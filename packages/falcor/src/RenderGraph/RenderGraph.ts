@@ -219,6 +219,15 @@ export class RenderGraph {
         });
     }
 
+    /**
+     * Awaits async pass initialization (asset loading). Call once before the
+     * first execute (web divergence, DESIGN.md §9).
+     */
+    async init(): Promise<void> {
+        await Promise.all([...this.passes.values()].map((p) => p.initAsync()));
+        this.compiled = null; // reflection may depend on loaded assets (e.g. ImageLoader size)
+    }
+
     /** Mirrors RenderGraphExe::execute. */
     execute(ctx: RenderContext): void {
         if (!this.compiled) this.compile(ctx);

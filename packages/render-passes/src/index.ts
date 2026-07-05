@@ -8,3 +8,4 @@
 export * from "./AccumulatePass/AccumulatePass.js";
 export * from "./ToneMapper/ToneMapper.js";
 export * from "./BlitPass/BlitPass.js";
+export * from "./ImageLoader/ImageLoader.js";

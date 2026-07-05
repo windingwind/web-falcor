@@ -41,6 +41,12 @@ export abstract class RenderPass {
     /** Mirrors RenderPass::compile (called when graph recompiles). */
     compile(_ctx: RenderContext, _compileData: CompileData): void {}
 
+    /**
+     * Async initialization (asset loading etc.) — web divergence (DESIGN.md §9):
+     * native Falcor blocks on file IO in constructors. Awaited by RenderGraph.init().
+     */
+    async initAsync(): Promise<void> {}
+
     setProperties(_props: Properties): void {}
     getProperties(): Properties {
         return new Properties();
