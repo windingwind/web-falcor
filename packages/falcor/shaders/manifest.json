@@ -1,0 +1,11 @@
+{
+  "outDir": "generated",
+  "entries": [
+    {
+      "name": "SanityCompute",
+      "source": "SanityCompute.cs.slang",
+      "entry": "main",
+      "stage": "compute"
+    }
+  ]
+}

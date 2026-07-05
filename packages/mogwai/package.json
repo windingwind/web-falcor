@@ -1,0 +1,15 @@
+{
+  "name": "@web-falcor/mogwai",
+  "version": "0.1.0",
+  "description": "Browser render-graph viewer application (mirrors Falcor/Source/Mogwai)",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@web-falcor/falcor": "*",
+    "@web-falcor/render-passes": "*"
+  }
+}

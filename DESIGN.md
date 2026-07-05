@@ -1,0 +1,456 @@
+# web-falcor — Framework Design
+
+A WebGPU-based reimplementation of [NVIDIA Falcor 8.0](https://github.com/NVIDIAGameWorks/Falcor)
+targeting **exact 1:1 feature parity wherever the web platform allows**, with every
+gap explicitly marked and explained.
+
+Reference: upstream clone at `./Falcor` (commit `eb540f67`, built natively at
+`Falcor/build/linux-gcc` for ground-truth comparison), research fork at `../Falcor`.
+
+---
+
+## 1. Goals and ground rules
+
+1. **1:1 parity as the default.** Every Falcor class, render pass, shader module and
+   script-visible API gets a web counterpart with the same name, same semantics, and —
+   where meaningful — the same file layout (`Source/Falcor/Scene/Camera/Camera.h` →
+   `packages/falcor/src/Scene/Camera/Camera.ts`).
+2. **Reuse Falcor's shader library verbatim.** Falcor's value is concentrated in its
+   257 `.slang` files (materials, BSDFs, samplers, light sampling, SDFs, path tracing).
+   We compile the *unmodified upstream sources* with Slang's WGSL backend rather than
+   hand-porting to WGSL. Verified working: Slang v2026.12.2 compiles
+   `Utils.Math.*` / `Utils.Sampling.*` modules directly to WGSL
+   (see `packages/falcor/shaders/SanityCompute.cs.slang` → `generated/`).
+3. **Feature-gap honesty.** Everything that cannot work in the browser is marked in the
+   parity matrix (§8) with one of:
+   - ✅ **Portable** — direct implementation, same behavior.
+   - 🟡 **Emulated** — same API and observable behavior, different mechanism
+     (e.g. software ray tracing in compute).
+   - 🔶 **Replaced** — same purpose, different technology (e.g. Python → TypeScript
+     scripting), API kept shape-compatible.
+   - ❌ **Impossible** — cannot be provided on the web platform at all; API exists but
+     throws `UnsupportedFeatureError` with a pointer to this document.
+4. **Verifiability.** The native `./Falcor` build is the oracle: image regression tests
+   render the same scene + render graph in native Falcor and in web-falcor (headless
+   Chromium on this host's RTX 5090) and compare with Falcor's own `ImageCompare`
+   metrics (MSE / FLIP).
+
+## 2. Platform decision: WebGPU primary, WebGL2 out of scope for parity
+
+Falcor is compute-first: skinning, light-BVH build/refit, environment-map sampling
+setup, parallel reduction, prefix sum, bitonic sort, SDF brick building, path tracing —
+all compute shaders. **WebGL2 has no compute shaders** (the `WEBGL_compute` effort was
+abandoned in 2020 in favor of WebGPU), no storage buffers, no arbitrary-format image
+writes, and no indirect dispatch.
+
+Consequences:
+
+- **WebGPU is the sole full-parity backend.** `Device` (mirroring `Core/API/Device`)
+  abstracts the backend as Falcor abstracts D3D12/Vulkan via slang-gfx.
+- **WebGL2 fallback is possible only for a raster-only subset** (GBufferRaster,
+  ForwardLighting-style passes, ToneMapper, blits) and would require a second shader
+  pipeline (Slang → GLSL 300 es, which Slang supports). It is *designed for* (the
+  `DeviceType.WebGL2` enum and the format/binding abstractions keep the door open) but
+  **not implemented in the initial milestones** — implementing ~20 % of Falcor twice
+  before the WebGPU path is complete would be wasted motion. It is marked per-feature
+  in the parity matrix.
+
+## 3. Architecture overview
+
+Layering mirrors Falcor exactly; each box is a package/module with the same
+responsibilities as its native counterpart:
+
+```
+┌──────────────────────────────────────────────────────────────────────┐
+│  apps: Mogwai (browser app)  ·  FalcorTest (headless)  ·  Samples    │  packages/mogwai
+├──────────────────────────────────────────────────────────────────────┤
+│  RenderPasses (plugins): GBuffer, PathTracer, ToneMapper, TAA, …     │  packages/render-passes
+├──────────────────────────────────────────────────────────────────────┤
+│  RenderGraph: RenderGraph · RenderPass · Reflection · Compiler ·     │
+│               ResourceCache · Exe · Import/Export (graph scripts)    │
+├───────────────┬───────────────────┬──────────────────────────────────┤
+│  Scene        │  Rendering        │  Utils                           │
+│  SceneBuilder │  Lights/EnvMap    │  Math · Image · UI · Timing      │  packages/falcor
+│  Materials    │  Materials(BSDF)  │  Sampling · Algorithm · Debug    │
+│  Lights/Anim  │  Volumes          │  Scripting · Settings · Color    │
+│  SDFs/Volumes │  SoftwareRT ★     │  SDF · Geometry · Neural         │
+├───────────────┴───────────────────┴──────────────────────────────────┤
+│  Core: API (Device, Buffer, Texture, Contexts, …) · Program          │
+│        (ProgramManager, Reflection, ParameterBlock/ShaderVar) ·      │
+│        Pass · State · Platform (browser) · Object/Error/Plugin       │
+├──────────────────────────────────────────────────────────────────────┤
+│  Shader system: Falcor .slang library (unmodified) + WebFalcor       │
+│  platform shims  ──slangc──▶  WGSL + reflection JSON                 │  packages/slang-compiler
+├──────────────────────────────────────────────────────────────────────┤
+│  WebGPU (browser)              [WebGL2: raster-only subset, future]  │
+└──────────────────────────────────────────────────────────────────────┘
+     ★ SoftwareRT replaces DXR/VK ray tracing — see §5.
+```
+
+Repository layout:
+
+```
+web-falcor/
+├── Falcor/                    # upstream clone: shader source of truth + native oracle
+├── tools/slang/               # Slang v2026.12.2 (slangc with WGSL backend)
+├── packages/
+│   ├── falcor/                # @web-falcor/falcor — core library, mirrors Source/Falcor
+│   │   ├── src/{Core,Scene,Rendering,RenderGraph,Utils,DiffRendering}/
+│   │   └── shaders/           # web-falcor-owned .slang (shims) + generated WGSL
+│   ├── render-passes/         # @web-falcor/render-passes — mirrors Source/RenderPasses
+│   ├── mogwai/                # @web-falcor/mogwai — browser app, mirrors Source/Mogwai
+│   └── slang-compiler/        # build-time slangc driver (→ runtime slang-wasm later)
+├── tests/                     # unit + image-regression harness (native oracle diffing)
+└── DESIGN.md                  # this document
+```
+
+## 4. Shader system (the load-bearing design decision)
+
+### 4.1 Compilation pipeline
+
+Falcor compiles Slang → DXIL/SPIR-V at runtime through slang-gfx. web-falcor compiles
+Slang → **WGSL** with the same compiler front-end, in two modes:
+
+1. **Build-time (primary)**: `packages/slang-compiler` drives native `slangc` over a
+   shader manifest. Each entry (source, entry point, stage, defines, type conformances)
+   produces `<name>.wgsl` + `<name>.reflection.json`. Verified end-to-end on this host.
+2. **Runtime (for parity with Falcor's dynamic defines)**: Falcor specializes shaders
+   at runtime via `DefineList`, type conformances, and scene-generated code
+   (`MaterialSystem` emits Slang for registered material types; `Scene` defines control
+   geometry types, light counts, etc.). A build-time-only pipeline cannot cover this.
+   The official **slang-wasm** build (published per-release, e.g.
+   `slang-2026.12.2-wasm.zip`, the same artifact powering the Slang Playground) runs the
+   identical compiler in the browser (and in Node for tests). The `ProgramManager`
+   mirrors Falcor's: program (files + defines + conformances) → hash → cache lookup →
+   compile on miss. Ahead-of-time-compiled variants from the manifest pre-seed the cache
+   so common paths never pay WASM compile time.
+
+### 4.2 Reflection-driven binding (`ParameterBlock` / `ShaderVar`)
+
+Falcor's host↔shader glue is its reflection system: `ProgramReflection` walks Slang's
+reflection API; `ParameterBlock` lays out constant data and resource bindings;
+`ShaderVar` gives `var["gScene"]["camera"]["viewMat"] = m` style access.
+
+web-falcor keeps this design 1:1:
+
+- Slang reflection JSON (build-time) or the slang-wasm reflection API (runtime)
+  populates `ProgramReflection` — types, struct offsets (std140 for uniform, std430
+  for storage), binding indices, spaces → **bind groups**.
+- `ParameterBlock` owns a CPU-side `ArrayBuffer` mirror of the uniform data plus the
+  resource table; `ShaderVar` is a thin proxy (JS `Proxy` for the indexing syntax plus
+  explicit `.setFloat3(...)` typed setters) writing through reflection offsets.
+- Falcor's register `space`s map to WebGPU **bind group indices**; slangc's WGSL
+  backend already emits `@group/@binding` consistently with its reflection output.
+- WebGPU's 4-bind-group default limit vs. Falcor's arbitrary spaces: the
+  `RootSignature`-equivalent packing lives in `ProgramKernels`, which flattens
+  parameter blocks into ≤ 4 groups (scene = group 1, per-pass = group 0, material
+  system = group 2, misc = group 3) and rewrites bindings via slangc's layout
+  parameters. This is internal; the `ParameterBlock` API is unchanged.
+
+### 4.3 WebFalcor platform shims (`packages/falcor/shaders/WebFalcor/`)
+
+A small set of *web-owned* Slang modules that implement Falcor interfaces whose native
+implementations use features WGSL lacks. Because Falcor is already coded against
+interfaces (`SceneRayQueryInterface`, `ISampleGenerator`, …), upstream shader code does
+not change — we swap the implementation module at import/conformance level:
+
+| Native module | WGSL blocker | Shim |
+|---|---|---|
+| `Scene/Raytracing.slang` (DXR pipeline: TraceRay, hit shaders, payloads) | no RT pipeline in WGSL | `WebFalcor/SoftwareRT`: megakernel compute path — see §5 |
+| `Scene/RaytracingInline.slang` (RayQuery) | no `rayQuery` in WGSL | same software BVH traversal, inlined; identical `SceneRayQuery` interface |
+| `Utils/NVAPI.slang(.slangh)` (SER, special registers) | NVIDIA-only | no-op shim (SER is a perf hint; results identical) |
+| 64-bit atomics (`AtomicAdd` on u64 in LightCollection/PixelStats) | WGSL has no i64/u64 | paired-u32 CAS emulation module |
+| float atomics (DiffRendering gradient accumulation) | WGSL has no atomic\<f32\> | CAS-loop on `atomic<u32>` bitcast |
+| `printf`-style `PixelDebug` GPU prints | no printf | already buffer-based in Falcor → portable; only the host decode changes |
+| Wave intrinsics (`WaveActiveSum` etc. in WarpProfiler, some samplers) | WGSL `subgroups` feature (shipped, but optional) | subgroup ops when available; scalar/workgroup-shared fallback otherwise |
+
+The manifest/`ProgramManager` selects shims through Slang's module search path and
+type conformances — never by editing upstream files. `./Falcor` stays a pristine
+checkout that doubles as the image-test oracle.
+
+## 5. Ray tracing without RT hardware (the biggest emulation)
+
+WebGPU has **no ray tracing API** (neither RT pipelines nor ray queries; proposals
+exist but nothing is shipped in any browser). Falcor's flagship passes (PathTracer,
+GBufferRT/VBufferRT, WhittedRayTracer, RTXDI) are all RT-based. Strategy:
+
+1. **BVH construction in compute** (`Core/API/RtAccelerationStructure` keeps its API):
+   LBVH build (Morton sort → Karras-style hierarchy → refit), two-level as in DXR:
+   BLAS per mesh group / TLAS over instances, matching Falcor's BLAS grouping strategy
+   so `InstanceID`/`GeometryIndex` semantics are preserved. Compaction and
+   update(refit) flags honored.
+2. **Traversal in compute**: a stack-based traversal kernel implementing
+   `SceneRayQuery` (inline-query style, `TraceRayInline` semantics including
+   `RAY_FLAG_*`, instance masks, alpha-test any-hit via material system hooks).
+3. **RT pipelines emulated as megakernels**: Falcor's raygen/miss/closest-hit/any-hit
+   modules are Slang functions; the shim links them into one compute kernel per
+   `RtProgram`, with the `RtBindingTable`'s hit-group indexing lowered to a switch over
+   material/geometry type (Slang link-time specialization keeps this static where
+   possible). Recursion (Whitted) is bounded-depth loop-converted — same approach
+   Falcor itself uses for inline-RT variants of its passes (`PathTracer` already has a
+   compute path, which becomes the default).
+4. **Performance is not parity-gated**: a 5090-class GPU runs compute path tracing at
+   interactive rates, but we mark every RT feature 🟡 with "software BVH; expect
+   single-digit× slower than native DXR".
+
+## 6. Module-by-module mapping
+
+### 6.1 `Core/` (mirrors `Source/Falcor/Core/`)
+
+| Falcor | web-falcor | Notes |
+|---|---|---|
+| `Object` (intrusive refcount, `ref<T>`) | GC + explicit `destroy()` for GPU objects | JS is GC'd; deterministic release only where WebGPU needs it (buffers/textures). `ref<T>` not reproduced — documented divergence, no observable API change. |
+| `Error` (exceptions) | `FalcorError` hierarchy + `UnsupportedFeatureError` | done (scaffold) |
+| `Plugin` (dynamic .so/.dll) | ES-module dynamic `import()` registry | render passes/importers self-register, same `PluginManager` API |
+| `AssetResolver` | URL/OPFS resolver with search paths | fetch()-backed; drag-&-drop and File System Access mounts |
+| `SampleApp` / `Testbed` | browser main-loop (rAF) / headless (OffscreenCanvas) | same lifecycle callbacks (onLoad/onFrameRender/onResize/…) |
+| `HotReloadFlags` | Vite HMR hooks → `ProgramManager.reloadAllPrograms()` | web is *better* here |
+| **API/** `Device` | `GPUAdapter/GPUDevice` wrapper | done (scaffold); async factory |
+| `Buffer`, `Texture`, `Sampler`, `ResourceViews` | `GPUBuffer/GPUTexture/GPUSampler/GPUTextureView` | typed/structured/raw buffers map to storage buffers; counter-buffers emulated (no D3D UAV counters) via side-buffer + atomics |
+| `Formats` | `ResourceFormat` → `GPUTextureFormat` | done (scaffold); ❌ gaps: 24-bit depth readback, RGB32F *texture* (buffer only), A8/L8 legacy |
+| `CopyContext/ComputeContext/RenderContext` | one `CommandEncoder` wrapper hierarchy, same class split | `blit()` via cached fullscreen pipeline, `resolveSubresource`, `clearUAV` via compute |
+| `FBO`, `VAO` | render-pass descriptor / vertex-layout caches | same API, lowered at pipeline-creation time |
+| `GraphicsStateObject/ComputeStateObject` | `GPURenderPipeline/GPUComputePipeline` + async cache | Falcor's PSO hash-cache pattern kept |
+| `Fence`, `FencedPool` | `onSubmittedWorkDone` promises + frame-ring | no user-visible timeline semaphores in WebGPU; API preserved, values internal |
+| `GpuMemoryHeap` (upload/readback rings) | ring of `mappedAtCreation`/`MAP_READ` staging buffers | same role; readback is async-only (§9 divergences) |
+| `QueryHeap`, `GpuTimer` | `GPUQuerySet` (timestamp) | ✅ behind `timestamp-query` feature (available on target browsers) |
+| `Swapchain` | canvas context `configure()` | vsync/HDR: `toneMapping`/`colorSpace` where Chrome supports; ❌ exclusive fullscreen/refresh control |
+| `RtAccelerationStructure`, `RtStateObject`, `ShaderTable` | software BVH + megakernel + virtual SBT | 🟡 §5 |
+| `Aftermath`, `NvApiExDesc`, D3D12 descriptor classes, CUDA interop in `CopyContext` | — | ❌ NVIDIA/D3D12-specific (see matrix) |
+| **Program/** all 13 files | same classes | §4; `DefineList`, type conformances, `RtBindingTable` all preserved |
+| **Pass/** `ComputePass/RasterPass/FullScreenPass` | same | FullScreenPass uses the same vertex-in-shader trick |
+| **State/** `GraphicsState/ComputeState` | same mutable-state + lazy-PSO-resolve design | |
+| **Platform/** `Window` (GLFW) | canvas + Pointer/Keyboard events, `ResizeObserver` | same `Window::ICallbacks`; `MonitorInfo` from `window.screen` (limited) |
+| `OS.h` (file dialogs, env, processes) | File System Access API pickers; ❌ processes, ❌ env | `MemoryMappedFile` → streamed `fetch`/OPFS; `LockFile` → Web Locks API |
+
+### 6.2 `Scene/`
+
+All host classes port 1:1 (they are data management + compute dispatch, no exotic API
+use): `Scene`, `SceneBuilder`, `SceneCache` (→ IndexedDB/OPFS), `Camera(+Controller)`,
+`Light` hierarchy, `LightCollection` (emissive triangle extraction in compute),
+`EnvMap`, `LightProfile` (IES), `MaterialSystem` + all material types (Standard, Cloth,
+Hair, MERL, MERLMix, RGL, all six PBRT materials), `Animation` (+ GPU skinning, morph
+targets, vertex caches), `CurveTessellation`, `SDFGrid` ×4 back-ends (NDSDF, SVS, SBS,
+SVO — all pure compute), `GridVolume`/`Grid` (NanoVDB parsing in TS; BC4-in-shader
+decode as native), `TriangleMesh`, `HitInfo`, `Transform`.
+
+Scene GPU access (`Scene.slang`, `SceneBlock`, geometry/material/light buffers) is the
+same reflection-bound parameter block. The **bindless problem**: Falcor binds all
+material textures as an unbounded descriptor array (`Texture2D gTextures[]`).
+WGSL has no runtime-sized binding arrays (`binding_array` exists only in native wgpu,
+not the browser). Mitigation, in order:
+1. group material textures by (format, size-class) into **texture-2d-arrays** with a
+   per-texture layer index in `TextureHandle` (transparent — `TextureHandle.slang`
+   is already an abstraction);
+2. large-scene overflow → mip-biased atlas fallback;
+3. marked 🟡 with limits documented (`maxSampledTexturesPerShaderStage` typically 16;
+   arrays count as one binding each).
+
+Importers (plugin package, like upstream):
+- **glTF/OBJ/PLY**: native TS loaders (glTF is the primary web format) — replaces the
+  Assimp path for these formats.
+- **Assimp (FBX, DAE, …)**: `assimpjs` (official Emscripten build) 🔶.
+- **PBRT / Mitsuba**: TS ports of Falcor's parsers ✅ (pure text parsing).
+- **USD**: 🔶 via Autodesk/Pixar `usd-wasm`; heavy (tens of MB WASM) and lags native
+  OpenUSD → optional plugin, off by default. Marked partial: usdz + core schemas work;
+  full nv-usd parity not promised.
+- **PythonImporter**: 🔶 via Pyodide (see §6.7).
+
+### 6.3 `Rendering/`
+
+| Subsystem | Status | Notes |
+|---|---|---|
+| `Lights/` Emissive samplers (Uniform/Power/LightBVH), `LightBVH(+Builder/Refit)`, `EnvMapSampler` | ✅ | pure Slang + compute; LightBVH build is compute shaders already |
+| `Materials/` all BSDF modules (Lambert, OrenNayar, Disney/Frostbite diffuse, GGX iso/aniso, StandardBSDF, Sheen, Hair Chiang16, Cloth, MERL/RGL, PBRT set, LayeredBSDF, Fresnel/Microfacet/NDF, TexLOD) | ✅ | compile as-is to WGSL; TexLOD ray-cone variants fine, ray-diff variants fine |
+| `Volumes/` GridVolumeSampler, phase functions | ✅ | NanoVDB traversal is shader code, portable |
+| `RTXDI/` | 🟡 | RTXDI **SDK** is open source (BSD): the resampling shaders port; visibility rays go through SoftwareRT. Full ReSTIR DI parity feasible but scheduled late |
+| `Utils/PixelStats` | ✅ | needs 64-bit-atomic shim (paired u32) |
+
+### 6.4 `RenderGraph/`
+
+Pure host-side logic — ports 1:1 with no platform caveats: `RenderGraph`,
+`RenderPass`, `RenderPassReflection`, `RenderGraphCompiler` (pass order, resource
+lifetime, field compatibility), `ResourceCache` (transient pool honoring
+`RenderPassHelpers::IOSize`), `RenderGraphExe`, `RenderGraphIR`,
+import/export of graph scripts (§6.7), `RenderGraphUI` (graph editor) on the web UI
+stack (§6.6).
+
+### 6.5 `RenderPasses/` — see parity matrix §8.2 for all 31.
+
+### 6.6 UI (`Utils/UI`, Mogwai)
+
+Falcor uses Dear ImGui (+ ImGuizmo). web-falcor uses **Dear ImGui compiled to WASM**
+(`jsimgui` / imgui-wasm bindings with the WebGPU backend) so widget code translates
+1:1 (`Gui::Widgets` API preserved), including ProfilerUI, PixelZoom, SpectrumUI,
+TextRenderer, and the RenderGraphUI node editor. Fallback plan if the binding layer
+proves brittle: same `Gui` API over Tweakpane/custom DOM (uglier, zero-WASM).
+Mogwai itself (menus, graph loading, FrameCapture → PNG/EXR download, VideoCapture →
+WebCodecs, TimingCapture → JSON) is a straightforward port.
+
+### 6.7 Scripting & Python API
+
+Falcor embeds Python (pybind11): render-graph scripts, Mogwai console, `Testbed`
+notebooks. Browser reality: no CPython. Design:
+
+1. **Primary 🔶**: a TypeScript scripting API that is *shape-identical* to the Python
+   one (`createPass("ToneMapper", {autoExposure: false})`, `g.addEdge(...)`,
+   `m.addGraph(...)`) — Falcor's own graph `.py` files are ~declarative Python that
+   maps 1:1 onto this.
+2. **Graph-script compatibility ✅**: a small parser executes upstream, unmodified
+   render-graph `.py` files (the subset actually used by all 40+ graph files in
+   `tests/image_tests/renderpasses/graphs/`) so existing content Just Works.
+3. **Full Python 🔶 (optional plugin)**: Pyodide runs real CPython in the browser with
+   a `falcor` bridge module for arbitrary scripts (Mogwai console, PythonImporter).
+   numpy interop works via Pyodide; **PyTorch does not exist in the browser** →
+   `test_pytorch`-style workflows are ❌ (closest substitute: ONNX Runtime Web /
+   tfjs, out of scope).
+
+### 6.8 `Utils/`
+
+Everything ports ✅ unless noted: Math (TS vector/matrix/quaternion lib with Falcor's
+exact conventions + the `.slang` math modules as-is), Sampling (all generators are
+Slang → as-is; CPU sample patterns trivial), Algorithm (ParallelReduction, PrefixSum,
+BitonicSort — compute, as-is), Color/Spectrum, Geometry, SDF draw utils, Image
+(PNG/JPG via browser codecs, **EXR/DDS/HDR via TS/WASM codecs**, NVTT-based BC
+encoding 🔶 → WASM encoder e.g. Binomial basis_universal or texture-compressor;
+decode of BC is native via `texture-compression-bc`), TextureManager/async loader
+(fetch + `createImageBitmap`), Timing (Clock/FrameRate/Profiler with timestamp
+queries), Debug (PixelDebug ✅, WarpProfiler 🟡 subgroups-gated), Scripting (§6.7),
+Settings (JSON + localStorage), CryptoUtils (SHA-1 → WebCrypto), Threading/TaskManager
+(→ Web Workers pool; scene build off-main-thread), `CudaUtils` ❌.
+
+### 6.9 `DiffRendering/` (WARDiffPathTracer)
+
+Slang **autodiff is a compiler feature**, not an API feature — `fwd_diff`/`bwd_diff`
+lower to plain compute code, so it compiles to WGSL. Gradient accumulation needs the
+float-atomic CAS shim. The PyTorch training loop does not exist in-browser; gradients
+are exposed as buffers (readable into JS / ONNX-web pipelines). Marked 🟡 (mechanism
+works; ecosystem differs).
+
+## 7. Testing strategy
+
+1. **Unit tests (vitest, Node)**: math, reflection layout, graph compilation — CPU-only.
+2. **GPU unit tests**: FalcorTest's GPU-unit-test pattern (dispatch kernel → readback →
+   assert) ported; run in headless Chromium (`--headless=new --enable-unsafe-webgpu`)
+   via Playwright on this host's RTX 5090. Falcor's `Testbed`-style tests map directly.
+3. **Image regression**: for each graph in `tests/image_tests/renderpasses/graphs/`,
+   render N frames native (`./Falcor/build/linux-gcc/bin/Debug/Mogwai --script ...
+   --headless`) and in web-falcor (same graph file, same scene, fixed seeds), compare
+   with `ImageCompare` (MSE + FLIP thresholds). Bit-exactness is *not* the bar
+   (different fp contraction/driver); Falcor's own image-test tolerances are.
+4. **Shader-compile CI gate**: every manifest entry must compile to WGSL and pass
+   `wgpu`-level validation (via Chromium) on every commit.
+
+## 8. Feature parity matrix
+
+### 8.1 Platform / Core capabilities
+
+| Feature | Status | Explanation / strategy |
+|---|---|---|
+| D3D12 / Vulkan backends | 🔶 | WebGPU is the backend (itself lowered to D3D12/Vulkan/Metal by the browser) |
+| WebGL2 backend | 🔶 partial-by-design | raster-only subset possible (no compute in WebGL2); deferred, see §2 |
+| Slang shading language, full library | ✅ | Slang WGSL backend, verified on this host (§4) |
+| Runtime shader specialization (DefineList, type conformances) | ✅ | slang-wasm in-browser compilation + AOT cache |
+| Shader reflection → ParameterBlock/ShaderVar | ✅ | slang reflection JSON / wasm API |
+| Hardware RT (DXR pipelines, inline RayQuery, SBTs) | 🟡 | **No WebGPU ray tracing API exists.** Software LBVH + compute traversal + megakernel lowering (§5); semantics preserved, performance lower |
+| Shader Execution Reordering (NVAPI) | ❌ | NVIDIA hardware/driver feature; no web analog. No-op shim (perf-only) |
+| Wave/subgroup intrinsics | 🟡 | WebGPU `subgroups` feature where available; workgroup-shared fallback |
+| 64-bit shader integers/atomics | 🟡 | not in WGSL; paired-u32 emulation shim |
+| fp16 in shaders | ✅ | `shader-f16` (available on target hardware) |
+| fp64 in shaders | ❌ | absent from WGSL entirely (native Falcor uses it in a few reduction/accumulation paths → those switch to compensated-f32 🟡) |
+| Bindless resources / unbounded descriptor arrays | 🟡 | not in browser WebGPU; texture-array packing per format class (§6.2), documented limits |
+| Indirect draw/dispatch | ✅ | WebGPU native (`drawIndirect`, `dispatchWorkgroupsIndirect`); ExecuteIndirect-style multi-draw 🟡 loop-emulated |
+| UAV counters / append buffers | 🟡 | emulated with explicit atomic counter buffers |
+| Timestamp queries / GpuTimer / Profiler | ✅ | `timestamp-query` feature |
+| Occlusion queries | ✅ | WebGPU native |
+| Async compute / multiple queues | ❌ | WebGPU exposes a single queue; Falcor's LowLevelContextData queue selection becomes a no-op (correctness unaffected) |
+| CUDA interop (buffers, semaphores, PyTorch tensors) | ❌ | no CUDA in browsers, full stop. `CudaUtils`/`CudaInterop` throw `UnsupportedFeatureError` |
+| NSight Aftermath | ❌ | driver crash-dump tech; browser substitute is WebGPU validation + device-lost logs |
+| Multi-GPU / LUID adapter selection | ❌ | browser picks adapter; only `powerPreference` hint exposed |
+| Exclusive fullscreen / vsync control / HDR swapchain | 🟡 | Fullscreen API + canvas `toneMapping` (HDR in Chrome); no vsync-off, no refresh-rate control |
+| Memory-mapped files, raw file paths, process spawn, registry/env | ❌ | sandboxed platform; OPFS + File System Access + fetch replace file I/O (`AssetResolver`) |
+| Hot reload | ✅ | Vite HMR (superior to native) |
+| Multithreaded scene build (TaskManager) | 🔶 | Web Workers (+ SharedArrayBuffer w/ COOP/COEP headers) |
+
+### 8.2 Render passes (all 31 upstream directories)
+
+| Pass | Status | Notes |
+|---|---|---|
+| AccumulatePass | ✅ | double-precision mode 🟡 → compensated f32 (fp64 gap) |
+| BlitPass | ✅ | |
+| BSDFOptimizer | 🟡 | uses diff rendering; gradients ✅, no in-browser torch optimizer → TS optimizer (Adam) provided |
+| BSDFViewer | ✅ | |
+| DebugPasses (ColorMap/Comparison/SideBySide/SplitScreen/InvalidPixelDetection) | ✅ | |
+| DLSSPass | ❌ | NVIDIA NGX driver + hardware black box; nearest substitutes: TAA-upscale ✅ or FSR2-WGSL port 🔶 (separate pass, not DLSS parity) |
+| ErrorMeasurePass | ✅ | |
+| FLIPPass | ✅ | pure compute |
+| GBuffer (GBufferRaster / GBufferRT / VBufferRaster / VBufferRT / DepthPass) | ✅ raster / 🟡 RT | RT variants via SoftwareRT (§5) |
+| ImageLoader | ✅ | EXR/DDS via WASM codecs |
+| MinimalPathTracer | 🟡 | SoftwareRT |
+| ModulateIllumination | ✅ | |
+| NRDPass | ❌ | NVIDIA closed-source denoiser SDK (native binaries). Substitute: SVGF ✅ (already in tree) or OIDN-web 🔶 as new optional pass |
+| OptixDenoiser | ❌ | requires CUDA+OptiX. Same substitutes as NRD |
+| OverlaySamplePass | ✅ | |
+| PathTracer | 🟡 | flagship; compute variant via SoftwareRT; NEE/MIS/LightBVH/EnvMap sampling/volumes all ✅ shader-side |
+| PixelInspectorPass | ✅ | |
+| RenderPassTemplate | ✅ | |
+| RTXDIPass | 🟡 | RTXDI SDK shaders are BSD-licensed & portable; visibility via SoftwareRT; scheduled after PathTracer |
+| SceneDebugger | ✅ | |
+| SDFEditor | ✅ | pure compute + UI |
+| SimplePostFX | ✅ | |
+| SVGFPass | ✅ | becomes the default denoiser (replacing NRD/Optix use-cases) |
+| TAA | ✅ | |
+| TestPasses | ✅/❌ | GPU-test passes ✅; PyTorch interop pass ❌ (CUDA) |
+| ToneMapper | ✅ | |
+| Utils (Composite/CrossFade/GaussianBlur) | ✅ | |
+| WARDiffPathTracer | 🟡 | §6.9 |
+| WhittedRayTracer | 🟡 | SoftwareRT, recursion → loop |
+
+### 8.3 Ecosystem / tooling
+
+| Component | Status | Notes |
+|---|---|---|
+| Mogwai app (graph loading, UI, capture) | ✅ | browser app; FrameCapture→download, VideoCapture→WebCodecs (FFmpeg ❌) |
+| Python scripting / console | 🔶 | TS API (shape-identical) + graph-`.py` compatibility layer; full CPython via optional Pyodide plugin |
+| PyTorch interop (`falcor.pytorch`) | ❌ | no CUDA/torch in browser; gradient buffers exposed to JS/ONNX-web instead |
+| FalcorTest | ✅ | vitest + Playwright harness (§7) |
+| RenderGraphEditor | ✅ | RenderGraphUI in-browser |
+| ImageCompare | ✅ | reused natively on CI host for oracle diffing; TS port for in-browser use |
+| Importers | see §6.2 | glTF/OBJ ✅, PBRT/Mitsuba ✅ (parser ports), Assimp 🔶 WASM, USD 🔶 usd-wasm (partial), Python importer 🔶 Pyodide |
+| SceneCache | 🔶 | OPFS/IndexedDB instead of disk cache |
+| NVTT texture compression (import path) | 🔶 | WASM BC encoders; decode is native WebGPU |
+
+## 9. Known behavioral divergences (accepted, documented)
+
+1. **Async boundaries.** Device creation, shader compilation, buffer readback and
+   screenshot capture are `async` on the web (native Falcor blocks). APIs that are
+   synchronous in Falcor and *cannot* be async-hidden return Promises; graph execution
+   itself stays synchronous per-frame (encoders are synchronous).
+2. **No raw pointers/interop handles.** `getNativeHandle()` returns the WebGPU object.
+3. **Float determinism.** WGSL→driver compilation differs from DXIL/SPIR-V; image
+   tests use tolerance thresholds, not bit-exactness (same policy as Falcor's own
+   cross-vendor tests).
+4. **Performance envelope.** Software RT and no SER/bindless put the ceiling below
+   native; parity target is *feature/semantics*, not frame-time.
+
+## 10. Roadmap (milestones map to upstream test coverage)
+
+| M | Scope | Exit criterion |
+|---|---|---|
+| **M0** ✔ | env: Falcor clone + native oracle build, Slang WGSL toolchain, workspace scaffold, shader pipeline PoC | done on this host |
+| **M1** | Core/API: Buffer/Texture/Sampler/Formats/Contexts/FBO/State/PSO caches, GpuMemoryHeap, GpuTimer, Fence | GPU unit tests green in headless Chromium |
+| **M2** | Program system: ProgramManager (AOT+slang-wasm), reflection, ParameterBlock/ShaderVar, ComputePass/RasterPass/FullScreenPass | Falcor's ParameterBlock unit tests ported & green |
+| **M3** | Utils: Math lib, Algorithm passes, Image IO, Profiler, PixelDebug, sample generators | ParallelReduction/PrefixSum/BitonicSort tests green |
+| **M4** | RenderGraph core + ResourceCache + graph-script loader; passes: ToneMapper, Blit, Accumulate, GaussianBlur, ImageLoader, DebugPasses | first upstream graph `.py` runs end-to-end in browser |
+| **M5** | Scene: SceneBuilder, glTF import, Camera, Lights, MaterialSystem (Standard), Animation/skinning; GBufferRaster/VBufferRaster + TAA + SVGF + SimplePostFX | ForwardRenderer-class graphs render; image-diff vs native within tolerance |
+| **M6** | SoftwareRT: LBVH build/refit, SceneRayQuery, RtAccelerationStructure API; VBufferRT, MinimalPathTracer, WhittedRayTracer | MinimalPathTracer image test within tolerance of native |
+| **M7** | Full material zoo (Hair/Cloth/MERL/RGL/PBRT), LightBVH/EnvMap samplers, GridVolumes, PathTracer (+NEE/MIS), SDF grids ×4, remaining passes | PathTracer + SDF image suites within tolerance |
+| **M8** | Mogwai UI (ImGui-wasm, RenderGraphUI, capture), Pyodide plugin, RTXDI, WARDiffPathTracer, Assimp/USD importers, WebGL2 raster subset (stretch) | upstream image-test graph suite pass-rate report; parity matrix finalized |
+
+## 11. Open questions for review
+
+1. **Graph-script compat layer**: is executing upstream `.py` graph files (via mini-interpreter, with Pyodide as the escape hatch) worth it to you, or is the shape-identical TS API alone acceptable?
+2. **USD priority**: `usd-wasm` is heavy and partial — is USD import on the critical path for your use (the `../Falcor` fork ships nv-usd), or can it stay an M8 optional plugin?
+3. **WebGL2 subset**: any concrete need (target devices without WebGPU?), or shall it remain design-compatible but unimplemented?
+4. **Denoiser substitute policy**: SVGF only, or also an OIDN-web optional pass where NRD/Optix graphs are auto-rewritten?
+5. **Your fork's deltas** (`../Falcor` adds e.g. froxel/OFD animation work): should web-falcor track upstream 8.0 only (current plan), or also your fork's custom passes?

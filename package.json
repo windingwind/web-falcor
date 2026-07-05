@@ -1,0 +1,23 @@
+{
+  "name": "web-falcor",
+  "version": "0.1.0",
+  "private": true,
+  "description": "WebGPU/WebGL reimplementation of NVIDIA Falcor",
+  "type": "module",
+  "workspaces": [
+    "packages/*"
+  ],
+  "scripts": {
+    "build": "npm run build --workspaces --if-present",
+    "shaders": "node packages/slang-compiler/bin/compile-shaders.js",
+    "dev": "npm run dev --workspace=@web-falcor/mogwai",
+    "test": "npm run test --workspaces --if-present",
+    "typecheck": "npm run typecheck --workspaces --if-present"
+  },
+  "devDependencies": {
+    "@webgpu/types": "^0.1.60",
+    "typescript": "^5.8.0",
+    "vite": "^6.3.0",
+    "vitest": "^3.1.0"
+  }
+}

@@ -1,0 +1,15 @@
+# Upstream Falcor clone (reference; has its own repo)
+/Falcor/
+
+# Native toolchains
+/tools/slang/
+
+node_modules/
+dist/
+*.tsbuildinfo
+
+# Generated shader artifacts
+packages/falcor/shaders/generated/
+
+.vite/
+.DS_Store
