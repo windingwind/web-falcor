@@ -98,7 +98,9 @@ GBufferPSOut psMain(VSOut vsOut)
 
     float3 faceNormal = normalize(cross(ddy(vsOut.posW), ddx(vsOut.posW)));
     VertexData v = prepareVertexData(vsOut, faceNormal);
-    let lod = ImplicitLodTextureSampler();
+    // WebFalcor: WGSL requires uniform control flow for implicit-LOD sampling;
+    // hoist uv derivatives here and sample by explicit gradients (equivalent).
+    let lod = ExplicitGradientTextureSampler(ddx(vsOut.texC), ddy(vsOut.texC));
 
 #if USE_ALPHA_TEST
     if (gScene.materials.alphaTest(v, vsOut.materialID, lod))

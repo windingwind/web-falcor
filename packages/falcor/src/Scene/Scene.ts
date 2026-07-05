@@ -48,6 +48,7 @@ export class Scene {
     private sampler: Sampler;
     private materialCount = 0;
     private instanceCount = 0;
+    private drawList: { indexCount: number; firstIndex: number; baseVertex: number; firstInstance: number }[] = [];
 
     constructor(
         public readonly device: Device,
@@ -85,18 +86,25 @@ export class Scene {
             });
         });
         this.instanceCount = instances.length;
+        this.drawList = meshDescs.map((m, i) => ({
+            indexCount: m.indexCount,
+            firstIndex: m.ibOffset,
+            baseVertex: m.vbOffset,
+            firstInstance: i,
+        }));
 
         const storage = ResourceBindFlags.ShaderResource | ResourceBindFlags.UnorderedAccess;
-        const make = (name: string, data: ArrayBufferView | ArrayBuffer, structSize: number) => {
+        const make = (name: string, data: ArrayBufferView | ArrayBuffer, structSize: number, extraFlags = ResourceBindFlags.None) => {
             const bytes = data instanceof ArrayBuffer ? new Uint8Array(data) : new Uint8Array(data.buffer, data.byteOffset, data.byteLength);
-            const buf = new Buffer(this.device, { size: bytes.byteLength, structSize, bindFlags: storage, memoryType: MemoryType.DeviceLocal, name: `Scene::${name}` });
+            const buf = new Buffer(this.device, { size: bytes.byteLength, structSize, bindFlags: storage | extraFlags, memoryType: MemoryType.DeviceLocal, name: `Scene::${name}` });
             buf.setBlob(bytes);
             this.buffers[name] = buf;
             return buf;
         };
 
-        make("vertices", packStaticVertices(allVertices), 48);
-        make("indices", new Uint32Array(allIndices), 4);
+        make("vertices", packStaticVertices(allVertices), 48, ResourceBindFlags.Vertex);
+        make("indices", new Uint32Array(allIndices), 4, ResourceBindFlags.Index);
+        make("drawIDs", new Uint32Array(instances.map((inst) => inst.instanceIndex)), 4, ResourceBindFlags.Vertex);
         make("meshes", packMeshDescs(meshDescs), 32);
         make("geometryInstances", packGeometryInstances(instances), 32);
 
@@ -164,7 +172,8 @@ export class Scene {
             MATERIAL_SYSTEM_UDIM_INDIRECTION_ENABLED: 0,
             MATERIAL_SYSTEM_HAS_SPEC_GLOSS_MATERIALS: 0,
             MATERIAL_SYSTEM_USE_LIGHT_PROFILE: 0,
-            FALCOR_MATERIAL_INSTANCE_SIZE: 128,
+            FALCOR_MATERIAL_INSTANCE_SIZE: 256,
+            WEBFALCOR_MTL_STANDARD: 1,
             SCENE_DIFFUSE_ALBEDO_MULTIPLIER: "1.0",
             FALCOR_NVAPI_AVAILABLE: 0,
         });
@@ -181,6 +190,7 @@ export class Scene {
         c["projMat"] = cam.projMat;
         c["viewProjMat"] = cam.viewProjMat;
         c["viewProjMatNoJitter"] = cam.viewProjMat;
+        c["prevViewProjMatNoJitter"] = cam.viewProjMat; // static scenes: prev == current
         c["invViewProj"] = cam.invViewProj;
         c["posW"] = cam.posW.toArray();
         c["focalLength"] = cam.focalLength;
@@ -234,5 +244,20 @@ export class Scene {
 
     getGeometryInstanceCount(): number {
         return this.instanceCount;
+    }
+
+    /** Raster draw data (mirrors Scene::rasterize): buffers + per-mesh indexed draws. */
+    getMeshDrawData(): {
+        vertexBuffer: Buffer;
+        drawIDBuffer: Buffer;
+        indexBuffer: Buffer;
+        draws: { indexCount: number; firstIndex: number; baseVertex: number; firstInstance: number }[];
+    } {
+        return {
+            vertexBuffer: this.buffers["vertices"]!,
+            drawIDBuffer: this.buffers["drawIDs"]!,
+            indexBuffer: this.buffers["indices"]!,
+            draws: this.drawList,
+        };
     }
 }

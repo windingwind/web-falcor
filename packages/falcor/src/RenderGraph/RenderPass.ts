@@ -8,6 +8,7 @@ import type { RenderContext } from "../Core/API/RenderContext.js";
 import type { Texture } from "../Core/API/Texture.js";
 import { Properties } from "../Utils/Properties.js";
 import { RenderPassReflection } from "./RenderPassReflection.js";
+import type { Scene } from "../Scene/Scene.js";
 import { RuntimeError } from "../Core/Error.js";
 
 export interface CompileData {
@@ -46,6 +47,13 @@ export abstract class RenderPass {
      * native Falcor blocks on file IO in constructors. Awaited by RenderGraph.init().
      */
     async initAsync(): Promise<void> {}
+
+    protected scene: Scene | null = null;
+
+    /** Mirrors RenderPass::setScene. */
+    setScene(scene: Scene | null): void {
+        this.scene = scene;
+    }
 
     setProperties(_props: Properties): void {}
     getProperties(): Properties {

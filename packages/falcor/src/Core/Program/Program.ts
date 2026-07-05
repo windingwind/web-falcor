@@ -77,6 +77,28 @@ export class Program {
     }
 }
 
+/**
+ * Post-emission WGSL fixups for known Slang emission defects:
+ * - '@interpolate' is only valid on IO members with '@location'; Slang keeps it
+ *   on internal copies of varying structs (Tint rejects them);
+ * - conversely, integral entry-IO varyings lose their required
+ *   '@interpolate(flat)' in the flattened IO structs.
+ */
+function fixupWgsl(wgsl: string): string {
+    return wgsl
+        .split("\n")
+        .map((line) => {
+            if (line.includes("@interpolate") && !line.includes("@location") && !line.includes("@builtin")) {
+                return line.replace(/@interpolate\([a-z_, ]+\)\s*/g, "");
+            }
+            if (line.includes("@location") && !line.includes("@interpolate") && /:\s*(vec[234]<)?(u32|i32)>?\s*,?\s*$/.test(line)) {
+                return line.replace("@location", "@interpolate(flat) @location");
+            }
+            return line;
+        })
+        .join("\n");
+}
+
 function shaderTypeToVisibility(type: ShaderType): GPUShaderStageFlags {
     switch (type) {
         case ShaderType.Compute: return GPUShaderStage.COMPUTE;
@@ -124,7 +146,7 @@ export class ProgramManager {
         const allDefines = this.globalDefines.clone().addAll(defines);
         const result = this.compiler.compile(desc.path, desc.entryPoints, allDefines);
         const kernels = desc.entryPoints.map((ep, i) => {
-            const wgsl = result.entryPointCode[i]!;
+            const wgsl = fixupWgsl(result.entryPointCode[i]!);
             return {
                 name: ep.name,
                 type: ep.type,

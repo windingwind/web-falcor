@@ -91,6 +91,8 @@ export class Device {
                 maxComputeWorkgroupSizeX: adapter.limits.maxComputeWorkgroupSizeX,
                 maxComputeWorkgroupSizeY: adapter.limits.maxComputeWorkgroupSizeY,
                 maxComputeWorkgroupStorageSize: adapter.limits.maxComputeWorkgroupStorageSize,
+                // G-buffer MRT layouts exceed the 32-byte default (8 fat targets).
+                maxColorAttachmentBytesPerSample: adapter.limits.maxColorAttachmentBytesPerSample,
             },
         });
 

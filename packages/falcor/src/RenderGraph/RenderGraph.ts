@@ -50,6 +50,7 @@ export class RenderGraph {
         if (this.passes.has(name)) throw new ArgumentError(`Pass '${name}' already exists`);
         this.passes.set(name, pass);
         pass.name = name;
+        if (this.scene) pass.setScene(this.scene);
         this.compiled = null;
         return pass;
     }
@@ -84,6 +85,15 @@ export class RenderGraph {
     /** Mirrors RenderGraph::setInput: binds an external resource to an unconnected input. */
     setInput(ref: string, texture: Texture): void {
         this.externalInputs.set(ref, texture);
+        this.compiled = null;
+    }
+
+    private scene: import("../Scene/Scene.js").Scene | null = null;
+
+    /** Mirrors RenderGraph::setScene: forwards to all passes. */
+    setScene(scene: import("../Scene/Scene.js").Scene | null): void {
+        this.scene = scene;
+        for (const pass of this.passes.values()) pass.setScene(scene);
         this.compiled = null;
     }
 
