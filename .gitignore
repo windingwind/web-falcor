@@ -1,8 +1,8 @@
 # Upstream Falcor clone (reference; has its own repo)
 /Falcor/
 
-# Native toolchains
-/tools/slang/
+# Toolchains (native slangc + slang-wasm; see README for download)
+/tools/
 
 node_modules/
 dist/
