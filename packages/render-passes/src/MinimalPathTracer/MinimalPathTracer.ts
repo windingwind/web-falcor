@@ -66,7 +66,7 @@ export class MinimalPathTracer extends RenderPass {
                 COMPUTE_DIRECT: this.computeDirect ? 1 : 0,
                 USE_IMPORTANCE_SAMPLING: this.useImportanceSampling ? 1 : 0,
                 USE_ANALYTIC_LIGHTS: this.scene.useAnalyticLights ? 1 : 0,
-                USE_EMISSIVE_LIGHTS: 0,
+                USE_EMISSIVE_LIGHTS: this.scene.useEmissiveLights ? 1 : 0,
                 USE_ENV_LIGHT: this.scene.useEnvLight ? 1 : 0,
                 USE_ENV_BACKGROUND: this.scene.useEnvBackground ? 1 : 0,
                 is_valid_gViewW: 0,

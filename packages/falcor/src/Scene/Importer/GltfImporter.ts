@@ -173,7 +173,8 @@ export class GltfImporter {
             const emissive = m.emissiveFactor ?? [0, 0, 0];
             const baseColorTex = pbr.baseColorTexture !== undefined ? textureIDs.get(pbr.baseColorTexture.index) : undefined;
             return {
-                header: { doubleSided: m.doubleSided ?? false },
+                // Emissive flag mirrors BasicMaterial::updateEmissiveFlag (factor defaults to 1).
+                header: { doubleSided: m.doubleSided ?? false, emissive: emissive.some((c) => c !== 0) },
                 basic: {
                     baseColor: new float4(bc[0]!, bc[1]!, bc[2]!, bc[3]!),
                     specular: new float4(1, pbr.roughnessFactor ?? 1, pbr.metallicFactor ?? 1, 0),

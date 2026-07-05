@@ -103,6 +103,7 @@ interface SlangWasmApi {
 }
 
 let slangInstance: SlangWasmApi | null = null;
+let slangGlobalSession: { createSession(target: number): SlangSessionApi | null } | null = null;
 let wgslTargetId = -1;
 
 /** Loads the slang-wasm module (idempotent). `moduleUrl` points at slang-wasm.js. */
@@ -115,6 +116,11 @@ export async function initSlang(moduleUrl: string): Promise<void> {
     const wgsl = slangInstance.getCompileTargets().find((t) => t.name === "WGSL");
     if (!wgsl) throw new RuntimeError("slang-wasm build lacks the WGSL target");
     wgslTargetId = wgsl.value;
+    // One global session for the process: each global session loads the full
+    // Slang core module and is never freed — creating one per define-set
+    // exhausts the wasm heap after ~15 program variants.
+    slangGlobalSession = slangInstance.createGlobalSession();
+    if (!slangGlobalSession) throw new RuntimeError("Failed to create Slang global session");
 }
 
 export function isSlangInitialized(): boolean {
@@ -153,7 +159,7 @@ export class SlangCompiler {
         let session = this.sessions.get(key) ?? null;
         if (!session) {
             const slang = slangInstance!;
-            session = slang.createGlobalSession()?.createSession(wgslTargetId) ?? null;
+            session = slangGlobalSession!.createSession(wgslTargetId) ?? null;
             if (!session) throw new RuntimeError("Failed to create Slang session");
             const header = defines.toHeader();
             const dirs = new Set<string>();

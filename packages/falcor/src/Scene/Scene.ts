@@ -60,6 +60,7 @@ export class Scene {
 
     private lightCount = 0;
     private envMap: EnvMap | null = null;
+    private hasEmissiveMaterials = false;
 
     constructor(
         public readonly device: Device,
@@ -69,6 +70,7 @@ export class Scene {
         textureManager: TextureManager = new TextureManager(),
     ) {
         assert(meshes.length > 0 && materials.length > 0, "Scene requires geometry and materials");
+        this.hasEmissiveMaterials = materials.some((m) => m.header?.emissive ?? false);
 
         // Concatenate mesh geometry into global vertex/index buffers.
         const allVertices: StaticVertex[] = [];
@@ -191,6 +193,12 @@ export class Scene {
     /** Mirrors Scene::useAnalyticLights() (render settings default to enabled). */
     get useAnalyticLights(): boolean {
         return this.lightCount > 0;
+    }
+
+    /** Mirrors Scene::useEmissiveLights(). v1 checks material flags; the
+     *  LightCollection active-triangle count refines this when NEE lands. */
+    get useEmissiveLights(): boolean {
+        return this.hasEmissiveMaterials;
     }
 
     /** Mirrors Scene::useEnvBackground(). */
