@@ -93,10 +93,17 @@ export class ParameterBlock {
         return [...this.slots.keys()];
     }
 
-    /** Mirrors ShaderVar resource assignment. */
+    /**
+     * Mirrors ShaderVar resource assignment. Parameters present in program
+     * reflection but statically unused by this kernel's WGSL are accepted as
+     * no-ops (Falcor reflection is program-level; backends bind what's used).
+     */
     setResource(name: string, resource: BindableResource): void {
         const slot = this.slots.get(name);
-        if (!slot) throw new ArgumentError(`No shader parameter named '${name}'`);
+        if (!slot) {
+            if (this.reflection.findParameter(name)) return;
+            throw new ArgumentError(`No shader parameter named '${name}'`);
+        }
         if (slot.kind !== "resource") throw new ArgumentError(`'${name}' is a constant buffer, not a resource`);
         slot.resource = resource;
         this.generation++;
@@ -105,6 +112,7 @@ export class ParameterBlock {
     /** Writes a uniform value at a member path inside a cbuffer. */
     setUniform(cbufferName: string, memberPath: string[], value: unknown): void {
         const slot = this.slots.get(cbufferName);
+        if (!slot && this.reflection.findParameter(cbufferName)) return;
         if (!slot || slot.kind !== "cbuffer") throw new ArgumentError(`No constant buffer named '${cbufferName}'`);
         let v: ReflectionVar | undefined = slot.reflectionVar;
         for (const part of memberPath) {

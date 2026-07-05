@@ -8,6 +8,7 @@
 import { Device } from "../API/Device.js";
 import { DefineList } from "./DefineList.js";
 import { SlangCompiler, ShaderType, type ShaderSourceResolver, type EntryPointDesc } from "./SlangCompiler.js";
+import { kShaderOverrides } from "./ShaderOverrides.js";
 import { ProgramReflection, parseWgslBindings, type WgslBinding } from "./ProgramReflection.js";
 import { RuntimeError } from "../Error.js";
 
@@ -95,7 +96,9 @@ export class ProgramManager {
         resolveSource: ShaderSourceResolver,
         filePaths: string[],
     ) {
-        this.compiler = new SlangCompiler(resolveSource, filePaths);
+        // Substitute WGSL-incompatible upstream files with WebFalcor overrides (DESIGN.md §4.3).
+        const resolveWithOverrides: ShaderSourceResolver = (path) => resolveSource(kShaderOverrides[path] ?? path);
+        this.compiler = new SlangCompiler(resolveWithOverrides, filePaths);
     }
 
     createProgram(desc: ProgramDesc, defines = new DefineList()): Program {

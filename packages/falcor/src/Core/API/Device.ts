@@ -85,6 +85,12 @@ export class Device {
                 maxStorageBuffersPerShaderStage: adapter.limits.maxStorageBuffersPerShaderStage,
                 maxBufferSize: adapter.limits.maxBufferSize,
                 maxStorageBufferBindingSize: adapter.limits.maxStorageBufferBindingSize,
+                // Falcor kernels use up to 1024-thread groups (e.g. ParallelReduction,
+                // PrefixSum); WebGPU defaults are 256.
+                maxComputeInvocationsPerWorkgroup: adapter.limits.maxComputeInvocationsPerWorkgroup,
+                maxComputeWorkgroupSizeX: adapter.limits.maxComputeWorkgroupSizeX,
+                maxComputeWorkgroupSizeY: adapter.limits.maxComputeWorkgroupSizeY,
+                maxComputeWorkgroupStorageSize: adapter.limits.maxComputeWorkgroupStorageSize,
             },
         });
 
