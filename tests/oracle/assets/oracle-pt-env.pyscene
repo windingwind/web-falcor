@@ -1,0 +1,9 @@
+# Native PT oracle with environment light: shared quad + point light + gradient env map.
+sceneBuilder.importScene('quad.gltf')
+
+light = PointLight('oracleLight')
+light.position = float3(0.5, 0.5, 1.5)
+light.intensity = float3(3.0, 3.0, 3.0)
+sceneBuilder.addLight(light)
+
+sceneBuilder.envMap = EnvMap.createFromFile('gradient.hdr')

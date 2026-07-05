@@ -16,6 +16,7 @@ import { RuntimeError } from "../../Core/Error.js";
 import type { AnalyticLight, StaticVertex } from "../SceneData.js";
 import { TextureManager } from "../Material/TextureManager.js";
 import { TextureHandleMode, packTextureHandle } from "../Material/MaterialData.js";
+import { generateTangents } from "../TangentSpace.js";
 
 interface GltfJson {
     asset: { version: string };
@@ -228,6 +229,8 @@ export class GltfImporter {
                         prim.indices !== undefined
                             ? new Uint32Array(readAccessor(prim.indices))
                             : new Uint32Array(Array.from({ length: count }, (_v, i) => i));
+                    // SceneBuilder generates MikkTSpace tangents when the asset has none.
+                    if (!tangents) generateTangents(vertices, indices);
                     meshDescs.push({ vertices, indices, materialID: prim.material ?? 0, transform: world });
                 }
             }

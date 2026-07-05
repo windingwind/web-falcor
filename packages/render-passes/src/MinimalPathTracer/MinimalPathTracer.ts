@@ -13,6 +13,8 @@ import {
     RenderPassReflection,
     ResourceBindFlags,
     ResourceFormat,
+    SAMPLE_GENERATOR_UNIFORM,
+    SampleGenerator,
     registerRenderPass,
     type CompileData,
     type Device,
@@ -25,10 +27,16 @@ export class MinimalPathTracer extends RenderPass {
     private pass: ComputePass | null = null;
     private frameCount = 0;
     private maxBounces = 3;
+    private useImportanceSampling = true;
+    private computeDirect = true;
+    private sampleGenerator: SampleGenerator;
 
     constructor(device: Device, props: Properties) {
         super(device);
         this.maxBounces = props.get("maxBounces", 3);
+        this.useImportanceSampling = props.get("useImportanceSampling", true);
+        this.computeDirect = props.get("computeDirect", true);
+        this.sampleGenerator = SampleGenerator.create(device, SAMPLE_GENERATOR_UNIFORM);
     }
 
     override reflect(compileData: CompileData): RenderPassReflection {
@@ -55,14 +63,15 @@ export class MinimalPathTracer extends RenderPass {
         if (!this.pass) {
             const defines = this.scene.getSceneDefines().addAll({
                 MAX_BOUNCES: this.maxBounces,
-                COMPUTE_DIRECT: 1,
-                USE_IMPORTANCE_SAMPLING: 1,
-                USE_ANALYTIC_LIGHTS: 1,
+                COMPUTE_DIRECT: this.computeDirect ? 1 : 0,
+                USE_IMPORTANCE_SAMPLING: this.useImportanceSampling ? 1 : 0,
+                USE_ANALYTIC_LIGHTS: this.scene.useAnalyticLights ? 1 : 0,
                 USE_EMISSIVE_LIGHTS: 0,
-                USE_ENV_LIGHT: 0,
-                USE_ENV_BACKGROUND: 0,
+                USE_ENV_LIGHT: this.scene.useEnvLight ? 1 : 0,
+                USE_ENV_BACKGROUND: this.scene.useEnvBackground ? 1 : 0,
                 is_valid_gViewW: 0,
             });
+            defines.addAll(this.sampleGenerator.getDefines());
             this.pass = ComputePass.create(this.device, { path: kShaderFile, defines });
         }
         const root = this.pass.getRootVar();

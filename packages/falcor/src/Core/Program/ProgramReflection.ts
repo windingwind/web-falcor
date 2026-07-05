@@ -34,7 +34,14 @@ export class ReflectionVar {
         const struct = this.getStructType();
         const field = struct?.fields?.find((f) => f.name === name);
         if (!field) return undefined;
-        const b = field.binding as { kind: string; offset?: number; size?: number } | undefined;
+        // Fields mixing resources and uniforms (e.g. EnvMap) report a
+        // `bindings` array instead of a single `binding`; the uniform entry
+        // carries the byte offset within the parent cbuffer.
+        const b =
+            (field.binding as { kind: string; offset?: number; size?: number } | undefined) ??
+            (field as { bindings?: { kind: string; offset?: number; size?: number }[] }).bindings?.find(
+                (x) => x.kind === "uniform",
+            );
         return new ReflectionVar(
             field.name,
             field.type as SlangReflectionType,

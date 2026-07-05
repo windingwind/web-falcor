@@ -19,6 +19,7 @@ import { float4x4, transpose, inverse } from "../Utils/Math/Matrix.js";
 import { buildBvh, type BvhTriangle } from "./SoftwareRT/Bvh.js";
 import { packLights, type AnalyticLight } from "./SceneData.js";
 import { TextureManager } from "./Material/TextureManager.js";
+import type { EnvMap } from "./Lights/EnvMap.js";
 import { transformPoint } from "../Utils/Math/Matrix.js";
 import {
     GeometryType,
@@ -58,6 +59,7 @@ export class Scene {
     private drawList: { indexCount: number; firstIndex: number; baseVertex: number; firstInstance: number }[] = [];
 
     private lightCount = 0;
+    private envMap: EnvMap | null = null;
 
     constructor(
         public readonly device: Device,
@@ -178,6 +180,29 @@ export class Scene {
     private gridIndirectionTex: Texture;
     private gridAtlasTex: Texture;
 
+    setEnvMap(envMap: EnvMap | null): void {
+        this.envMap = envMap;
+    }
+
+    getEnvMap(): EnvMap | null {
+        return this.envMap;
+    }
+
+    /** Mirrors Scene::useAnalyticLights() (render settings default to enabled). */
+    get useAnalyticLights(): boolean {
+        return this.lightCount > 0;
+    }
+
+    /** Mirrors Scene::useEnvBackground(). */
+    get useEnvBackground(): boolean {
+        return this.envMap !== null;
+    }
+
+    /** Mirrors Scene::useEnvLight() (render settings default to enabled). */
+    get useEnvLight(): boolean {
+        return this.envMap !== null && this.envMap.intensity > 0;
+    }
+
     /** Mirrors Scene::getSceneDefines(). */
     getSceneDefines(): DefineList {
         return new DefineList().addAll({
@@ -252,9 +277,13 @@ export class Scene {
         scene["prevVertices"] = this.buffers["vertices"]!;
         scene["indexData"]["data0"] = this.buffers["indices"]!;
 
-        // Env map: dummy black texture (no env light in v1; uniforms stay zeroed).
-        scene["envMap"]["envMap"] = this.dummyTexture;
-        scene["envMap"]["envSampler"] = this.sampler;
+        // Env map (dummy black texture + zeroed uniforms when absent).
+        if (this.envMap) {
+            this.envMap.bindShaderData(scene["envMap"] as ShaderVar);
+        } else {
+            scene["envMap"]["envMap"] = this.dummyTexture;
+            scene["envMap"]["envSampler"] = this.sampler;
+        }
 
         // Grid volume single instance (dummy; SCENE_GRID_COUNT=0 keeps it unreachable).
         scene["grid0"]["buf"] = this.buffers["materialBuffer0"]!;

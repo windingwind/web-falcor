@@ -240,10 +240,7 @@ void traceScatterRay(inout ScatterRayData rayData)
         rayData.terminated = true;
 
         // Add contribution from distant light (env map) in this direction.
-        if (kUseEnvLight && !rayData.terminated)
-        {
-        }
-        if (kUseEnvLight)
+        if (kUseEnvLight && (kComputeDirect || rayData.pathLength > 0))
         {
             float3 Le = gScene.envMap.eval(rayData.direction);
             rayData.radiance += rayData.thp * Le;

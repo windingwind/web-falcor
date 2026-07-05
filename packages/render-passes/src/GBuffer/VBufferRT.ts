@@ -12,6 +12,8 @@ import {
     RenderPassReflection,
     ResourceBindFlags,
     ResourceFormat,
+    SAMPLE_GENERATOR_DEFAULT,
+    SampleGenerator,
     registerRenderPass,
     type CompileData,
     type Device,
@@ -24,10 +26,12 @@ export class VBufferRT extends RenderPass {
     private pass: ComputePass | null = null;
     private frameCount = 0;
     private useAlphaTest = false;
+    private sampleGenerator: SampleGenerator;
 
     constructor(device: Device, props: Properties) {
         super(device);
         this.useAlphaTest = props.get("useAlphaTest", false);
+        this.sampleGenerator = SampleGenerator.create(device, SAMPLE_GENERATOR_DEFAULT);
     }
 
     override reflect(compileData: CompileData): RenderPassReflection {
@@ -64,6 +68,7 @@ export class VBufferRT extends RenderPass {
                 is_valid_gTime: 0,
                 is_valid_gMask: 0,
             });
+            defines.addAll(this.sampleGenerator.getDefines());
             this.pass = ComputePass.create(this.device, { path: kShaderFile, defines });
         }
         const root = this.pass.getRootVar();
