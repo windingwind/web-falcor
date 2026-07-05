@@ -20,6 +20,7 @@ import { buildBvh, type BvhTriangle } from "./SoftwareRT/Bvh.js";
 import { packLights, type AnalyticLight } from "./SceneData.js";
 import { TextureManager } from "./Material/TextureManager.js";
 import type { EnvMap } from "./Lights/EnvMap.js";
+import { buildLightCollection } from "./Lights/LightCollection.js";
 import { transformPoint } from "../Utils/Math/Matrix.js";
 import {
     GeometryType,
@@ -62,6 +63,8 @@ export class Scene {
     private envMap: EnvMap | null = null;
     private hasEmissiveMaterials = false;
     private materialTypes = new Set<MaterialType>();
+    private emissiveTriangleCount = 0;
+    private emissiveMeshCount = 0;
 
     constructor(
         public readonly device: Device,
@@ -156,6 +159,27 @@ export class Scene {
         // Analytic lights.
         this.lightCount = lights.length;
         make("lights", packLights(lights), 224);
+
+        // Emissive geometry (LightCollection).
+        const lc = buildLightCollection(
+            meshes,
+            materials.map((m) => {
+                const em = m.basic.emissive;
+                const factor = m.basic.emissiveFactor ?? 1;
+                return {
+                    emissive: m.header?.emissive ?? false,
+                    radiance: [(em?.x ?? 0) * factor, (em?.y ?? 0) * factor, (em?.z ?? 0) * factor] as [number, number, number],
+                };
+            }),
+        );
+        this.emissiveTriangleCount = lc.triangleCount;
+        this.emissiveMeshCount = lc.meshCount;
+        make("emissiveTriangles", lc.triangleData, 64);
+        make("emissiveFlux", lc.fluxData, 32);
+        make("emissiveActiveTriangles", lc.activeTriangles, 4);
+        make("emissiveTriToActive", lc.triToActiveMapping, 4);
+        make("emissiveMeshData", lc.meshData, 16);
+        make("emissivePerMeshInstanceOffset", lc.perMeshInstanceOffset, 4);
 
         // Materials.
         this.materialCount = materials.length;
@@ -304,6 +328,18 @@ export class Scene {
             scene["envMap"]["envMap"] = this.dummyTexture;
             scene["envMap"]["envSampler"] = this.sampler;
         }
+
+        // Emissive geometry (LightCollection.slang).
+        const lightCollection = scene["lightCollection"];
+        lightCollection["triangleCount"] = this.emissiveTriangleCount;
+        lightCollection["activeTriangleCount"] = this.emissiveTriangleCount;
+        lightCollection["meshCount"] = this.emissiveMeshCount;
+        lightCollection["triangleData"] = this.buffers["emissiveTriangles"]!;
+        lightCollection["activeTriangles"] = this.buffers["emissiveActiveTriangles"]!;
+        lightCollection["triToActiveMapping"] = this.buffers["emissiveTriToActive"]!;
+        lightCollection["fluxData"] = this.buffers["emissiveFlux"]!;
+        lightCollection["meshData"] = this.buffers["emissiveMeshData"]!;
+        lightCollection["perMeshInstanceOffset"] = this.buffers["emissivePerMeshInstanceOffset"]!;
 
         // Grid volume single instance (dummy; SCENE_GRID_COUNT=0 keeps it unreachable).
         scene["grid0"]["buf"] = this.buffers["materialBuffer0"]!;

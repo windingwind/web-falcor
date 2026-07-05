@@ -16,7 +16,7 @@ export interface StaticVertex {
 }
 
 /** Octahedral snorm2x16 encode (Utils/Math/PackedFormats.slang encodeNormal2x16). */
-function encodeNormal2x16(n: float3): number {
+export function encodeNormal2x16(n: float3): number {
     const l1 = Math.abs(n.x) + Math.abs(n.y) + Math.abs(n.z) || 1;
     let ox = n.x / l1;
     let oy = n.y / l1;

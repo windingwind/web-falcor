@@ -154,46 +154,61 @@ export class SlangCompiler {
         });
     }
 
+    /** Define-set key whose header the (global) MEMFS files currently carry. */
+    private fsOwnerKey: string | null = null;
+
+    /** Writes all registered shader files with this define header prepended.
+     *  MEMFS is shared across sessions while modules load lazily per session,
+     *  so the files must carry the ACTIVE session's defines whenever a compile
+     *  may trigger implicit module loads. */
+    private writeShaderFiles(defines: DefineList): void {
+        const slang = slangInstance!;
+        const header = defines.toHeader();
+        const dirs = new Set<string>();
+        for (const path of this.registeredFiles) {
+            const source = this.resolveSource(path);
+            if (source === undefined) continue;
+            const dir = path.split("/").slice(0, -1).join("/");
+            if (dir) {
+                slang.FS.createPath("/", dir, true, true);
+                dirs.add(dir);
+            }
+            const rewritten = this.rewriteIncludes(source, path);
+            // Prepend program defines to modules only — .slangh files are textually
+            // included into units that already carry the defines (avoid redefinition).
+            const prefix = path.endsWith(".slangh") || path.endsWith(".h") ? "" : header;
+            // #line keeps diagnostics pointing at the original source.
+            slang.FS.writeFile(`/${path}`, `${prefix}#line 1 "${path}"\n${rewritten}`);
+        }
+        // Modules loaded implicitly from the FS are recorded without a leading
+        // slash, so their imports resolve relative to their own directory.
+        // Falcor imports are shader-root-relative: symlink each top-level root
+        // into every directory so dir-relative resolution lands at the root.
+        const roots = new Set(this.registeredFiles.map((f) => f.split("/")[0]!).filter((r) => !r.includes(".")));
+        for (const dir of dirs) {
+            for (const root of roots) {
+                try {
+                    slang.FS.symlink(`/${root}`, `/${dir}/${root}`);
+                } catch {
+                    // Path already exists (real directory or prior link) — fine.
+                }
+            }
+        }
+        this.fsOwnerKey = defines.key();
+    }
+
     private getSession(defines: DefineList): SlangSessionApi {
         const key = defines.key();
         let session = this.sessions.get(key) ?? null;
         if (!session) {
-            const slang = slangInstance!;
             session = slangGlobalSession!.createSession(wgslTargetId) ?? null;
             if (!session) throw new RuntimeError("Failed to create Slang session");
-            const header = defines.toHeader();
-            const dirs = new Set<string>();
-            for (const path of this.registeredFiles) {
-                const source = this.resolveSource(path);
-                if (source === undefined) continue;
-                const dir = path.split("/").slice(0, -1).join("/");
-                if (dir) {
-                    slang.FS.createPath("/", dir, true, true);
-                    dirs.add(dir);
-                }
-                const rewritten = this.rewriteIncludes(source, path);
-                // Prepend program defines to modules only — .slangh files are textually
-                // included into units that already carry the defines (avoid redefinition).
-                const prefix = path.endsWith(".slangh") || path.endsWith(".h") ? "" : header;
-                // #line keeps diagnostics pointing at the original source.
-                slang.FS.writeFile(`/${path}`, `${prefix}#line 1 "${path}"\n${rewritten}`);
-            }
-            // Modules loaded implicitly from the FS are recorded without a leading
-            // slash, so their imports resolve relative to their own directory.
-            // Falcor imports are shader-root-relative: symlink each top-level root
-            // into every directory so dir-relative resolution lands at the root.
-            const roots = new Set(this.registeredFiles.map((f) => f.split("/")[0]!).filter((r) => !r.includes(".")));
-            for (const dir of dirs) {
-                for (const root of roots) {
-                    try {
-                        slang.FS.symlink(`/${root}`, `/${dir}/${root}`);
-                    } catch {
-                        // Path already exists (real directory or prior link) — fine.
-                    }
-                }
-            }
             this.sessions.set(key, session);
         }
+        // A session created for another define set may have stamped the shared
+        // MEMFS with its header since this session last compiled; refresh so
+        // lazy module loads during the upcoming compile see OUR defines.
+        if (this.fsOwnerKey !== key) this.writeShaderFiles(defines);
         return session;
     }
 
