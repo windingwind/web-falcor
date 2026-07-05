@@ -8,6 +8,9 @@
 
 import { ComputeContext } from "./ComputeContext.js";
 import type { Texture } from "./Texture.js";
+import type { Fbo } from "./FBO.js";
+import type { Vao } from "./VAO.js";
+import type { GraphicsStateObject } from "./GraphicsStateObject.js";
 import { isDepthFormat } from "./Formats.js";
 import { RuntimeError } from "../Error.js";
 
@@ -108,6 +111,35 @@ export class RenderContext extends ComputeContext {
         pass.setPipeline(pipeline);
         pass.setBindGroup(0, bindGroup);
         pass.draw(3);
+        pass.end();
+    }
+
+    /**
+     * Raw draw path used until M2's GraphicsState/ProgramVars land: begins a render
+     * pass from the FBO, binds the PSO, VAO buffers and bind groups, draws.
+     */
+    drawRaw(
+        gso: GraphicsStateObject,
+        vao: Vao | null,
+        fbo: Fbo,
+        bindGroups: (GPUBindGroup | null)[],
+        vertexOrIndexCount: number,
+        instanceCount = 1,
+        opts: { indexed?: boolean; blendConstant?: [number, number, number, number]; stencilRef?: number } = {},
+    ): void {
+        const pass = this.getEncoder().beginRenderPass(fbo.getGpuRenderPassDescriptor());
+        pass.setPipeline(gso.gpuPipeline);
+        pass.setViewport(0, 0, fbo.width, fbo.height, 0, 1);
+        bindGroups.forEach((bg, i) => bg && pass.setBindGroup(i, bg));
+        if (opts.blendConstant) pass.setBlendConstant({ r: opts.blendConstant[0], g: opts.blendConstant[1], b: opts.blendConstant[2], a: opts.blendConstant[3] });
+        if (opts.stencilRef !== undefined) pass.setStencilReference(opts.stencilRef);
+        vao?.vertexBuffers.forEach((vb, i) => pass.setVertexBuffer(i, vb.gpuBuffer));
+        if (opts.indexed && vao?.indexBuffer) {
+            pass.setIndexBuffer(vao.indexBuffer.gpuBuffer, vao.getGpuIndexFormat());
+            pass.drawIndexed(vertexOrIndexCount, instanceCount);
+        } else {
+            pass.draw(vertexOrIndexCount, instanceCount);
+        }
         pass.end();
     }
 
