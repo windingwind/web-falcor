@@ -38,4 +38,8 @@ export * from "./Core/State/ComputeState.js";
 export * from "./Core/Program/ShaderOverrides.js";
 export * from "./Utils/Algorithm/ParallelReduction.js";
 export * from "./Utils/Algorithm/PrefixSum.js";
+export * from "./Utils/Math/Vector.js";
+export * from "./Utils/Math/Matrix.js";
+export * from "./Utils/Math/Quaternion.js";
+export * from "./Utils/SampleGenerators/CPUSampleGenerator.js";
 export * from "./Utils/Logger.js";
