@@ -14,6 +14,8 @@ import { float4x4, mulMat, matrixFromTranslation, matrixFromScaling } from "../.
 import { matrixFromQuat, quatf } from "../../Utils/Math/Quaternion.js";
 import { RuntimeError } from "../../Core/Error.js";
 import type { AnalyticLight, StaticVertex } from "../SceneData.js";
+import { TextureManager } from "../Material/TextureManager.js";
+import { TextureHandleMode, packTextureHandle } from "../Material/MaterialData.js";
 
 interface GltfJson {
     asset: { version: string };
@@ -33,10 +35,17 @@ interface GltfJson {
     buffers?: { uri?: string; byteLength: number }[];
     materials?: {
         name?: string;
-        pbrMetallicRoughness?: { baseColorFactor?: number[]; metallicFactor?: number; roughnessFactor?: number };
+        pbrMetallicRoughness?: {
+            baseColorFactor?: number[];
+            metallicFactor?: number;
+            roughnessFactor?: number;
+            baseColorTexture?: { index: number };
+        };
         emissiveFactor?: number[];
         doubleSided?: boolean;
     }[];
+    textures?: { source?: number; sampler?: number }[];
+    images?: { uri?: string; bufferView?: number; mimeType?: string }[];
 }
 
 interface GltfPrimitive {
@@ -130,17 +139,45 @@ export class GltfImporter {
             return out;
         };
 
+        // Decode images -> TextureManager (baseColor textures are sRGB).
+        const textureManager = new TextureManager();
+        const textureIDs = new Map<number, number>();
+        for (let t = 0; t < (json.textures ?? []).length; t++) {
+            const tex = json.textures![t]!;
+            if (tex.source === undefined) continue;
+            const img = json.images![tex.source]!;
+            let blob: Blob;
+            if (img.uri?.startsWith("data:")) {
+                const b64 = img.uri.slice(img.uri.indexOf(",") + 1);
+                const bin = atob(b64);
+                const bytesArr = new Uint8Array(bin.length);
+                for (let i = 0; i < bin.length; i++) bytesArr[i] = bin.charCodeAt(i);
+                blob = new Blob([bytesArr], { type: img.mimeType ?? "image/png" });
+            } else if (img.bufferView !== undefined) {
+                const view = json.bufferViews![img.bufferView]!;
+                const buf = buffers[view.buffer]!;
+                blob = new Blob([buf.slice(view.byteOffset ?? 0, (view.byteOffset ?? 0) + view.byteLength) as Uint8Array<ArrayBuffer>], { type: img.mimeType ?? "image/png" });
+            } else {
+                const imgUrl = new URL(img.uri!, new URL(baseUrl, "http://x/")).pathname;
+                blob = await (await fetch(imgUrl)).blob();
+            }
+            const bitmap = await createImageBitmap(blob, { colorSpaceConversion: "none" });
+            textureIDs.set(t, textureManager.addTexture({ bitmap, srgb: true }));
+        }
+
         // Materials (pbrMetallicRoughness factors; MetalRough encoding: specular = (occlusion, roughness, metallic)).
         const materials: SceneMaterialDesc[] = (json.materials ?? []).map((m) => {
             const pbr = m.pbrMetallicRoughness ?? {};
             const bc = pbr.baseColorFactor ?? [1, 1, 1, 1];
             const emissive = m.emissiveFactor ?? [0, 0, 0];
+            const baseColorTex = pbr.baseColorTexture !== undefined ? textureIDs.get(pbr.baseColorTexture.index) : undefined;
             return {
                 header: { doubleSided: m.doubleSided ?? false },
                 basic: {
                     baseColor: new float4(bc[0]!, bc[1]!, bc[2]!, bc[3]!),
                     specular: new float4(1, pbr.roughnessFactor ?? 1, pbr.metallicFactor ?? 1, 0),
                     emissive: new float3(emissive[0]!, emissive[1]!, emissive[2]!),
+                    texBaseColor: baseColorTex !== undefined ? packTextureHandle(TextureHandleMode.Texture, baseColorTex) : undefined,
                 },
             };
         });
@@ -201,6 +238,6 @@ export class GltfImporter {
         for (const rootNode of sceneDef?.nodes ?? []) visit(rootNode, float4x4.identity());
         if (meshDescs.length === 0) throw new RuntimeError("GltfImporter: no triangle meshes found");
 
-        return new Scene(device, meshDescs, materials, lights);
+        return new Scene(device, meshDescs, materials, lights, textureManager);
     }
 }

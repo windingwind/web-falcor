@@ -18,6 +18,7 @@ import { Camera } from "./Camera/Camera.js";
 import { float4x4, transpose, inverse } from "../Utils/Math/Matrix.js";
 import { buildBvh, type BvhTriangle } from "./SoftwareRT/Bvh.js";
 import { packLights, type AnalyticLight } from "./SceneData.js";
+import { TextureManager } from "./Material/TextureManager.js";
 import { transformPoint } from "../Utils/Math/Matrix.js";
 import {
     GeometryType,
@@ -53,6 +54,7 @@ export class Scene {
     private sampler: Sampler;
     private materialCount = 0;
     private instanceCount = 0;
+    private textureCount = 1;
     private drawList: { indexCount: number; firstIndex: number; baseVertex: number; firstInstance: number }[] = [];
 
     private lightCount = 0;
@@ -62,6 +64,7 @@ export class Scene {
         meshes: SceneMeshDesc[],
         materials: SceneMaterialDesc[],
         lights: AnalyticLight[] = [],
+        textureManager: TextureManager = new TextureManager(),
     ) {
         assert(meshes.length > 0 && materials.length > 0, "Scene requires geometry and materials");
 
@@ -157,20 +160,12 @@ export class Scene {
         });
         make("materialData", blobBytes, 128);
         make("materialBuffer0", new Uint32Array(4), 4);
-        make("materialTextureUvScale", new Float32Array([1, 1]), 8);
 
-        // Material system textures (v1: single white layer; TextureManager packing grows here).
-        this.textureArray = new Texture(this.device, {
-            type: ResourceType.Texture2D,
-            width: 1,
-            height: 1,
-            arraySize: 1,
-            mipLevels: 1,
-            format: ResourceFormat.RGBA32Float,
-            bindFlags: ResourceBindFlags.ShaderResource,
-            name: "Scene::materialTexturesArray",
-        });
-        this.textureArray.setSubresourceBlob(0, 0, new Float32Array([1, 1, 1, 1]));
+        // Material textures packed into one array (DESIGN.md §6.2).
+        const packed = textureManager.build(this.device);
+        this.textureArray = packed.array;
+        this.textureCount = Math.max(textureManager.count, 1);
+        make("materialTextureUvScale", packed.uvScale, 8);
         this.dummyTexture = this.device.createTexture2D(1, 1, ResourceFormat.RGBA32Float, 1, 1, new Float32Array([0, 0, 0, 0]));
         this.texture3D = this.device.createTexture3D(1, 1, 1, ResourceFormat.RGBA32Float, 1);
         this.gridRangeTex = this.device.createTexture3D(1, 1, 1, ResourceFormat.RG32Float, 1);
@@ -202,7 +197,7 @@ export class Scene {
             HIT_INFO_INSTANCE_ID_BITS: 16,
             HIT_INFO_PRIMITIVE_INDEX_BITS: 12,
             MATERIAL_SYSTEM_SAMPLER_DESC_COUNT: 16,
-            MATERIAL_SYSTEM_TEXTURE_DESC_COUNT: 1,
+            MATERIAL_SYSTEM_TEXTURE_DESC_COUNT: this.textureCount,
             MATERIAL_SYSTEM_BUFFER_DESC_COUNT: 1,
             MATERIAL_SYSTEM_TEXTURE_3D_DESC_COUNT: 1,
             MATERIAL_SYSTEM_UDIM_INDIRECTION_ENABLED: 0,
