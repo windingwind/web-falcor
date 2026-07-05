@@ -41,6 +41,24 @@ import Rendering.Materials.ClothMaterial;
 #if WEBFALCOR_MTL_HAIR
 import Rendering.Materials.HairMaterial;
 #endif
+#if WEBFALCOR_MTL_PBRT_DIFFUSE
+import Rendering.Materials.PBRT.PBRTDiffuseMaterial;
+#endif
+#if WEBFALCOR_MTL_PBRT_DIFFUSE_TRANSMISSION
+import Rendering.Materials.PBRT.PBRTDiffuseTransmissionMaterial;
+#endif
+#if WEBFALCOR_MTL_PBRT_CONDUCTOR
+import Rendering.Materials.PBRT.PBRTConductorMaterial;
+#endif
+#if WEBFALCOR_MTL_PBRT_DIELECTRIC
+import Rendering.Materials.PBRT.PBRTDielectricMaterial;
+#endif
+#if WEBFALCOR_MTL_PBRT_COATED_CONDUCTOR
+import Rendering.Materials.PBRT.PBRTCoatedConductorMaterial;
+#endif
+#if WEBFALCOR_MTL_PBRT_COATED_DIFFUSE
+import Rendering.Materials.PBRT.PBRTCoatedDiffuseMaterial;
+#endif
 import Scene.Material.ShadingUtils;
 import Utils.Math.ShadingFrame;
 
@@ -83,6 +101,30 @@ extension MaterialSystem
         case MaterialType::Hair:
             return reinterpret<HairMaterial, MaterialDataBlob>(materialData[materialID]);
 #endif
+#if WEBFALCOR_MTL_PBRT_DIFFUSE
+        case MaterialType::PBRTDiffuse:
+            return reinterpret<PBRTDiffuseMaterial, MaterialDataBlob>(materialData[materialID]);
+#endif
+#if WEBFALCOR_MTL_PBRT_DIFFUSE_TRANSMISSION
+        case MaterialType::PBRTDiffuseTransmission:
+            return reinterpret<PBRTDiffuseTransmissionMaterial, MaterialDataBlob>(materialData[materialID]);
+#endif
+#if WEBFALCOR_MTL_PBRT_CONDUCTOR
+        case MaterialType::PBRTConductor:
+            return reinterpret<PBRTConductorMaterial, MaterialDataBlob>(materialData[materialID]);
+#endif
+#if WEBFALCOR_MTL_PBRT_DIELECTRIC
+        case MaterialType::PBRTDielectric:
+            return reinterpret<PBRTDielectricMaterial, MaterialDataBlob>(materialData[materialID]);
+#endif
+#if WEBFALCOR_MTL_PBRT_COATED_CONDUCTOR
+        case MaterialType::PBRTCoatedConductor:
+            return reinterpret<PBRTCoatedConductorMaterial, MaterialDataBlob>(materialData[materialID]);
+#endif
+#if WEBFALCOR_MTL_PBRT_COATED_DIFFUSE
+        case MaterialType::PBRTCoatedDiffuse:
+            return reinterpret<PBRTCoatedDiffuseMaterial, MaterialDataBlob>(materialData[materialID]);
+#endif
         default:
             break;
         }
@@ -93,6 +135,18 @@ extension MaterialSystem
         return reinterpret<ClothMaterial, MaterialDataBlob>(materialData[materialID]);
 #elif WEBFALCOR_MTL_HAIR
         return reinterpret<HairMaterial, MaterialDataBlob>(materialData[materialID]);
+#elif WEBFALCOR_MTL_PBRT_DIFFUSE
+        return reinterpret<PBRTDiffuseMaterial, MaterialDataBlob>(materialData[materialID]);
+#elif WEBFALCOR_MTL_PBRT_DIFFUSE_TRANSMISSION
+        return reinterpret<PBRTDiffuseTransmissionMaterial, MaterialDataBlob>(materialData[materialID]);
+#elif WEBFALCOR_MTL_PBRT_CONDUCTOR
+        return reinterpret<PBRTConductorMaterial, MaterialDataBlob>(materialData[materialID]);
+#elif WEBFALCOR_MTL_PBRT_DIELECTRIC
+        return reinterpret<PBRTDielectricMaterial, MaterialDataBlob>(materialData[materialID]);
+#elif WEBFALCOR_MTL_PBRT_COATED_CONDUCTOR
+        return reinterpret<PBRTCoatedConductorMaterial, MaterialDataBlob>(materialData[materialID]);
+#elif WEBFALCOR_MTL_PBRT_COATED_DIFFUSE
+        return reinterpret<PBRTCoatedDiffuseMaterial, MaterialDataBlob>(materialData[materialID]);
 #endif
     }
 

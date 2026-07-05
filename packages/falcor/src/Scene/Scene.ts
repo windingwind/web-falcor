@@ -244,6 +244,12 @@ export class Scene {
             WEBFALCOR_MTL_STANDARD: this.materialTypes.has(MaterialType.Standard) ? 1 : 0,
             WEBFALCOR_MTL_CLOTH: this.materialTypes.has(MaterialType.Cloth) ? 1 : 0,
             WEBFALCOR_MTL_HAIR: this.materialTypes.has(MaterialType.Hair) ? 1 : 0,
+            WEBFALCOR_MTL_PBRT_DIFFUSE: this.materialTypes.has(MaterialType.PBRTDiffuse) ? 1 : 0,
+            WEBFALCOR_MTL_PBRT_DIFFUSE_TRANSMISSION: this.materialTypes.has(MaterialType.PBRTDiffuseTransmission) ? 1 : 0,
+            WEBFALCOR_MTL_PBRT_CONDUCTOR: this.materialTypes.has(MaterialType.PBRTConductor) ? 1 : 0,
+            WEBFALCOR_MTL_PBRT_DIELECTRIC: this.materialTypes.has(MaterialType.PBRTDielectric) ? 1 : 0,
+            WEBFALCOR_MTL_PBRT_COATED_CONDUCTOR: this.materialTypes.has(MaterialType.PBRTCoatedConductor) ? 1 : 0,
+            WEBFALCOR_MTL_PBRT_COATED_DIFFUSE: this.materialTypes.has(MaterialType.PBRTCoatedDiffuse) ? 1 : 0,
             SCENE_DIFFUSE_ALBEDO_MULTIPLIER: "1.0",
             FALCOR_NVAPI_AVAILABLE: 0,
             SAMPLE_GENERATOR_TYPE: 0, // TinyUniform (SampleGeneratorType.slangh)

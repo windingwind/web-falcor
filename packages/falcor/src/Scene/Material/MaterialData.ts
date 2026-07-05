@@ -12,6 +12,14 @@ export enum MaterialType {
     Cloth = 2,
     Hair = 3,
     MERL = 4,
+    MERLMix = 5,
+    PBRTDiffuse = 6,
+    PBRTDiffuseTransmission = 7,
+    PBRTConductor = 8,
+    PBRTDielectric = 9,
+    PBRTCoatedConductor = 10,
+    PBRTCoatedDiffuse = 11,
+    RGL = 12,
 }
 
 export enum AlphaMode {
@@ -90,6 +98,8 @@ export interface BasicMaterialDesc {
     baseColor?: float4;
     /** occlusion (R), roughness (G), metallic (B) in MetalRough mode. */
     specular?: float4;
+    /** Transmission color (PBRTConductor reads the conductor k from here). */
+    transmission?: float3;
     emissive?: float3;
     emissiveFactor?: number;
     specularTransmission?: number;
@@ -128,8 +138,8 @@ export function packBasicMaterialBlob(header: MaterialHeaderDesc, mat: BasicMate
     dv.setFloat32(off, em.x, true); dv.setFloat32(off + 4, em.y, true); dv.setFloat32(off + 8, em.z, true);
     off += 12;
     dv.setUint16(off, f32tof16(mat.specularTransmission ?? 0), true); off += 2;
-    // transmission color f16x3 (default 1)
-    dv.setUint16(off, f32tof16(1), true); dv.setUint16(off + 2, f32tof16(1), true); dv.setUint16(off + 4, f32tof16(1), true); off += 6;
+    const tr = mat.transmission ?? new float3(1, 1, 1);
+    dv.setUint16(off, f32tof16(tr.x), true); dv.setUint16(off + 2, f32tof16(tr.y), true); dv.setUint16(off + 4, f32tof16(tr.z), true); off += 6;
     dv.setUint16(off, f32tof16(0), true); off += 2; // diffuseTransmission
     // volumeScattering f16x3 + pad + volumeAbsorption f16x3 + anisotropy (8 halves)
     for (let i = 0; i < 8; i++) { dv.setUint16(off, 0, true); off += 2; }
