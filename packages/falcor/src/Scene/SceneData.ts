@@ -66,14 +66,14 @@ export function packStaticVertices(vertices: StaticVertex[]): ArrayBuffer {
     return buffer;
 }
 
-/** Mirrors GeometryType (SceneTypes.slang). */
+/** Mirrors GeometryType (SceneDefines.slangh GEOMETRY_TYPE_* values). */
 export enum GeometryType {
-    None = 0xff,
-    TriangleMesh = 0,
-    DisplacedTriangleMesh = 1,
-    Curve = 2,
-    SDFGrid = 3,
-    Custom = 4,
+    None = 0,
+    TriangleMesh = 1,
+    DisplacedTriangleMesh = 2,
+    Curve = 3,
+    SDFGrid = 5,
+    Custom = 6,
 }
 
 export const kGeometryInstanceSize = 32; // 8 uints

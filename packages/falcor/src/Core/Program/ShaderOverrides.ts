@@ -23,6 +23,7 @@ export const kShaderOverrides: Readonly<Record<string, string>> = {
     // textures, single sampler/buffer/3D bindings, single grid/SDF instances,
     // single-buffer Split*Buffers.
     "Scene/Material/BasicMaterialData.slang": "WebFalcor/Overrides/Scene/Material/BasicMaterialData.slang",
+    "Scene/Material/AlphaTest.slang": "WebFalcor/Overrides/Scene/Material/AlphaTest.slang",
     "Scene/Material/MaterialData.slang": "WebFalcor/Overrides/Scene/Material/MaterialData.slang",
     "Scene/Material/MaterialSystem.slang": "WebFalcor/Overrides/Scene/Material/MaterialSystem.slang",
     "Scene/Material/TextureSampler.slang": "WebFalcor/Overrides/Scene/Material/TextureSampler.slang",
@@ -31,6 +32,8 @@ export const kShaderOverrides: Readonly<Record<string, string>> = {
     // Newer-Slang '= {}' / brace-init fixes + WGSL raster-path gaps.
     "Scene/Material/MaterialFactory.slang": "WebFalcor/Overrides/Scene/Material/MaterialFactory.slang",
     "Scene/Raster.slang": "WebFalcor/Overrides/Scene/Raster.slang",
+    // Software BVH traversal replaces DXR 1.1 RayQuery (DESIGN.md §5).
+    "Scene/RaytracingInline.slang": "WebFalcor/Overrides/Scene/RaytracingInline.slang",
     "Rendering/Materials/StandardMaterial.slang": "WebFalcor/Overrides/Rendering/Materials/StandardMaterial.slang",
     "Rendering/Materials/IMaterial.slang": "WebFalcor/Overrides/Rendering/Materials/IMaterial.slang",
     // SV_PrimitiveID/SV_Barycentrics/[earlydepthstencil] absent from WGSL; static material dispatch.

@@ -16,6 +16,8 @@ import { DefineList } from "../Core/Program/DefineList.js";
 import type { ShaderVar } from "../Core/Program/ParameterBlock.js";
 import { Camera } from "./Camera/Camera.js";
 import { float4x4, transpose, inverse } from "../Utils/Math/Matrix.js";
+import { buildBvh, type BvhTriangle } from "./SoftwareRT/Bvh.js";
+import { transformPoint } from "../Utils/Math/Matrix.js";
 import {
     GeometryType,
     packGeometryInstances,
@@ -121,6 +123,24 @@ export class Scene {
         make("worldMatrices", world, 64);
         make("inverseTransposeWorldMatrices", invT, 64);
 
+        // Software RT BVH over world-space triangles (DESIGN.md §5).
+        const bvhTris: BvhTriangle[] = [];
+        meshes.forEach((mesh, meshID) => {
+            const m = mesh.transform ?? float4x4.identity();
+            for (let p = 0; p < mesh.indices.length / 3; p++) {
+                bvhTris.push({
+                    v0: transformPoint(m, mesh.vertices[mesh.indices[p * 3]!]!.position),
+                    v1: transformPoint(m, mesh.vertices[mesh.indices[p * 3 + 1]!]!.position),
+                    v2: transformPoint(m, mesh.vertices[mesh.indices[p * 3 + 2]!]!.position),
+                    instanceIndex: meshID,
+                    primitiveIndex: p,
+                });
+            }
+        });
+        const bvh = buildBvh(bvhTris);
+        make("bvhNodes", bvh.nodes, 16);
+        make("bvhTris", bvh.tris, 16);
+
         // Materials.
         this.materialCount = materials.length;
         const blobBytes = new Uint8Array(materials.length * 128);
@@ -221,6 +241,8 @@ export class Scene {
         scene["geometryInstances"] = this.buffers["geometryInstances"]!;
         scene["meshes"] = this.buffers["meshes"]!;
         scene["vertices"]["data0"] = this.buffers["vertices"]!;
+        scene["webfalcorBvhNodes"] = this.buffers["bvhNodes"]!;
+        scene["webfalcorBvhTris"] = this.buffers["bvhTris"]!;
         scene["prevVertices"] = this.buffers["vertices"]!;
         scene["indexData"]["data0"] = this.buffers["indices"]!;
 
