@@ -131,3 +131,56 @@ export function packMeshDescs(meshes: MeshDescData[]): Uint32Array {
     }
     return out;
 }
+
+/** Mirrors LightType (LightData.slang). */
+export enum LightType {
+    Point = 0,
+    Directional = 1,
+    Distant = 2,
+    Rect = 3,
+    Disc = 4,
+    Sphere = 5,
+}
+
+export interface AnalyticLight {
+    type: LightType;
+    /** Position (point lights) in world space. */
+    posW?: float3;
+    /** Direction (directional/spot), normalized. */
+    dirW?: float3;
+    /** Emitted radiance/intensity. */
+    intensity: float3;
+}
+
+export const kLightDataSize = 208; // 6x16B rows + 2x float4x4
+
+/** Packs LightData (LightData.slang layout; 16-byte rows, matrices identity). */
+export function packLights(lights: AnalyticLight[]): ArrayBuffer {
+    const buffer = new ArrayBuffer(Math.max(lights.length, 1) * kLightDataSize);
+    const dv = new DataView(buffer);
+    lights.forEach((light, i) => {
+        const base = i * kLightDataSize;
+        const posW = light.posW ?? new float3(0, 0, 0);
+        const dirW = light.dirW ?? new float3(0, -1, 0);
+        dv.setFloat32(base + 0, posW.x, true);
+        dv.setFloat32(base + 4, posW.y, true);
+        dv.setFloat32(base + 8, posW.z, true);
+        dv.setUint32(base + 12, light.type, true);
+        dv.setFloat32(base + 16, dirW.x, true);
+        dv.setFloat32(base + 20, dirW.y, true);
+        dv.setFloat32(base + 24, dirW.z, true);
+        dv.setFloat32(base + 28, Math.PI, true); // openingAngle (full sphere)
+        dv.setFloat32(base + 32, light.intensity.x, true);
+        dv.setFloat32(base + 36, light.intensity.y, true);
+        dv.setFloat32(base + 40, light.intensity.z, true);
+        dv.setFloat32(base + 44, -1, true); // cosOpeningAngle
+        dv.setFloat32(base + 48, 0.9999893, true); // cosSubtendedAngle
+        dv.setFloat32(base + 52, 0, true); // penumbraAngle
+        // rows 4-5: tangent/surfaceArea/bitangent zeroed; matrices identity.
+        for (let m = 0; m < 2; m++) {
+            const mBase = base + 80 + m * 64;
+            for (let d = 0; d < 4; d++) dv.setFloat32(mBase + d * 20, 1, true); // diagonal (stride 16+4)
+        }
+    });
+    return buffer;
+}

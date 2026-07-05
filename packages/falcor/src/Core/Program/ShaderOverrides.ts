@@ -38,4 +38,8 @@ export const kShaderOverrides: Readonly<Record<string, string>> = {
     "Rendering/Materials/IMaterial.slang": "WebFalcor/Overrides/Rendering/Materials/IMaterial.slang",
     // SV_PrimitiveID/SV_Barycentrics/[earlydepthstencil] absent from WGSL; static material dispatch.
     "RenderPasses/GBuffer/GBuffer/GBufferRaster.3d.slang": "WebFalcor/Overrides/RenderPasses/GBuffer/GBuffer/GBufferRaster.3d.slang",
+    // Write-only storage textures (WGSL r32*-only read_write rule).
+    "RenderPasses/GBuffer/VBuffer/VBufferRT.slang": "WebFalcor/Overrides/RenderPasses/GBuffer/VBuffer/VBufferRT.slang",
+    // RT pipeline -> compute megakernel over SceneRayQuery (DESIGN.md §5).
+    "RenderPasses/MinimalPathTracer/MinimalPathTracer.rt.slang": "WebFalcor/Overrides/RenderPasses/MinimalPathTracer/MinimalPathTracer.rt.slang",
 };

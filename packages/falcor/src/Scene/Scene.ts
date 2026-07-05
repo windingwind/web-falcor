@@ -17,6 +17,7 @@ import type { ShaderVar } from "../Core/Program/ParameterBlock.js";
 import { Camera } from "./Camera/Camera.js";
 import { float4x4, transpose, inverse } from "../Utils/Math/Matrix.js";
 import { buildBvh, type BvhTriangle } from "./SoftwareRT/Bvh.js";
+import { packLights, type AnalyticLight } from "./SceneData.js";
 import { transformPoint } from "../Utils/Math/Matrix.js";
 import {
     GeometryType,
@@ -54,10 +55,13 @@ export class Scene {
     private instanceCount = 0;
     private drawList: { indexCount: number; firstIndex: number; baseVertex: number; firstInstance: number }[] = [];
 
+    private lightCount = 0;
+
     constructor(
         public readonly device: Device,
         meshes: SceneMeshDesc[],
         materials: SceneMaterialDesc[],
+        lights: AnalyticLight[] = [],
     ) {
         assert(meshes.length > 0 && materials.length > 0, "Scene requires geometry and materials");
 
@@ -140,6 +144,10 @@ export class Scene {
         const bvh = buildBvh(bvhTris);
         make("bvhNodes", bvh.nodes, 16);
         make("bvhTris", bvh.tris, 16);
+
+        // Analytic lights.
+        this.lightCount = lights.length;
+        make("lights", packLights(lights), 208);
 
         // Materials.
         this.materialCount = materials.length;
@@ -243,6 +251,8 @@ export class Scene {
         scene["vertices"]["data0"] = this.buffers["vertices"]!;
         scene["webfalcorBvhNodes"] = this.buffers["bvhNodes"]!;
         scene["webfalcorBvhTris"] = this.buffers["bvhTris"]!;
+        scene["lights"] = this.buffers["lights"]!;
+        scene["lightCount"] = this.lightCount;
         scene["prevVertices"] = this.buffers["vertices"]!;
         scene["indexData"]["data0"] = this.buffers["indices"]!;
 
