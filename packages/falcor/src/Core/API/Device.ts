@@ -8,6 +8,7 @@
 
 import { RuntimeError } from "../Error.js";
 import { Logger } from "../../Utils/Logger.js";
+import { RenderContext } from "./RenderContext.js";
 
 /** Mirrors Falcor::Device::Type (D3D12/Vulkan). The web backend is WebGPU; WebGL2 fallback is raster-only. */
 export enum DeviceType {
@@ -39,11 +40,21 @@ export interface SupportedFeatures {
 }
 
 export class Device {
+    /** The device's immediate context (mirrors Device::getRenderContext()). */
+    readonly renderContext: RenderContext;
+
     private constructor(
         public readonly adapter: GPUAdapter,
         public readonly gpuDevice: GPUDevice,
         public readonly desc: DeviceDesc,
-    ) {}
+    ) {
+        this.renderContext = new RenderContext(this);
+    }
+
+    /** Mirrors Device::getRenderContext(). */
+    getRenderContext(): RenderContext {
+        return this.renderContext;
+    }
 
     /** Async factory (WebGPU device acquisition is async, unlike Falcor's constructor). */
     static async create(desc: DeviceDesc = {}): Promise<Device> {
@@ -63,6 +74,8 @@ export class Device {
             "texture-compression-bc",
             "float32-filterable",
             "indirect-first-instance",
+            "subgroups",
+            "chromium-experimental-timestamp-query-inside-passes" as GPUFeatureName,
         ];
         const features = wanted.filter((f) => adapter.features.has(f));
 

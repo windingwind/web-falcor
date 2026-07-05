@@ -17,6 +17,7 @@ export enum ResourceFormat {
     RG8Snorm,
     RG16Unorm,
     RG16Snorm,
+    RGBA16Unorm,
     RGBA8Unorm,
     RGBA8Snorm,
     RGBA8UnormSrgb,
@@ -84,6 +85,7 @@ const kGpuFormatMap: Partial<Record<ResourceFormat, GPUTextureFormat>> = {
     [ResourceFormat.RG8Snorm]: "rg8snorm",
     [ResourceFormat.RG16Unorm]: "rg16unorm",
     [ResourceFormat.RG16Snorm]: "rg16snorm",
+    [ResourceFormat.RGBA16Unorm]: "rgba16unorm",
     [ResourceFormat.RGBA8Unorm]: "rgba8unorm",
     [ResourceFormat.RGBA8Snorm]: "rgba8snorm",
     [ResourceFormat.RGBA8UnormSrgb]: "rgba8unorm-srgb",
@@ -141,6 +143,33 @@ const kGpuFormatMap: Partial<Record<ResourceFormat, GPUTextureFormat>> = {
 /** Returns the WebGPU texture format for a ResourceFormat, or undefined if not representable. */
 export function toGpuTextureFormat(format: ResourceFormat): GPUTextureFormat | undefined {
     return kGpuFormatMap[format];
+}
+
+/** Bytes per pixel (uncompressed) or per 4x4 block (BC formats). Mirrors Falcor's FormatDesc table. */
+const kBytesPerBlock: Partial<Record<ResourceFormat, number>> = {
+    [ResourceFormat.R8Unorm]: 1, [ResourceFormat.R8Snorm]: 1, [ResourceFormat.R8Int]: 1, [ResourceFormat.R8Uint]: 1,
+    [ResourceFormat.R16Unorm]: 2, [ResourceFormat.R16Snorm]: 2, [ResourceFormat.R16Float]: 2, [ResourceFormat.R16Int]: 2, [ResourceFormat.R16Uint]: 2,
+    [ResourceFormat.RG8Unorm]: 2, [ResourceFormat.RG8Snorm]: 2, [ResourceFormat.RG8Int]: 2, [ResourceFormat.RG8Uint]: 2,
+    [ResourceFormat.R32Float]: 4, [ResourceFormat.R32Int]: 4, [ResourceFormat.R32Uint]: 4,
+    [ResourceFormat.RG16Unorm]: 4, [ResourceFormat.RG16Snorm]: 4, [ResourceFormat.RG16Float]: 4, [ResourceFormat.RG16Int]: 4, [ResourceFormat.RG16Uint]: 4,
+    [ResourceFormat.RGBA8Unorm]: 4, [ResourceFormat.RGBA8Snorm]: 4, [ResourceFormat.RGBA8UnormSrgb]: 4, [ResourceFormat.RGBA8Int]: 4, [ResourceFormat.RGBA8Uint]: 4,
+    [ResourceFormat.BGRA8Unorm]: 4, [ResourceFormat.BGRA8UnormSrgb]: 4,
+    [ResourceFormat.R11G11B10Float]: 4, [ResourceFormat.RGB10A2Unorm]: 4, [ResourceFormat.RGB10A2Uint]: 4, [ResourceFormat.RGB9E5Float]: 4,
+    [ResourceFormat.RG32Float]: 8, [ResourceFormat.RG32Int]: 8, [ResourceFormat.RG32Uint]: 8,
+    [ResourceFormat.RGBA16Float]: 8, [ResourceFormat.RGBA16Int]: 8, [ResourceFormat.RGBA16Uint]: 8, [ResourceFormat.RGBA16Unorm]: 8,
+    [ResourceFormat.RGB32Float]: 12,
+    [ResourceFormat.RGBA32Float]: 16, [ResourceFormat.RGBA32Int]: 16, [ResourceFormat.RGBA32Uint]: 16,
+    [ResourceFormat.D16Unorm]: 2, [ResourceFormat.D32Float]: 4, [ResourceFormat.D24UnormS8Uint]: 4, [ResourceFormat.D32FloatS8Uint]: 8,
+    [ResourceFormat.BC1Unorm]: 8, [ResourceFormat.BC1UnormSrgb]: 8, [ResourceFormat.BC4Unorm]: 8, [ResourceFormat.BC4Snorm]: 8,
+    [ResourceFormat.BC2Unorm]: 16, [ResourceFormat.BC2UnormSrgb]: 16, [ResourceFormat.BC3Unorm]: 16, [ResourceFormat.BC3UnormSrgb]: 16,
+    [ResourceFormat.BC5Unorm]: 16, [ResourceFormat.BC5Snorm]: 16, [ResourceFormat.BC6HS16]: 16, [ResourceFormat.BC6HU16]: 16,
+    [ResourceFormat.BC7Unorm]: 16, [ResourceFormat.BC7UnormSrgb]: 16,
+};
+
+export function getFormatBytesPerBlock(format: ResourceFormat): number {
+    const bytes = kBytesPerBlock[format];
+    if (bytes === undefined) throw new Error(`No byte size for format ${ResourceFormat[format]}`);
+    return bytes;
 }
 
 export function isDepthFormat(format: ResourceFormat): boolean {

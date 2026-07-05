@@ -5,5 +5,16 @@
 
 export * from "./Core/Error.js";
 export * from "./Core/API/Device.js";
+export * from "./Core/API/DeviceFactories.js";
 export * from "./Core/API/Formats.js";
+export * from "./Core/API/Types.js";
+export * from "./Core/API/Resource.js";
+export * from "./Core/API/Buffer.js";
+export * from "./Core/API/Texture.js";
+export * from "./Core/API/Sampler.js";
+export * from "./Core/API/Fence.js";
+export * from "./Core/API/GpuTimer.js";
+export * from "./Core/API/CopyContext.js";
+export * from "./Core/API/ComputeContext.js";
+export * from "./Core/API/RenderContext.js";
 export * from "./Utils/Logger.js";

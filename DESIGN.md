@@ -388,7 +388,7 @@ works; ecosystem differs).
 | ImageLoader | ✅ | EXR/DDS via WASM codecs |
 | MinimalPathTracer | 🟡 | SoftwareRT |
 | ModulateIllumination | ✅ | |
-| NRDPass | ❌ | NVIDIA closed-source denoiser SDK (native binaries). Substitute: SVGF ✅ (already in tree) or OIDN-web 🔶 as new optional pass |
+| NRDPass | 🟡 | NRD shader source is public (HLSL) → genuine port attempted in M8 (ReBLUR/SIGMA subset); host SDK reimplemented in TS. SVGF ✅ available meanwhile (§11.4) |
 | OptixDenoiser | ❌ | requires CUDA+OptiX. Same substitutes as NRD |
 | OverlaySamplePass | ✅ | |
 | PathTracer | 🟡 | flagship; compute variant via SoftwareRT; NEE/MIS/LightBVH/EnvMap sampling/volumes all ✅ shader-side |
@@ -441,16 +441,32 @@ works; ecosystem differs).
 | **M1** | Core/API: Buffer/Texture/Sampler/Formats/Contexts/FBO/State/PSO caches, GpuMemoryHeap, GpuTimer, Fence | GPU unit tests green in headless Chromium |
 | **M2** | Program system: ProgramManager (AOT+slang-wasm), reflection, ParameterBlock/ShaderVar, ComputePass/RasterPass/FullScreenPass | Falcor's ParameterBlock unit tests ported & green |
 | **M3** | Utils: Math lib, Algorithm passes, Image IO, Profiler, PixelDebug, sample generators | ParallelReduction/PrefixSum/BitonicSort tests green |
-| **M4** | RenderGraph core + ResourceCache + graph-script loader; passes: ToneMapper, Blit, Accumulate, GaussianBlur, ImageLoader, DebugPasses | first upstream graph `.py` runs end-to-end in browser |
-| **M5** | Scene: SceneBuilder, glTF import, Camera, Lights, MaterialSystem (Standard), Animation/skinning; GBufferRaster/VBufferRaster + TAA + SVGF + SimplePostFX | ForwardRenderer-class graphs render; image-diff vs native within tolerance |
+| **M4** | RenderGraph core + ResourceCache + **Pyodide graph-`.py` loader** (user decision §11.1); passes: ToneMapper, Blit, Accumulate, GaussianBlur, ImageLoader, DebugPasses | first upstream graph `.py` runs end-to-end in browser |
+| **M5** | Scene: SceneBuilder, **`.pyscene` import (Pyodide)**, glTF import, Camera, Lights, MaterialSystem (Standard), Animation/skinning; GBufferRaster/VBufferRaster + TAA + SVGF + SimplePostFX | ForwardRenderer-class graphs render; image-diff vs native within tolerance |
 | **M6** | SoftwareRT: LBVH build/refit, SceneRayQuery, RtAccelerationStructure API; VBufferRT, MinimalPathTracer, WhittedRayTracer | MinimalPathTracer image test within tolerance of native |
 | **M7** | Full material zoo (Hair/Cloth/MERL/RGL/PBRT), LightBVH/EnvMap samplers, GridVolumes, PathTracer (+NEE/MIS), SDF grids ×4, remaining passes | PathTracer + SDF image suites within tolerance |
 | **M8** | Mogwai UI (ImGui-wasm, RenderGraphUI, capture), Pyodide plugin, RTXDI, WARDiffPathTracer, Assimp/USD importers, WebGL2 raster subset (stretch) | upstream image-test graph suite pass-rate report; parity matrix finalized |
 
-## 11. Open questions for review
+## 11. Resolved design questions (user decisions, 2026-07-05)
 
-1. **Graph-script compat layer**: is executing upstream `.py` graph files (via mini-interpreter, with Pyodide as the escape hatch) worth it to you, or is the shape-identical TS API alone acceptable?
-2. **USD priority**: `usd-wasm` is heavy and partial — is USD import on the critical path for your use (the `../Falcor` fork ships nv-usd), or can it stay an M8 optional plugin?
-3. **WebGL2 subset**: any concrete need (target devices without WebGPU?), or shall it remain design-compatible but unimplemented?
-4. **Denoiser substitute policy**: SVGF only, or also an OIDN-web optional pass where NRD/Optix graphs are auto-rewritten?
-5. **Your fork's deltas** (`../Falcor` adds e.g. froxel/OFD animation work): should web-falcor track upstream 8.0 only (current plan), or also your fork's custom passes?
+1. **Graph-script compat layer** — *Resolved: `.py`-first.* Upstream `.py` graph files
+   **and** `.pyscene` scene files are the primary content path, executed via Pyodide
+   with a `falcor` bridge module (mini-interpreter dropped — pyscenes are real Python).
+   The shape-identical TS API comes after the `.py` path is verified. Pyodide moves
+   from "optional M8 plugin" onto the critical path (graphs in M4, pyscene in M5).
+2. **USD priority** — *Resolved: as 1:1 as possible.* USD import via usd-wasm is a real
+   deliverable (M8), not an optional stub; partiality only where usd-wasm itself lags
+   OpenUSD.
+3. **WebGL2 subset** — *Resolved: 1:1 where possible; use WebGL2 to fill WebGPU gaps.*
+   WebGPU remains primary. Audit note: WebGL2 capabilities are a strict subset of
+   WebGPU for everything Falcor needs, with one exception worth tracking —
+   `EXT_disjoint_timer_query` availability vs. `timestamp-query` on some platforms.
+   Raster-only WebGL2 backend remains an M8 stretch goal.
+4. **Denoiser policy** — *Resolved: as 1:1 as possible.* NRD's shader source is public
+   (github.com/NVIDIA-RTX/NRD, HLSL): attempt a genuine NRD port (ReBLUR/SIGMA subset)
+   in M8 instead of treating NRDPass as ❌-with-substitute. NRDPass reclassified 🟡
+   (host-side SDK → TS reimplementation; shaders via Slang/WGSL). DLSS remains ❌
+   (closed driver binary). OptixDenoiser remains ❌ (CUDA); OIDN-web offered as an
+   optional non-parity pass.
+5. **Fork deltas** — *Resolved: track upstream 8.0 only* (`eb540f67`); the research
+   fork's custom passes are out of scope.
