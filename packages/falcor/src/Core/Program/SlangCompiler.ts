@@ -89,6 +89,7 @@ interface SlangWasmApi {
         createPath(parent: string, path: string, canRead: boolean, canWrite: boolean): void;
         writeFile(path: string, data: string): void;
         analyzePath(path: string): { exists: boolean };
+        symlink(target: string, linkPath: string): void;
     };
 }
 
@@ -121,6 +122,23 @@ export class SlangCompiler {
         this.registeredFiles = filePaths;
     }
 
+    /**
+     * Rewrites #include directives to absolute MEMFS paths. The wasm binding has
+     * no -I search-path API; Falcor includes are shader-root-relative, with
+     * occasional same-directory relative includes.
+     */
+    private rewriteIncludes(source: string, filePath: string): string {
+        const dir = filePath.split("/").slice(0, -1).join("/");
+        const known = new Set(this.registeredFiles);
+        return source.replace(/^(\s*#\s*include\s+")([^"]+)(")/gm, (_m, pre: string, target: string, post: string) => {
+            if (target.startsWith("/")) return `${pre}${target}${post}`;
+            if (known.has(target)) return `${pre}/${target}${post}`;
+            const relative = dir ? `${dir}/${target}` : target;
+            if (known.has(relative)) return `${pre}/${relative}${post}`;
+            return `${pre}${target}${post}`; // leave unresolved; slang reports the error
+        });
+    }
+
     private getSession(defines: DefineList): SlangSessionApi {
         const key = defines.key();
         let session = this.sessions.get(key) ?? null;
@@ -129,13 +147,32 @@ export class SlangCompiler {
             session = slang.createGlobalSession()?.createSession(wgslTargetId) ?? null;
             if (!session) throw new RuntimeError("Failed to create Slang session");
             const header = defines.toHeader();
+            const dirs = new Set<string>();
             for (const path of this.registeredFiles) {
                 const source = this.resolveSource(path);
                 if (source === undefined) continue;
                 const dir = path.split("/").slice(0, -1).join("/");
-                if (dir) slang.FS.createPath("/", dir, true, true);
+                if (dir) {
+                    slang.FS.createPath("/", dir, true, true);
+                    dirs.add(dir);
+                }
+                const rewritten = this.rewriteIncludes(source, path);
                 // #line keeps diagnostics pointing at the original source.
-                slang.FS.writeFile(`/${path}`, `${header}#line 1 "${path}"\n${source}`);
+                slang.FS.writeFile(`/${path}`, `${header}#line 1 "${path}"\n${rewritten}`);
+            }
+            // Modules loaded implicitly from the FS are recorded without a leading
+            // slash, so their imports resolve relative to their own directory.
+            // Falcor imports are shader-root-relative: symlink each top-level root
+            // into every directory so dir-relative resolution lands at the root.
+            const roots = new Set(this.registeredFiles.map((f) => f.split("/")[0]!).filter((r) => !r.includes(".")));
+            for (const dir of dirs) {
+                for (const root of roots) {
+                    try {
+                        slang.FS.symlink(`/${root}`, `/${dir}/${root}`);
+                    } catch {
+                        // Path already exists (real directory or prior link) — fine.
+                    }
+                }
             }
             this.sessions.set(key, session);
         }
@@ -153,7 +190,8 @@ export class SlangCompiler {
         if (source === undefined) throw new RuntimeError(`Shader source not found: ${entrySourcePath}`);
         const moduleName = entrySourcePath.replace(/[/.]/g, "_");
         const header = defines.toHeader();
-        const module = session.loadModuleFromSource(`${header}#line 1 "${entrySourcePath}"\n${source}`, moduleName, `/${entrySourcePath}`);
+        const rewritten = this.rewriteIncludes(source, entrySourcePath);
+        const module = session.loadModuleFromSource(`${header}#line 1 "${entrySourcePath}"\n${rewritten}`, moduleName, `/${entrySourcePath}`);
         if (!module) {
             const err = slang.getLastError();
             throw new RuntimeError(`Slang compilation failed for ${entrySourcePath}:\n${err.type}: ${err.message}`);

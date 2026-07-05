@@ -4,8 +4,36 @@
  * window.__results / console.
  */
 
-import { Device } from "@web-falcor/falcor";
+import { Device, ProgramManager, initSlang } from "@web-falcor/falcor";
 import { tests, SkipError } from "./registry.js";
+
+/** Fetches the Falcor shader tree and wires the program system (M2+ tests). */
+async function initProgramSystem(device: Device): Promise<void> {
+    const list = (await (await fetch("/packages/falcor/shaders/generated/shader-file-list.json")).json()) as {
+        falcorFiles: string[];
+        localFiles: string[];
+    };
+    const sources = new Map<string, string>();
+    const missing: string[] = [];
+    const fetchInto = async (urlBase: string, files: string[]) => {
+        await Promise.all(
+            files.map(async (f) => {
+                const res = await fetch(`${urlBase}/${f}`);
+                if (res.ok) sources.set(f, await res.text());
+                else missing.push(`${urlBase}/${f} (${res.status})`);
+            }),
+        );
+    };
+    await Promise.all([
+        fetchInto("/Falcor/Source/Falcor", list.falcorFiles),
+        fetchInto("/packages/falcor/shaders", list.localFiles),
+    ]);
+    if (missing.length > 0) {
+        console.error(`shader registry: ${missing.length} files failed to fetch; first: ${missing.slice(0, 3).join(", ")}`);
+    }
+    await initSlang("/tools/slang-wasm/slang-wasm.js");
+    device.setProgramManager(new ProgramManager(device, (p) => sources.get(p), [...sources.keys()]));
+}
 
 interface TestResult {
     name: string;
@@ -36,6 +64,9 @@ async function run() {
     const device = await Device.create();
     const info = device.adapter.info;
     log(`# adapter: ${info?.vendor ?? "?"} ${info?.architecture ?? "?"}`);
+    const t0 = performance.now();
+    await initProgramSystem(device);
+    log(`# program system ready in ${(performance.now() - t0).toFixed(0)}ms`);
     log(`# tests: ${tests.length}`);
 
     const results: TestResult[] = [];
