@@ -3,8 +3,42 @@
  * an unmodified-Falcor-shader-library kernel compiled at runtime by slang-wasm.
  */
 
-import { ComputePass, MemoryType, ResourceBindFlags, float4x4, mulMatVec, float4 } from "@web-falcor/falcor";
+import { ComputePass, MemoryType, ResourceBindFlags, ResourceFormat, float4x4, mulMatVec, float4 } from "@web-falcor/falcor";
 import { gpuTest, expectEq, expectClose, expectArrayClose } from "../harness/registry.js";
+
+gpuTest("ParameterBlock.nestedBlockPaths", async ({ device }) => {
+    // The gScene binding pattern: ParameterBlock with uniforms (incl. matrix),
+    // nested struct containing a buffer, texture + sampler — set via ShaderVar paths.
+    const pass = ComputePass.create(device, { path: "NestedBlockTest.cs.slang" });
+    const count = 4;
+    const verts = new Float32Array([1, 0, 0, 1, 0, 1, 0, 1, 0, 0, 1, 1, 1, 1, 1, 1]);
+    const vertexBuf = device.createBuffer(verts.byteLength, ResourceBindFlags.ShaderResource | ResourceBindFlags.UnorderedAccess, MemoryType.DeviceLocal, verts);
+    const out = device.createStructuredBuffer(16, count, ResourceBindFlags.UnorderedAccess | ResourceBindFlags.ShaderResource);
+    // 1x1 texture with value (0.25, 0.5, 0.75, 1).
+    const tex = device.createTexture2D(1, 1, ResourceFormat.RGBA32Float, 1, 1, new Float32Array([0.25, 0.5, 0.75, 1]));
+
+    const m = float4x4.fromRows([[2, 0, 0, 10], [0, 3, 0, 20], [0, 0, 4, 30], [0, 0, 0, 1]]);
+    const root = pass.getRootVar();
+    root["gBlock"]["transform"] = m;
+    root["gBlock"]["offset"] = [100, 200, 300];
+    root["gBlock"]["count"] = count;
+    root["gBlock"]["vertices"]["data0"] = vertexBuf;
+    root["gBlock"]["colorTex"] = tex;
+    root["gBlock"]["sampler"] = device.createSampler();
+    root["gOut"] = out;
+
+    pass.execute(device.renderContext, count);
+    const gpu = new Float32Array((await out.getBlob()).buffer);
+    for (let i = 0; i < count; i++) {
+        const v = new float4(verts[i * 4]!, verts[i * 4 + 1]!, verts[i * 4 + 2]!, verts[i * 4 + 3]!);
+        const t = mulMatVec(m, v);
+        const expected = [t.x + 100 + 0.25, t.y + 200 + 0.5, t.z + 300 + 0.75, t.w + 0 + 1];
+        expectArrayClose(gpu.subarray(i * 4, i * 4 + 4), expected, 1e-4, `out[${i}]`);
+    }
+    vertexBuf.destroy();
+    out.destroy();
+    tex.destroy();
+});
 
 gpuTest("ParameterBlock.matrixCbufferLayout", async ({ device }) => {
     // Non-diagonal matrix through Slang's mul(): GPU result must match the

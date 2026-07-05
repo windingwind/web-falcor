@@ -65,7 +65,9 @@ import Rendering.Materials.TexLODHelpers;
 struct Scene
 {
     // Raytracing
-    [root] RaytracingAccelerationStructure rtAccel;
+    // WebFalcor: RaytracingAccelerationStructure has no WGSL representation
+    // (slangc emits an invalid empty-typed binding). Removed for the raster
+    // path; M6's SoftwareRT binds its BVH via SceneRayQuery instead.
 
     // Instance transforms
     [root] StructuredBuffer<float4x4> worldMatrices;
