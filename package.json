@@ -24,6 +24,7 @@
     "vitest": "^3.1.0"
   },
   "dependencies": {
+    "parse-exr": "^1.0.2",
     "pyodide": "^314.0.2"
   }
 }
