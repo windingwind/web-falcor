@@ -15,4 +15,15 @@ export const kShaderOverrides: Readonly<Record<string, string>> = {
     "Utils/Algorithm/PrefixSum.cs.slang": "WebFalcor/Overrides/Utils/Algorithm/PrefixSum.cs.slang",
     // Read-write rgba32float storage textures (WGSL allows r32* only) -> structured buffers; Double mode omitted (no fp64/i64).
     "RenderPasses/AccumulatePass/Accumulate.cs.slang": "WebFalcor/Overrides/RenderPasses/AccumulatePass/Accumulate.cs.slang",
+    // pack*/unpack* renamed (collide with builtins added to Slang post-2024); 'this = {};' replaced.
+    "Utils/Math/FormatConversion.slang": "WebFalcor/Overrides/Utils/Math/FormatConversion.slang",
+    "Utils/Math/PackedFormats.slang": "WebFalcor/Overrides/Utils/Math/PackedFormats.slang",
+    "Scene/HitInfo.slang": "WebFalcor/Overrides/Scene/HitInfo.slang",
+    // WGSL has no binding arrays (DESIGN.md §6.2): packed Texture2DArray material
+    // textures, single sampler/buffer/3D bindings, single grid/SDF instances,
+    // single-buffer Split*Buffers.
+    "Scene/Material/MaterialSystem.slang": "WebFalcor/Overrides/Scene/Material/MaterialSystem.slang",
+    "Scene/Material/TextureSampler.slang": "WebFalcor/Overrides/Scene/Material/TextureSampler.slang",
+    "Scene/Scene.slang": "WebFalcor/Overrides/Scene/Scene.slang",
+    "Scene/SceneTypes.slang": "WebFalcor/Overrides/Scene/SceneTypes.slang",
 };
