@@ -11,6 +11,8 @@ import { fileURLToPath } from "node:url";
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../../..");
 const falcorRoot = join(repoRoot, "Falcor/Source/Falcor");
+// Falcor's deployed shader layout merges Source/Falcor/* with Source/RenderPasses -> RenderPasses/*.
+const renderPassesRoot = join(repoRoot, "Falcor/Source/RenderPasses");
 const localRoot = join(repoRoot, "packages/falcor/shaders");
 
 function walk(dir, filter) {
@@ -30,9 +32,10 @@ function walk(dir, filter) {
 const isShader = (name) => name.endsWith(".slang") || name.endsWith(".slangh");
 
 const falcorFiles = walk(falcorRoot, isShader).map((p) => relative(falcorRoot, p).replaceAll("\\", "/"));
+const renderPassFiles = walk(renderPassesRoot, isShader).map((p) => "RenderPasses/" + relative(renderPassesRoot, p).replaceAll("\\", "/"));
 const localFiles = walk(localRoot, isShader).map((p) => relative(localRoot, p).replaceAll("\\", "/"));
 
 const outDir = join(localRoot, "generated");
 mkdirSync(outDir, { recursive: true });
-writeFileSync(join(outDir, "shader-file-list.json"), JSON.stringify({ falcorFiles, localFiles }, null, 1));
-console.log(`shader-file-list.json: ${falcorFiles.length} Falcor + ${localFiles.length} local shader files`);
+writeFileSync(join(outDir, "shader-file-list.json"), JSON.stringify({ falcorFiles, renderPassFiles, localFiles }, null, 1));
+console.log(`shader-file-list.json: ${falcorFiles.length} Falcor + ${renderPassFiles.length} render-pass + ${localFiles.length} local shader files`);

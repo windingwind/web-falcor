@@ -11,6 +11,7 @@ import { tests, SkipError } from "./registry.js";
 async function initProgramSystem(device: Device): Promise<void> {
     const list = (await (await fetch("/packages/falcor/shaders/generated/shader-file-list.json")).json()) as {
         falcorFiles: string[];
+        renderPassFiles: string[];
         localFiles: string[];
     };
     const sources = new Map<string, string>();
@@ -26,6 +27,7 @@ async function initProgramSystem(device: Device): Promise<void> {
     };
     await Promise.all([
         fetchInto("/Falcor/Source/Falcor", list.falcorFiles),
+        fetchInto("/Falcor/Source", list.renderPassFiles),
         fetchInto("/packages/falcor/shaders", list.localFiles),
     ]);
     if (missing.length > 0) {

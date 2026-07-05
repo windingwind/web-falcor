@@ -13,4 +13,6 @@ export const kShaderOverrides: Readonly<Record<string, string>> = {
     "Utils/Algorithm/ParallelReduction.cs.slang": "WebFalcor/Overrides/Utils/Algorithm/ParallelReduction.cs.slang",
     // ByteAddressBuffer atomics -> structured buffers with Atomic<uint> elements.
     "Utils/Algorithm/PrefixSum.cs.slang": "WebFalcor/Overrides/Utils/Algorithm/PrefixSum.cs.slang",
+    // Read-write rgba32float storage textures (WGSL allows r32* only) -> structured buffers; Double mode omitted (no fp64/i64).
+    "RenderPasses/AccumulatePass/Accumulate.cs.slang": "WebFalcor/Overrides/RenderPasses/AccumulatePass/Accumulate.cs.slang",
 };

@@ -19,7 +19,10 @@ const vite = await createServer({
     root: repoRoot,
     server: { port: 0, host: "127.0.0.1" },
     resolve: {
-        alias: { "@web-falcor/falcor": resolve(repoRoot, "packages/falcor/src/index.ts") },
+        alias: {
+            "@web-falcor/falcor": resolve(repoRoot, "packages/falcor/src/index.ts"),
+            "@web-falcor/render-passes": resolve(repoRoot, "packages/render-passes/src/index.ts"),
+        },
     },
     logLevel: "warn",
 });
