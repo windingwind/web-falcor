@@ -35,6 +35,12 @@ __exported import Rendering.Materials.IMaterial;
 #if WEBFALCOR_MTL_STANDARD
 import Rendering.Materials.StandardMaterial;
 #endif
+#if WEBFALCOR_MTL_CLOTH
+import Rendering.Materials.ClothMaterial;
+#endif
+#if WEBFALCOR_MTL_HAIR
+import Rendering.Materials.HairMaterial;
+#endif
 import Scene.Material.ShadingUtils;
 import Utils.Math.ShadingFrame;
 
@@ -69,12 +75,24 @@ extension MaterialSystem
         case MaterialType::Standard:
             return reinterpret<StandardMaterial, MaterialDataBlob>(materialData[materialID]);
 #endif
+#if WEBFALCOR_MTL_CLOTH
+        case MaterialType::Cloth:
+            return reinterpret<ClothMaterial, MaterialDataBlob>(materialData[materialID]);
+#endif
+#if WEBFALCOR_MTL_HAIR
+        case MaterialType::Hair:
+            return reinterpret<HairMaterial, MaterialDataBlob>(materialData[materialID]);
+#endif
         default:
             break;
         }
         // Unreachable for valid scenes; fall back to the first registered type.
 #if WEBFALCOR_MTL_STANDARD
         return reinterpret<StandardMaterial, MaterialDataBlob>(materialData[materialID]);
+#elif WEBFALCOR_MTL_CLOTH
+        return reinterpret<ClothMaterial, MaterialDataBlob>(materialData[materialID]);
+#elif WEBFALCOR_MTL_HAIR
+        return reinterpret<HairMaterial, MaterialDataBlob>(materialData[materialID]);
 #endif
     }
 

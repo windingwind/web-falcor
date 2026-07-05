@@ -1,0 +1,15 @@
+# Cloth PT oracle: unit quad (TriangleMesh.createQuad) with ClothMaterial,
+# rotated into the XY plane spanning [0,1]^2 at z=0, plus one point light.
+clothMat = ClothMaterial('cloth')
+clothMat.baseColor = float4(0.6, 0.3, 0.2, 1.0)
+clothMat.roughness = 0.7
+
+quadMesh = TriangleMesh.createQuad(float2(1.0, 1.0))
+meshID = sceneBuilder.addTriangleMesh(quadMesh, clothMat)
+nodeID = sceneBuilder.addNode('quad', Transform(translation=float3(0.5, 0.5, 0.0), rotationEulerDeg=float3(90.0, 0.0, 0.0)))
+sceneBuilder.addMeshInstance(nodeID, meshID)
+
+light = PointLight('oracleLight')
+light.position = float3(0.5, 0.5, 1.5)
+light.intensity = float3(3.0, 3.0, 3.0)
+sceneBuilder.addLight(light)

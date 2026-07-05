@@ -61,6 +61,7 @@ export class Scene {
     private lightCount = 0;
     private envMap: EnvMap | null = null;
     private hasEmissiveMaterials = false;
+    private materialTypes = new Set<MaterialType>();
 
     constructor(
         public readonly device: Device,
@@ -160,6 +161,7 @@ export class Scene {
         this.materialCount = materials.length;
         const blobBytes = new Uint8Array(materials.length * 128);
         materials.forEach((m, i) => {
+            this.materialTypes.add(m.header?.materialType ?? MaterialType.Standard);
             blobBytes.set(packBasicMaterialBlob({ materialType: MaterialType.Standard, ...m.header }, m.basic), i * 128);
         });
         make("materialData", blobBytes, 128);
@@ -237,7 +239,11 @@ export class Scene {
             MATERIAL_SYSTEM_HAS_SPEC_GLOSS_MATERIALS: 0,
             MATERIAL_SYSTEM_USE_LIGHT_PROFILE: 0,
             FALCOR_MATERIAL_INSTANCE_SIZE: 256,
-            WEBFALCOR_MTL_STANDARD: 1,
+            // Static material dispatch (MaterialFactory override) — mirrors
+            // MaterialSystem::getTypeConformances() type registration.
+            WEBFALCOR_MTL_STANDARD: this.materialTypes.has(MaterialType.Standard) ? 1 : 0,
+            WEBFALCOR_MTL_CLOTH: this.materialTypes.has(MaterialType.Cloth) ? 1 : 0,
+            WEBFALCOR_MTL_HAIR: this.materialTypes.has(MaterialType.Hair) ? 1 : 0,
             SCENE_DIFFUSE_ALBEDO_MULTIPLIER: "1.0",
             FALCOR_NVAPI_AVAILABLE: 0,
             SAMPLE_GENERATOR_TYPE: 0, // TinyUniform (SampleGeneratorType.slangh)
