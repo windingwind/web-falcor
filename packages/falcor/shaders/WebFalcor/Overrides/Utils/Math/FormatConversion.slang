@@ -66,7 +66,7 @@ int floatToSnorm8(float v)
 float unpackSnorm8(uint packed)
 {
     int bits = (int)(packed << 24) >> 24;
-    precise float unpacked = max((float)bits / 127.f, -1.0f);
+    /* precise */ float unpacked = max((float)bits / 127.f, -1.0f);
     return unpacked;
 }
 
@@ -74,7 +74,7 @@ float unpackSnorm8(uint packed)
  * Pack single float into a 8-bit snorm in the lower bits of the returned dword.
  * @return 8-bit snorm in low bits, high bits all zero.
  */
-uint packSnorm8(precise float v)
+uint packSnorm8(/* precise */ float v)
 {
     return floatToSnorm8(v) & 0x000000ff;
 }
@@ -87,7 +87,7 @@ uint packSnorm8(precise float v)
 float2 unpackSnorm2x8(uint packed)
 {
     int2 bits = int2((int)(packed << 24), (int)(packed << 16)) >> 24;
-    precise float2 unpacked = max((float2)bits / 127.f, -1.0f);
+    /* precise */ float2 unpacked = max((float2)bits / 127.f, -1.0f);
     return unpacked;
 }
 
@@ -95,7 +95,7 @@ float2 unpackSnorm2x8(uint packed)
  * Pack two floats into 8-bit snorm values in the lo bits of a dword.
  * @return Two 8-bit snorm in low bits, high bits all zero.
  */
-uint packSnorm2x8(precise float2 v)
+uint packSnorm2x8(/* precise */ float2 v)
 {
     return (floatToSnorm8(v.x) & 0x000000ff) | ((floatToSnorm8(v.y) << 8) & 0x0000ff00);
 }
@@ -252,7 +252,7 @@ int floatToSnorm16(float v)
 float unpackSnorm16(uint packed)
 {
     int bits = (int)(packed << 16) >> 16;
-    precise float unpacked = max((float)bits / 32767.f, -1.0f);
+    /* precise */ float unpacked = max((float)bits / 32767.f, -1.0f);
     return unpacked;
 }
 
@@ -260,7 +260,7 @@ float unpackSnorm16(uint packed)
  * Pack single float into a 16-bit snorm in the lower bits of the returned dword.
  * @return 16-bit snorm in low bits, high bits all zero.
  */
-uint packSnorm16(precise float v)
+uint packSnorm16(/* precise */ float v)
 {
     return floatToSnorm16(v) & 0x0000ffff;
 }
@@ -273,7 +273,7 @@ uint packSnorm16(precise float v)
 float2 falcor_unpackSnorm2x16(uint packed)
 {
     int2 bits = int2(packed << 16, packed) >> 16;
-    precise float2 unpacked = max((float2)bits / 32767.f, -1.0f);
+    /* precise */ float2 unpacked = max((float2)bits / 32767.f, -1.0f);
     return unpacked;
 }
 
@@ -281,7 +281,7 @@ float2 falcor_unpackSnorm2x16(uint packed)
  * Pack two floats into 16-bit snorm values in the lo/hi bits of a dword.
  * @return Two 16-bit snorm in low/high bits.
  */
-uint falcor_packSnorm2x16(precise float2 v)
+uint falcor_packSnorm2x16(/* precise */ float2 v)
 {
     return (floatToSnorm16(v.x) & 0x0000ffff) | (floatToSnorm16(v.y) << 16);
 }

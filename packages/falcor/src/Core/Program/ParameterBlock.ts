@@ -99,11 +99,15 @@ export class ParameterBlock {
         const key = path.join(".");
 
         if (type.kind === "parameterBlock" || type.kind === "constantBuffer") {
-            const element = type.elementType ?? { kind: "struct" };
-            // Implicit uniform buffer for the block's uniform members.
+            // Reflection JSON shape differs between slang-wasm and native slangc:
+            // fields live on elementType or under elementVarLayout.type.
+            const element = (type.elementType?.fields ? type.elementType : type.elementVarLayout?.type) ?? type.elementType ?? { kind: "struct" };
+            // Implicit uniform buffer for the block's uniform members. The exact
+            // std140 size (incl. trailing padding) comes from elementVarLayout.
             const wb = this.wgslByName.get(flatName);
             if (wb && wb.layoutEntry.buffer?.type === "uniform" && hasUniformContent(element)) {
-                this.addCBufferSlot(key, wb, element);
+                const uniformBinding = type.elementVarLayout?.bindings?.find((b) => b.kind === "uniform");
+                this.addCBufferSlot(key, wb, element, uniformBinding?.size);
             }
             // Recurse into element fields for resources / nested blocks.
             for (const f of element.fields ?? []) {
@@ -128,8 +132,8 @@ export class ParameterBlock {
         this.slots.set(key, { kind: "resource", binding: wb, resource: null });
     }
 
-    private addCBufferSlot(key: string, wb: WgslBinding, elementType: SlangReflectionType): void {
-        const size = computeStructSize(elementType);
+    private addCBufferSlot(key: string, wb: WgslBinding, elementType: SlangReflectionType, exactSize?: number): void {
+        const size = exactSize && exactSize > 0 ? Math.ceil(exactSize / 16) * 16 : computeStructSize(elementType);
         const cpuData = new ArrayBuffer(size);
         this.slots.set(key, {
             kind: "cbuffer",
@@ -280,7 +284,12 @@ export class ParameterBlock {
         const r = slot.resource!;
         if (r instanceof Buffer) return { buffer: r.gpuBuffer };
         if (r instanceof Texture) {
-            return slot.binding.layoutEntry.storageTexture ? r.getUAV() : r.getSRV();
+            // View dimension must match the layout's declaration (e.g. a one-layer
+            // texture bound as texture_2d_array still needs a 2d-array view).
+            const entry = slot.binding.layoutEntry;
+            const dim = entry.storageTexture?.viewDimension ?? entry.texture?.viewDimension;
+            if (entry.storageTexture) return r.getView(0, 1, 0, undefined, dim);
+            return r.getView(0, undefined, 0, undefined, dim);
         }
         if (r instanceof Sampler) return r.gpuSampler;
         return r;

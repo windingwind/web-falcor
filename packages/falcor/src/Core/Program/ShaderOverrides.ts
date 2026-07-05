@@ -22,6 +22,8 @@ export const kShaderOverrides: Readonly<Record<string, string>> = {
     // WGSL has no binding arrays (DESIGN.md §6.2): packed Texture2DArray material
     // textures, single sampler/buffer/3D bindings, single grid/SDF instances,
     // single-buffer Split*Buffers.
+    "Scene/Material/BasicMaterialData.slang": "WebFalcor/Overrides/Scene/Material/BasicMaterialData.slang",
+    "Scene/Material/MaterialData.slang": "WebFalcor/Overrides/Scene/Material/MaterialData.slang",
     "Scene/Material/MaterialSystem.slang": "WebFalcor/Overrides/Scene/Material/MaterialSystem.slang",
     "Scene/Material/TextureSampler.slang": "WebFalcor/Overrides/Scene/Material/TextureSampler.slang",
     "Scene/Scene.slang": "WebFalcor/Overrides/Scene/Scene.slang",

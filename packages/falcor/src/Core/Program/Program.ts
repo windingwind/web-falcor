@@ -99,6 +99,21 @@ export class ProgramManager {
         // Substitute WGSL-incompatible upstream files with WebFalcor overrides (DESIGN.md §4.3).
         const resolveWithOverrides: ShaderSourceResolver = (path) => resolveSource(kShaderOverrides[path] ?? path);
         this.compiler = new SlangCompiler(resolveWithOverrides, filePaths);
+
+        // f16 demotion: when the device lacks shader-f16, map half types to f32 at
+        // the token level (WGSL 'enable f16' would fail validation otherwise).
+        // Literals like 1.h constant-fold; f16tof32/f32tof16 lower to pack/unpack2x16float.
+        // Divergence: f16 storage precision becomes f32 math with f16 rounding only at
+        // pack boundaries. 16-bit index buffers are unsupported in this mode.
+        if (!device.hasFeature("shader-f16")) {
+            this.globalDefines.addAll({
+                WEBFALCOR_NO_F16: 1,
+                float16_t: "float",
+                float16_t2: "float2",
+                float16_t3: "float3",
+                float16_t4: "float4",
+            });
+        }
     }
 
     createProgram(desc: ProgramDesc, defines = new DefineList()): Program {

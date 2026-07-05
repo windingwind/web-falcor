@@ -1,0 +1,133 @@
+/**
+ * Host-side packers for GPU scene structures (Scene/SceneTypes.slang layouts
+ * transcribed from upstream).
+ */
+
+import { float2, float3, float4 } from "../Utils/Math/Vector.js";
+import { f32tof16 } from "./Material/MaterialData.js";
+
+export interface StaticVertex {
+    position: float3;
+    normal: float3;
+    /** xyz = tangent, w = sign (0 if invalid). */
+    tangent: float4;
+    texCrd: float2;
+    curveRadius?: number;
+}
+
+/** Octahedral snorm2x16 encode (Utils/Math/PackedFormats.slang encodeNormal2x16). */
+function encodeNormal2x16(n: float3): number {
+    const l1 = Math.abs(n.x) + Math.abs(n.y) + Math.abs(n.z) || 1;
+    let ox = n.x / l1;
+    let oy = n.y / l1;
+    if (n.z < 0) {
+        const tx = (1 - Math.abs(oy)) * (ox >= 0 ? 1 : -1);
+        const ty = (1 - Math.abs(ox)) * (oy >= 0 ? 1 : -1);
+        ox = tx;
+        oy = ty;
+    }
+    const sx = Math.round(Math.min(Math.max(ox, -1), 1) * 32767) & 0xffff;
+    const sy = Math.round(Math.min(Math.max(oy, -1), 1) * 32767) & 0xffff;
+    return (sy << 16) | sx;
+}
+
+/**
+ * WGSL address-space layout: vec3 members align to 16 bytes, so the packed
+ * vertex struct is 48 bytes on the web (native Falcor packs it into 32).
+ * Element offsets: position@0, packedNormalTangentCurveRadius@16, texCrd@32.
+ */
+export const kPackedStaticVertexSize = 48;
+
+/** Packs vertices into PackedStaticVertexData layout (SceneTypes.slang pack()). */
+export function packStaticVertices(vertices: StaticVertex[]): ArrayBuffer {
+    const buffer = new ArrayBuffer(vertices.length * kPackedStaticVertexSize);
+    const dv = new DataView(buffer);
+    for (let i = 0; i < vertices.length; i++) {
+        const v = vertices[i]!;
+        const base = i * kPackedStaticVertexSize;
+        dv.setFloat32(base + 0, v.position.x, true);
+        dv.setFloat32(base + 4, v.position.y, true);
+        dv.setFloat32(base + 8, v.position.z, true);
+
+        const nx = f32tof16(v.normal.x);
+        const ny = f32tof16(v.normal.y);
+        const nz = f32tof16(v.normal.z);
+        let packedTangentSign = v.tangent.w;
+        if ((v.curveRadius ?? 0) > 0) packedTangentSign *= v.curveRadius!;
+        const tw = f32tof16(packedTangentSign);
+
+        dv.setUint32(base + 16, ((ny << 16) | nx) >>> 0, true);
+        dv.setUint32(base + 20, ((tw << 16) | nz) >>> 0, true);
+        dv.setUint32(base + 24, encodeNormal2x16(new float3(v.tangent.x, v.tangent.y, v.tangent.z)) >>> 0, true);
+
+        dv.setFloat32(base + 32, v.texCrd.x, true);
+        dv.setFloat32(base + 36, v.texCrd.y, true);
+    }
+    return buffer;
+}
+
+/** Mirrors GeometryType (SceneTypes.slang). */
+export enum GeometryType {
+    None = 0xff,
+    TriangleMesh = 0,
+    DisplacedTriangleMesh = 1,
+    Curve = 2,
+    SDFGrid = 3,
+    Custom = 4,
+}
+
+export const kGeometryInstanceSize = 32; // 8 uints
+
+export interface GeometryInstance {
+    type: GeometryType;
+    globalMatrixID: number;
+    materialID: number;
+    geometryID: number;
+    vbOffset: number;
+    ibOffset: number;
+    instanceIndex: number;
+    geometryIndex: number;
+    flags?: number;
+}
+
+export function packGeometryInstances(instances: GeometryInstance[]): Uint32Array {
+    const out = new Uint32Array(instances.length * 8);
+    for (let i = 0; i < instances.length; i++) {
+        const inst = instances[i]!;
+        // Upper 3 bits of flags store the geometry type (kTypeOffset = 29).
+        out[i * 8 + 0] = (((inst.type & 0x7) << 29) | ((inst.flags ?? 0) & 0x1fffffff)) >>> 0;
+        out[i * 8 + 1] = inst.globalMatrixID;
+        out[i * 8 + 2] = inst.materialID;
+        out[i * 8 + 3] = inst.geometryID;
+        out[i * 8 + 4] = inst.vbOffset;
+        out[i * 8 + 5] = inst.ibOffset;
+        out[i * 8 + 6] = inst.instanceIndex;
+        out[i * 8 + 7] = inst.geometryIndex;
+    }
+    return out;
+}
+
+export const kMeshDescSize = 32; // 8 uints
+
+export interface MeshDescData {
+    vbOffset: number;
+    ibOffset: number;
+    vertexCount: number;
+    indexCount: number;
+    skinningVbOffset?: number;
+    prevVbOffset?: number;
+    materialID: number;
+    flags?: number; // MeshFlags: bit0 = Use16BitIndices, bit1 = IsSkinned, ...
+}
+
+export function packMeshDescs(meshes: MeshDescData[]): Uint32Array {
+    const out = new Uint32Array(meshes.length * 8);
+    for (let i = 0; i < meshes.length; i++) {
+        const m = meshes[i]!;
+        out.set(
+            [m.vbOffset, m.ibOffset, m.vertexCount, m.indexCount, m.skinningVbOffset ?? 0, m.prevVbOffset ?? 0, m.materialID, m.flags ?? 0],
+            i * 8,
+        );
+    }
+    return out;
+}

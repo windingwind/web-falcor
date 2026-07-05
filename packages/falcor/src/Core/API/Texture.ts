@@ -80,10 +80,16 @@ export class Texture extends Resource {
     /** Creates a view; cached by descriptor key (mirrors Falcor's view caching). */
     private viewCache = new Map<string, GPUTextureView>();
 
-    getView(mostDetailedMip = 0, mipCount?: number, firstArraySlice = 0, arraySize?: number): GPUTextureView {
+    getView(mostDetailedMip = 0, mipCount?: number, firstArraySlice = 0, arraySize?: number, dimension?: GPUTextureViewDimension): GPUTextureView {
         const mips = mipCount ?? this.mipCount - mostDetailedMip;
         const layers = arraySize ?? (this.type === ResourceType.Texture3D ? 1 : this.gpuTexture.depthOrArrayLayers - firstArraySlice);
-        const key = `${mostDetailedMip}/${mips}/${firstArraySlice}/${layers}`;
+        const dim =
+            dimension ??
+            (this.type === ResourceType.Texture1D ? "1d"
+            : this.type === ResourceType.Texture3D ? "3d"
+            : this.type === ResourceType.TextureCube ? "cube"
+            : layers > 1 ? "2d-array" : "2d");
+        const key = `${mostDetailedMip}/${mips}/${firstArraySlice}/${layers}/${dim}`;
         let view = this.viewCache.get(key);
         if (!view) {
             view = this.gpuTexture.createView({
@@ -91,11 +97,7 @@ export class Texture extends Resource {
                 mipLevelCount: mips,
                 baseArrayLayer: this.type === ResourceType.Texture3D ? 0 : firstArraySlice,
                 arrayLayerCount: this.type === ResourceType.Texture3D ? undefined : layers,
-                dimension:
-                    this.type === ResourceType.Texture1D ? "1d"
-                    : this.type === ResourceType.Texture3D ? "3d"
-                    : this.type === ResourceType.TextureCube ? "cube"
-                    : layers > 1 ? "2d-array" : "2d",
+                dimension: dim,
             });
             this.viewCache.set(key, view);
         }

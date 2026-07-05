@@ -67,6 +67,11 @@ export interface SlangReflectionType {
     resultType?: SlangReflectionType;
     fields?: (SlangReflectionParameter & { binding?: { kind: string; offset?: number; size?: number } })[];
     access?: string;
+    /** Present on parameterBlock types: element layout incl. total uniform size. */
+    elementVarLayout?: {
+        type?: SlangReflectionType;
+        bindings?: { kind: string; index?: number; offset?: number; size?: number; count?: number }[];
+    };
     [key: string]: unknown;
 }
 
@@ -161,8 +166,11 @@ export class SlangCompiler {
                     dirs.add(dir);
                 }
                 const rewritten = this.rewriteIncludes(source, path);
+                // Prepend program defines to modules only — .slangh files are textually
+                // included into units that already carry the defines (avoid redefinition).
+                const prefix = path.endsWith(".slangh") || path.endsWith(".h") ? "" : header;
                 // #line keeps diagnostics pointing at the original source.
-                slang.FS.writeFile(`/${path}`, `${header}#line 1 "${path}"\n${rewritten}`);
+                slang.FS.writeFile(`/${path}`, `${prefix}#line 1 "${path}"\n${rewritten}`);
             }
             // Modules loaded implicitly from the FS are recorded without a leading
             // slash, so their imports resolve relative to their own directory.
