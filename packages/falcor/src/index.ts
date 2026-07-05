@@ -31,4 +31,8 @@ export * from "./Core/Program/ProgramReflection.js";
 export * from "./Core/Program/ParameterBlock.js";
 export * from "./Core/Program/Program.js";
 export * from "./Core/Pass/ComputePass.js";
+export * from "./Core/Pass/RasterPass.js";
+export * from "./Core/Pass/FullScreenPass.js";
+export * from "./Core/State/GraphicsState.js";
+export * from "./Core/State/ComputeState.js";
 export * from "./Utils/Logger.js";

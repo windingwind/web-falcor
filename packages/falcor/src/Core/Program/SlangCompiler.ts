@@ -26,6 +26,8 @@ export enum ShaderType {
 export interface EntryPointDesc {
     name: string;
     type: ShaderType;
+    /** Index into the program's module list (default 0). */
+    moduleIndex?: number;
 }
 
 export interface CompileResult {
@@ -180,32 +182,41 @@ export class SlangCompiler {
     }
 
     /**
-     * Compiles a program (single entry module importing others) to WGSL + reflection.
-     * Mirrors ProgramManager::createProgramKernels' compile request.
+     * Compiles a program (one or more source modules + entry points) to WGSL +
+     * reflection. Mirrors ProgramManager::createProgramKernels' compile request;
+     * multiple modules cover Falcor's multi-translation-unit programs (e.g.
+     * FullScreenPass.vs.slang + user pixel shader).
      */
-    compile(entrySourcePath: string, entryPoints: EntryPointDesc[], defines = new DefineList()): CompileResult {
+    compile(modulePaths: string | string[], entryPoints: EntryPointDesc[], defines = new DefineList()): CompileResult {
+        const paths = typeof modulePaths === "string" ? [modulePaths] : modulePaths;
         const slang = slangInstance!;
         const session = this.getSession(defines);
-        const source = this.resolveSource(entrySourcePath);
-        if (source === undefined) throw new RuntimeError(`Shader source not found: ${entrySourcePath}`);
-        const moduleName = entrySourcePath.replace(/[/.]/g, "_");
         const header = defines.toHeader();
-        const rewritten = this.rewriteIncludes(source, entrySourcePath);
-        const module = session.loadModuleFromSource(`${header}#line 1 "${entrySourcePath}"\n${rewritten}`, moduleName, `/${entrySourcePath}`);
-        if (!module) {
-            const err = slang.getLastError();
-            throw new RuntimeError(`Slang compilation failed for ${entrySourcePath}:\n${err.type}: ${err.message}`);
-        }
-        const eps: SlangComponentApi[] = [];
-        for (const ep of entryPoints) {
-            const found = module.findAndCheckEntryPoint(ep.name, ep.type);
+
+        const modules: (SlangModuleApi & SlangComponentApi)[] = paths.map((path) => {
+            const source = this.resolveSource(path);
+            if (source === undefined) throw new RuntimeError(`Shader source not found: ${path}`);
+            const rewritten = this.rewriteIncludes(source, path);
+            const moduleName = path.replace(/[/.]/g, "_");
+            const module = session.loadModuleFromSource(`${header}#line 1 "${path}"\n${rewritten}`, moduleName, `/${path}`);
+            if (!module) {
+                const err = slang.getLastError();
+                throw new RuntimeError(`Slang compilation failed for ${path}:\n${err.type}: ${err.message}`);
+            }
+            return module;
+        });
+
+        const eps: SlangComponentApi[] = entryPoints.map((ep) => {
+            const moduleIndex = ep.moduleIndex ?? 0;
+            const found = modules[moduleIndex]!.findAndCheckEntryPoint(ep.name, ep.type);
             if (!found) {
                 const err = slang.getLastError();
-                throw new RuntimeError(`Entry point '${ep.name}' not found in ${entrySourcePath}:\n${err.type}: ${err.message}`);
+                throw new RuntimeError(`Entry point '${ep.name}' not found in ${paths[moduleIndex]}:\n${err.type}: ${err.message}`);
             }
-            eps.push(found);
-        }
-        const composite = session.createCompositeComponentType([module, ...eps]);
+            return found;
+        });
+
+        const composite = session.createCompositeComponentType([...modules, ...eps]);
         const linked = composite.link();
         const entryPointCode = entryPoints.map((_ep, i) => linked.getEntryPointCode(i, 0));
         const layout = linked.getLayout(0);

@@ -12,8 +12,13 @@ import { ProgramReflection, parseWgslBindings, type WgslBinding } from "./Progra
 import { RuntimeError } from "../Error.js";
 
 export interface ProgramDesc {
-    /** Shader path relative to the shader root, e.g. "RenderPasses/ToneMapper/ToneMapper.cs.slang". */
-    path: string;
+    /**
+     * Shader module path(s) relative to the shader root, e.g.
+     * "RenderPasses/ToneMapper/ToneMapper.cs.slang". Multiple modules mirror
+     * Falcor's multi-translation-unit programs; entry points reference modules
+     * via moduleIndex.
+     */
+    path: string | string[];
     entryPoints: EntryPointDesc[];
 }
 
@@ -32,9 +37,9 @@ export class ProgramVersion {
         public readonly kernels: EntryPointKernel[],
     ) {}
 
-    getKernel(name: string): EntryPointKernel {
-        const k = this.kernels.find((k) => k.name === name);
-        if (!k) throw new RuntimeError(`No kernel '${name}' in program version`);
+    getKernel(name: string, type?: ShaderType): EntryPointKernel {
+        const k = this.kernels.find((k) => k.name === name && (type === undefined || k.type === type));
+        if (!k) throw new RuntimeError(`No kernel '${name}'${type !== undefined ? ` of stage ${ShaderType[type]}` : ""} in program version`);
         return k;
     }
 }
@@ -106,7 +111,7 @@ export class ProgramManager {
                 name: ep.name,
                 type: ep.type,
                 wgsl,
-                module: this.device.gpuDevice.createShaderModule({ label: `${desc.path}:${ep.name}`, code: wgsl }),
+                module: this.device.gpuDevice.createShaderModule({ label: `${String(desc.path)}:${ep.name}`, code: wgsl }),
                 bindings: parseWgslBindings(wgsl, shaderTypeToVisibility(ep.type)),
             };
         });

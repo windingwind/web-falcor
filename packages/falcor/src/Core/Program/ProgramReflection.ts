@@ -160,6 +160,27 @@ export function parseWgslBindings(wgsl: string, visibility: GPUShaderStageFlags)
     return bindings;
 }
 
+/**
+ * Merges per-entry-point WGSL binding lists (e.g. VS + PS of one program) into
+ * one list with OR'd visibility — linked Slang programs emit consistent
+ * @group/@binding assignments across entry points.
+ */
+export function mergeWgslBindings(...lists: WgslBinding[][]): WgslBinding[] {
+    const merged = new Map<string, WgslBinding>();
+    for (const list of lists) {
+        for (const b of list) {
+            const key = `${b.group}:${b.binding}`;
+            const existing = merged.get(key);
+            if (existing) {
+                existing.layoutEntry.visibility |= b.layoutEntry.visibility;
+            } else {
+                merged.set(key, { ...b, layoutEntry: { ...b.layoutEntry } });
+            }
+        }
+    }
+    return [...merged.values()];
+}
+
 function wgslDimToView(dim: string): GPUTextureViewDimension {
     switch (dim) {
         case "1d": return "1d";

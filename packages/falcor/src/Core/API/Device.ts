@@ -91,6 +91,10 @@ export class Device {
         gpuDevice.lost.then((info) => {
             Logger.error(`GPU device lost: ${info.reason} - ${info.message}`);
         });
+        // Mirrors Falcor's debug-layer message callback.
+        gpuDevice.addEventListener("uncapturederror", (ev) => {
+            console.error(`WebGPU uncaptured error: ${(ev as GPUUncapturedErrorEvent).error.message}`);
+        });
 
         const device = new Device(adapter, gpuDevice, desc);
         Logger.info(`Created WebGPU device (features: ${features.join(", ") || "none"})`);
