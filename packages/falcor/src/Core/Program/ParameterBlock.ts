@@ -146,9 +146,34 @@ export class ParameterBlock {
             if (arr.length !== count) throw new ArgumentError(`Expected ${count} components for '${member.name}', got ${arr.length}`);
             for (let i = 0; i < count; i++) write(offset + i * 4, scalarType, arr[i]!);
         } else if (type.kind === "matrix") {
-            // Row-major float4x4 etc. — full matrix support (padding rules) lands with M3 math lib.
-            const arr = value as ArrayLike<number>;
-            for (let i = 0; i < arr.length; i++) write(offset + i * 4, "float32", arr[i]!);
+            // Host convention is row-major (Falcor). Slang's WGSL emission stores
+            // HLSL floatRxC as an array of R vec4-aligned rows and swaps mul()
+            // operand order itself — so bytes go out row-major with 16-byte row
+            // stride (GPU-verified against mul(M, v) for float4x4; the _ColMajor
+            // suffix in emitted type names refers to the transposed WGSL-side
+            // matrix dims, not the byte order).
+            const maybe = value as { toArray?: () => Float32Array };
+            const arr = (typeof maybe?.toArray === "function" ? maybe.toArray() : value) as ArrayLike<number>;
+            const rows = type.rowCount ?? 4;
+            const cols = type.columnCount ?? 4;
+            if (arr.length !== rows * cols) {
+                throw new ArgumentError(`Expected ${rows * cols} floats for '${member.name}' (float${rows}x${cols}), got ${arr.length}`);
+            }
+            // Element layout by size signature: square/row-count-many elements store
+            // rows (GPU-verified for float4x4); otherwise elements are columns
+            // (e.g. float3x4 -> 4 elements x 16B = 64B, columns of 3).
+            const size = member.byteSize > 0 ? member.byteSize : rows * 16;
+            if (size === rows * 16) {
+                for (let r = 0; r < rows; r++) {
+                    for (let c = 0; c < cols; c++) write(offset + r * 16 + c * 4, "float32", arr[r * cols + c]!);
+                }
+            } else if (size === cols * 16) {
+                for (let r = 0; r < rows; r++) {
+                    for (let c = 0; c < cols; c++) write(offset + c * 16 + r * 4, "float32", arr[r * cols + c]!);
+                }
+            } else {
+                throw new RuntimeError(`Unexpected matrix layout for '${member.name}': float${rows}x${cols} in ${size} bytes`);
+            }
         } else {
             throw new RuntimeError(`Setting '${type.kind}' uniforms not implemented yet`);
         }

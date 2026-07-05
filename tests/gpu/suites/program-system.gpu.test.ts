@@ -3,8 +3,34 @@
  * an unmodified-Falcor-shader-library kernel compiled at runtime by slang-wasm.
  */
 
-import { ComputePass, MemoryType, ResourceBindFlags } from "@web-falcor/falcor";
-import { gpuTest, expectEq, expectClose } from "../harness/registry.js";
+import { ComputePass, MemoryType, ResourceBindFlags, float4x4, mulMatVec, float4 } from "@web-falcor/falcor";
+import { gpuTest, expectEq, expectClose, expectArrayClose } from "../harness/registry.js";
+
+gpuTest("ParameterBlock.matrixCbufferLayout", async ({ device }) => {
+    // Non-diagonal matrix through Slang's mul(): GPU result must match the
+    // CPU math library (verifies the ColMajor cbuffer transposition).
+    const pass = ComputePass.create(device, { path: "MatrixTest.cs.slang" });
+    const out = device.createStructuredBuffer(16, 1, ResourceBindFlags.UnorderedAccess | ResourceBindFlags.ShaderResource);
+
+    const m = float4x4.fromRows([
+        [1, 2, 3, 4],
+        [5, 6, 7, 8],
+        [9, 10, 11, 12],
+        [0, 0, 0, 1],
+    ]);
+    const p = new float4(0.5, -1.5, 2.5, 1);
+
+    const root = pass.getRootVar();
+    root["CB"]["gWorld"] = m;
+    root["CB"]["gPoint"] = p.toArray();
+    root["gOut"] = out;
+    pass.execute(device.renderContext, 1);
+
+    const gpu = new Float32Array((await out.getBlob()).buffer, 0, 4);
+    const cpu = mulMatVec(m, p);
+    expectArrayClose(gpu, cpu.toArray(), 1e-5, "mul(M, v) GPU vs CPU");
+    out.destroy();
+});
 
 gpuTest("ComputePass.falcorShaderRoundtrip", async ({ device }) => {
     // SanityCompute.cs.slang imports Utils.Math.MathHelpers + TinyUniformSampleGenerator

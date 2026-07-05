@@ -44,6 +44,7 @@ export * from "./RenderGraph/RenderGraph.js";
 export * from "./Utils/Properties.js";
 export * from "./Utils/Image/HDRDecoder.js";
 export * from "./Utils/Scripting/Scripting.js";
+export * from "./Scene/Camera/Camera.js";
 export * from "./Utils/Math/Vector.js";
 export * from "./Utils/Math/Matrix.js";
 export * from "./Utils/Math/Quaternion.js";

@@ -60,6 +60,8 @@ export interface SlangReflectionType {
     name?: string;
     baseShape?: string;
     elementCount?: number;
+    rowCount?: number;
+    columnCount?: number;
     scalarType?: string;
     elementType?: SlangReflectionType;
     resultType?: SlangReflectionType;
