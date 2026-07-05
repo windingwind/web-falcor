@@ -152,7 +152,7 @@ export interface AnalyticLight {
     intensity: float3;
 }
 
-export const kLightDataSize = 208; // 6x16B rows + 2x float4x4
+export const kLightDataSize = 224; // 6x16B rows + 2x 64B float4x4 (rows at 96/160)
 
 /** Packs LightData (LightData.slang layout; 16-byte rows, matrices identity). */
 export function packLights(lights: AnalyticLight[]): ArrayBuffer {
@@ -176,10 +176,10 @@ export function packLights(lights: AnalyticLight[]): ArrayBuffer {
         dv.setFloat32(base + 44, -1, true); // cosOpeningAngle
         dv.setFloat32(base + 48, 0.9999893, true); // cosSubtendedAngle
         dv.setFloat32(base + 52, 0, true); // penumbraAngle
-        // rows 4-5: tangent/surfaceArea/bitangent zeroed; matrices identity.
+        // rows 4-5 (tangent/surfaceArea/bitangent) zeroed; matrices identity at 96/160.
         for (let m = 0; m < 2; m++) {
-            const mBase = base + 80 + m * 64;
-            for (let d = 0; d < 4; d++) dv.setFloat32(mBase + d * 20, 1, true); // diagonal (stride 16+4)
+            const mBase = base + 96 + m * 64;
+            for (let d = 0; d < 4; d++) dv.setFloat32(mBase + d * 20, 1, true); // diagonal (row stride 16 + 4)
         }
     });
     return buffer;

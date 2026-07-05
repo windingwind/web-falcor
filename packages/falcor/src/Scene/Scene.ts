@@ -147,7 +147,7 @@ export class Scene {
 
         // Analytic lights.
         this.lightCount = lights.length;
-        make("lights", packLights(lights), 208);
+        make("lights", packLights(lights), 224);
 
         // Materials.
         this.materialCount = materials.length;
@@ -212,6 +212,7 @@ export class Scene {
             WEBFALCOR_MTL_STANDARD: 1,
             SCENE_DIFFUSE_ALBEDO_MULTIPLIER: "1.0",
             FALCOR_NVAPI_AVAILABLE: 0,
+            SAMPLE_GENERATOR_TYPE: 0, // TinyUniform (SampleGeneratorType.slangh)
         });
     }
 

@@ -13,7 +13,7 @@ import { float2, float3, float4 } from "../../Utils/Math/Vector.js";
 import { float4x4, mulMat, matrixFromTranslation, matrixFromScaling } from "../../Utils/Math/Matrix.js";
 import { matrixFromQuat, quatf } from "../../Utils/Math/Quaternion.js";
 import { RuntimeError } from "../../Core/Error.js";
-import type { StaticVertex } from "../SceneData.js";
+import type { AnalyticLight, StaticVertex } from "../SceneData.js";
 
 interface GltfJson {
     asset: { version: string };
@@ -51,14 +51,14 @@ const kTypeComponents: Record<string, number> = { SCALAR: 1, VEC2: 2, VEC3: 3, V
 
 export class GltfImporter {
     /** Imports a .gltf (JSON, embedded/external buffers) or .glb from a URL. */
-    static async importFromUrl(device: Device, url: string): Promise<Scene> {
+    static async importFromUrl(device: Device, url: string, lights: AnalyticLight[] = []): Promise<Scene> {
         const response = await fetch(url);
         if (!response.ok) throw new RuntimeError(`GltfImporter: failed to fetch '${url}' (${response.status})`);
         const bytes = new Uint8Array(await response.arrayBuffer());
-        return GltfImporter.importFromBytes(device, bytes, url);
+        return GltfImporter.importFromBytes(device, bytes, url, lights);
     }
 
-    static async importFromBytes(device: Device, bytes: Uint8Array, baseUrl = ""): Promise<Scene> {
+    static async importFromBytes(device: Device, bytes: Uint8Array, baseUrl = "", lights: AnalyticLight[] = []): Promise<Scene> {
         let json: GltfJson;
         let binChunk: Uint8Array | null = null;
 
@@ -201,6 +201,6 @@ export class GltfImporter {
         for (const rootNode of sceneDef?.nodes ?? []) visit(rootNode, float4x4.identity());
         if (meshDescs.length === 0) throw new RuntimeError("GltfImporter: no triangle meshes found");
 
-        return new Scene(device, meshDescs, materials);
+        return new Scene(device, meshDescs, materials, lights);
     }
 }
