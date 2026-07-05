@@ -13,6 +13,7 @@ async function initProgramSystem(device: Device): Promise<void> {
         falcorFiles: string[];
         renderPassFiles: string[];
         localFiles: string[];
+        externalFiles?: { path: string; url: string }[];
     };
     const sources = new Map<string, string>();
     const missing: string[] = [];
@@ -29,6 +30,11 @@ async function initProgramSystem(device: Device): Promise<void> {
         fetchInto("/Falcor/Source/Falcor", list.falcorFiles),
         fetchInto("/Falcor/Source", list.renderPassFiles),
         fetchInto("/packages/falcor/shaders", list.localFiles),
+        ...(list.externalFiles ?? []).map(async ({ path, url }) => {
+            const res = await fetch(url);
+            if (res.ok) sources.set(path, await res.text());
+            else missing.push(`${url} (${res.status})`);
+        }),
     ]);
     if (missing.length > 0) {
         console.error(`shader registry: ${missing.length} files failed to fetch; first: ${missing.slice(0, 3).join(", ")}`);

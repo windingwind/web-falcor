@@ -31,11 +31,14 @@ function walk(dir, filter) {
 
 const isShader = (name) => name.endsWith(".slang") || name.endsWith(".slangh");
 
+// External headers included by upstream shaders (served via /Falcor/external symlink targets).
+const externalFiles = [{ path: "nanovdb/PNanoVDB.h", url: "/Falcor/external/packman/nanovdb/include/nanovdb/PNanoVDB.h" }];
+
 const falcorFiles = walk(falcorRoot, isShader).map((p) => relative(falcorRoot, p).replaceAll("\\", "/"));
 const renderPassFiles = walk(renderPassesRoot, isShader).map((p) => "RenderPasses/" + relative(renderPassesRoot, p).replaceAll("\\", "/"));
 const localFiles = walk(localRoot, isShader).map((p) => relative(localRoot, p).replaceAll("\\", "/"));
 
 const outDir = join(localRoot, "generated");
 mkdirSync(outDir, { recursive: true });
-writeFileSync(join(outDir, "shader-file-list.json"), JSON.stringify({ falcorFiles, renderPassFiles, localFiles }, null, 1));
-console.log(`shader-file-list.json: ${falcorFiles.length} Falcor + ${renderPassFiles.length} render-pass + ${localFiles.length} local shader files`);
+writeFileSync(join(outDir, "shader-file-list.json"), JSON.stringify({ falcorFiles, renderPassFiles, localFiles, externalFiles }, null, 1));
+console.log(`shader-file-list.json: ${falcorFiles.length} Falcor + ${renderPassFiles.length} render-pass + ${localFiles.length} local + ${externalFiles.length} external shader files`);
