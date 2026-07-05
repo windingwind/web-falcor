@@ -28,4 +28,11 @@ export const kShaderOverrides: Readonly<Record<string, string>> = {
     "Scene/Material/TextureSampler.slang": "WebFalcor/Overrides/Scene/Material/TextureSampler.slang",
     "Scene/Scene.slang": "WebFalcor/Overrides/Scene/Scene.slang",
     "Scene/SceneTypes.slang": "WebFalcor/Overrides/Scene/SceneTypes.slang",
+    // Newer-Slang '= {}' / brace-init fixes + WGSL raster-path gaps.
+    "Scene/Material/MaterialFactory.slang": "WebFalcor/Overrides/Scene/Material/MaterialFactory.slang",
+    "Scene/Raster.slang": "WebFalcor/Overrides/Scene/Raster.slang",
+    "Rendering/Materials/StandardMaterial.slang": "WebFalcor/Overrides/Rendering/Materials/StandardMaterial.slang",
+    "Rendering/Materials/IMaterial.slang": "WebFalcor/Overrides/Rendering/Materials/IMaterial.slang",
+    // SV_PrimitiveID/SV_Barycentrics/[earlydepthstencil] absent from WGSL; static material dispatch.
+    "RenderPasses/GBuffer/GBuffer/GBufferRaster.3d.slang": "WebFalcor/Overrides/RenderPasses/GBuffer/GBuffer/GBufferRaster.3d.slang",
 };
