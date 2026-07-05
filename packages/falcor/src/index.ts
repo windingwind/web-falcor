@@ -51,5 +51,6 @@ export * from "./Utils/Math/Quaternion.js";
 export * from "./Utils/SampleGenerators/CPUSampleGenerator.js";
 export * from "./Utils/Logger.js";
 export * from "./Scene/Scene.js";
+export * from "./Scene/Importer/GltfImporter.js";
 export * from "./Scene/SceneData.js";
 export * from "./Scene/Material/MaterialData.js";

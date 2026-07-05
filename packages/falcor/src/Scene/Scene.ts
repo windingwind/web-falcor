@@ -32,6 +32,8 @@ export interface SceneMeshDesc {
     vertices: StaticVertex[];
     indices: Uint32Array;
     materialID: number;
+    /** World transform (row-major float4x4); identity if omitted. */
+    transform?: float4x4;
 }
 
 export interface SceneMaterialDesc {
@@ -76,7 +78,7 @@ export class Scene {
             });
             instances.push({
                 type: GeometryType.TriangleMesh,
-                globalMatrixID: 0,
+                globalMatrixID: meshID,
                 materialID: mesh.materialID,
                 geometryID: meshID,
                 vbOffset,
@@ -108,10 +110,16 @@ export class Scene {
         make("meshes", packMeshDescs(meshDescs), 32);
         make("geometryInstances", packGeometryInstances(instances), 32);
 
-        // Node transforms (identity, single node).
-        const identity = float4x4.identity();
-        make("worldMatrices", identity.toArray(), 64);
-        make("inverseTransposeWorldMatrices", transpose(inverse(identity)).toArray(), 64);
+        // Node transforms: one node per mesh (globalMatrixID == mesh index).
+        const world = new Float32Array(meshes.length * 16);
+        const invT = new Float32Array(meshes.length * 16);
+        meshes.forEach((mesh, i) => {
+            const m = mesh.transform ?? float4x4.identity();
+            world.set(m.toArray(), i * 16);
+            invT.set(transpose(inverse(m)).toArray(), i * 16);
+        });
+        make("worldMatrices", world, 64);
+        make("inverseTransposeWorldMatrices", invT, 64);
 
         // Materials.
         this.materialCount = materials.length;

@@ -1,0 +1,206 @@
+/**
+ * glTF 2.0 importer (Scene/Importer) — the web-native scene format
+ * (native Falcor loads the same files via Assimp, enabling oracle comparison).
+ *
+ * v1 scope: static triangle meshes (POSITION/NORMAL/TANGENT/TEXCOORD_0,
+ * u16/u32 indices), node-hierarchy transforms, pbrMetallicRoughness factors.
+ * Textures land with the TextureManager packing work; skinning in M7.
+ */
+
+import type { Device } from "../../Core/API/Device.js";
+import { Scene, type SceneMaterialDesc, type SceneMeshDesc } from "../Scene.js";
+import { float2, float3, float4 } from "../../Utils/Math/Vector.js";
+import { float4x4, mulMat, matrixFromTranslation, matrixFromScaling } from "../../Utils/Math/Matrix.js";
+import { matrixFromQuat, quatf } from "../../Utils/Math/Quaternion.js";
+import { RuntimeError } from "../../Core/Error.js";
+import type { StaticVertex } from "../SceneData.js";
+
+interface GltfJson {
+    asset: { version: string };
+    scene?: number;
+    scenes?: { nodes: number[] }[];
+    nodes?: {
+        mesh?: number;
+        children?: number[];
+        matrix?: number[];
+        translation?: number[];
+        rotation?: number[];
+        scale?: number[];
+    }[];
+    meshes?: { primitives: GltfPrimitive[] }[];
+    accessors?: { bufferView?: number; byteOffset?: number; componentType: number; count: number; type: string }[];
+    bufferViews?: { buffer: number; byteOffset?: number; byteLength: number; byteStride?: number }[];
+    buffers?: { uri?: string; byteLength: number }[];
+    materials?: {
+        name?: string;
+        pbrMetallicRoughness?: { baseColorFactor?: number[]; metallicFactor?: number; roughnessFactor?: number };
+        emissiveFactor?: number[];
+        doubleSided?: boolean;
+    }[];
+}
+
+interface GltfPrimitive {
+    attributes: Record<string, number>;
+    indices?: number;
+    material?: number;
+    mode?: number;
+}
+
+const kComponentSize: Record<number, number> = { 5120: 1, 5121: 1, 5122: 2, 5123: 2, 5125: 4, 5126: 4 };
+const kTypeComponents: Record<string, number> = { SCALAR: 1, VEC2: 2, VEC3: 3, VEC4: 4, MAT4: 16 };
+
+export class GltfImporter {
+    /** Imports a .gltf (JSON, embedded/external buffers) or .glb from a URL. */
+    static async importFromUrl(device: Device, url: string): Promise<Scene> {
+        const response = await fetch(url);
+        if (!response.ok) throw new RuntimeError(`GltfImporter: failed to fetch '${url}' (${response.status})`);
+        const bytes = new Uint8Array(await response.arrayBuffer());
+        return GltfImporter.importFromBytes(device, bytes, url);
+    }
+
+    static async importFromBytes(device: Device, bytes: Uint8Array, baseUrl = ""): Promise<Scene> {
+        let json: GltfJson;
+        let binChunk: Uint8Array | null = null;
+
+        if (bytes[0] === 0x67 && bytes[1] === 0x6c && bytes[2] === 0x54 && bytes[3] === 0x46) {
+            // GLB container: 12-byte header, then chunks (JSON, BIN).
+            const dv = new DataView(bytes.buffer, bytes.byteOffset);
+            let offset = 12;
+            let jsonText = "";
+            while (offset < bytes.byteLength) {
+                const chunkLength = dv.getUint32(offset, true);
+                const chunkType = dv.getUint32(offset + 4, true);
+                const chunk = bytes.subarray(offset + 8, offset + 8 + chunkLength);
+                if (chunkType === 0x4e4f534a) jsonText = new TextDecoder().decode(chunk);
+                else if (chunkType === 0x004e4942) binChunk = chunk;
+                offset += 8 + chunkLength + ((4 - (chunkLength % 4)) % 4);
+            }
+            json = JSON.parse(jsonText);
+        } else {
+            json = JSON.parse(new TextDecoder().decode(bytes));
+        }
+
+        // Resolve buffers (GLB bin chunk, data: URIs, or relative fetches).
+        const buffers: Uint8Array[] = [];
+        for (const buf of json.buffers ?? []) {
+            if (!buf.uri) {
+                if (!binChunk) throw new RuntimeError("GltfImporter: buffer without uri and no GLB bin chunk");
+                buffers.push(binChunk);
+            } else if (buf.uri.startsWith("data:")) {
+                const base64 = buf.uri.slice(buf.uri.indexOf(",") + 1);
+                const bin = atob(base64);
+                const out = new Uint8Array(bin.length);
+                for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+                buffers.push(out);
+            } else {
+                const bufUrl = new URL(buf.uri, new URL(baseUrl, "http://x/")).pathname;
+                const res = await fetch(bufUrl);
+                if (!res.ok) throw new RuntimeError(`GltfImporter: failed to fetch buffer '${bufUrl}'`);
+                buffers.push(new Uint8Array(await res.arrayBuffer()));
+            }
+        }
+
+        const readAccessor = (index: number): Float32Array | Uint32Array => {
+            const acc = json.accessors![index]!;
+            const view = json.bufferViews![acc.bufferView!]!;
+            const buffer = buffers[view.buffer]!;
+            const components = kTypeComponents[acc.type]!;
+            const compSize = kComponentSize[acc.componentType]!;
+            const stride = view.byteStride ?? components * compSize;
+            const base = buffer.byteOffset + (view.byteOffset ?? 0) + (acc.byteOffset ?? 0);
+
+            if (acc.componentType === 5126) {
+                const out = new Float32Array(acc.count * components);
+                const dv = new DataView(buffer.buffer);
+                for (let i = 0; i < acc.count; i++) {
+                    for (let c = 0; c < components; c++) out[i * components + c] = dv.getFloat32(base + i * stride + c * 4, true);
+                }
+                return out;
+            }
+            const out = new Uint32Array(acc.count * components);
+            const dv = new DataView(buffer.buffer);
+            for (let i = 0; i < acc.count; i++) {
+                for (let c = 0; c < components; c++) {
+                    out[i * components + c] =
+                        compSize === 4 ? dv.getUint32(base + i * stride + c * 4, true)
+                        : compSize === 2 ? dv.getUint16(base + i * stride + c * 2, true)
+                        : dv.getUint8(base + i * stride + c);
+                }
+            }
+            return out;
+        };
+
+        // Materials (pbrMetallicRoughness factors; MetalRough encoding: specular = (occlusion, roughness, metallic)).
+        const materials: SceneMaterialDesc[] = (json.materials ?? []).map((m) => {
+            const pbr = m.pbrMetallicRoughness ?? {};
+            const bc = pbr.baseColorFactor ?? [1, 1, 1, 1];
+            const emissive = m.emissiveFactor ?? [0, 0, 0];
+            return {
+                header: { doubleSided: m.doubleSided ?? false },
+                basic: {
+                    baseColor: new float4(bc[0]!, bc[1]!, bc[2]!, bc[3]!),
+                    specular: new float4(1, pbr.roughnessFactor ?? 1, pbr.metallicFactor ?? 1, 0),
+                    emissive: new float3(emissive[0]!, emissive[1]!, emissive[2]!),
+                },
+            };
+        });
+        if (materials.length === 0) materials.push({ basic: { baseColor: new float4(1, 1, 1, 1) } });
+
+        // Flatten the node hierarchy, collecting world transforms per mesh instance.
+        const meshDescs: SceneMeshDesc[] = [];
+        const nodeTransform = (node: NonNullable<GltfJson["nodes"]>[number]): float4x4 => {
+            if (node.matrix) {
+                // glTF matrices are column-major.
+                const m = new float4x4();
+                for (let c = 0; c < 4; c++) for (let r = 0; r < 4; r++) m.set(r, c, node.matrix[c * 4 + r]!);
+                return m;
+            }
+            const t = node.translation ?? [0, 0, 0];
+            const r = node.rotation ?? [0, 0, 0, 1];
+            const s = node.scale ?? [1, 1, 1];
+            return mulMat(
+                matrixFromTranslation(new float3(t[0]!, t[1]!, t[2]!)),
+                mulMat(matrixFromQuat(new quatf(r[0]!, r[1]!, r[2]!, r[3]!)), matrixFromScaling(new float3(s[0]!, s[1]!, s[2]!))),
+            );
+        };
+
+        const visit = (nodeIndex: number, parent: float4x4) => {
+            const node = json.nodes![nodeIndex]!;
+            const world = mulMat(parent, nodeTransform(node));
+            if (node.mesh !== undefined) {
+                for (const prim of json.meshes![node.mesh]!.primitives) {
+                    if ((prim.mode ?? 4) !== 4) continue; // triangles only
+                    const pos = readAccessor(prim.attributes["POSITION"]!) as Float32Array;
+                    const count = pos.length / 3;
+                    const normals = prim.attributes["NORMAL"] !== undefined ? (readAccessor(prim.attributes["NORMAL"]) as Float32Array) : null;
+                    const tangents = prim.attributes["TANGENT"] !== undefined ? (readAccessor(prim.attributes["TANGENT"]) as Float32Array) : null;
+                    const uvs = prim.attributes["TEXCOORD_0"] !== undefined ? (readAccessor(prim.attributes["TEXCOORD_0"]) as Float32Array) : null;
+
+                    const vertices: StaticVertex[] = [];
+                    for (let i = 0; i < count; i++) {
+                        vertices.push({
+                            position: new float3(pos[i * 3]!, pos[i * 3 + 1]!, pos[i * 3 + 2]!),
+                            normal: normals ? new float3(normals[i * 3]!, normals[i * 3 + 1]!, normals[i * 3 + 2]!) : new float3(0, 0, 1),
+                            tangent: tangents
+                                ? new float4(tangents[i * 4]!, tangents[i * 4 + 1]!, tangents[i * 4 + 2]!, tangents[i * 4 + 3]!)
+                                : new float4(1, 0, 0, 1),
+                            texCrd: uvs ? new float2(uvs[i * 2]!, uvs[i * 2 + 1]!) : new float2(0, 0),
+                        });
+                    }
+                    const indices =
+                        prim.indices !== undefined
+                            ? new Uint32Array(readAccessor(prim.indices))
+                            : new Uint32Array(Array.from({ length: count }, (_v, i) => i));
+                    meshDescs.push({ vertices, indices, materialID: prim.material ?? 0, transform: world });
+                }
+            }
+            for (const child of node.children ?? []) visit(child, world);
+        };
+
+        const sceneDef = json.scenes?.[json.scene ?? 0];
+        for (const rootNode of sceneDef?.nodes ?? []) visit(rootNode, float4x4.identity());
+        if (meshDescs.length === 0) throw new RuntimeError("GltfImporter: no triangle meshes found");
+
+        return new Scene(device, meshDescs, materials);
+    }
+}
