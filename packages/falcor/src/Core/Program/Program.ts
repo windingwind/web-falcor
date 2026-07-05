@@ -136,6 +136,14 @@ export class ProgramManager {
                 float16_t4: "float4",
             });
         }
+        // WGSL has no 16-bit integers at all (PathState.rejectedHits etc.);
+        // demote unconditionally — packing code masks to 16 bits already.
+        this.globalDefines.addAll({
+            uint16_t: "uint",
+            uint16_t2: "uint2",
+            uint16_t4: "uint4",
+            int16_t: "int",
+        });
     }
 
     createProgram(desc: ProgramDesc, defines = new DefineList()): Program {

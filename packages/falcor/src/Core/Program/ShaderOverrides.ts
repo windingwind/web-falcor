@@ -42,6 +42,9 @@ export const kShaderOverrides: Readonly<Record<string, string>> = {
     "RenderPasses/GBuffer/VBuffer/VBufferRT.slang": "WebFalcor/Overrides/RenderPasses/GBuffer/VBuffer/VBufferRT.slang",
     // RT pipeline -> compute megakernel over SceneRayQuery (DESIGN.md §5).
     "RenderPasses/MinimalPathTracer/MinimalPathTracer.rt.slang": "WebFalcor/Overrides/RenderPasses/MinimalPathTracer/MinimalPathTracer.rt.slang",
+    // Full PathTracer: '= {}' fixes + RT pipeline -> compute megakernel over SceneRayQuery.
+    "RenderPasses/PathTracer/PathTracer.slang": "WebFalcor/Overrides/RenderPasses/PathTracer/PathTracer.slang",
+    "RenderPasses/PathTracer/TracePass.rt.slang": "WebFalcor/Overrides/RenderPasses/PathTracer/TracePass.rt.slang",
     // Newer-Slang nested brace-init fix.
     "Rendering/Materials/PBRT/PBRTConductorMaterial.slang": "WebFalcor/Overrides/Rendering/Materials/PBRT/PBRTConductorMaterial.slang",
     // WGSL has no 64-bit integers: SplitMix64 state emulated as uint2 (lo, hi), bit-identical sequences.
