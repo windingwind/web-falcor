@@ -384,6 +384,7 @@ more than 0.05). Suite: `npm run test:gpu` (53 GPU tests + 23 unit green).
 | upstream image test `SplitScreen.py` (jpg ×2 raw/sRGB, PNG oracle) | interactive split (headless no-mouse state) | sRGB MSE 4.4e-5 † | max 22 bytes |
 | upstream image test `ModulateIllumination.py` (jpg+png, EXR oracle) | optional-input compositing (radiance × reflectance) | 1.1e-3 † | 10 px > 0.02 |
 | upstream image test `SimplePostFX.py` (hdr, PNG oracle) | bloom pyramid + star + CA + barrel + grading, all params non-default | sRGB MSE 1.1e-3 ⚠ | edge-localized: border sampling emulated in-shader (no border mode in WebGPU); HW TMU sub-texel precision differs, compounds over the 8-level pyramid |
+| upstream image test `FLIPPass.py` (jpg raw vs sRGB, PNG oracle) | full FLIP perceptual metric (CIELab/CSF, magma display map) | byte MSE 6.7e-5 | max 10 bytes |
 
 † residual is entirely the jpg *input decode* (browser vs FreeImage IDCT/chroma
 upsampling, ≤3 sRGB LSB): the png-fed pixels contribute zero error (Composite
@@ -400,10 +401,10 @@ output is diffed against native Mogwai running the same file.
 
 | Status | Count | Graphs |
 |---|---|---|
-| ✅ verified vs native | 11 | MinimalPathTracer, ToneMapping, VBufferRT, CompositePass, CrossFadePass, GaussianBlur, ColorMapPass, SideBySide, SplitScreen, ModulateIllumination, SimplePostFX |
+| ✅ verified vs native | 12 | MinimalPathTracer, ToneMapping, VBufferRT, CompositePass, CrossFadePass, GaussianBlur, ColorMapPass, SideBySide, SplitScreen, ModulateIllumination, SimplePostFX, FLIPPass |
 | 🟢 runnable now (passes exist; oracle pending) | 1 | VBufferRTInline (same pass; inline variant is our default) |
 | 🟡 needs PathTracer optional outputs + resolve pass | 5 | PathTracer, PathTracerAdaptive, PathTracerDielectrics, PathTracerMaterials, SDFEditorRenderGraphV2* |
-| 🟡 needs missing SMALL passes (ports are mechanical) | 2 | HalfRes (IOSize plumbing + scene), FLIPPass |
+| 🟡 needs missing SMALL passes (ports are mechanical) | 1 | HalfRes (IOSize plumbing + scene) |
 | 🟡 needs GBufferRaster extra channels / GBufferRT pass | 7 | GBufferRaster, GBufferRasterAlpha, GBufferRT, GBufferRTInline, GBufferRTTexGrads, MVecRT, MVecRaster |
 | 🟡 needs larger pass ports (M8 scope) | 7 | SVGF, TAA, VBufferRaster, VBufferRasterAlpha, BSDFViewer, WhittedRayTracer, SceneDebugger |
 | 🟡 M8 flagship items | 4 | RTXDI, WARDiffPathTracer ×3 |

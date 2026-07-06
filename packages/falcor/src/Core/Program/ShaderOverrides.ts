@@ -66,4 +66,6 @@ export const kShaderOverrides: Readonly<Record<string, string>> = {
     "RenderPasses/ModulateIllumination/ModulateIllumination.cs.slang": "WebFalcor/Overrides/RenderPasses/ModulateIllumination/ModulateIllumination.cs.slang",
     // Write-only gDst + gDstPrev ping-pong, uint gInPlace, border sampling emulated (no border mode in WebGPU).
     "RenderPasses/SimplePostFX/SimplePostFX.cs.slang": "WebFalcor/Overrides/RenderPasses/SimplePostFX/SimplePostFX.cs.slang",
+    // Write-only outputs + uniform bools -> uint.
+    "RenderPasses/FLIPPass/FLIPPass.cs.slang": "WebFalcor/Overrides/RenderPasses/FLIPPass/FLIPPass.cs.slang",
 };

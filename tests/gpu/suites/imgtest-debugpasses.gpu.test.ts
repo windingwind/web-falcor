@@ -82,6 +82,44 @@ gpuTest("ImageTestColorMap.matchesNativeOracle", async ({ device }) => {
     await compareToPngOracle(web, "oracle-imgtest-colormap.ColorMap.output.0.png", 2e-4);
 });
 
+gpuTest("ImageTestFLIP.matchesNativeOracle", async ({ device }) => {
+    // FLIP error map of jpg-raw vs jpg-sRGB. The output is RGBA8UnormSrgb, so
+    // web readback bytes compare directly against the native PNG bytes. The
+    // jpg decode residual hits test and reference images identically, so the
+    // metric largely cancels it.
+    const webBytes = await (async () => {
+        await initScripting("/node_modules/pyodide");
+        const source = await (await fetch(`/Falcor/tests/image_tests/renderpasses/graphs/FLIPPass.py`)).text();
+        const [graph] = await runGraphScript(device, source);
+        await graph!.init();
+        graph!.onResize(size, size);
+        const ctx = device.renderContext;
+        graph!.execute(ctx);
+        return new Uint8Array((await ctx.readTextureSubresource(graph!.getOutput("FLIP.errorMapDisplay")!)).buffer);
+    })();
+
+    const blob = await (await fetch(`/tests/oracle/out-native/oracle-imgtest-flip.FLIP.errorMapDisplay.0.png`)).blob();
+    const bitmap = await createImageBitmap(blob, { colorSpaceConversion: "none" });
+    expectEq(bitmap.width, size, "oracle resolution");
+    const canvas = new OffscreenCanvas(size, size);
+    const c2d = canvas.getContext("2d", { willReadFrequently: true })!;
+    c2d.drawImage(bitmap, 0, 0);
+    const nat = c2d.getImageData(0, 0, size, size).data;
+
+    let mse = 0;
+    let maxDiff = 0;
+    for (let i = 0; i < size * size; i++) {
+        for (let ch = 0; ch < 3; ch++) {
+            const d = (webBytes[i * 4 + ch]! - nat[i * 4 + ch]!) / 255;
+            mse += d * d;
+            maxDiff = Math.max(maxDiff, Math.abs(d) * 255);
+        }
+    }
+    mse /= size * size * 3;
+    console.error(`# imgtestFLIP: mse=${mse.toExponential(2)} maxByteDiff=${maxDiff}`);
+    expectEq(mse < 5e-4, true, `byte MSE ${mse}`);
+});
+
 gpuTest("ImageTestSimplePostFX.matchesNativeOracle", async ({ device }) => {
     // hdr input through bloom pyramid + star + grading (all params non-default).
     // Residual (mse ~1.1e-3, edge-localized): border sampling is emulated
