@@ -43,6 +43,7 @@ export const kShaderOverrides: Readonly<Record<string, string>> = {
     // RT pipeline -> compute megakernel over SceneRayQuery (DESIGN.md §5).
     "RenderPasses/MinimalPathTracer/MinimalPathTracer.rt.slang": "WebFalcor/Overrides/RenderPasses/MinimalPathTracer/MinimalPathTracer.rt.slang",
     // Full PathTracer: '= {}' fixes + RT pipeline -> compute megakernel over SceneRayQuery.
+    "RenderPasses/PathTracer/GeneratePaths.cs.slang": "WebFalcor/Overrides/RenderPasses/PathTracer/GeneratePaths.cs.slang",
     "RenderPasses/PathTracer/PathTracer.slang": "WebFalcor/Overrides/RenderPasses/PathTracer/PathTracer.slang",
     "RenderPasses/PathTracer/TracePass.rt.slang": "WebFalcor/Overrides/RenderPasses/PathTracer/TracePass.rt.slang",
     // Newer-Slang nested brace-init fix.

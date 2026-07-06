@@ -89,7 +89,7 @@ struct PathTracer
     RWStructuredBuffer<GuideData> sampleGuideData;  ///< Output per-sample guide data.
     NRDBuffers outputNRD;                           ///< Output NRD data.
 
-    RWTexture2D<float4> outputColor;                ///< Output color buffer if kSamplesPerPixel == 1.
+    WTexture2D<float4> outputColor;                 ///< Output color buffer if kSamplesPerPixel == 1. WebFalcor: write-only (WGSL read_write is r32*-only).
 
     /*******************************************************************
                                 Static members
@@ -1178,7 +1178,7 @@ struct PathTracer
         if (kSamplesPerPixel == 1)
         {
             // Write color directly to frame buffer.
-            outputColor[pixel] = float4(path.L, 1.f);
+            outputColor.Store(pixel, float4(path.L, 1.f));
         }
         else
         {

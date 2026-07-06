@@ -61,7 +61,13 @@ function isResourceKind(type: SlangReflectionType | undefined): boolean {
 }
 
 function hasUniformContent(type: SlangReflectionType): boolean {
-    return (type.fields ?? []).some((f) => (f.binding as { kind?: string } | undefined)?.kind === "uniform");
+    // Fields mixing resources and uniforms expose a `bindings` array instead
+    // of a single `binding` (same shape as in ReflectionVar.findMember).
+    return (type.fields ?? []).some(
+        (f) =>
+            (f.binding as { kind?: string } | undefined)?.kind === "uniform" ||
+            (f as { bindings?: { kind: string }[] }).bindings?.some((b) => b.kind === "uniform"),
+    );
 }
 
 export class ParameterBlock {
@@ -90,6 +96,16 @@ export class ParameterBlock {
                 entries: wgslBindings.filter((b) => b.group === g).map((b) => b.layoutEntry),
             });
             this.groups.set(g, { layout, bindGroup: null, generation: -1 });
+        }
+
+        // Every WGSL binding must have a slot, or the bind group can never be
+        // completed (layout counts all bindings). Unmatched bindings indicate a
+        // reflection-path mapping gap — surface them loudly.
+        const slotBindings = new Set([...this.slots.values()].map((s) => s.binding));
+        for (const wb of wgslBindings) {
+            if (!slotBindings.has(wb)) {
+                console.error(`ParameterBlock: WGSL binding '${wb.name}' (group ${wb.group}, binding ${wb.binding}) has no reflection match; bind group will be incomplete`);
+            }
         }
     }
 
