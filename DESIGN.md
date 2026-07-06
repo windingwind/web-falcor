@@ -341,6 +341,35 @@ works; ecosystem differs).
 4. **Shader-compile CI gate**: every manifest entry must compile to WGSL and pass
    `wgpu`-level validation (via Chromium) on every commit.
 
+### 7.1 Verified oracle results (web vs native hardware DXR, same GPU)
+
+All comparisons render the identical scene/camera/seed natively (Mogwai
+`--headless`, hardware Vulkan RT) and on web (WebGPU compute + software BVH),
+then diff per-pixel (mean |Δ| over RGB; "bad" = pixels with any channel off by
+more than 0.05). Suite: `npm run test:gpu` (53 GPU tests + 23 unit green).
+
+| Oracle | Web pass under test | mean abs Δ | bad px (of 65536) |
+|---|---|---|---|
+| GBufferRT posW/texC | GBufferRaster (raster) | per-pixel match | 0 |
+| GBufferRT posW | SceneRayQuery primary rays | 4.4e-6 | 0 |
+| MinimalPathTracer, quad+point light | MinimalPathTracer (megakernel) | 9.5e-7 | 0 |
+| MinimalPathTracer, textured quad | + TextureManager array | 1.4e-6 | 0 |
+| MinimalPathTracer, env light+background | + EnvMap | 7.5e-5 | 0 |
+| MinimalPathTracer, emissive two-quad | + emissive surfaces | 1.5e-4 | 14 (silhouette) |
+| MinimalPathTracer, ClothMaterial | static material dispatch | 1.9e-5 | 0 |
+| MinimalPathTracer, HairMaterial (Chiang16) | static material dispatch | 1.3e-3 | 0 |
+| MinimalPathTracer, PBRTDiffuse | static material dispatch | 8.9e-6 | 0 |
+| MinimalPathTracer, PBRTConductor (aniso GGX) | static material dispatch | 2.9e-5 | 0 |
+| **PathTracer** (NEE+MIS, emissive uniform sampler) | full PathTracer port | 1.6e-4 | 13 (silhouette) |
+| **PathTracer**, env light | + EnvMapSampler importance sampling | 7.4e-5 | 0 |
+| **PathTracer**, emissive power sampler | + alias table (bit-replicated) | 1.6e-4 | 13 (silhouette) |
+| `.pyscene` importScene path (Pyodide) | SceneBuilder bridge | 9.5e-7 | 0 |
+| `.pyscene` builder-geometry path (Pyodide) | SceneBuilder bridge | 1.9e-5 | 0 |
+
+RNG parity is exact: TinyUniform (LCG+TEA) and xoshiro128** (SplitMix64 seeding
+emulated as paired u32) produce bit-identical streams, so 1-spp renders match
+native to float tolerance rather than statistically.
+
 ## 8. Feature parity matrix
 
 ### 8.1 Platform / Core capabilities
@@ -355,8 +384,8 @@ works; ecosystem differs).
 | Hardware RT (DXR pipelines, inline RayQuery, SBTs) | 🟡 | **No WebGPU ray tracing API exists.** Software LBVH + compute traversal + megakernel lowering (§5); semantics preserved, performance lower |
 | Shader Execution Reordering (NVAPI) | ❌ | NVIDIA hardware/driver feature; no web analog. No-op shim (perf-only) |
 | Wave/subgroup intrinsics | 🟡 | WebGPU `subgroups` feature where available; workgroup-shared fallback |
-| 64-bit shader integers/atomics | 🟡 | not in WGSL; paired-u32 emulation shim |
-| fp16 in shaders | ✅ | `shader-f16` (available on target hardware) |
+| 64-bit shader integers/atomics | 🟡 | not in WGSL; paired-u32 emulation shim (verified bit-identical: SplitMix64 seeding, xoshiro128** streams) |
+| fp16 in shaders | 🟡 | Chromium does not expose `shader-f16` on this host (driver supports it): token-level f16→f32 demotion; f16 rounding only at pack boundaries. 16-bit ints demoted likewise (absent from WGSL entirely) |
 | fp64 in shaders | ❌ | absent from WGSL entirely (native Falcor uses it in a few reduction/accumulation paths → those switch to compensated-f32 🟡) |
 | Bindless resources / unbounded descriptor arrays | 🟡 | not in browser WebGPU; texture-array packing per format class (§6.2), documented limits |
 | Indirect draw/dispatch | ✅ | WebGPU native (`drawIndirect`, `dispatchWorkgroupsIndirect`); ExecuteIndirect-style multi-draw 🟡 loop-emulated |
@@ -386,12 +415,12 @@ works; ecosystem differs).
 | FLIPPass | ✅ | pure compute |
 | GBuffer (GBufferRaster / GBufferRT / VBufferRaster / VBufferRT / DepthPass) | ✅ raster / 🟡 RT | RT variants via SoftwareRT (§5) |
 | ImageLoader | ✅ | EXR/DDS via WASM codecs |
-| MinimalPathTracer | 🟡 | SoftwareRT |
+| MinimalPathTracer | ✅ | SoftwareRT megakernel; oracle-verified (9.5e-7, §7.1) |
 | ModulateIllumination | ✅ | |
 | NRDPass | 🟡 | NRD shader source is public (HLSL) → genuine port attempted in M8 (ReBLUR/SIGMA subset); host SDK reimplemented in TS. SVGF ✅ available meanwhile (§11.4) |
 | OptixDenoiser | ❌ | requires CUDA+OptiX. Same substitutes as NRD |
 | OverlaySamplePass | ✅ | |
-| PathTracer | 🟡 | flagship; compute variant via SoftwareRT; NEE/MIS/LightBVH/EnvMap sampling/volumes all ✅ shader-side |
+| PathTracer | ✅ core | SoftwareRT megakernel, oracle-verified w/ NEE+MIS, Uniform/Power emissive samplers + EnvMapSampler (§7.1). v1 limits: fixed spp=1, no guide/NRD outputs, LightBVH sampler pending, volumes/SDF pending |
 | PixelInspectorPass | ✅ | |
 | RenderPassTemplate | ✅ | |
 | RTXDIPass | 🟡 | RTXDI SDK shaders are BSD-licensed & portable; visibility via SoftwareRT; scheduled after PathTracer |
@@ -438,14 +467,14 @@ works; ecosystem differs).
 | M | Scope | Exit criterion |
 |---|---|---|
 | **M0** ✔ | env: Falcor clone + native oracle build, Slang WGSL toolchain, workspace scaffold, shader pipeline PoC | done on this host |
-| **M1** | Core/API: Buffer/Texture/Sampler/Formats/Contexts/FBO/State/PSO caches, GpuMemoryHeap, GpuTimer, Fence | GPU unit tests green in headless Chromium |
-| **M2** | Program system: ProgramManager (AOT+slang-wasm), reflection, ParameterBlock/ShaderVar, ComputePass/RasterPass/FullScreenPass | Falcor's ParameterBlock unit tests ported & green |
-| **M3** | Utils: Math lib, Algorithm passes, Image IO, Profiler, PixelDebug, sample generators | ParallelReduction/PrefixSum/BitonicSort tests green |
-| **M4** | RenderGraph core + ResourceCache + **Pyodide graph-`.py` loader** (user decision §11.1); passes: ToneMapper, Blit, Accumulate, GaussianBlur, ImageLoader, DebugPasses | first upstream graph `.py` runs end-to-end in browser |
-| **M5** | Scene: SceneBuilder, **`.pyscene` import (Pyodide)**, glTF import, Camera, Lights, MaterialSystem (Standard), Animation/skinning; GBufferRaster/VBufferRaster + TAA + SVGF + SimplePostFX | ForwardRenderer-class graphs render; image-diff vs native within tolerance |
-| **M6** | SoftwareRT: LBVH build/refit, SceneRayQuery, RtAccelerationStructure API; VBufferRT, MinimalPathTracer, WhittedRayTracer | MinimalPathTracer image test within tolerance of native |
-| **M7** | Full material zoo (Hair/Cloth/MERL/RGL/PBRT), LightBVH/EnvMap samplers, GridVolumes, PathTracer (+NEE/MIS), SDF grids ×4, remaining passes | PathTracer + SDF image suites within tolerance |
-| **M8** | Mogwai UI (ImGui-wasm, RenderGraphUI, capture), Pyodide plugin, RTXDI, WARDiffPathTracer, Assimp/USD importers, WebGL2 raster subset (stretch) | upstream image-test graph suite pass-rate report; parity matrix finalized |
+| **M1** ✔ | Core/API: Buffer/Texture/Sampler/Formats/Contexts/FBO/State/PSO caches, GpuMemoryHeap, GpuTimer, Fence | GPU unit tests green (hardware WebGPU under Xvfb) |
+| **M2** ✔ | Program system: ProgramManager (slang-wasm), reflection, ParameterBlock/ShaderVar, ComputePass/RasterPass/FullScreenPass | ParameterBlock/program tests green |
+| **M3** ✔ | Utils: Math lib, Algorithm passes (ParallelReduction/PrefixSum), sample generators | algorithm tests green vs CPU refs (BitonicSort deferred: warp-32 assumptions) |
+| **M4** ✔ | RenderGraph core + **Pyodide graph-`.py` loader** (§11.1); ToneMapper, Blit, Accumulate, ImageLoader | unmodified upstream `ToneMapping.py` runs end-to-end in browser |
+| **M5** ✔ | Scene host driving unmodified upstream Scene.slang, glTF import, Camera, Lights, MaterialSystem (Standard); GBufferRaster | GBuffer matches native GBufferRT oracle per-pixel |
+| **M6** ✔ | SoftwareRT: CPU BVH, SceneRayQuery override; VBufferRT, MinimalPathTracer | MinimalPathTracer matches native hardware DXR at 9.5e-7 (§7.1) |
+| **M7** ✔ core | Material zoo (Cloth/Hair/PBRT ×6), LightCollection, EnvMap+EnvMapSampler, emissive Uniform/Power samplers, **full PathTracer**, **`.pyscene` on web** (§11.1) | PathTracer matches native at 1.6e-4; 15 oracle comparisons green (§7.1). Open: LightBVH sampler, MERL/RGL, GridVolumes, SDF grids ×4, animation/skinning |
+| **M8** | Mogwai UI (ImGui-wasm, RenderGraphUI, capture), RTXDI, NRD port, WARDiffPathTracer, Assimp/USD importers, WebGL2 raster subset (stretch) | upstream image-test graph suite pass-rate report; parity matrix finalized |
 
 ## 11. Resolved design questions (user decisions, 2026-07-05)
 
