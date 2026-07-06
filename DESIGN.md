@@ -389,6 +389,7 @@ more than 0.05). Suite: `npm run test:gpu` (53 GPU tests + 23 unit green).
 | volume-absorption isolation oracles (single + nested-priority cubes, IoR 1) | interior list + evalTransmittance vs analytic exp(-sigma d) | 1.2e-4 / 1.1e-4 | analytic-exact centers |
 | upstream image test `PathTracerMaterials.py` over its own upstream scene (material_test, 4 frames) | 99-material zoo: metallic/roughness/transmission/delta/thin/IoR/diffuseTransmission rows, emissive strips, heavy instancing | sRGB MSE 1.3e-4 | 377 @0.05 |
 | upstream image test `VBufferRTInline.py` — depth / viewW (mvec loose: native frame-0 prev-camera) | inline ray queries (the web-default path) | 1.1e-4 / 6.1e-5 | 0 / 0 |
+| upstream image tests `GBufferRT.py` + `GBufferRTInline.py` — 13 channels (posW/normW/tangentW/faceNormalW/texC/texGrads/depth/linearZ/guideNormalW/diffuseOpacity/specRough/emissive/viewW) | full RT G-buffer (ray differentials, material queries); channels split across ≤8-storage-texture dispatches (WebGPU per-stage cap) | texGrads + emissive byte-exact; rest 1e-7..2e-4 | 0 bad on all 13 (linearZ slope skipped where 0/0-UB; normWRoughnessMaterialID format-divergent: no rgb10a2 storage in WGSL) |
 | StratifiedSamplePattern (camera jitter) vs gcc/libstdc++ reference | std::mt19937 + std::shuffle + generate_canonical\<float\> replicated | bit-exact | 0 (unit-pinned) |
 | upstream `HalfRes.py` graph over cornell_box (web-side only ⚠) | IOSize Half plumbing + stratified jitter + 16-frame accumulation | runs, half-res, jitter advances | no native oracle: the oracle GPU's Vulkan driver lacks ROVs, so native Mogwai cannot construct GBufferRaster at all |
 | upstream image test `PathTracer.py` over cornell_box (4 frames) — color / guideNormal / reflectionPosW / albedo / specularAlbedo / indirectAlbedo / ToneMapper.dst | guide outputs + ResolvePass | 2.5e-4 / 1.4e-5 / 3.9e-5 / byte-exact / 1.6e-9 / byte-exact / 4.7e-6 | 38 @0.05 (stochastic silhouette, cornell policy) / 0 / 0 / — |
@@ -414,7 +415,7 @@ output is diffed against native Mogwai running the same file.
 | 🟢 runnable now (passes exist; oracle pending) | 1 | VBufferRTInline (same pass; inline variant is our default) |
 | 🟡 PathTracer siblings | 2 | PathTracerAdaptive (dynamic spp / sampleCount input unsupported), SDFEditorRenderGraphV2 (SDF grids) |
 | 🟠 runnable on web; native oracle impossible on this machine | 1 | HalfRes (needs FBX importer for Arcade.pyscene; and the oracle GPU lacks ROV support, so native Mogwai cannot run GBufferRaster-based graphs at all) |
-| 🟡 needs GBufferRaster extra channels / GBufferRT pass | 7 | GBufferRaster, GBufferRasterAlpha, GBufferRT, GBufferRTInline, GBufferRTTexGrads, MVecRT, MVecRaster — ⚠ raster-based ones share the native-ROV oracle blocker |
+| 🟡 GBuffer remainder | 5 | GBufferRTTexGrads (RayDiffs/RayCones LOD modes), MVecRT, GBufferRaster, GBufferRasterAlpha, MVecRaster — ⚠ raster-based ones share the native-ROV oracle blocker |
 | 🟡 needs larger pass ports (M8 scope) | 7 | SVGF, TAA, VBufferRaster, VBufferRasterAlpha, BSDFViewer, WhittedRayTracer, SceneDebugger |
 | 🟡 M8 flagship items | 4 | RTXDI, WARDiffPathTracer ×3 |
 | ❌ impossible on web (CUDA/driver tech) | 2 | OptixDenoiser, DLSS |

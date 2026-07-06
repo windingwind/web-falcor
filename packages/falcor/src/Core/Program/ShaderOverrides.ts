@@ -40,6 +40,8 @@ export const kShaderOverrides: Readonly<Record<string, string>> = {
     "RenderPasses/GBuffer/GBuffer/GBufferRaster.3d.slang": "WebFalcor/Overrides/RenderPasses/GBuffer/GBuffer/GBufferRaster.3d.slang",
     // Write-only storage textures (WGSL r32*-only read_write rule).
     "RenderPasses/GBuffer/VBuffer/VBufferRT.slang": "WebFalcor/Overrides/RenderPasses/GBuffer/VBuffer/VBufferRT.slang",
+    // Same + rgb10a2unorm storage unsupported in WGSL (normWRoughnessMaterialID -> rgba16f).
+    "RenderPasses/GBuffer/GBuffer/GBufferRT.slang": "WebFalcor/Overrides/RenderPasses/GBuffer/GBuffer/GBufferRT.slang",
     // RT pipeline -> compute megakernel over SceneRayQuery (DESIGN.md §5).
     "RenderPasses/MinimalPathTracer/MinimalPathTracer.rt.slang": "WebFalcor/Overrides/RenderPasses/MinimalPathTracer/MinimalPathTracer.rt.slang",
     // Full PathTracer: '= {}' fixes + RT pipeline -> compute megakernel over SceneRayQuery.

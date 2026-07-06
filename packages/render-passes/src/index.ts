@@ -11,6 +11,7 @@ export * from "./BlitPass/BlitPass.js";
 export * from "./ImageLoader/ImageLoader.js";
 export * from "./GBuffer/GBufferRaster.js";
 export * from "./GBuffer/VBufferRT.js";
+export * from "./GBuffer/GBufferRT.js";
 export * from "./MinimalPathTracer/MinimalPathTracer.js";
 export * from "./PathTracer/PathTracer.js";
 export * from "./Utils/Composite.js";
