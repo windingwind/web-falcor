@@ -63,6 +63,7 @@ export class PathTracer extends RenderPass {
     // (viewDir/sampleCount/... are only live for other configurations).
     private dummyTexFloat: Texture | null = null;
     private dummyTexUint: Texture | null = null;
+    private outputDummies = new Map<string, Texture>();
     private dummyBufferA: Buffer | null = null;
     private dummyBufferB: Buffer | null = null;
     private dummySampler: Sampler | null = null;
@@ -225,6 +226,7 @@ export class PathTracer extends RenderPass {
                 new Texture(this.device, { type: ResourceType.Texture2D, width: 1, height: 1, arraySize: 1, mipLevels: 1, format, bindFlags: storage, name: "PathTracer::dummy" });
             this.dummyTexFloat = tex(ResourceFormat.RGBA32Float);
             this.dummyTexUint = tex(ResourceFormat.R32Uint);
+
             const buf = () => new Buffer(this.device, { size: 64, structSize: 16, bindFlags: storage, memoryType: MemoryType.DeviceLocal, name: "PathTracer::dummyBuf" });
             this.dummyBufferA = buf();
             this.dummyBufferB = buf();
@@ -408,11 +410,40 @@ export class PathTracer extends RenderPass {
             this.trySet(cb, "sampleNRDEmission", this.dummyBufferA!);
             this.trySet(cb, "sampleNRDReflectance", this.dummyBufferA!);
             this.trySet(cb, "sampleNRDPrimaryHitNeeOnDelta", this.dummyBufferA!);
+            // Unconnected resolve outputs bind format-matched 1x1 dummies —
+            // one PER OUTPUT: native binds null UAVs (writes dropped); WebGPU
+            // storage bindings must match the kernel's static format and must
+            // not alias, and out-of-bounds stores are dropped.
+            const guideFormats: Record<string, ResourceFormat> = {
+                albedo: ResourceFormat.RGBA8Unorm,
+                specularAlbedo: ResourceFormat.RGBA8Unorm,
+                indirectAlbedo: ResourceFormat.RGBA8Unorm,
+                guideNormal: ResourceFormat.RGBA16Float,
+                reflectionPosW: ResourceFormat.RGBA32Float,
+                color: ResourceFormat.RGBA32Float,
+            };
+            const outputDummy = (name: string): Texture => {
+                let t = this.outputDummies.get(name);
+                if (!t) {
+                    t = new Texture(this.device, {
+                        type: ResourceType.Texture2D,
+                        width: 1,
+                        height: 1,
+                        arraySize: 1,
+                        mipLevels: 1,
+                        format: guideFormats[name]!,
+                        bindFlags: ResourceBindFlags.ShaderResource | ResourceBindFlags.UnorderedAccess,
+                        name: `PathTracer::dummyOut_${name}`,
+                    });
+                    this.outputDummies.set(name, t);
+                }
+                return t;
+            };
             for (const name of ["albedo", "specularAlbedo", "indirectAlbedo", "guideNormal", "reflectionPosW"]) {
                 const key = `output${name[0]!.toUpperCase()}${name.slice(1)}`;
-                this.trySet(cb, key, renderData.getTexture(name) ?? this.dummyTexFloat!);
+                this.trySet(cb, key, renderData.getTexture(name) ?? outputDummy(name));
             }
-            this.trySet(cb, "outputColor", this.fixedSampleCount ? this.dummyTexFloat! : color);
+            this.trySet(cb, "outputColor", this.fixedSampleCount ? outputDummy("color") : color);
             this.resolvePass.execute(ctx, frameDim[0], frameDim[1]);
         }
 

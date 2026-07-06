@@ -400,6 +400,7 @@ more than 0.05). Suite: `npm run test:gpu` (53 GPU tests + 23 unit green).
 | upstream image test `PathTracer.py` over cornell_box (4 frames) — color / guideNormal / reflectionPosW / albedo / specularAlbedo / indirectAlbedo / ToneMapper.dst | guide outputs + ResolvePass | 2.5e-4 / 1.4e-5 / 3.9e-5 / byte-exact / 1.6e-9 / byte-exact / 4.7e-6 | 38 @0.05 (stochastic silhouette, cornell policy) / 0 / 0 / — |
 | `PathTracer.py` rayCount / pathLength (PixelStats port; per-pixel integer counters vs raw native texture dumps) | PixelStats override: packed atomic buffer + resolve kernel | sums 248895 vs 248890 / 118515 exact | 7 / 4 mismatched pixels (stochastic tail) |
 | TAA feature graph (upstream TAA.py wiring with GBufferRT instead of ROV-blocked GBufferRaster; 8 Halton-jittered frames, history exercised) | TAA pass port | sRGB MSE 8.4e-7 | 2 px >3 LSB (float-vs-sRGB-quantized history, documented) |
+| SVGF feature graph (upstream SVGF.py wiring, GBufferRT + PathTracer over sphere_array; 4 frames temporal + a-trous) | SVGF pass port (5 kernels verbatim) | mean 4.2e-4 | 104 @0.05 (filtered stochastic tail; PT input itself 284) |
 
 † residual is entirely the jpg *input decode* (browser vs FreeImage IDCT/chroma
 upsampling, ≤3 sRGB LSB): the png-fed pixels contribute zero error (Composite
@@ -421,7 +422,7 @@ output is diffed against native Mogwai running the same file.
 | 🟡 PathTracer siblings | 1 | SDFEditorRenderGraphV2 (SDF grids, M7 remainder) |
 | 🟠 runnable on web; native oracle impossible on this machine | 1 | HalfRes (needs FBX importer for Arcade.pyscene; and the oracle GPU lacks ROV support, so native Mogwai cannot run GBufferRaster-based graphs at all) |
 | 🟡 GBuffer remainder | 3 | GBufferRaster, GBufferRasterAlpha, MVecRaster — ⚠ all raster-based: native-ROV oracle blocker |
-| 🟡 needs larger pass ports (M8 scope) | 4 | SVGF, TAA (pass PORTED + feature-verified vs native — jittered GBufferRT feature graph, mse 8.4e-7; the upstream TAA.py graph itself stays oracle-blocked: GBufferRaster needs ROV the native driver lacks), VBufferRaster, VBufferRasterAlpha |
+| 🟡 needs larger pass ports (M8 scope) | 4 | SVGF + TAA (both passes PORTED + feature-verified vs native via GBufferRT feature graphs — TAA mse 8.4e-7, SVGF mean 4.2e-4; the upstream graphs themselves stay oracle-blocked: GBufferRaster needs ROV the native driver lacks), VBufferRaster, VBufferRasterAlpha |
 | 🟡 M8 flagship items | 4 | RTXDI, WARDiffPathTracer ×3 |
 | ❌ impossible on web (CUDA/driver tech) | 2 | OptixDenoiser, DLSS |
 
@@ -484,7 +485,7 @@ output is diffed against native Mogwai running the same file.
 | SceneDebugger | ✅ | |
 | SDFEditor | ✅ | pure compute + UI |
 | SimplePostFX | ✅ | |
-| SVGFPass | ✅ | becomes the default denoiser (replacing NRD/Optix use-cases) |
+| SVGFPass | ✅ ported | feature-verified vs native (sphere_array feature graph, mean 4.2e-4); all 5 kernels verbatim, no overrides. Default denoiser (replacing NRD/Optix use-cases) |
 | TAA | ✅ ported | feature-verified vs native (jittered GBufferRT graph, mse 8.4e-7); bool->uint cbuffer override only |
 | TestPasses | ✅/❌ | GPU-test passes ✅; PyTorch interop pass ❌ (CUDA) |
 | ToneMapper | ✅ | |

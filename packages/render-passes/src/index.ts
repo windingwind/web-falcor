@@ -25,4 +25,5 @@ export * from "./Utils/FLIPPass.js";
 export * from "./WhittedRayTracer/WhittedRayTracer.js";
 export * from "./SceneDebugger/SceneDebugger.js";
 export * from "./TAA/TAA.js";
+export * from "./SVGFPass/SVGFPass.js";
 export * from "./BSDFViewer/BSDFViewer.js";
