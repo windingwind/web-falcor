@@ -1,0 +1,29 @@
+# Minimal volume-absorption isolation: unit cube, IoR=1 (no refraction, no
+# Fresnel), specular transmission 1 -> center-pixel transmittance is exactly
+# exp(-volumeAbsorption * 1.0) times the envmap radiance behind the cube.
+envMap = EnvMap('gradient.hdr')
+envMap.intensity = 1.0
+sceneBuilder.envMap = envMap
+
+cubeMat = StandardMaterial('Absorber')
+cubeMat.baseColor = float4(1.0, 1.0, 1.0, 1.0)
+cubeMat.roughness = 0.0
+cubeMat.metallic = 0.0
+cubeMat.indexOfRefraction = 1.0
+cubeMat.specularTransmission = 1.0
+cubeMat.doubleSided = True
+cubeMat.nestedPriority = 1
+cubeMat.volumeAbsorption = float3(0.5, 1.0, 2.0)
+
+cubeMesh = TriangleMesh.createCube(float3(1.0, 1.0, 1.0))
+sceneBuilder.addMeshInstance(
+    sceneBuilder.addNode('Cube', Transform(translation=float3(0.0, 0.0, 0.0))),
+    sceneBuilder.addTriangleMesh(cubeMesh, cubeMat)
+)
+
+camera = Camera('cam')
+camera.position = float3(0.0, 0.0, 3.0)
+camera.target = float3(0.0, 0.0, 0.0)
+camera.up = float3(0.0, 1.0, 0.0)
+camera.focalLength = 35.0
+sceneBuilder.addCamera(camera)

@@ -311,7 +311,7 @@ export class SceneBuilderBridge {
     private commands: Command[] = [];
     private meshMaterials: MaterialBridge[] = []; // by meshID
     private meshGeometry: TriangleMeshDesc[] = [];
-    private meshInstanced = new Map<number, float4x4>();
+    private meshInstanced = new Map<number, float4x4[]>();
     private nodes: float4x4[] = [];
     private lights: LightBridge[] = [];
     private _envMap: EnvMapRef | null = null;
@@ -355,7 +355,11 @@ export class SceneBuilderBridge {
     addMeshInstance(nodeID: number, meshID: number): void {
         const transform = this.nodes[nodeID];
         if (!transform) throw new RuntimeError(`addMeshInstance: unknown node ${nodeID}`);
-        this.meshInstanced.set(meshID, transform);
+        // One mesh may be instanced under many nodes (e.g. nested_dielectrics
+        // instances one cube 30x) — accumulate, don't overwrite.
+        const list = this.meshInstanced.get(meshID);
+        if (list) list.push(transform);
+        else this.meshInstanced.set(meshID, [transform]);
     }
 
     addLight(light: LightBridge): void {
@@ -383,8 +387,8 @@ export class SceneBuilderBridge {
         // Builder-added meshes (instanced via nodes).
         const materialIDs = new Map<MaterialBridge, number>();
         this.meshGeometry.forEach((geo, meshID) => {
-            const transform = this.meshInstanced.get(meshID);
-            if (!transform) return; // mesh never instanced
+            const transforms = this.meshInstanced.get(meshID);
+            if (!transforms) return; // mesh never instanced
             const mat = this.meshMaterials[meshID]!;
             let materialID = materialIDs.get(mat);
             if (materialID === undefined) {
@@ -395,7 +399,9 @@ export class SceneBuilderBridge {
             // Local-space tangents when the asset provides none (native MikkTSpace).
             const vertices = geo.vertices.map((v) => ({ ...v }));
             generateTangents(vertices, geo.indices);
-            meshes.push({ vertices, indices: geo.indices, materialID, transform });
+            for (const transform of transforms) {
+                meshes.push({ vertices, indices: geo.indices, materialID, transform });
+            }
         });
 
         const lights: AnalyticLight[] = this.lights.map((l) => ({

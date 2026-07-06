@@ -85,6 +85,15 @@ export class PathTracer extends RenderPass {
         this.maxDiffuseBounces = props.get("maxDiffuseBounces", 3);
         this.maxSpecularBounces = props.get("maxSpecularBounces", 3);
         this.maxTransmissionBounces = props.get("maxTransmissionBounces", 10);
+        // Mirrors native: maxSurfaceBounces initializes the per-lobe limits
+        // when they aren't explicitly set; otherwise it is raised to their max.
+        if (props.has("maxSurfaceBounces")) {
+            if (!props.has("maxDiffuseBounces")) this.maxDiffuseBounces = this.maxSurfaceBounces;
+            if (!props.has("maxSpecularBounces")) this.maxSpecularBounces = this.maxSurfaceBounces;
+            if (!props.has("maxTransmissionBounces")) this.maxTransmissionBounces = this.maxSurfaceBounces;
+        } else {
+            this.maxSurfaceBounces = Math.max(this.maxDiffuseBounces, this.maxSpecularBounces, this.maxTransmissionBounces);
+        }
         this.useBSDFSampling = props.get("useBSDFSampling", true);
         this.useRussianRoulette = props.get("useRussianRoulette", false);
         this.useNEE = props.get("useNEE", true);

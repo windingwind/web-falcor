@@ -1,0 +1,43 @@
+# Nested-volume absorption isolation: two OVERLAPPING IoR=1 cubes with
+# different nested priorities -> exercises the false-intersection rejection
+# path (interior list) with hand-checkable segment attenuation.
+envMap = EnvMap('gradient.hdr')
+envMap.intensity = 1.0
+sceneBuilder.envMap = envMap
+
+matA = StandardMaterial('A')
+matA.baseColor = float4(1.0, 1.0, 1.0, 1.0)
+matA.roughness = 0.0
+matA.metallic = 0.0
+matA.indexOfRefraction = 1.0
+matA.specularTransmission = 1.0
+matA.doubleSided = True
+matA.nestedPriority = 2
+matA.volumeAbsorption = float3(2.0, 1.0, 1.5)
+
+matB = StandardMaterial('B')
+matB.baseColor = float4(1.0, 1.0, 1.0, 1.0)
+matB.roughness = 0.0
+matB.metallic = 0.0
+matB.indexOfRefraction = 1.0
+matB.specularTransmission = 1.0
+matB.doubleSided = True
+matB.nestedPriority = 1
+matB.volumeAbsorption = float3(10.0, 20.0, 30.0)
+
+cubeMesh = TriangleMesh.createCube(float3(1.0, 1.0, 1.0))
+sceneBuilder.addMeshInstance(
+    sceneBuilder.addNode('A', Transform(translation=float3(0.0, 0.0, 0.0))),
+    sceneBuilder.addTriangleMesh(cubeMesh, matA)
+)
+sceneBuilder.addMeshInstance(
+    sceneBuilder.addNode('B', Transform(translation=float3(0.0, 0.0, 0.4))),
+    sceneBuilder.addTriangleMesh(cubeMesh, matB)
+)
+
+camera = Camera('cam')
+camera.position = float3(0.0, 0.0, 3.0)
+camera.target = float3(0.0, 0.0, 0.0)
+camera.up = float3(0.0, 1.0, 0.0)
+camera.focalLength = 35.0
+sceneBuilder.addCamera(camera)

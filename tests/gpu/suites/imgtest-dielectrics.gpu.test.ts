@@ -8,12 +8,8 @@
  * Regenerate the oracle with:
  *   Falcor/build/linux-gcc/bin/Debug/Mogwai --script tests/oracle/render-native-imgtest-dielectrics.py --headless
  *
- * ⚠ QUARANTINED (.gpu.wip): web renders the dielectric stack systematically
- * BRIGHTER (mse 2.8e-2, jitter ruled out via 1-frame A/B; background exact,
- * so env rotation/intensity are right; absorption data verified flowing into
- * the material blob). Channel ratios vs sigma=(10,20,30) imply ~5-10% of the
- * in-volume path length misses attenuation. Suspect interior-list handling
- * in the megakernel (first never-exercised path). Investigation next.
+ * (Historical: this test exposed the SceneBuilder multi-instancing bug —
+ * one mesh instanced N times rendered only its last instance.)
  */
 
 import { initScripting, runGraphScript, runSceneScript } from "@web-falcor/falcor";
@@ -69,6 +65,6 @@ gpuTest("ImageTestDielectrics.matchesNativeOracle", async ({ device }) => {
         console.error(`#   px(${px},${py}) web=${web[i]},${web[i + 1]},${web[i + 2]} nat=${nat[i]},${nat[i + 1]},${nat[i + 2]}`);
     }
     // Stochastic content (20-bounce glass paths): cornell bad-pixel policy.
-    expectEq(mse < 2e-3, true, `sRGB MSE ${mse}`);
+    expectEq(mse < 5e-4, true, `sRGB MSE ${mse}`);
     expectEq(bad <= 400, true, `bad pixels ${bad}`);
 });

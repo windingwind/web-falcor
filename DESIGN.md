@@ -385,6 +385,8 @@ more than 0.05). Suite: `npm run test:gpu` (53 GPU tests + 23 unit green).
 | upstream image test `ModulateIllumination.py` (jpg+png, EXR oracle) | optional-input compositing (radiance × reflectance) | 1.1e-3 † | 10 px > 0.02 |
 | upstream image test `SimplePostFX.py` (hdr, PNG oracle) | bloom pyramid + star + CA + barrel + grading, all params non-default | sRGB MSE 1.1e-3 ⚠ | edge-localized: border sampling emulated in-shader (no border mode in WebGPU); HW TMU sub-texel precision differs, compounds over the 8-level pyramid |
 | upstream image test `FLIPPass.py` (jpg raw vs sRGB, PNG oracle) | full FLIP perceptual metric (CIELab/CSF, magma display map) | byte MSE 6.7e-5 | max 10 bytes |
+| upstream image test `PathTracerDielectrics.py` over its own upstream scene (nested_dielectrics, 4 frames) | nested volumes (priorities, absorption), rotated env, stratified jitter, 20 bounces, 30x mesh instancing | sRGB MSE 4.9e-5 | 91 @0.05 |
+| volume-absorption isolation oracles (single + nested-priority cubes, IoR 1) | interior list + evalTransmittance vs analytic exp(-sigma d) | 1.2e-4 / 1.1e-4 | analytic-exact centers |
 | StratifiedSamplePattern (camera jitter) vs gcc/libstdc++ reference | std::mt19937 + std::shuffle + generate_canonical\<float\> replicated | bit-exact | 0 (unit-pinned) |
 | upstream `HalfRes.py` graph over cornell_box (web-side only ⚠) | IOSize Half plumbing + stratified jitter + 16-frame accumulation | runs, half-res, jitter advances | no native oracle: the oracle GPU's Vulkan driver lacks ROVs, so native Mogwai cannot construct GBufferRaster at all |
 | upstream image test `PathTracer.py` over cornell_box (4 frames) — color / guideNormal / reflectionPosW / albedo / specularAlbedo / indirectAlbedo / ToneMapper.dst | guide outputs + ResolvePass | 2.5e-4 / 1.4e-5 / 3.9e-5 / byte-exact / 1.6e-9 / byte-exact / 4.7e-6 | 38 @0.05 (stochastic silhouette, cornell policy) / 0 / 0 / — |
@@ -404,11 +406,11 @@ output is diffed against native Mogwai running the same file.
 
 | Status | Count | Graphs |
 |---|---|---|
-| ✅ verified vs native | 13 | MinimalPathTracer, ToneMapping, VBufferRT, CompositePass, CrossFadePass, GaussianBlur, ColorMapPass, SideBySide, SplitScreen, ModulateIllumination, SimplePostFX, FLIPPass, PathTracer* |
+| ✅ verified vs native | 14 | MinimalPathTracer, ToneMapping, VBufferRT, CompositePass, CrossFadePass, GaussianBlur, ColorMapPass, SideBySide, SplitScreen, ModulateIllumination, SimplePostFX, FLIPPass, PathTracer*, PathTracerDielectrics |
 
 \* PathTracer.py: rayCount/pathLength outputs allocate but await the PixelStats port; the other 8 marked outputs verified.
 | 🟢 runnable now (passes exist; oracle pending) | 1 | VBufferRTInline (same pass; inline variant is our default) |
-| 🟡 PathTracer siblings | 4 | PathTracerDielectrics (runs; ⚠ open parity issue: dielectric stack renders brighter — interior-list absorption under investigation, quarantined test documents findings), PathTracerMaterials (scene sweep pending), PathTracerAdaptive (dynamic spp / sampleCount input unsupported), SDFEditorRenderGraphV2 (SDF grids) |
+| 🟡 PathTracer siblings | 3 | PathTracerMaterials (scene sweep pending), PathTracerAdaptive (dynamic spp / sampleCount input unsupported), SDFEditorRenderGraphV2 (SDF grids) |
 | 🟠 runnable on web; native oracle impossible on this machine | 1 | HalfRes (needs FBX importer for Arcade.pyscene; and the oracle GPU lacks ROV support, so native Mogwai cannot run GBufferRaster-based graphs at all) |
 | 🟡 needs GBufferRaster extra channels / GBufferRT pass | 7 | GBufferRaster, GBufferRasterAlpha, GBufferRT, GBufferRTInline, GBufferRTTexGrads, MVecRT, MVecRaster — ⚠ raster-based ones share the native-ROV oracle blocker |
 | 🟡 needs larger pass ports (M8 scope) | 7 | SVGF, TAA, VBufferRaster, VBufferRasterAlpha, BSDFViewer, WhittedRayTracer, SceneDebugger |
