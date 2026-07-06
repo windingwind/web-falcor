@@ -72,7 +72,9 @@ export class ImageLoader extends RenderPass {
 
     override reflect(compileData: CompileData): RenderPassReflection {
         const r = new RenderPassReflection();
-        const [w, h] = this.texture ? [this.texture.width, this.texture.height] : compileData.defaultTexDims;
+        // Native default IO size selection = framebuffer dims (the loaded image
+        // is blitted into the output), NOT the image's own size.
+        const [w, h] = compileData.defaultTexDims;
         r.addOutput("dst", "Loaded image")
             .texture2D(w, h)
             .format(this.texture?.format ?? ResourceFormat.RGBA32Float)

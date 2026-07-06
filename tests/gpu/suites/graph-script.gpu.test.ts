@@ -50,3 +50,47 @@ gpuTest("GraphScript.upstreamToneMappingPy", async ({ device }) => {
     expectEq(finite, true, "all values finite");
     expectEq(avg > 0.02 && avg <= 1.0, true, `plausible tonemapped luminance (avg=${avg.toFixed(4)})`);
 });
+
+gpuTest("GraphScript.toneMappingMatchesNativePng", async ({ device }) => {
+    // OVERALL VERIFY: same unmodified graph, diffed against the native Mogwai
+    // frame capture (PNG, top-down, sRGB bytes).
+    // Regenerate: Mogwai --script tests/oracle/render-native-imgtest-tonemap.py --headless
+    const size = 256;
+    const source = await (await fetch("/Falcor/tests/image_tests/renderpasses/graphs/ToneMapping.py")).text();
+    await initScripting("/node_modules/pyodide");
+    const [graph] = await runGraphScript(device, source);
+    await graph!.init();
+    graph!.onResize(size, size);
+    const ctx = device.renderContext;
+    graph!.execute(ctx);
+    const web = new Float32Array((await ctx.readTextureSubresource(graph!.getOutput("BlitPass.dst")!)).buffer);
+
+    const blob = await (await fetch("/tests/oracle/out-native/oracle-imgtest-tonemap.BlitPass.dst.0.png")).blob();
+    const bitmap = await createImageBitmap(blob, { colorSpaceConversion: "none" });
+    expectEq(bitmap.width, size, "oracle resolution");
+    const canvas = new OffscreenCanvas(size, size);
+    const c2d = canvas.getContext("2d", { willReadFrequently: true })!;
+    c2d.drawImage(bitmap, 0, 0);
+    const nat = c2d.getImageData(0, 0, size, size).data; // sRGB bytes, top-down
+
+    const toSrgbByte = (v: number) => {
+        const c = Math.min(Math.max(v, 0), 1);
+        const s = c <= 0.0031308 ? c * 12.92 : 1.055 * Math.pow(c, 1 / 2.4) - 0.055;
+        return Math.round(s * 255);
+    };
+    // Heavy minification (2048x1024 HDR -> 256x256) makes bit-exact bilinear
+    // phases unrealistic; adopt upstream ImageCompare policy (MSE threshold in
+    // encoded sRGB) plus a mean-byte guard.
+    let mse = 0;
+    let maxDiff = 0;
+    for (let i = 0; i < size * size; i++) {
+        for (let ch = 0; ch < 3; ch++) {
+            const d = (toSrgbByte(web[i * 4 + ch]!) - nat[i * 4 + ch]!) / 255;
+            mse += d * d;
+            maxDiff = Math.max(maxDiff, Math.abs(d) * 255);
+        }
+    }
+    mse /= size * size * 3;
+    console.error(`# imgtestTonemap: mse=${mse.toExponential(2)} maxByteDiff=${maxDiff}`);
+    expectEq(mse < 2e-4, true, `sRGB MSE ${mse}`); // upstream image tests use 1e-4..1e-3 per-test
+});
