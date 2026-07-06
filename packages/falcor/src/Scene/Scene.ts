@@ -21,6 +21,8 @@ import { packLights, type AnalyticLight } from "./SceneData.js";
 import { TextureManager } from "./Material/TextureManager.js";
 import type { EnvMap } from "./Lights/EnvMap.js";
 import { buildLightCollection } from "./Lights/LightCollection.js";
+import { decodeNormal2x16Host, type Vec3 } from "../Rendering/Lights/LightBVHTypes.js";
+import type { EmissiveTriangleInput } from "../Rendering/Lights/LightBVHBuilder.js";
 import { transformPoint } from "../Utils/Math/Matrix.js";
 import {
     GeometryType,
@@ -66,6 +68,7 @@ export class Scene {
     private emissiveTriangleCount = 0;
     private emissiveMeshCount = 0;
     private emissiveFluxes = new Float32Array(0);
+    private emissiveTriangles: EmissiveTriangleInput[] = [];
 
     constructor(
         public readonly device: Device,
@@ -178,6 +181,18 @@ export class Scene {
         this.emissiveFluxes = new Float32Array(lc.triangleCount);
         const fluxView = new DataView(lc.fluxData);
         for (let i = 0; i < lc.triangleCount; i++) this.emissiveFluxes[i] = fluxView.getFloat32(i * 32, true);
+        // Retain builder inputs for the LightBVH sampler (native builds from the
+        // UNPACKED emissive triangles: octahedral-decoded normals).
+        const triView = new DataView(lc.triangleData);
+        this.emissiveTriangles = Array.from({ length: lc.triangleCount }, (_v, i) => ({
+            posW: [0, 1, 2].map((k) => [
+                triView.getFloat32(i * 64 + k * 16, true),
+                triView.getFloat32(i * 64 + k * 16 + 4, true),
+                triView.getFloat32(i * 64 + k * 16 + 8, true),
+            ]) as [Vec3, Vec3, Vec3],
+            normal: decodeNormal2x16Host(triView.getUint32(i * 64 + 48, true)),
+            flux: this.emissiveFluxes[i]!,
+        }));
         make("emissiveTriangles", lc.triangleData, 64);
         make("emissiveFlux", lc.fluxData, 32);
         make("emissiveActiveTriangles", lc.activeTriangles, 4);
@@ -219,6 +234,11 @@ export class Scene {
     /** Per-emissive-triangle flux in LightCollection order (for power sampling). */
     getEmissiveFluxes(): Float32Array {
         return this.emissiveFluxes;
+    }
+
+    /** Emissive triangles as LightBVH builder inputs (LightCollection order). */
+    getEmissiveTriangles(): EmissiveTriangleInput[] {
+        return this.emissiveTriangles;
     }
 
     getEnvMap(): EnvMap | null {

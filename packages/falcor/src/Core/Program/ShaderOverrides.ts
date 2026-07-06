@@ -50,6 +50,8 @@ export const kShaderOverrides: Readonly<Record<string, string>> = {
     "Rendering/Materials/PBRT/PBRTConductorMaterial.slang": "WebFalcor/Overrides/Rendering/Materials/PBRT/PBRTConductorMaterial.slang",
     // Typed buffers (Buffer<T>) don't exist in WGSL -> structured buffer.
     "Rendering/Lights/EmissivePowerSampler.slang": "WebFalcor/Overrides/Rendering/Lights/EmissivePowerSampler.slang",
+    // 64-bit traversal bitmask kept as uint2 (no 64-bit ints in WGSL).
+    "Rendering/Lights/LightBVHSampler.slang": "WebFalcor/Overrides/Rendering/Lights/LightBVHSampler.slang",
     // WGSL has no 64-bit integers: SplitMix64 state emulated as uint2 (lo, hi), bit-identical sequences.
     "Utils/Sampling/Pseudorandom/SplitMix64.slang": "WebFalcor/Overrides/Utils/Sampling/Pseudorandom/SplitMix64.slang",
     "Utils/Sampling/UniformSampleGenerator.slang": "WebFalcor/Overrides/Utils/Sampling/UniformSampleGenerator.slang",

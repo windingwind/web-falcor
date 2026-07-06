@@ -14,6 +14,7 @@ import {
     ComputePass,
     EmissivePowerSampler,
     EnvMapSampler,
+    LightBVHSampler,
     MemoryType,
     Properties,
     RenderData,
@@ -70,6 +71,7 @@ export class PathTracer extends RenderPass {
     private adjustShadingNormals = false;
     private emissiveSampler = "Uniform";
     private powerSampler: EmissivePowerSampler | null = null;
+    private lightBVHSampler: LightBVHSampler | null = null;
 
     constructor(device: Device, props: Properties) {
         super(device);
@@ -84,8 +86,8 @@ export class PathTracer extends RenderPass {
         this.useMIS = props.get("useMIS", true);
         this.useAlphaTest = props.get("useAlphaTest", true);
         this.emissiveSampler = props.get("emissiveSampler", "Uniform");
-        if (!(this.emissiveSampler in kEmissiveSamplerTypes) || this.emissiveSampler === "LightBVH") {
-            throw new Error(`PathTracer: unsupported emissiveSampler '${this.emissiveSampler}' (Uniform/Power)`);
+        if (!(this.emissiveSampler in kEmissiveSamplerTypes)) {
+            throw new Error(`PathTracer: unknown emissiveSampler '${this.emissiveSampler}'`);
         }
         // PathTracer defaults to TinyUniform (unlike MinimalPathTracer).
         this.sampleGenerator = SampleGenerator.create(device, SAMPLE_GENERATOR_TINY_UNIFORM);
@@ -135,6 +137,7 @@ export class PathTracer extends RenderPass {
             MIS_HEURISTIC: this.misHeuristic,
             MIS_POWER_EXPONENT: "2.0",
             _EMISSIVE_LIGHT_SAMPLER_TYPE: kEmissiveSamplerTypes[this.emissiveSampler]!,
+            ...(this.lightBVHSampler ? Object.fromEntries(this.lightBVHSampler.getDefines().entries()) : {}),
             INTERIOR_LIST_SLOT_COUNT: 2,
             GBUFFER_ADJUST_SHADING_NORMALS: 0,
             USE_ENV_LIGHT: scene.useEnvLight ? 1 : 0,
@@ -191,6 +194,9 @@ export class PathTracer extends RenderPass {
         const tiles = [Math.ceil(frameDim[0] / kScreenTileDim), Math.ceil(frameDim[1] / kScreenTileDim)];
 
         if (!this.generatePass) {
+            if (this.emissiveSampler === "LightBVH" && this.scene.useEmissiveLights && !this.lightBVHSampler) {
+                this.lightBVHSampler = new LightBVHSampler(this.device, this.scene.getEmissiveTriangles());
+            }
             const defines = this.getStaticDefines();
             this.generatePass = ComputePass.create(this.device, { path: kGeneratePathsFile, defines });
             this.tracePass = ComputePass.create(this.device, { path: kTracePassFile, defines });
@@ -215,6 +221,7 @@ export class PathTracer extends RenderPass {
                 if (!this.powerSampler) this.powerSampler = new EmissivePowerSampler(this.device, this.scene.getEmissiveFluxes());
                 this.powerSampler.bindShaderData(block["emissiveSampler"] as ShaderVar);
             }
+            if (this.lightBVHSampler) this.lightBVHSampler.bindShaderData(block["emissiveSampler"] as ShaderVar);
             const envSampler = block["envMapSampler"] as ShaderVar;
             if (this.scene.useEnvLight) {
                 if (!this.envMapSampler) this.envMapSampler = new EnvMapSampler(this.device, ctx, this.scene.getEnvMap()!);

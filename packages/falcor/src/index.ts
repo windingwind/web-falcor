@@ -59,5 +59,8 @@ export * from "./Scene/Lights/EnvMap.js";
 export * from "./Scene/TangentSpace.js";
 export * from "./Rendering/Lights/EnvMapSampler.js";
 export * from "./Rendering/Lights/EmissivePowerSampler.js";
+export * from "./Rendering/Lights/LightBVHTypes.js";
+export * from "./Rendering/Lights/LightBVHBuilder.js";
+export * from "./Rendering/Lights/LightBVHSamplerHost.js";
 export * from "./Scene/SceneData.js";
 export * from "./Scene/Material/MaterialData.js";
