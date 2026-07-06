@@ -368,6 +368,7 @@ more than 0.05). Suite: `npm run test:gpu` (53 GPU tests + 23 unit green).
 | **PathTracer**, emissive LightBVH sampler | CPU LightBVH builder port | 1.6e-4 | 13 (silhouette) |
 | PathTracer, 24-emitter cluster scene (LightBVH) | SAOH splits, multi-level bitmasks | 5.4e-6 | 0 |
 | **upstream `cornell_box.pyscene`, unmodified** | full stack: Pyodide + PathTracer + LightBVH | 2.6e-4 | 49 (silhouette) |
+| **upstream `sphere_array.pyscene`, unmodified** | 131k tris, metal/rough grid, HDR env sampling | 8.2e-4 | 267 (silhouette) |
 
 RNG parity is exact: TinyUniform (LCG+TEA) and xoshiro128** (SplitMix64 seeding
 emulated as paired u32) produce bit-identical streams, so 1-spp renders match

@@ -72,23 +72,85 @@ export const TriangleMesh = {
         }
         return { vertices, indices: new Uint32Array(indices) };
     },
+
+    createSphere(radius = 1, segmentsU = 32, segmentsV = 32): TriangleMeshDesc {
+        const t0 = new float4(0, 0, 0, 0);
+        const vertices: StaticVertex[] = [];
+        const indices: number[] = [];
+        for (let v = 0; v <= segmentsV; v++) {
+            for (let u = 0; u <= segmentsU; u++) {
+                const uu = u / segmentsU;
+                const vv = v / segmentsV;
+                const theta = uu * 2 * Math.PI;
+                const phi = vv * Math.PI;
+                const dir = new float3(Math.cos(theta) * Math.sin(phi), Math.cos(phi), Math.sin(theta) * Math.sin(phi));
+                vertices.push({
+                    position: new float3(dir.x * radius, dir.y * radius, dir.z * radius),
+                    normal: dir,
+                    tangent: t0,
+                    texCrd: new float2(uu, vv),
+                });
+            }
+        }
+        for (let v = 0; v < segmentsV; v++) {
+            for (let u = 0; u < segmentsU; u++) {
+                const i0 = v * (segmentsU + 1) + u;
+                const i1 = v * (segmentsU + 1) + ((u + 1) % (segmentsU + 1));
+                const i2 = (v + 1) * (segmentsU + 1) + u;
+                const i3 = (v + 1) * (segmentsU + 1) + ((u + 1) % (segmentsU + 1));
+                indices.push(i0, i1, i2, i2, i1, i3);
+            }
+        }
+        return { vertices, indices: new Uint32Array(indices) };
+    },
 };
+
+/** Normalizes python-side vector objects (PyProxy with x/y/z/w attrs) into
+ *  owned JS vectors — proxies may be destroyed after script execution. */
+export function toF3(v: { x: number; y: number; z: number } | null | undefined, fallback?: float3): float3 {
+    if (!v) return fallback ?? new float3(0, 0, 0);
+    return new float3(v.x, v.y, v.z);
+}
+export function toF4(v: { x: number; y: number; z: number; w: number } | null | undefined, fallback?: float4): float4 {
+    if (!v) return fallback ?? new float4(0, 0, 0, 0);
+    return new float4(v.x, v.y, v.z, v.w);
+}
 
 /** Camera description assembled in pyscenes (Camera() + sceneBuilder.addCamera). */
 export class CameraBridge {
-    position = new float3(0, 0, 3);
-    target = new float3(0, 0, 0);
-    up = new float3(0, 1, 0);
+    private _position = new float3(0, 0, 3);
+    private _target = new float3(0, 0, 0);
+    private _up = new float3(0, 1, 0);
     focalLength = 21;
+
+    set position(v: { x: number; y: number; z: number }) {
+        this._position = toF3(v);
+    }
+    set target(v: { x: number; y: number; z: number }) {
+        this._target = toF3(v);
+    }
+    set up(v: { x: number; y: number; z: number }) {
+        this._up = toF3(v);
+    }
+    getPosition(): float3 {
+        return this._position;
+    }
+    getTarget(): float3 {
+        return this._target;
+    }
+    getUp(): float3 {
+        return this._up;
+    }
 }
 
-/** Material bridge mirroring the BasicMaterial python properties. */
+/** Material bridge mirroring the BasicMaterial python properties. Vector
+ *  setters normalize python-side vectors into owned JS copies. */
 export class MaterialBridge {
-    baseColor = new float4(1, 1, 1, 1);
+    private _baseColor = new float4(1, 1, 1, 1);
     /** specularParams (occlusion/roughness/metallic; BasicMaterialData default is all-zero). */
-    specularParams = new float4(0, 0, 0, 0);
-    transmissionColor = new float3(1, 1, 1);
-    emissiveColor = new float3(0, 0, 0);
+    private _specularParams = new float4(0, 0, 0, 0);
+    private _transmissionColor = new float3(1, 1, 1);
+    private _emissiveColor = new float3(0, 0, 0);
     emissiveFactor = 1;
     doubleSided = false;
 
@@ -97,25 +159,43 @@ export class MaterialBridge {
         public readonly name: string,
     ) {}
 
+    set baseColor(v: { x: number; y: number; z: number; w: number }) {
+        this._baseColor = toF4(v);
+    }
+    set specularParams(v: { x: number; y: number; z: number; w: number }) {
+        this._specularParams = toF4(v);
+    }
+    set transmissionColor(v: { x: number; y: number; z: number }) {
+        this._transmissionColor = toF3(v);
+    }
+    set emissiveColor(v: { x: number; y: number; z: number }) {
+        this._emissiveColor = toF3(v);
+    }
+
     /** ClothMaterial/BasicMaterial::setRoughness -> specular.g. */
-    set roughness(r: number | float2) {
+    set roughness(r: number | { x: number; y: number }) {
         if (typeof r === "number") {
-            this.specularParams = new float4(this.specularParams.x, r, this.specularParams.z, this.specularParams.w);
+            this._specularParams = new float4(this._specularParams.x, r, this._specularParams.z, this._specularParams.w);
         } else {
             // PBRTConductorMaterial::setRoughness(float2) -> specular.rg.
-            this.specularParams = new float4(r.x, r.y, this.specularParams.z, this.specularParams.w);
+            this._specularParams = new float4(r.x, r.y, this._specularParams.z, this._specularParams.w);
         }
     }
 
+    /** StandardMaterial::setMetallic -> specular.b. */
+    set metallic(m: number) {
+        this._specularParams = new float4(this._specularParams.x, this._specularParams.y, m, this._specularParams.w);
+    }
+
     toDesc(): SceneMaterialDesc {
-        const emissive = this.emissiveColor.x !== 0 || this.emissiveColor.y !== 0 || this.emissiveColor.z !== 0;
+        const emissive = this._emissiveColor.x !== 0 || this._emissiveColor.y !== 0 || this._emissiveColor.z !== 0;
         return {
             header: { materialType: this.materialType, doubleSided: this.doubleSided, emissive },
             basic: {
-                baseColor: this.baseColor,
-                specular: this.specularParams,
-                transmission: this.transmissionColor,
-                emissive: this.emissiveColor,
+                baseColor: this._baseColor,
+                specular: this._specularParams,
+                transmission: this._transmissionColor,
+                emissive: this._emissiveColor,
                 emissiveFactor: this.emissiveFactor,
             },
         };
@@ -123,24 +203,48 @@ export class MaterialBridge {
 }
 
 export class LightBridge {
-    position = new float3(0, 0, 0);
-    intensity = new float3(1, 1, 1);
-    direction = new float3(0, -1, 0);
+    private _position = new float3(0, 0, 0);
+    private _intensity = new float3(1, 1, 1);
+    private _direction = new float3(0, -1, 0);
     constructor(
         public readonly lightType: LightType,
         public readonly name: string,
     ) {}
+
+    set position(v: { x: number; y: number; z: number }) {
+        this._position = toF3(v);
+    }
+    set intensity(v: { x: number; y: number; z: number }) {
+        this._intensity = toF3(v);
+    }
+    set direction(v: { x: number; y: number; z: number }) {
+        this._direction = toF3(v);
+    }
+    getPosition(): float3 {
+        return this._position;
+    }
+    getIntensity(): float3 {
+        return this._intensity;
+    }
+    getDirection(): float3 {
+        return this._direction;
+    }
 }
 
 /** Transform bridge (composition order Translate * Rotate * Scale, as native). */
+type VecLike = { x: number; y: number; z: number };
 export function makeTransform(
-    translation: float3 | null,
-    rotationEuler: float3 | null,
-    rotationEulerDeg: float3 | null,
-    scalingIn: float3 | number | null,
+    translationIn: VecLike | null,
+    rotationEulerIn: VecLike | null,
+    rotationEulerDegIn: VecLike | null,
+    scalingIn: VecLike | number | null,
 ): float4x4 {
-    // Scalar scaling broadcasts (native float3 constructor from scalar).
-    const scaling = typeof scalingIn === "number" ? new float3(scalingIn, scalingIn, scalingIn) : scalingIn;
+    // Scalar scaling broadcasts (native float3 constructor from scalar);
+    // python-side vectors normalize to owned JS copies.
+    const scaling = typeof scalingIn === "number" ? new float3(scalingIn, scalingIn, scalingIn) : scalingIn ? toF3(scalingIn) : null;
+    const translation = translationIn ? toF3(translationIn) : null;
+    const rotationEuler = rotationEulerIn ? toF3(rotationEulerIn) : null;
+    const rotationEulerDeg = rotationEulerDegIn ? toF3(rotationEulerDegIn) : null;
     const rot = rotationEuler ?? (rotationEulerDeg ? new float3((rotationEulerDeg.x * Math.PI) / 180, (rotationEulerDeg.y * Math.PI) / 180, (rotationEulerDeg.z * Math.PI) / 180) : null);
     let m = float4x4.identity();
     if (scaling) m = mulMat(matrixFromScaling(scaling), m);
@@ -166,6 +270,7 @@ export function makeTransform(
 
 interface EnvMapRef {
     path: string;
+    intensity: number;
 }
 
 type Command =
@@ -250,21 +355,23 @@ export class SceneBuilderBridge {
 
         const lights: AnalyticLight[] = this.lights.map((l) => ({
             type: l.lightType,
-            posW: l.position,
-            dirW: l.direction,
-            intensity: l.intensity,
+            posW: l.getPosition(),
+            dirW: l.getDirection(),
+            intensity: l.getIntensity(),
         }));
 
         const scene = new Scene(device, meshes, materials, lights, textureManager);
         if (this.camera) {
-            scene.camera.setPosition(this.camera.position);
-            scene.camera.setTarget(this.camera.target);
-            scene.camera.setUpVector(this.camera.up);
+            scene.camera.setPosition(this.camera.getPosition());
+            scene.camera.setTarget(this.camera.getTarget());
+            scene.camera.setUpVector(this.camera.getUp());
             scene.camera.setFocalLength(this.camera.focalLength);
         }
         if (this.envMap) {
             const url = baseUrl ? `${baseUrl}/${this.envMap.path}` : this.envMap.path;
-            scene.setEnvMap(await EnvMap.createFromUrl(device, url));
+            const envMap = await EnvMap.createFromUrl(device, url);
+            envMap.intensity = this.envMap.intensity;
+            scene.setEnvMap(envMap);
         }
         return scene;
     }

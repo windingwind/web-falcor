@@ -82,9 +82,44 @@ export async function runGraphScript(device: Device, source: string): Promise<Re
 const kScenePrelude = `
 import sys
 sys.modules.pop('webfalcor_scene', None)  # registerJsModule per call; defeat import caching
-from webfalcor_scene import (sceneBuilder, TriangleMesh, float2, float3, float4,
+from webfalcor_scene import (sceneBuilder, _TriangleMesh,
     PointLight, DirectionalLight, StandardMaterial, ClothMaterial, HairMaterial,
     PBRTDiffuseMaterial, PBRTConductorMaterial, Camera, _makeTransform, _makeEnvMap)
+
+# Python-side vector types with arithmetic (upstream pyscenes do e.g. size / 2);
+# the JS bridge reads .x/.y/.z/.w off any object.
+class float2:
+    def __init__(self, x=0.0, y=None):
+        self.x = float(x); self.y = float(x if y is None else y)
+class float3:
+    def __init__(self, x=0.0, y=None, z=None):
+        if y is None: y = z = x
+        self.x = float(x); self.y = float(y); self.z = float(z)
+    def _map(self, other, op):
+        if isinstance(other, float3):
+            return float3(op(self.x, other.x), op(self.y, other.y), op(self.z, other.z))
+        return float3(op(self.x, other), op(self.y, other), op(self.z, other))
+    def __add__(self, o): return self._map(o, lambda a, b: a + b)
+    def __sub__(self, o): return self._map(o, lambda a, b: a - b)
+    def __mul__(self, o): return self._map(o, lambda a, b: a * b)
+    def __rmul__(self, o): return self._map(o, lambda a, b: a * b)
+    def __truediv__(self, o): return self._map(o, lambda a, b: a / b)
+    def __neg__(self): return float3(-self.x, -self.y, -self.z)
+class float4:
+    def __init__(self, x=0.0, y=None, z=None, w=None):
+        if y is None: y = z = w = x
+        self.x = float(x); self.y = float(y); self.z = float(z); self.w = float(w)
+
+class TriangleMesh:
+    @staticmethod
+    def createQuad(size=None):
+        return _TriangleMesh.createQuad(size)
+    @staticmethod
+    def createCube(size=None):
+        return _TriangleMesh.createCube(size)
+    @staticmethod
+    def createSphere(radius=1.0, segmentsU=32, segmentsV=32):
+        return _TriangleMesh.createSphere(radius, segmentsU, segmentsV)
 
 def Transform(translation=None, rotationEuler=None, rotationEulerDeg=None, scaling=None):
     return _makeTransform(translation, rotationEuler, rotationEulerDeg, scaling)
@@ -105,17 +140,16 @@ export async function runSceneScript(device: Device, source: string, baseUrl: st
     if (!pyodide) throw new RuntimeError("Call initScripting() first");
     const builder = new SceneBuilderBridge();
 
+    type VecLike = { x: number; y: number; z: number };
     const sceneModule = {
         sceneBuilder: builder,
-        // Pyodide calls JS classes without `new` — expose factories.
-        TriangleMesh: {
-            createQuad: (size?: float2) => TriangleMesh.createQuad(size),
-            createCube: (size?: float3) => TriangleMesh.createCube(size),
+        // Pyodide calls JS classes without `new`; vectors live python-side (prelude).
+        _TriangleMesh: {
+            createQuad: (size?: { x: number; y: number } | null) => TriangleMesh.createQuad(size ? new float2(size.x, size.y) : undefined),
+            createCube: (size?: VecLike | null) => TriangleMesh.createCube(size ? new float3(size.x, size.y, size.z) : undefined),
+            createSphere: (radius?: number, segmentsU?: number, segmentsV?: number) => TriangleMesh.createSphere(radius, segmentsU, segmentsV),
         },
         Camera: (_name = "") => new CameraBridge(),
-        float2: (x = 0, y = 0) => new float2(x, y),
-        float3: (x = 0, y = 0, z = 0) => new float3(x, y, z),
-        float4: (x = 0, y = 0, z = 0, w = 0) => new float4(x, y, z, w),
         PointLight: (name = "") => new LightBridge(LightType.Point, name),
         DirectionalLight: (name = "") => new LightBridge(LightType.Directional, name),
         StandardMaterial: (name = "") => new MaterialBridge(MaterialType.Standard, name),
@@ -124,7 +158,7 @@ export async function runSceneScript(device: Device, source: string, baseUrl: st
         PBRTDiffuseMaterial: (name = "") => new MaterialBridge(MaterialType.PBRTDiffuse, name),
         PBRTConductorMaterial: (name = "") => new MaterialBridge(MaterialType.PBRTConductor, name),
         _makeTransform: makeTransform,
-        _makeEnvMap: (path: string) => ({ path }),
+        _makeEnvMap: (path: string) => ({ path, intensity: 1 }),
     };
     pyodide.registerJsModule("webfalcor_scene", sceneModule);
 
