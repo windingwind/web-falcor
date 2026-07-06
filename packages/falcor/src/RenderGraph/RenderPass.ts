@@ -14,6 +14,12 @@ import { RuntimeError } from "../Core/Error.js";
 export interface CompileData {
     /** Default output dimensions (mirrors RenderPassHelpers::IOSize default). */
     defaultTexDims: [number, number];
+    /**
+     * Reflection of the resources connected to this pass's inputs, keyed by the
+     * input field name (mirrors CompileData::connectedResources). Passes like
+     * GaussianBlur shape their outputs from the incoming format/dimensions.
+     */
+    connectedResources?: RenderPassReflection;
 }
 
 /** Resource dictionary passed to execute (mirrors Falcor::RenderData). */

@@ -375,6 +375,13 @@ more than 0.05). Suite: `npm run test:gpu` (53 GPU tests + 23 unit green).
 | **upstream image test `MinimalPathTracer.py` graph + `cornell_box.pyscene`, both unmodified** | full Mogwai workflow: graph script + scene script + 4-pass chain | 1.5e-4 | 72 (silhouette) |
 | upstream image test `ToneMapping.py` (scene-less, PNG oracle) | ImageLoader + ACES + blit | sRGB MSE 1.2e-4 | — |
 | upstream image test `VBufferRT.py` — depth / viewW / mask channels | V-buffer aux outputs | 1.1e-4 / 6.1e-5 / exact | 0 / 0 / 0 |
+| upstream image test `GaussianBlur.py` (hdr ImageLoader, EXR oracle) | connectedResources-shaped IO + separable fullscreen blur + weights buffer | 4.2e-5 | 0 |
+| upstream image test `CompositePass.py` (jpg+png ImageLoaders, EXR oracle) | scaled add compositing | 2.3e-3 † | 14 px > 0.02 |
+| upstream image test `CrossFadePass.py` (jpg+png ImageLoaders, EXR oracle) | auto-fade frame counting (frame 0 ⇒ out = A) | 2.3e-3 † | 14 px > 0.02 |
+
+† residual is entirely the jpg *input decode* (browser vs FreeImage IDCT/chroma
+upsampling, ≤3 sRGB LSB): the png-fed pixels contribute zero error (Composite
+and CrossFade have identical stats), and the hdr-fed GaussianBlur sits at 4.2e-5.
 
 RNG parity is exact: TinyUniform (LCG+TEA) and xoshiro128** (SplitMix64 seeding
 emulated as paired u32) produce bit-identical streams, so 1-spp renders match
@@ -387,10 +394,10 @@ output is diffed against native Mogwai running the same file.
 
 | Status | Count | Graphs |
 |---|---|---|
-| ✅ verified vs native | 3 | MinimalPathTracer, ToneMapping, VBufferRT |
+| ✅ verified vs native | 6 | MinimalPathTracer, ToneMapping, VBufferRT, CompositePass, CrossFadePass, GaussianBlur |
 | 🟢 runnable now (passes exist; oracle pending) | 1 | VBufferRTInline (same pass; inline variant is our default) |
 | 🟡 needs PathTracer optional outputs + resolve pass | 5 | PathTracer, PathTracerAdaptive, PathTracerDielectrics, PathTracerMaterials, SDFEditorRenderGraphV2* |
-| 🟡 needs missing SMALL passes (ports are mechanical) | 10 | ColorMapPass, CompositePass, CrossFadePass, GaussianBlur, ModulateIllumination, SideBySide, SplitScreen, SimplePostFX, HalfRes, FLIPPass |
+| 🟡 needs missing SMALL passes (ports are mechanical) | 7 | ColorMapPass, ModulateIllumination, SideBySide, SplitScreen, SimplePostFX, HalfRes, FLIPPass |
 | 🟡 needs GBufferRaster extra channels / GBufferRT pass | 7 | GBufferRaster, GBufferRasterAlpha, GBufferRT, GBufferRTInline, GBufferRTTexGrads, MVecRT, MVecRaster |
 | 🟡 needs larger pass ports (M8 scope) | 7 | SVGF, TAA, VBufferRaster, VBufferRasterAlpha, BSDFViewer, WhittedRayTracer, SceneDebugger |
 | 🟡 M8 flagship items | 4 | RTXDI, WARDiffPathTracer ×3 |

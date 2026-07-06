@@ -13,7 +13,7 @@ import { Texture } from "../Core/API/Texture.js";
 import { ResourceBindFlags, ResourceType } from "../Core/API/Types.js";
 import { ResourceFormat } from "../Core/API/Formats.js";
 import { RenderPass, RenderData, type CompileData } from "./RenderPass.js";
-import { Field, FieldVisibility } from "./RenderPassReflection.js";
+import { Field, FieldVisibility, RenderPassReflection } from "./RenderPassReflection.js";
 import { ArgumentError, RuntimeError } from "../Core/Error.js";
 import { Logger } from "../Utils/Logger.js";
 
@@ -139,11 +139,25 @@ export class RenderGraph {
     /** Mirrors RenderGraphCompiler::compile + ResourceCache::allocateResources. */
     compile(ctx: RenderContext): void {
         const order = this.sortPasses();
-        const compileData: CompileData = { defaultTexDims: this.defaultDims };
         this.allocated.clear();
 
+        // Per-pass CompileData carrying connectedResources: the already-reflected
+        // source fields feeding this pass's inputs, renamed to the input field
+        // (mirrors RenderGraphCompiler::compilePasses). Topological order
+        // guarantees sources reflect before consumers.
         const reflections = new Map<string, ReturnType<RenderPass["reflect"]>>();
-        for (const name of order) reflections.set(name, this.passes.get(name)!.reflect(compileData));
+        const compileDatas = new Map<string, CompileData>();
+        for (const name of order) {
+            const connected = new RenderPassReflection();
+            for (const e of this.edges) {
+                if (e.dstPass !== name) continue;
+                const srcField = reflections.get(e.srcPass)?.getField(e.srcField);
+                if (srcField) connected.addConnectedField(e.dstField, srcField);
+            }
+            const compileData: CompileData = { defaultTexDims: this.defaultDims, connectedResources: connected };
+            compileDatas.set(name, compileData);
+            reflections.set(name, this.passes.get(name)!.reflect(compileData));
+        }
 
         const compiled: CompiledPass[] = [];
         for (const name of order) {
@@ -213,7 +227,7 @@ export class RenderGraph {
                 this.allocated.set(key, texture);
             }
 
-            pass.compile(ctx, compileData);
+            pass.compile(ctx, compileDatas.get(name)!);
             compiled.push({ name, pass, resources });
         }
         this.compiled = compiled;

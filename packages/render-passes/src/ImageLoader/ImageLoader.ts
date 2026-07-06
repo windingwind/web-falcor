@@ -53,8 +53,9 @@ export class ImageLoader extends RenderPass {
             const hdr = decodeHdr(new Uint8Array(await response.arrayBuffer()));
             this.texture = this.device.createTexture2D(hdr.width, hdr.height, ResourceFormat.RGBA32Float, 1, 1, hdr.data);
         } else {
-            // PNG/JPG via the browser decoder.
-            const bitmap = await createImageBitmap(await response.blob(), { colorSpaceConversion: "none" });
+            // PNG/JPG via the browser decoder. premultiplyAlpha must be off:
+            // native FreeImage loads straight (non-premultiplied) RGBA.
+            const bitmap = await createImageBitmap(await response.blob(), { colorSpaceConversion: "none", premultiplyAlpha: "none" });
             const texture = this.device.createTexture2D(
                 bitmap.width,
                 bitmap.height,

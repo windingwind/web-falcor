@@ -55,4 +55,9 @@ export const kShaderOverrides: Readonly<Record<string, string>> = {
     // WGSL has no 64-bit integers: SplitMix64 state emulated as uint2 (lo, hi), bit-identical sequences.
     "Utils/Sampling/Pseudorandom/SplitMix64.slang": "WebFalcor/Overrides/Utils/Sampling/Pseudorandom/SplitMix64.slang",
     "Utils/Sampling/UniformSampleGenerator.slang": "WebFalcor/Overrides/Utils/Sampling/UniformSampleGenerator.slang",
+    // Write-only storage textures (WGSL r32*-only read_write rule).
+    "RenderPasses/Utils/Composite/Composite.cs.slang": "WebFalcor/Overrides/RenderPasses/Utils/Composite/Composite.cs.slang",
+    "RenderPasses/Utils/CrossFade/CrossFade.cs.slang": "WebFalcor/Overrides/RenderPasses/Utils/CrossFade/CrossFade.cs.slang",
+    // Typed buffers (Buffer<T>) don't exist in WGSL -> structured buffer.
+    "RenderPasses/Utils/GaussianBlur/GaussianBlur.ps.slang": "WebFalcor/Overrides/RenderPasses/Utils/GaussianBlur/GaussianBlur.ps.slang",
 };

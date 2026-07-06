@@ -13,3 +13,6 @@ export * from "./GBuffer/GBufferRaster.js";
 export * from "./GBuffer/VBufferRT.js";
 export * from "./MinimalPathTracer/MinimalPathTracer.js";
 export * from "./PathTracer/PathTracer.js";
+export * from "./Utils/Composite.js";
+export * from "./Utils/CrossFade.js";
+export * from "./Utils/GaussianBlur.js";

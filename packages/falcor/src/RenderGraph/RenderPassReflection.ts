@@ -98,4 +98,24 @@ export class RenderPassReflection {
     getField(name: string): Field | undefined {
         return this.fields.find((f) => f.name_ === name);
     }
+
+    /**
+     * Clones a connected source field under this pass's input field name — used
+     * by RenderGraph to build CompileData::connectedResources.
+     */
+    addConnectedField(name: string, src: Field): Field {
+        const f = new Field(name, src.desc_, src.visibility_);
+        f.resourceType = src.resourceType;
+        f.width = src.width;
+        f.height = src.height;
+        f.depth = src.depth;
+        f.sampleCount = src.sampleCount;
+        f.mipCount = src.mipCount;
+        f.arraySize = src.arraySize;
+        f.format_ = src.format_;
+        f.bindFlags_ = src.bindFlags_;
+        f.flags_ = src.flags_;
+        this.fields.push(f);
+        return f;
+    }
 }
