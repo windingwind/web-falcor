@@ -21,4 +21,12 @@ m.frameCapture.baseFilename = "oracle-imgtest-pathtracer"
 for i in range(4):
     m.renderFrame()
 m.frameCapture.capture()
+
+# rayCount/pathLength are R32Uint; the native EXR capture path writes zeros
+# for uint formats (Bitmap uint->EXR bug), so dump raw texture data instead.
+# Requires numpy in the bundled python (pythondist/python3 -m pip install numpy).
+import numpy as np
+for name in ["rayCount", "pathLength"]:
+    tex = m.activeGraph.getOutput("PathTracer." + name).to_numpy()
+    tex.astype(np.uint32).tofile(os.path.join(base, "out-native", "oracle-imgtest-pathtracer.PathTracer." + name + ".0.u32"))
 exit()

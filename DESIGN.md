@@ -264,7 +264,7 @@ Importers (plugin package, like upstream):
 | `Materials/` all BSDF modules (Lambert, OrenNayar, Disney/Frostbite diffuse, GGX iso/aniso, StandardBSDF, Sheen, Hair Chiang16, Cloth, MERL/RGL, PBRT set, LayeredBSDF, Fresnel/Microfacet/NDF, TexLOD) | ✅ | compile as-is to WGSL; TexLOD ray-cone variants fine, ray-diff variants fine |
 | `Volumes/` GridVolumeSampler, phase functions | ✅ | NanoVDB traversal is shader code, portable |
 | `RTXDI/` | 🟡 | RTXDI **SDK** is open source (BSD): the resampling shaders port; visibility rays go through SoftwareRT. Full ReSTIR DI parity feasible but scheduled late |
-| `Utils/PixelStats` | ✅ | needs 64-bit-atomic shim (paired u32) |
+| `Utils/PixelStats` | ✅ ported | per-pixel counters ported (binding array + texture atomics -> one packed `Atomic<uint>` buffer, 5 regions; rayCount/pathLength verified vs native per-pixel). Aggregate CPU-readback stats (`getStats()`) pending |
 
 ### 6.4 `RenderGraph/`
 
@@ -398,6 +398,7 @@ more than 0.05). Suite: `npm run test:gpu` (53 GPU tests + 23 unit green).
 | StratifiedSamplePattern (camera jitter) vs gcc/libstdc++ reference | std::mt19937 + std::shuffle + generate_canonical\<float\> replicated | bit-exact | 0 (unit-pinned) |
 | upstream `HalfRes.py` graph over cornell_box (web-side only ⚠) | IOSize Half plumbing + stratified jitter + 16-frame accumulation | runs, half-res, jitter advances | no native oracle: the oracle GPU's Vulkan driver lacks ROVs, so native Mogwai cannot construct GBufferRaster at all |
 | upstream image test `PathTracer.py` over cornell_box (4 frames) — color / guideNormal / reflectionPosW / albedo / specularAlbedo / indirectAlbedo / ToneMapper.dst | guide outputs + ResolvePass | 2.5e-4 / 1.4e-5 / 3.9e-5 / byte-exact / 1.6e-9 / byte-exact / 4.7e-6 | 38 @0.05 (stochastic silhouette, cornell policy) / 0 / 0 / — |
+| `PathTracer.py` rayCount / pathLength (PixelStats port; per-pixel integer counters vs raw native texture dumps) | PixelStats override: packed atomic buffer + resolve kernel | sums 248895 vs 248890 / 118515 exact | 7 / 4 mismatched pixels (stochastic tail) |
 
 † residual is entirely the jpg *input decode* (browser vs FreeImage IDCT/chroma
 upsampling, ≤3 sRGB LSB): the png-fed pixels contribute zero error (Composite
@@ -414,9 +415,7 @@ output is diffed against native Mogwai running the same file.
 
 | Status | Count | Graphs |
 |---|---|---|
-| ✅ verified vs native | 14 | MinimalPathTracer, ToneMapping, VBufferRT, CompositePass, CrossFadePass, GaussianBlur, ColorMapPass, SideBySide, SplitScreen, ModulateIllumination, SimplePostFX, FLIPPass, PathTracer*, PathTracerDielectrics |
-
-\* PathTracer.py: rayCount/pathLength outputs allocate but await the PixelStats port; the other 8 marked outputs verified.
+| ✅ verified vs native | 14 | MinimalPathTracer, ToneMapping, VBufferRT, CompositePass, CrossFadePass, GaussianBlur, ColorMapPass, SideBySide, SplitScreen, ModulateIllumination, SimplePostFX, FLIPPass, PathTracer, PathTracerDielectrics |
 | 🟢 runnable now (passes exist; oracle pending) | 1 | VBufferRTInline (same pass; inline variant is our default) |
 | 🟡 PathTracer siblings | 1 | SDFEditorRenderGraphV2 (SDF grids, M7 remainder) |
 | 🟠 runnable on web; native oracle impossible on this machine | 1 | HalfRes (needs FBX importer for Arcade.pyscene; and the oracle GPU lacks ROV support, so native Mogwai cannot run GBufferRaster-based graphs at all) |

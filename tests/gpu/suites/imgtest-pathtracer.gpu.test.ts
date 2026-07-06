@@ -4,8 +4,9 @@
  * cornell_box.pyscene, 4 accumulated frames, diffed against native captures.
  * (Upstream's test scene is Arcade.pyscene — FBX importer pending.)
  *
- * rayCount/pathLength are marked by the graph and allocate, but need the
- * PixelStats port (pending) — not compared here.
+ * rayCount/pathLength come from the PixelStats port and are compared against
+ * raw .u32 dumps of the native output textures (the native uint->EXR capture
+ * path writes zeros, so the oracle script dumps via Texture.to_numpy).
  *
  * Regenerate the oracle with:
  *   Falcor/build/linux-gcc/bin/Debug/Mogwai --script tests/oracle/render-native-imgtest-pathtracer.py --headless
@@ -110,4 +111,27 @@ gpuTest("ImageTestPathTracer.matchesNativeOracle", async ({ device }) => {
     await comparePng(await readBytes("PathTracer.indirectAlbedo"), "oracle-imgtest-pathtracer.PathTracer.indirectAlbedo.0.png", 5e-4);
     // Final frame (sRGB bytes, direct compare).
     await comparePng(await readBytes("ToneMapper.dst"), "oracle-imgtest-pathtracer.ToneMapper.dst.0.png", 5e-4);
+
+    // Pixel stats (integer per-pixel counters, frame 4 only — native clears
+    // per frame). Counts flip on the pixels where the stochastic content
+    // diverges (same policy as radiance: small mismatch tail allowed).
+    const compareU32 = async (ref: string, oracle: string, badTol: number, sumRelTol: number) => {
+        const web = new Uint32Array((await ctx.readTextureSubresource(graph!.getOutput(ref)!)).buffer);
+        const nat = new Uint32Array(await (await fetch(`/tests/oracle/out-native/${oracle}`)).arrayBuffer());
+        expectEq(nat.length, size * size, `${oracle} size`);
+        let mismatch = 0;
+        let webSum = 0;
+        let natSum = 0;
+        for (let i = 0; i < size * size; i++) {
+            if (web[i]! !== nat[i]!) mismatch++;
+            webSum += web[i]!;
+            natSum += nat[i]!;
+        }
+        const sumRel = Math.abs(webSum - natSum) / natSum;
+        console.error(`# ${oracle}: mismatch=${mismatch} webSum=${webSum} natSum=${natSum} sumRel=${sumRel.toExponential(2)}`);
+        expectEq(mismatch <= badTol, true, `${oracle} mismatched pixels ${mismatch}`);
+        expectEq(sumRel < sumRelTol, true, `${oracle} sum divergence ${sumRel}`);
+    };
+    await compareU32("PathTracer.rayCount", "oracle-imgtest-pathtracer.PathTracer.rayCount.0.u32", 300, 1e-3);
+    await compareU32("PathTracer.pathLength", "oracle-imgtest-pathtracer.PathTracer.pathLength.0.u32", 300, 1e-3);
 });

@@ -53,6 +53,9 @@ export class PathTracer extends RenderPass {
     private sampleColor: Buffer | null = null;
     private sampleOffset: Texture | null = null;
     private sampleCountInput: Texture | null = null;
+    private statsEnabled = false;
+    private statsBuffer: Buffer | null = null;
+    private statsResolvePass: ComputePass | null = null;
     private tracePass: ComputePass | null = null;
     private frameCount = 0;
     private sampleGenerator: SampleGenerator;
@@ -197,6 +200,7 @@ export class PathTracer extends RenderPass {
             OUTPUT_GUIDE_DATA: this.outputGuideData ? 1 : 0,
             OUTPUT_NRD_DATA: 0,
             OUTPUT_NRD_ADDITIONAL_DATA: 0,
+            ...(this.statsEnabled ? { _PIXEL_STATS_ENABLED: 1 } : {}),
         }).addAll(this.sampleGenerator.getDefines());
     }
 
@@ -233,6 +237,17 @@ export class PathTracer extends RenderPass {
         var_["sampleGuideData"] = this.outputGuideData ? this.sampleGuideData! : this.dummyBufferB;
     }
 
+    /** Binds the pixel-stats globals (module scope, present when enabled). */
+    private bindStats(root: ShaderVar, frameDim: [number, number]): void {
+        if (!this.statsEnabled) return;
+        try {
+            (root["PixelStatsCB"] as ShaderVar)["gPixelStatsDim"] = frameDim;
+        } catch {
+            /* stats DCE'd in this kernel */
+        }
+        this.trySet(root, "gStatsBuffer", this.statsBuffer!);
+    }
+
     /** Sets a member only if it survived DCE in this kernel variant. */
     private trySet(var_: ShaderVar, name: string, value: unknown): void {
         try {
@@ -257,9 +272,12 @@ export class PathTracer extends RenderPass {
         // sampleCount input is connected (SAMPLES_PER_PIXEL define becomes 0).
         this.sampleCountInput = renderData.getTexture("sampleCount") ?? null;
         const fixedSampleCount = this.sampleCountInput === null;
-        if (outputGuideData !== this.outputGuideData || fixedSampleCount !== this.fixedSampleCount) {
+        // Mirrors native: pixel stats collect when rayCount/pathLength connect.
+        const statsEnabled = renderData.getTexture("rayCount") !== undefined || renderData.getTexture("pathLength") !== undefined;
+        if (outputGuideData !== this.outputGuideData || fixedSampleCount !== this.fixedSampleCount || statsEnabled !== this.statsEnabled) {
             this.outputGuideData = outputGuideData;
             this.fixedSampleCount = fixedSampleCount;
+            this.statsEnabled = statsEnabled;
             this.generatePass = null;
         }
 
@@ -290,6 +308,23 @@ export class PathTracer extends RenderPass {
                 });
             }
         }
+        if (this.statsEnabled) {
+            // One packed buffer, 5 per-pixel counter regions (storage-buffer
+            // count per stage is limited; see the PixelStats override).
+            const statsSize = frameDim[0] * frameDim[1] * 5 * 4;
+            if (!this.statsBuffer || this.statsBuffer.size < statsSize) {
+                this.statsBuffer = new Buffer(this.device, {
+                    size: statsSize,
+                    structSize: 4,
+                    bindFlags: ResourceBindFlags.ShaderResource | ResourceBindFlags.UnorderedAccess,
+                    memoryType: MemoryType.DeviceLocal,
+                    name: "PathTracer::stats",
+                });
+            }
+            // Mirrors PixelStats::beginFrame: stats are per-frame.
+            ctx.clearBuffer(this.statsBuffer);
+        }
+
         if (!this.fixedSampleCount) {
             // ColorType at COLOR_FORMAT LogLuvHDR = one packed uint per sample.
             if (!this.sampleColor || this.sampleColor.size < sampleCount * 4) {
@@ -318,6 +353,7 @@ export class PathTracer extends RenderPass {
         {
             const root = this.generatePass.getRootVar();
             this.scene.bindShaderData(root);
+            this.bindStats(root, frameDim);
             this.bindPathTracerData(root["CB"]["gPathGenerator"] as ShaderVar, vbuffer, color, frameDim);
             // One thread per pixel, padded to whole tiles (numthreads(256,1,1)).
             this.generatePass.execute(ctx, tiles[0]! * kScreenTileDim * kScreenTileDim, tiles[1]!);
@@ -327,6 +363,7 @@ export class PathTracer extends RenderPass {
         {
             const root = this.tracePass!.getRootVar();
             this.scene.bindShaderData(root);
+            this.bindStats(root, frameDim);
             const block = root["gPathTracer"] as ShaderVar;
             this.bindPathTracerData(block, vbuffer, color, frameDim);
             if (this.emissiveSampler === "Power" && this.scene.useEmissiveLights) {
@@ -377,6 +414,26 @@ export class PathTracer extends RenderPass {
             }
             this.trySet(cb, "outputColor", this.fixedSampleCount ? this.dummyTexFloat! : color);
             this.resolvePass.execute(ctx, frameDim[0], frameDim[1]);
+        }
+
+        // Resolve pixel stats into the connected outputs (native copies its
+        // stats textures in endFrame; the web resolve reads the packed
+        // atomic buffer instead).
+        if (this.statsEnabled) {
+            const rayCount = renderData.getTexture("rayCount");
+            const pathLength = renderData.getTexture("pathLength");
+            if (!this.statsResolvePass) {
+                this.statsResolvePass = ComputePass.create(this.device, {
+                    path: "WebFalcor/PixelStatsResolve.cs.slang",
+                    defines: { is_valid_gRayCount: rayCount ? 1 : 0, is_valid_gPathLength: pathLength ? 1 : 0 },
+                });
+            }
+            const root = this.statsResolvePass.getRootVar();
+            (root["CB"] as ShaderVar)["gFrameDim"] = frameDim;
+            root["gStatsBuffer"] = this.statsBuffer!;
+            if (rayCount) this.trySet(root, "gRayCount", rayCount);
+            if (pathLength) this.trySet(root, "gPathLength", pathLength);
+            this.statsResolvePass.execute(ctx, frameDim[0], frameDim[1]);
         }
 
         this.frameCount++;

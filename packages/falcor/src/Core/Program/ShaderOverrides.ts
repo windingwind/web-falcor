@@ -77,4 +77,6 @@ export const kShaderOverrides: Readonly<Record<string, string>> = {
     // Write-only storage textures (WGSL r32*-only read_write rule).
     "RenderPasses/SceneDebugger/SceneDebugger.cs.slang": "WebFalcor/Overrides/RenderPasses/SceneDebugger/SceneDebugger.cs.slang",
     "RenderPasses/BSDFViewer/BSDFViewer.cs.slang": "WebFalcor/Overrides/RenderPasses/BSDFViewer/BSDFViewer.cs.slang",
+    // WGSL has no binding arrays / storage-texture atomics -> per-type atomic buffers.
+    "Rendering/Utils/PixelStats.slang": "WebFalcor/Overrides/Rendering/Utils/PixelStats.slang",
 };
