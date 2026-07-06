@@ -63,6 +63,11 @@ export async function runGraphScript(device: Device, source: string): Promise<Re
             createPass(device, type, new Properties((toJs(props) as Record<string, never>) ?? {})),
         // Output-channel marker flags (markOutput's optional second argument).
         TextureChannelFlags: { Red: 1, Green: 2, Blue: 4, Alpha: 8, RGB: 7, RGBA: 15 },
+        // Vector factories for pass properties (e.g. SimplePostFX saturationCurve).
+        // Factories, not classes: Pyodide can't `new` JS classes from Python.
+        float2: (x = 0, y = 0) => new float2(x, y),
+        float3: (x = 0, y = 0, z = 0) => new float3(x, y, z),
+        float4: (x = 0, y = 0, z = 0, w = 0) => new float4(x, y, z, w),
     };
     pyodide.registerJsModule("falcor", falcorModule);
 

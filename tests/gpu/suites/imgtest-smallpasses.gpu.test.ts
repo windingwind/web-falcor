@@ -78,3 +78,10 @@ gpuTest("ImageTestGaussianBlur.matchesNativeOracle", async ({ device }) => {
     // hdr input decodes bit-exactly; separable blur is pure float math.
     await compareToOracle(web, "oracle-imgtest-gaussianblur.GaussianBlur.dst.0.exr", 1e-4, 50);
 });
+
+gpuTest("ImageTestModulateIllumination.matchesNativeOracle", async ({ device }) => {
+    // out = diffuseRadiance(png) * diffuseReflectance(jpg) + specularRadiance(png):
+    // jpg decode residual scaled by the png factor.
+    const web = await runUpstreamGraph(device, "ModulateIllumination.py", "ModulateIllumination.output");
+    await compareToOracle(web, "oracle-imgtest-modulate.ModulateIllumination.output.0.exr", 5e-3, 700, 0.02);
+});

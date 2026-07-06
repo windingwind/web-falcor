@@ -45,15 +45,22 @@ async function compareToPngOracle(web: Float32Array, oracle: string, mseTol: num
     };
     let mse = 0;
     let maxDiff = 0;
-    for (let i = 0; i < size * size; i++) {
-        for (let ch = 0; ch < 3; ch++) {
-            const d = (toSrgbByte(web[i * 4 + ch]!) - nat[i * 4 + ch]!) / 255;
-            mse += d * d;
-            maxDiff = Math.max(maxDiff, Math.abs(d) * 255);
+    let maxAt = [0, 0];
+    for (let y = 0; y < size; y++) {
+        for (let x = 0; x < size; x++) {
+            const i = y * size + x;
+            for (let ch = 0; ch < 3; ch++) {
+                const d = (toSrgbByte(web[i * 4 + ch]!) - nat[i * 4 + ch]!) / 255;
+                mse += d * d;
+                if (Math.abs(d) * 255 > maxDiff) {
+                    maxDiff = Math.abs(d) * 255;
+                    maxAt = [x, y];
+                }
+            }
         }
     }
     mse /= size * size * 3;
-    console.error(`# ${oracle}: mse=${mse.toExponential(2)} maxByteDiff=${maxDiff}`);
+    console.error(`# ${oracle}: mse=${mse.toExponential(2)} maxByteDiff=${maxDiff} at=${maxAt}`);
     expectEq(mse < mseTol, true, `sRGB MSE ${mse}`);
 }
 
@@ -73,4 +80,16 @@ gpuTest("ImageTestColorMap.matchesNativeOracle", async ({ device }) => {
     // reduction result is consumed one frame later, like native).
     const web = await runUpstreamGraph(device, "ColorMapPass.py", "ColorMap.output");
     await compareToPngOracle(web, "oracle-imgtest-colormap.ColorMap.output.0.png", 2e-4);
+});
+
+gpuTest("ImageTestSimplePostFX.matchesNativeOracle", async ({ device }) => {
+    // hdr input through bloom pyramid + star + grading (all params non-default).
+    // Residual (mse ~1.1e-3, edge-localized): border sampling is emulated
+    // in-shader (WebGPU has no border mode), and the HW TMU's internal
+    // coordinate precision differs sub-texel from shader float math — the
+    // difference compounds across the 8-level pyramid and shows up as
+    // half-LSB coordinate shifts on hard HDR edges (max ~78 bytes at the sun
+    // silhouette). Not a math error: the non-bloom paths match near-exactly.
+    const web = await runUpstreamGraph(device, "SimplePostFX.py", "BlitPass.dst");
+    await compareToPngOracle(web, "oracle-imgtest-simplepostfx.BlitPass.dst.0.png", 2e-3);
 });

@@ -18,3 +18,5 @@ export * from "./Utils/CrossFade.js";
 export * from "./Utils/GaussianBlur.js";
 export * from "./DebugPasses/ComparisonPass.js";
 export * from "./DebugPasses/ColorMapPass.js";
+export * from "./Utils/ModulateIllumination.js";
+export * from "./Utils/SimplePostFX.js";

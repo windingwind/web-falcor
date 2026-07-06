@@ -62,4 +62,8 @@ export const kShaderOverrides: Readonly<Record<string, string>> = {
     "RenderPasses/Utils/GaussianBlur/GaussianBlur.ps.slang": "WebFalcor/Overrides/RenderPasses/Utils/GaussianBlur/GaussianBlur.ps.slang",
     // bool in uniform address space is non-host-shareable in WGSL -> uint.
     "RenderPasses/DebugPasses/Comparison.ps.slang": "WebFalcor/Overrides/RenderPasses/DebugPasses/Comparison.ps.slang",
+    // Write-only storage textures (WGSL r32*-only read_write rule).
+    "RenderPasses/ModulateIllumination/ModulateIllumination.cs.slang": "WebFalcor/Overrides/RenderPasses/ModulateIllumination/ModulateIllumination.cs.slang",
+    // Write-only gDst + gDstPrev ping-pong, uint gInPlace, border sampling emulated (no border mode in WebGPU).
+    "RenderPasses/SimplePostFX/SimplePostFX.cs.slang": "WebFalcor/Overrides/RenderPasses/SimplePostFX/SimplePostFX.cs.slang",
 };
