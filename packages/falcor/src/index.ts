@@ -56,5 +56,6 @@ export * from "./Scene/Importer/GltfImporter.js";
 export * from "./Scene/Material/TextureManager.js";
 export * from "./Scene/Lights/EnvMap.js";
 export * from "./Scene/TangentSpace.js";
+export * from "./Rendering/Lights/EnvMapSampler.js";
 export * from "./Scene/SceneData.js";
 export * from "./Scene/Material/MaterialData.js";

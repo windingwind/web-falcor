@@ -119,6 +119,14 @@ export class Texture extends Resource {
         return this.getView(mipLevel, 1, firstArraySlice, arraySize);
     }
 
+    /** Mirrors Texture::generateMips: box-filter downsample chain via blits
+     *  (linear sampling at destination texel centers == 2x2 average). */
+    generateMips(ctx: { blit(src: Texture, dst: Texture, filter?: GPUFilterMode, srcMip?: number, dstMip?: number): void }): void {
+        for (let mip = 1; mip < this.mipCount; mip++) {
+            ctx.blit(this, this, "linear", mip - 1, mip);
+        }
+    }
+
     /** Mirrors Texture::setSubresourceBlob: uploads one mip of one array slice. */
     setSubresourceBlob(mipLevel: number, arraySlice: number, data: ArrayBufferView | ArrayBuffer): void {
         const w = Math.max(1, this.width >> mipLevel);

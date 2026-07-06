@@ -12,6 +12,7 @@
 import {
     Buffer,
     ComputePass,
+    EnvMapSampler,
     MemoryType,
     Properties,
     RenderData,
@@ -51,6 +52,7 @@ export class PathTracer extends RenderPass {
     private dummyBufferA: Buffer | null = null;
     private dummyBufferB: Buffer | null = null;
     private dummySampler: Sampler | null = null;
+    private envMapSampler: EnvMapSampler | null = null;
 
     // StaticParams (defaults mirror PathTracer.h).
     private samplesPerPixel = 1;
@@ -202,10 +204,15 @@ export class PathTracer extends RenderPass {
             this.scene.bindShaderData(root);
             const block = root["gPathTracer"] as ShaderVar;
             this.bindPathTracerData(block, vbuffer, color, frameDim);
-            // Env map sampler members can survive DCE with env light off.
             const envSampler = block["envMapSampler"] as ShaderVar;
-            envSampler["importanceSampler"] = this.dummySampler!;
-            envSampler["importanceMap"] = this.dummyTexFloat!;
+            if (this.scene.useEnvLight) {
+                if (!this.envMapSampler) this.envMapSampler = new EnvMapSampler(this.device, ctx, this.scene.getEnvMap()!);
+                this.envMapSampler.bindShaderData(envSampler);
+            } else {
+                // Env map sampler members can survive DCE with env light off.
+                envSampler["importanceSampler"] = this.dummySampler!;
+                envSampler["importanceMap"] = this.dummyTexFloat!;
+            }
             this.tracePass!.execute(ctx, frameDim[0], frameDim[1]);
         }
 

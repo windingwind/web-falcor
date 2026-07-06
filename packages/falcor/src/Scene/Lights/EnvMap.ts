@@ -21,7 +21,7 @@ const kIdentity3x4 = [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0];
 
 export class EnvMap {
     readonly texture: Texture;
-    private readonly sampler: Sampler;
+    readonly sampler: Sampler;
     intensity = 1;
     tint: [number, number, number] = [1, 1, 1];
 
