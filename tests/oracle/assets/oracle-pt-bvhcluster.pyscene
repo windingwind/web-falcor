@@ -1,0 +1,24 @@
+# Multi-cluster emissive scene exercising the LightBVH: 3 spatial clusters of
+# 4 rotated quads each (24 emissive triangles -> multi-level SAOH tree), plus
+# a diffuse receiver plane.
+receiverMat = StandardMaterial('receiver')
+receiverMat.baseColor = float4(0.5, 0.5, 0.5, 1.0)
+receiverMat.roughness = 0.8
+
+receiverMesh = TriangleMesh.createQuad(float2(12.0, 12.0))
+receiverID = sceneBuilder.addTriangleMesh(receiverMesh, receiverMat)
+receiverNode = sceneBuilder.addNode('receiver', Transform(translation=float3(3.0, 0.0, 0.0)))
+sceneBuilder.addMeshInstance(receiverNode, receiverID)
+
+quadMesh = TriangleMesh.createQuad(float2(0.5, 0.5))
+for c in range(3):
+    for q in range(4):
+        mat = StandardMaterial('emitter_%d_%d' % (c, q))
+        mat.baseColor = float4(0.05, 0.05, 0.05, 1.0)
+        mat.emissiveColor = float3(1.0 + c, 0.5 + q * 0.5, 0.25)
+        mat.emissiveFactor = 2.0 + c * 0.5
+        meshID = sceneBuilder.addTriangleMesh(quadMesh, mat)
+        nodeID = sceneBuilder.addNode('emitter_%d_%d' % (c, q), Transform(
+            translation=float3(c * 3.0, 1.5 + q * 0.4, -1.0 + q * 0.6),
+            rotationEulerDeg=float3(120.0 + q * 15.0, c * 40.0, 0.0)))
+        sceneBuilder.addMeshInstance(nodeID, meshID)

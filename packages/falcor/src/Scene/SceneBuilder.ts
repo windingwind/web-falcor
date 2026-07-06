@@ -47,8 +47,8 @@ export const TriangleMesh = {
 /** Material bridge mirroring the BasicMaterial python properties. */
 export class MaterialBridge {
     baseColor = new float4(1, 1, 1, 1);
-    /** specularParams (occlusion/roughness/metallic in MetalRough). */
-    specularParams = new float4(0, 0.5, 0, 0);
+    /** specularParams (occlusion/roughness/metallic; BasicMaterialData default is all-zero). */
+    specularParams = new float4(0, 0, 0, 0);
     transmissionColor = new float3(1, 1, 1);
     emissiveColor = new float3(0, 0, 0);
     emissiveFactor = 1;
@@ -105,7 +105,8 @@ export function makeTransform(
     let m = float4x4.identity();
     if (scaling) m = mulMat(matrixFromScaling(scaling), m);
     if (rot) {
-        // R = Rz * Ry * Rx (XYZ euler angles).
+        // R = Rz * Ry * Rx — numerically verified against math::quatFromEulerAngles
+        // (Falcor's euler quat expands to the ZYX matrix product).
         const [cx, sx, cy, sy, cz, sz] = [Math.cos(rot.x), Math.sin(rot.x), Math.cos(rot.y), Math.sin(rot.y), Math.cos(rot.z), Math.sin(rot.z)];
         const r = float4x4.identity();
         r.set(0, 0, cy * cz);
