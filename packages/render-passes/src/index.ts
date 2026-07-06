@@ -22,3 +22,4 @@ export * from "./DebugPasses/ColorMapPass.js";
 export * from "./Utils/ModulateIllumination.js";
 export * from "./Utils/SimplePostFX.js";
 export * from "./Utils/FLIPPass.js";
+export * from "./WhittedRayTracer/WhittedRayTracer.js";

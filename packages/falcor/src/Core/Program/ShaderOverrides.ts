@@ -71,4 +71,7 @@ export const kShaderOverrides: Readonly<Record<string, string>> = {
     "RenderPasses/SimplePostFX/SimplePostFX.cs.slang": "WebFalcor/Overrides/RenderPasses/SimplePostFX/SimplePostFX.cs.slang",
     // Write-only outputs + uniform bools -> uint.
     "RenderPasses/FLIPPass/FLIPPass.cs.slang": "WebFalcor/Overrides/RenderPasses/FLIPPass/FLIPPass.cs.slang",
+    // RT pipeline -> compute megakernel over SceneRayQuery; existential lod
+    // samplers restructured into generic helpers.
+    "RenderPasses/WhittedRayTracer/WhittedRayTracer.rt.slang": "WebFalcor/Overrides/RenderPasses/WhittedRayTracer/WhittedRayTracer.rt.slang",
 };
