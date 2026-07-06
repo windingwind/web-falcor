@@ -173,6 +173,17 @@ export class RenderGraph {
                     continue;
                 }
 
+                // Optional outputs are only allocated when consumed: connected to an
+                // edge or marked as a graph output (native ResourceCache behavior —
+                // unallocated optional outputs read back as null in RenderData, which
+                // passes use to drive their is_valid_* defines).
+                if (field.isOptional() && field.isOutput() && !field.isInput()) {
+                    const consumed =
+                        this.outputs.some((o) => o.pass === name && o.field === field.name_) ||
+                        this.edges.some((e) => e.srcPass === name && e.srcField === field.name_);
+                    if (!consumed) continue;
+                }
+
                 // Output / internal / input-output: allocate (merging connected inputs' requirements).
                 const merged = new Field(field.name_, field.desc_, field.visibility_).merge(field);
                 merged.resourceType = field.resourceType;

@@ -209,6 +209,7 @@ export class Scene {
         });
         make("materialData", blobBytes, 128);
         make("materialBuffer0", new Uint32Array(4), 4);
+        make("curveDummy", new Uint32Array(16), 32); // StaticCurveVertexData-sized dummy
 
         // Material textures packed into one array (DESIGN.md §6.2).
         const packed = textureManager.build(this.device);
@@ -348,6 +349,10 @@ export class Scene {
         scene["lights"] = this.buffers["lights"]!;
         scene["lightCount"] = this.lightCount;
         scene["prevVertices"] = this.buffers["vertices"]!;
+        // Curve buffers (no curve geometry yet; dummies for DCE survivors).
+        scene["curveVertices"] = this.buffers["curveDummy"]!;
+        scene["prevCurveVertices"] = this.buffers["curveDummy"]!;
+        scene["curveIndices"] = this.buffers["curveDummy"]!;
         scene["indexData"]["data0"] = this.buffers["indices"]!;
 
         // Env map (dummy black texture + zeroed uniforms when absent).

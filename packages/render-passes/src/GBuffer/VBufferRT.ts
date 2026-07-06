@@ -6,6 +6,7 @@
 
 import {
     ComputePass,
+    FieldFlags,
     Properties,
     RenderData,
     RenderPass,
@@ -45,6 +46,21 @@ export class VBufferRT extends RenderPass {
             .texture2D(w, h)
             .format(ResourceFormat.RGBA32Float)
             .bindFlags(ResourceBindFlags.UnorderedAccess | ResourceBindFlags.ShaderResource);
+        r.addOutput("depth", "Depth buffer (NDC)")
+            .texture2D(w, h)
+            .format(ResourceFormat.R32Float)
+            .bindFlags(ResourceBindFlags.UnorderedAccess | ResourceBindFlags.ShaderResource)
+            .flags(FieldFlags.Optional);
+        r.addOutput("mvec", "Motion vector")
+            .texture2D(w, h)
+            .format(ResourceFormat.RG32Float)
+            .bindFlags(ResourceBindFlags.UnorderedAccess | ResourceBindFlags.ShaderResource)
+            .flags(FieldFlags.Optional);
+        r.addOutput("mask", "Mask")
+            .texture2D(w, h)
+            .format(ResourceFormat.R32Float)
+            .bindFlags(ResourceBindFlags.UnorderedAccess | ResourceBindFlags.ShaderResource)
+            .flags(FieldFlags.Optional);
         return r;
     }
 
@@ -62,11 +78,11 @@ export class VBufferRT extends RenderPass {
                 USE_ALPHA_TEST: this.useAlphaTest ? 1 : 0,
                 RAY_FLAGS: 0,
                 COMPUTE_DEPTH_OF_FIELD: 0,
-                is_valid_gDepth: 0,
-                is_valid_gMotionVector: 0,
+                is_valid_gDepth: renderData.getTexture("depth") ? 1 : 0,
+                is_valid_gMotionVector: renderData.getTexture("mvec") ? 1 : 0,
                 is_valid_gViewW: 1,
                 is_valid_gTime: 0,
-                is_valid_gMask: 0,
+                is_valid_gMask: renderData.getTexture("mask") ? 1 : 0,
             });
             defines.addAll(this.sampleGenerator.getDefines());
             this.pass = ComputePass.create(this.device, { path: kShaderFile, defines });
@@ -77,6 +93,12 @@ export class VBufferRT extends RenderPass {
         root["gVBufferRT"]["frameCount"] = this.frameCount;
         root["gVBuffer"] = vbuffer;
         root["gViewW"] = renderData.getTexture("viewW")!;
+        const depth = renderData.getTexture("depth");
+        if (depth) root["gDepth"] = depth;
+        const mvec = renderData.getTexture("mvec");
+        if (mvec) root["gMotionVector"] = mvec;
+        const mask = renderData.getTexture("mask");
+        if (mask) root["gMask"] = mask;
         this.pass.execute(ctx, vbuffer.width, vbuffer.height);
         this.frameCount++;
     }

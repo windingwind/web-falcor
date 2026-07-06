@@ -93,6 +93,8 @@ export class Device {
                 maxComputeWorkgroupStorageSize: adapter.limits.maxComputeWorkgroupStorageSize,
                 // G-buffer MRT layouts exceed the 32-byte default (8 fat targets).
                 maxColorAttachmentBytesPerSample: adapter.limits.maxColorAttachmentBytesPerSample,
+                // G-buffer-style passes write many storage textures (default limit 4).
+                maxStorageTexturesPerShaderStage: adapter.limits.maxStorageTexturesPerShaderStage,
             },
         });
 
