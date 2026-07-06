@@ -104,6 +104,7 @@ export interface BasicMaterialDesc {
     emissive?: float3;
     emissiveFactor?: number;
     specularTransmission?: number;
+    volumeAbsorption?: float3;
     texBaseColor?: number; // packed TextureHandle
     texSpecular?: number;
     texEmissive?: number;
@@ -142,8 +143,12 @@ export function packBasicMaterialBlob(header: MaterialHeaderDesc, mat: BasicMate
     const tr = mat.transmission ?? new float3(1, 1, 1);
     dv.setUint16(off, f32tof16(tr.x), true); dv.setUint16(off + 2, f32tof16(tr.y), true); dv.setUint16(off + 4, f32tof16(tr.z), true); off += 6;
     dv.setUint16(off, f32tof16(mat.diffuseTransmission ?? 0), true); off += 2; // diffuseTransmission
-    // volumeScattering f16x3 + pad + volumeAbsorption f16x3 + anisotropy (8 halves)
-    for (let i = 0; i < 8; i++) { dv.setUint16(off, 0, true); off += 2; }
+    // volumeScattering f16x3 + pad (4 halves)
+    for (let i = 0; i < 4; i++) { dv.setUint16(off, 0, true); off += 2; }
+    const va = mat.volumeAbsorption ?? new float3(0, 0, 0);
+    dv.setUint16(off, f32tof16(va.x), true); dv.setUint16(off + 2, f32tof16(va.y), true); dv.setUint16(off + 4, f32tof16(va.z), true);
+    off += 6;
+    dv.setUint16(off, 0, true); off += 2; // volumeAnisotropy
     off += 2; // trailing pad: displacementScale is 4-byte aligned (payload offset 64)
     dv.setFloat32(off, 0, true); off += 4; // displacementScale
     dv.setFloat32(off, 0, true); off += 4; // displacementOffset

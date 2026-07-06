@@ -408,7 +408,7 @@ output is diffed against native Mogwai running the same file.
 
 \* PathTracer.py: rayCount/pathLength outputs allocate but await the PixelStats port; the other 8 marked outputs verified.
 | 🟢 runnable now (passes exist; oracle pending) | 1 | VBufferRTInline (same pass; inline variant is our default) |
-| 🟡 PathTracer siblings | 4 | PathTracerMaterials + PathTracerDielectrics (need VBufferRT stratified jitter — pattern exists, hookup pending), PathTracerAdaptive (dynamic spp / sampleCount input unsupported), SDFEditorRenderGraphV2 (SDF grids) |
+| 🟡 PathTracer siblings | 4 | PathTracerDielectrics (runs; ⚠ open parity issue: dielectric stack renders brighter — interior-list absorption under investigation, quarantined test documents findings), PathTracerMaterials (scene sweep pending), PathTracerAdaptive (dynamic spp / sampleCount input unsupported), SDFEditorRenderGraphV2 (SDF grids) |
 | 🟠 runnable on web; native oracle impossible on this machine | 1 | HalfRes (needs FBX importer for Arcade.pyscene; and the oracle GPU lacks ROV support, so native Mogwai cannot run GBufferRaster-based graphs at all) |
 | 🟡 needs GBufferRaster extra channels / GBufferRT pass | 7 | GBufferRaster, GBufferRasterAlpha, GBufferRT, GBufferRTInline, GBufferRTTexGrads, MVecRT, MVecRaster — ⚠ raster-based ones share the native-ROV oracle blocker |
 | 🟡 needs larger pass ports (M8 scope) | 7 | SVGF, TAA, VBufferRaster, VBufferRasterAlpha, BSDFViewer, WhittedRayTracer, SceneDebugger |

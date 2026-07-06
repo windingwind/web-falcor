@@ -160,8 +160,14 @@ export class PathTracer extends RenderPass {
             COLOR_FORMAT: 1, // ColorFormat::LogLuvHDR (native default; unused at spp==1)
             MIS_HEURISTIC: this.misHeuristic,
             MIS_POWER_EXPONENT: "2.0",
-            _EMISSIVE_LIGHT_SAMPLER_TYPE: kEmissiveSamplerTypes[this.emissiveSampler]!,
-            ...(this.lightBVHSampler ? Object.fromEntries(this.lightBVHSampler.getDefines().entries()) : {}),
+            // Mirrors native: the sampler-type define comes from the emissive
+            // sampler's own getDefines(); without emissive lights there is no
+            // sampler and the shader falls back to the NULL sampler.
+            ...(scene.useEmissiveLights
+                ? this.lightBVHSampler
+                    ? Object.fromEntries(this.lightBVHSampler.getDefines().entries())
+                    : { _EMISSIVE_LIGHT_SAMPLER_TYPE: kEmissiveSamplerTypes[this.emissiveSampler]! }
+                : {}),
             INTERIOR_LIST_SLOT_COUNT: 2,
             GBUFFER_ADJUST_SHADING_NORMALS: 0,
             USE_ENV_LIGHT: scene.useEnvLight ? 1 : 0,

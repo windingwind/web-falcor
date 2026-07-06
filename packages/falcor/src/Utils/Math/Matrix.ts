@@ -215,3 +215,14 @@ export function ortho(left: number, right: number, bottom: number, top: number, 
     m.set(2, 3, zNear / (zNear - zFar));
     return m;
 }
+
+/** Mirrors MatrixMath.h matrixFromRotationXYZ (intrinsic rotations, negated angles). */
+export function matrixFromRotationXYZ(angleX: number, angleY: number, angleZ: number): float4x4 {
+    const c1 = Math.cos(-angleX), c2 = Math.cos(-angleY), c3 = Math.cos(-angleZ);
+    const s1 = Math.sin(-angleX), s2 = Math.sin(-angleY), s3 = Math.sin(-angleZ);
+    const m = float4x4.identity();
+    m.set(0, 0, c2 * c3); m.set(0, 1, c2 * s3); m.set(0, 2, -s2);
+    m.set(1, 0, -c1 * s3 + s1 * s2 * c3); m.set(1, 1, c1 * c3 + s1 * s2 * s3); m.set(1, 2, s1 * c2);
+    m.set(2, 0, s1 * s3 + c1 * s2 * c3); m.set(2, 1, -s1 * c3 + c1 * s2 * s3); m.set(2, 2, c1 * c2);
+    return m;
+}

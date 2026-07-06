@@ -164,6 +164,12 @@ export class MaterialBridge {
     specularTransmission = 0;
     diffuseTransmission = 0;
     thinSurface = false;
+    nestedPriority = 0;
+    private _volumeAbsorption = new float3(0, 0, 0);
+
+    set volumeAbsorption(v: { x: number; y: number; z: number }) {
+        this._volumeAbsorption = toF3(v);
+    }
 
     constructor(
         public readonly materialType: MaterialType,
@@ -201,7 +207,14 @@ export class MaterialBridge {
     toDesc(): SceneMaterialDesc {
         const emissive = this._emissiveColor.x !== 0 || this._emissiveColor.y !== 0 || this._emissiveColor.z !== 0;
         return {
-            header: { materialType: this.materialType, doubleSided: this.doubleSided, emissive, ior: this.indexOfRefraction, thinSurface: this.thinSurface },
+            header: {
+                materialType: this.materialType,
+                doubleSided: this.doubleSided,
+                emissive,
+                ior: this.indexOfRefraction,
+                thinSurface: this.thinSurface,
+                nestedPriority: this.nestedPriority,
+            },
             basic: {
                 baseColor: this._baseColor,
                 specular: this._specularParams,
@@ -210,6 +223,7 @@ export class MaterialBridge {
                 emissiveFactor: this.emissiveFactor,
                 specularTransmission: this.specularTransmission,
                 diffuseTransmission: this.diffuseTransmission,
+                volumeAbsorption: this._volumeAbsorption,
             },
         };
     }
@@ -286,6 +300,7 @@ export function makeTransform(
 interface EnvMapRef {
     path: string;
     intensity: number;
+    rotation?: { x: number; y: number; z: number };
 }
 
 type Command =
@@ -299,8 +314,23 @@ export class SceneBuilderBridge {
     private meshInstanced = new Map<number, float4x4>();
     private nodes: float4x4[] = [];
     private lights: LightBridge[] = [];
-    envMap: EnvMapRef | null = null;
+    private _envMap: EnvMapRef | null = null;
     camera: CameraBridge | null = null;
+
+    /** Eagerly copies the descriptor: python-side values (PyProxies) may not
+     *  outlive the script, and props are set before assignment in pyscenes. */
+    set envMap(v: EnvMapRef | null) {
+        this._envMap = v
+            ? {
+                  path: String(v.path),
+                  intensity: Number(v.intensity),
+                  rotation: v.rotation ? { x: Number(v.rotation.x), y: Number(v.rotation.y), z: Number(v.rotation.z) } : undefined,
+              }
+            : null;
+    }
+    get envMap(): EnvMapRef | null {
+        return this._envMap;
+    }
     cameraSpeed = 1;
 
     addCamera(camera: CameraBridge): void {
@@ -387,6 +417,7 @@ export class SceneBuilderBridge {
             const url = baseUrl ? `${baseUrl}/${this.envMap.path}` : this.envMap.path;
             const envMap = await EnvMap.createFromUrl(device, url);
             envMap.intensity = this.envMap.intensity;
+            if (this.envMap.rotation) envMap.setRotation([this.envMap.rotation.x, this.envMap.rotation.y, this.envMap.rotation.z]);
             scene.setEnvMap(envMap);
         }
         return scene;

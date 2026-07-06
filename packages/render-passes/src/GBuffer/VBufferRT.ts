@@ -6,6 +6,11 @@
 
 import {
     ComputePass,
+    DxSamplePattern,
+    HaltonSamplePattern,
+    StratifiedSamplePattern,
+    float2,
+    type CPUSampleGenerator,
     FieldFlags,
     Properties,
     RenderData,
@@ -28,11 +33,18 @@ export class VBufferRT extends RenderPass {
     private frameCount = 0;
     private useAlphaTest = false;
     private sampleGenerator: SampleGenerator;
+    private cameraJitterGenerator: CPUSampleGenerator | null = null;
 
     constructor(device: Device, props: Properties) {
         super(device);
         this.useAlphaTest = props.get("useAlphaTest", false);
         this.sampleGenerator = SampleGenerator.create(device, SAMPLE_GENERATOR_DEFAULT);
+        // Mirrors GBufferBase::updateSamplePattern (Center -> no generator).
+        const pattern = props.get<string>("samplePattern", "Center");
+        const count = props.get("sampleCount", 16);
+        if (pattern === "Stratified") this.cameraJitterGenerator = new StratifiedSamplePattern(count);
+        else if (pattern === "Halton") this.cameraJitterGenerator = new HaltonSamplePattern(count);
+        else if (pattern === "DirectX") this.cameraJitterGenerator = new DxSamplePattern(count);
     }
 
     override reflect(compileData: CompileData): RenderPassReflection {
@@ -73,6 +85,11 @@ export class VBufferRT extends RenderPass {
     override execute(ctx: RenderContext, renderData: RenderData): void {
         if (!this.scene) return;
         const vbuffer = renderData.getTexture("vbuffer")!;
+        // Mirrors GBufferBase::updateFrameDim (first jitter sample lands next frame).
+        this.scene.camera.setPatternGenerator(
+            this.cameraJitterGenerator,
+            new float2(Math.fround(1 / vbuffer.width), Math.fround(1 / vbuffer.height)),
+        );
         if (!this.pass) {
             const defines = this.scene.getSceneDefines().addAll({
                 USE_ALPHA_TEST: this.useAlphaTest ? 1 : 0,
