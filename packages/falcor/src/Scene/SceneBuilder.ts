@@ -155,6 +155,8 @@ export class MaterialBridge {
     doubleSided = false;
     indexOfRefraction = 1.5;
     specularTransmission = 0;
+    diffuseTransmission = 0;
+    thinSurface = false;
 
     constructor(
         public readonly materialType: MaterialType,
@@ -192,7 +194,7 @@ export class MaterialBridge {
     toDesc(): SceneMaterialDesc {
         const emissive = this._emissiveColor.x !== 0 || this._emissiveColor.y !== 0 || this._emissiveColor.z !== 0;
         return {
-            header: { materialType: this.materialType, doubleSided: this.doubleSided, emissive, ior: this.indexOfRefraction },
+            header: { materialType: this.materialType, doubleSided: this.doubleSided, emissive, ior: this.indexOfRefraction, thinSurface: this.thinSurface },
             basic: {
                 baseColor: this._baseColor,
                 specular: this._specularParams,
@@ -200,6 +202,7 @@ export class MaterialBridge {
                 emissive: this._emissiveColor,
                 emissiveFactor: this.emissiveFactor,
                 specularTransmission: this.specularTransmission,
+                diffuseTransmission: this.diffuseTransmission,
             },
         };
     }

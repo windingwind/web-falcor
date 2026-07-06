@@ -1,0 +1,16 @@
+# Minimal DistantLight isolation scene: diffuse quad lit by a distant light.
+mat = StandardMaterial('Floor')
+mat.baseColor = float4(0.6, 0.6, 0.6, 1.0)
+mat.roughness = 0.6
+
+quadMesh = TriangleMesh.createQuad(float2(2.0, 2.0))
+sceneBuilder.addMeshInstance(
+    sceneBuilder.addNode('Floor', Transform(translation=float3(0.5, 0.5, 0.0), rotationEulerDeg=float3(90.0, 0.0, 0.0))),
+    sceneBuilder.addTriangleMesh(quadMesh, mat)
+)
+
+light = DistantLight()
+light.direction = float3(-0.1, -0.5, -0.8)
+light.intensity = float3(2.0)
+light.angle = 0.05
+sceneBuilder.addLight(light)

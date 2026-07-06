@@ -100,6 +100,7 @@ export interface BasicMaterialDesc {
     specular?: float4;
     /** Transmission color (PBRTConductor reads the conductor k from here). */
     transmission?: float3;
+    diffuseTransmission?: number;
     emissive?: float3;
     emissiveFactor?: number;
     specularTransmission?: number;
@@ -140,7 +141,7 @@ export function packBasicMaterialBlob(header: MaterialHeaderDesc, mat: BasicMate
     dv.setUint16(off, f32tof16(mat.specularTransmission ?? 0), true); off += 2;
     const tr = mat.transmission ?? new float3(1, 1, 1);
     dv.setUint16(off, f32tof16(tr.x), true); dv.setUint16(off + 2, f32tof16(tr.y), true); dv.setUint16(off + 4, f32tof16(tr.z), true); off += 6;
-    dv.setUint16(off, f32tof16(0), true); off += 2; // diffuseTransmission
+    dv.setUint16(off, f32tof16(mat.diffuseTransmission ?? 0), true); off += 2; // diffuseTransmission
     // volumeScattering f16x3 + pad + volumeAbsorption f16x3 + anisotropy (8 halves)
     for (let i = 0; i < 8; i++) { dv.setUint16(off, 0, true); off += 2; }
     off += 2; // trailing pad: displacementScale is 4-byte aligned (payload offset 64)

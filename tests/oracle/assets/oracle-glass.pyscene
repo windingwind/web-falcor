@@ -1,0 +1,26 @@
+# Minimal glass isolation scene: glass sphere over a diffuse floor, point light.
+floorMat = StandardMaterial('Floor')
+floorMat.baseColor = float4(0.5, 0.55, 0.6, 1.0)
+floorMat.roughness = 0.7
+
+glassMat = StandardMaterial('Glass')
+glassMat.baseColor = float4(1.0, 1.0, 1.0, 1.0)
+glassMat.roughness = 0.0
+glassMat.specularTransmission = 1.0
+glassMat.indexOfRefraction = 1.5
+
+quadMesh = TriangleMesh.createQuad(float2(4.0, 4.0))
+sceneBuilder.addMeshInstance(
+    sceneBuilder.addNode('Floor', Transform(translation=float3(0.5, -0.2, 0.0))),
+    sceneBuilder.addTriangleMesh(quadMesh, floorMat)
+)
+sphereMesh = TriangleMesh.createSphere(radius = 0.35)
+sceneBuilder.addMeshInstance(
+    sceneBuilder.addNode('Glass', Transform(translation=float3(0.5, 0.5, 0.0))),
+    sceneBuilder.addTriangleMesh(sphereMesh, glassMat)
+)
+
+light = PointLight('L')
+light.position = float3(0.5, 1.5, 1.5)
+light.intensity = float3(5.0, 5.0, 5.0)
+sceneBuilder.addLight(light)
