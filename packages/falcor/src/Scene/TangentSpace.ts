@@ -40,6 +40,12 @@ export function generateTangents(vertices: StaticVertex[], indices: Uint32Array)
         const os = [e1[0]! * t2 - e2[0]! * t1, e1[1]! * t2 - e2[1]! * t1, e1[2]! * t2 - e2[2]! * t1];
         const len = Math.hypot(os[0]!, os[1]!, os[2]!);
         if (len === 0) continue;
+        // mikktspace.c InitTriInfo: vOs is scaled by fS = mirrored ? -1 : +1,
+        // so the face tangent always points along +dP/du.
+        const fS = area >= 0 ? 1 : -1;
+        os[0]! *= fS;
+        os[1]! *= fS;
+        os[2]! *= fS;
 
         for (const [a, b, c] of [
             [i0, i1, i2],

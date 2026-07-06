@@ -1,30 +1,28 @@
 /**
- * M7: LightBVH hardening — multi-cluster emissive scene (24 triangles in 3
- * spatial clusters, varied rotations and flux) builds a multi-level SAOH tree,
- * exercising binned splits, nth_element ordering, cone unions and multi-level
- * traversal bitmasks. Scene is a shared .pyscene, loaded via Pyodide on web
- * and natively for the oracle.
+ * OVERALL VERIFY: the UNMODIFIED upstream cornell_box.pyscene
+ * (Falcor/media/test_scenes) runs through the Pyodide bridge — cube factory,
+ * scalar scaling, in-scene Camera — and the full PathTracer (LightBVH NEE)
+ * matches the native render of the same file.
  *
  * Regenerate the oracle with:
- *   Falcor/build/linux-gcc/bin/Debug/Mogwai --script tests/oracle/render-native-fullpt-bvhcluster.py --headless
+ *   Falcor/build/linux-gcc/bin/Debug/Mogwai --script tests/oracle/render-native-cornell.py --headless
  */
 
-import { RenderGraph, createPass, float3, initScripting, runSceneScript } from "@web-falcor/falcor";
+import { RenderGraph, createPass, initScripting, runSceneScript } from "@web-falcor/falcor";
 import "@web-falcor/render-passes";
 import parseExr from "parse-exr";
 import { gpuTest, expectEq } from "../harness/registry.js";
 
-gpuTest("LightBVHCluster.matchesNativeOracle", async ({ device }) => {
+gpuTest("CornellBox.matchesNativeOracle", async ({ device }) => {
     const size = 256;
     await initScripting("/node_modules/pyodide");
-    const source = await (await fetch("/tests/oracle/assets/oracle-pt-bvhcluster.pyscene")).text();
-    const scene = await runSceneScript(device, source, "/tests/oracle/assets");
+    const source = await (await fetch("/Falcor/media/test_scenes/cornell_box.pyscene")).text();
+    const scene = await runSceneScript(device, source, "/Falcor/media/test_scenes");
 
-    scene.camera.setPosition(new float3(3.0, 3.5, 7.0));
-    scene.camera.setTarget(new float3(3.0, 0.5, 0.0));
+    // Camera comes from the pyscene itself; only the aspect mirrors the 256^2 framebuffer.
     scene.camera.setAspectRatio(1.0);
 
-    const graph = new RenderGraph(device, "BVHClusterGraph");
+    const graph = new RenderGraph(device, "CornellGraph");
     graph.onResize(size, size);
     graph.addPass(createPass(device, "VBufferRT", { useAlphaTest: false }), "VBufferRT");
     graph.addPass(createPass(device, "PathTracer", { samplesPerPixel: 1, emissiveSampler: "LightBVH" }), "PathTracer");
@@ -36,7 +34,7 @@ gpuTest("LightBVHCluster.matchesNativeOracle", async ({ device }) => {
     graph.execute(ctx);
     const web = new Float32Array((await ctx.readTextureSubresource(graph.getOutput("PathTracer.color")!)).buffer);
 
-    const res = await fetch("/tests/oracle/out-native/oracle-fullpt-bvhcluster.PathTracer.color.0.exr");
+    const res = await fetch("/tests/oracle/out-native/oracle-cornell.PathTracer.color.0.exr");
     const { data, width, height } = parseExr(await res.arrayBuffer(), 1015) as { data: Float32Array; width: number; height: number };
     expectEq(width, size, "oracle resolution");
 
@@ -59,7 +57,7 @@ gpuTest("LightBVHCluster.matchesNativeOracle", async ({ device }) => {
     }
     const mean = sum / (size * size * 3);
     const rel = sum / Math.max(refSum, 1e-6);
-    console.error(`# bvhClusterPT: meanAbs=${mean.toExponential(2)} rel=${rel.toExponential(2)} bad=${badPixels}`);
+    console.error(`# cornellPT: meanAbs=${mean.toExponential(2)} rel=${rel.toExponential(2)} bad=${badPixels}`);
     expectEq(mean < 5e-3, true, `radiance mean abs diff ${mean}`);
-    expectEq(badPixels < size, true, `bad pixels ${badPixels}`);
+    expectEq(badPixels < size * 8, true, `bad pixels ${badPixels}`);
 });

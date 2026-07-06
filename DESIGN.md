@@ -365,6 +365,9 @@ more than 0.05). Suite: `npm run test:gpu` (53 GPU tests + 23 unit green).
 | **PathTracer**, emissive power sampler | + alias table (bit-replicated) | 1.6e-4 | 13 (silhouette) |
 | `.pyscene` importScene path (Pyodide) | SceneBuilder bridge | 9.5e-7 | 0 |
 | `.pyscene` builder-geometry path (Pyodide) | SceneBuilder bridge | 1.9e-5 | 0 |
+| **PathTracer**, emissive LightBVH sampler | CPU LightBVH builder port | 1.6e-4 | 13 (silhouette) |
+| PathTracer, 24-emitter cluster scene (LightBVH) | SAOH splits, multi-level bitmasks | 5.4e-6 | 0 |
+| **upstream `cornell_box.pyscene`, unmodified** | full stack: Pyodide + PathTracer + LightBVH | 2.6e-4 | 49 (silhouette) |
 
 RNG parity is exact: TinyUniform (LCG+TEA) and xoshiro128** (SplitMix64 seeding
 emulated as paired u32) produce bit-identical streams, so 1-spp renders match

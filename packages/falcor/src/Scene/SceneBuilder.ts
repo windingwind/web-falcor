@@ -27,7 +27,7 @@ export interface TriangleMeshDesc {
     indices: Uint32Array;
 }
 
-/** Mirrors TriangleMesh::createQuad (XZ plane, +Y normal). */
+/** Mirrors TriangleMesh factories (TriangleMesh.cpp). */
 export const TriangleMesh = {
     createQuad(size: float2 = new float2(1, 1)): TriangleMeshDesc {
         const hx = 0.5 * size.x;
@@ -42,7 +42,45 @@ export const TriangleMesh = {
         ];
         return { vertices, indices: new Uint32Array([2, 1, 0, 1, 2, 3]) };
     },
+
+    createCube(size: float3 = new float3(1, 1, 1)): TriangleMeshDesc {
+        const positions: number[][][] = [
+            [[-0.5, -0.5, -0.5], [-0.5, -0.5, 0.5], [0.5, -0.5, 0.5], [0.5, -0.5, -0.5]],
+            [[-0.5, 0.5, 0.5], [-0.5, 0.5, -0.5], [0.5, 0.5, -0.5], [0.5, 0.5, 0.5]],
+            [[-0.5, 0.5, -0.5], [-0.5, -0.5, -0.5], [0.5, -0.5, -0.5], [0.5, 0.5, -0.5]],
+            [[0.5, 0.5, 0.5], [0.5, -0.5, 0.5], [-0.5, -0.5, 0.5], [-0.5, 0.5, 0.5]],
+            [[-0.5, 0.5, 0.5], [-0.5, -0.5, 0.5], [-0.5, -0.5, -0.5], [-0.5, 0.5, -0.5]],
+            [[0.5, 0.5, -0.5], [0.5, -0.5, -0.5], [0.5, -0.5, 0.5], [0.5, 0.5, 0.5]],
+        ];
+        const normals: number[][] = [[0, -1, 0], [0, 1, 0], [0, 0, -1], [0, 0, 1], [-1, 0, 0], [1, 0, 0]];
+        const uv: number[][] = [[0, 0], [1, 0], [1, 1], [0, 1]];
+        const sign = [size.x < 0 ? -1 : 1, size.y < 0 ? -1 : 1, size.z < 0 ? -1 : 1];
+        const t0 = new float4(0, 0, 0, 0);
+        const vertices: StaticVertex[] = [];
+        const indices: number[] = [];
+        for (let i = 0; i < 6; i++) {
+            const idx = vertices.length;
+            indices.push(idx, idx + 2, idx + 1, idx, idx + 3, idx + 2);
+            for (let j = 0; j < 4; j++) {
+                vertices.push({
+                    position: new float3(positions[i]![j]![0]! * size.x, positions[i]![j]![1]! * size.y, positions[i]![j]![2]! * size.z),
+                    normal: new float3(normals[i]![0]! * sign[0]!, normals[i]![1]! * sign[1]!, normals[i]![2]! * sign[2]!),
+                    tangent: t0,
+                    texCrd: new float2(uv[j]![0]!, uv[j]![1]!),
+                });
+            }
+        }
+        return { vertices, indices: new Uint32Array(indices) };
+    },
 };
+
+/** Camera description assembled in pyscenes (Camera() + sceneBuilder.addCamera). */
+export class CameraBridge {
+    position = new float3(0, 0, 3);
+    target = new float3(0, 0, 0);
+    up = new float3(0, 1, 0);
+    focalLength = 21;
+}
 
 /** Material bridge mirroring the BasicMaterial python properties. */
 export class MaterialBridge {
@@ -99,8 +137,10 @@ export function makeTransform(
     translation: float3 | null,
     rotationEuler: float3 | null,
     rotationEulerDeg: float3 | null,
-    scaling: float3 | null,
+    scalingIn: float3 | number | null,
 ): float4x4 {
+    // Scalar scaling broadcasts (native float3 constructor from scalar).
+    const scaling = typeof scalingIn === "number" ? new float3(scalingIn, scalingIn, scalingIn) : scalingIn;
     const rot = rotationEuler ?? (rotationEulerDeg ? new float3((rotationEulerDeg.x * Math.PI) / 180, (rotationEulerDeg.y * Math.PI) / 180, (rotationEulerDeg.z * Math.PI) / 180) : null);
     let m = float4x4.identity();
     if (scaling) m = mulMat(matrixFromScaling(scaling), m);
@@ -140,6 +180,12 @@ export class SceneBuilderBridge {
     private nodes: float4x4[] = [];
     private lights: LightBridge[] = [];
     envMap: EnvMapRef | null = null;
+    camera: CameraBridge | null = null;
+    cameraSpeed = 1;
+
+    addCamera(camera: CameraBridge): void {
+        this.camera = camera;
+    }
 
     importScene(path: string): void {
         this.commands.push({ kind: "import", path });
@@ -210,6 +256,12 @@ export class SceneBuilderBridge {
         }));
 
         const scene = new Scene(device, meshes, materials, lights, textureManager);
+        if (this.camera) {
+            scene.camera.setPosition(this.camera.position);
+            scene.camera.setTarget(this.camera.target);
+            scene.camera.setUpVector(this.camera.up);
+            scene.camera.setFocalLength(this.camera.focalLength);
+        }
         if (this.envMap) {
             const url = baseUrl ? `${baseUrl}/${this.envMap.path}` : this.envMap.path;
             scene.setEnvMap(await EnvMap.createFromUrl(device, url));

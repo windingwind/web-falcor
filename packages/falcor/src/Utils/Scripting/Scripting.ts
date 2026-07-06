@@ -12,7 +12,7 @@ import { RenderGraph } from "../../RenderGraph/RenderGraph.js";
 import { createPass } from "../../RenderGraph/RenderPass.js";
 import { Properties } from "../Properties.js";
 import { RuntimeError } from "../../Core/Error.js";
-import { LightBridge, MaterialBridge, SceneBuilderBridge, TriangleMesh, makeTransform } from "../../Scene/SceneBuilder.js";
+import { CameraBridge, LightBridge, MaterialBridge, SceneBuilderBridge, TriangleMesh, makeTransform } from "../../Scene/SceneBuilder.js";
 import type { Scene } from "../../Scene/Scene.js";
 import { LightType } from "../../Scene/SceneData.js";
 import { MaterialType } from "../../Scene/Material/MaterialData.js";
@@ -84,7 +84,7 @@ import sys
 sys.modules.pop('webfalcor_scene', None)  # registerJsModule per call; defeat import caching
 from webfalcor_scene import (sceneBuilder, TriangleMesh, float2, float3, float4,
     PointLight, DirectionalLight, StandardMaterial, ClothMaterial, HairMaterial,
-    PBRTDiffuseMaterial, PBRTConductorMaterial, _makeTransform, _makeEnvMap)
+    PBRTDiffuseMaterial, PBRTConductorMaterial, Camera, _makeTransform, _makeEnvMap)
 
 def Transform(translation=None, rotationEuler=None, rotationEulerDeg=None, scaling=None):
     return _makeTransform(translation, rotationEuler, rotationEulerDeg, scaling)
@@ -110,7 +110,9 @@ export async function runSceneScript(device: Device, source: string, baseUrl: st
         // Pyodide calls JS classes without `new` — expose factories.
         TriangleMesh: {
             createQuad: (size?: float2) => TriangleMesh.createQuad(size),
+            createCube: (size?: float3) => TriangleMesh.createCube(size),
         },
+        Camera: (_name = "") => new CameraBridge(),
         float2: (x = 0, y = 0) => new float2(x, y),
         float3: (x = 0, y = 0, z = 0) => new float3(x, y, z),
         float4: (x = 0, y = 0, z = 0, w = 0) => new float4(x, y, z, w),
