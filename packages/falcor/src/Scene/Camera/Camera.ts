@@ -28,6 +28,8 @@ export interface CameraData {
     viewMat: float4x4;
     projMat: float4x4;
     viewProjMat: float4x4;
+    viewProjMatNoJitter: float4x4;
+    prevViewProjMatNoJitter: float4x4;
     invViewProj: float4x4;
     posW: float3;
     focalLength: number;
@@ -62,6 +64,7 @@ export class Camera {
         generator: null,
         scale: new float2(0, 0),
     };
+    private prevViewProjMatNoJitter: float4x4 | null = null;
 
     constructor(name = "Camera") {
         this.name = name;
@@ -73,12 +76,15 @@ export class Camera {
         if (!generator) this.setJitter(0, 0);
     }
 
-    /** Mirrors the jitter part of Camera::beginFrame (called once per frame). */
+    /** Mirrors Camera::beginFrame: jitter pattern advance + prev-matrix roll
+     *  (native keeps mPrevData = last frame's data; first frame: prev == cur). */
     beginFrame(): void {
+        this.prevViewProjMatNoJitter = this.getData().viewProjMatNoJitter.clone();
         if (this.jitterPattern.generator) {
             const j = this.jitterPattern.generator.next();
             this.setJitter(Math.fround(j.x * this.jitterPattern.scale.x), Math.fround(j.y * this.jitterPattern.scale.y));
         }
+        this.dirty = true; // prev matrix changed
     }
 
     setPosition(p: float3): void { this.position = p.clone(); this.dirty = true; }
@@ -101,14 +107,16 @@ export class Camera {
     getData(): CameraData {
         if (this.dirty || !this.data) {
             const viewMat = matrixFromLookAt(this.position, this.target, this.up);
-            let projMat = perspective(this.getFovY(), this.aspectRatio, this.nearZ, this.farZ);
+            const projMatNoJitter = perspective(this.getFovY(), this.aspectRatio, this.nearZ, this.farZ);
+            let projMat = projMatNoJitter;
             // Camera jitter offsets clip-space positions (mirrors Camera::calculateCameraParameters).
             if (this.jitter.x !== 0 || this.jitter.y !== 0) {
-                projMat = projMat.clone();
+                projMat = projMatNoJitter.clone();
                 projMat.set(0, 2, projMat.get(0, 2) + 2 * this.jitter.x);
                 projMat.set(1, 2, projMat.get(1, 2) - 2 * this.jitter.y);
             }
             const viewProjMat = mulMat(projMat, viewMat);
+            const viewProjMatNoJitter = mulMat(projMatNoJitter, viewMat);
 
             // Ray-gen basis (mirrors upstream cameraU/V/W computation).
             const invView = inverse(viewMat);
@@ -121,6 +129,8 @@ export class Camera {
                 viewMat,
                 projMat,
                 viewProjMat,
+                viewProjMatNoJitter,
+                prevViewProjMatNoJitter: this.prevViewProjMatNoJitter ?? viewProjMatNoJitter,
                 invViewProj: inverse(viewProjMat),
                 posW: this.position.clone(),
                 focalLength: this.focalLength,

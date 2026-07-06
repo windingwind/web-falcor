@@ -320,8 +320,8 @@ export class Scene {
         c["viewMat"] = cam.viewMat;
         c["projMat"] = cam.projMat;
         c["viewProjMat"] = cam.viewProjMat;
-        c["viewProjMatNoJitter"] = cam.viewProjMat;
-        c["prevViewProjMatNoJitter"] = cam.viewProjMat; // static scenes: prev == current
+        c["viewProjMatNoJitter"] = cam.viewProjMatNoJitter;
+        c["prevViewProjMatNoJitter"] = cam.prevViewProjMatNoJitter;
         c["invViewProj"] = cam.invViewProj;
         c["posW"] = cam.posW.toArray();
         c["focalLength"] = cam.focalLength;

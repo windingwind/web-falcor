@@ -5,8 +5,10 @@
  *
  * Skipped channels: vbuffer/mtlData (packed uints round-tripped through float
  * EXR captures are not faithfully comparable; hit equality is covered by every
- * PT oracle), mvec/mvecW/disocclusion (native frame-0 prev-camera state
- * differs, as documented for VBufferRT), normWRoughnessMaterialID (native
+ * PT oracle), mvec/mvecW/disocclusion in 1-frame captures (native
+ * initializeCameras snapshots the pre-resize camera into prevData at load —
+ * jittered multi-frame mvec is verified exactly by the MVecRT.py test),
+ * normWRoughnessMaterialID (native
  * RGB10A2Unorm; WGSL has no rgb10a2 storage — web uses RGBA16Float, format-
  * divergent by design), time/mask (not marked by this graph).
  *
