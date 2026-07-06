@@ -25,7 +25,7 @@ gpuTest("FullPathTracerEnv.matchesNativeOracle", async ({ device }) => {
     const graph = new RenderGraph(device, "FullPTEnvGraph");
     graph.onResize(size, size);
     graph.addPass(createPass(device, "VBufferRT", { useAlphaTest: false }), "VBufferRT");
-    graph.addPass(createPass(device, "PathTracer", { samplesPerPixel: 1 }), "PathTracer");
+    graph.addPass(createPass(device, "PathTracer", { samplesPerPixel: 1, emissiveSampler: "Uniform" }), "PathTracer");
     graph.addEdge("VBufferRT.vbuffer", "PathTracer.vbuffer");
     graph.markOutput("PathTracer.color");
     graph.setScene(scene);

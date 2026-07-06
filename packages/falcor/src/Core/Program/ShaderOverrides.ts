@@ -46,6 +46,7 @@ export const kShaderOverrides: Readonly<Record<string, string>> = {
     "RenderPasses/PathTracer/GeneratePaths.cs.slang": "WebFalcor/Overrides/RenderPasses/PathTracer/GeneratePaths.cs.slang",
     "RenderPasses/PathTracer/PathTracer.slang": "WebFalcor/Overrides/RenderPasses/PathTracer/PathTracer.slang",
     "RenderPasses/PathTracer/TracePass.rt.slang": "WebFalcor/Overrides/RenderPasses/PathTracer/TracePass.rt.slang",
+    "RenderPasses/PathTracer/ResolvePass.cs.slang": "WebFalcor/Overrides/RenderPasses/PathTracer/ResolvePass.cs.slang",
     // Newer-Slang nested brace-init fix.
     "Rendering/Materials/PBRT/PBRTConductorMaterial.slang": "WebFalcor/Overrides/Rendering/Materials/PBRT/PBRTConductorMaterial.slang",
     // Typed buffers (Buffer<T>) don't exist in WGSL -> structured buffer.

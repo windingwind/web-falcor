@@ -4,14 +4,15 @@
  * as native does). TracePass runs as the WebFalcor compute megakernel over
  * software ray queries (see the TracePass.rt.slang override).
  *
- * v1 limits (documented in DESIGN.md parity matrix): fixed sample count only,
- * no guide/NRD outputs, EmissiveUniformSampler only (LightBVH/Power pending),
- * no RTXDI/SER, spp == 1 (per-sample color buffers pending).
+ * Limits (documented in DESIGN.md parity matrix): fixed spp == 1 only (no
+ * adaptive sampleCount input), guide outputs supported via ResolvePass, no
+ * NRD outputs, no RTXDI/SER; rayCount/pathLength await the PixelStats port.
  */
 
 import {
     Buffer,
     ComputePass,
+    FieldFlags,
     EmissivePowerSampler,
     EnvMapSampler,
     LightBVHSampler,
@@ -36,6 +37,7 @@ import {
 
 const kGeneratePathsFile = "RenderPasses/PathTracer/GeneratePaths.cs.slang";
 const kTracePassFile = "RenderPasses/PathTracer/TracePass.rt.slang";
+const kResolvePassFile = "RenderPasses/PathTracer/ResolvePass.cs.slang";
 
 /** Mirrors EmissiveLightSamplerType (EmissiveLightSamplerType.slangh). */
 const kEmissiveSamplerTypes: Record<string, number> = { Uniform: 0, LightBVH: 1, Power: 2 };
@@ -44,6 +46,9 @@ const kScreenTileDim = 16;
 
 export class PathTracer extends RenderPass {
     private generatePass: ComputePass | null = null;
+    private resolvePass: ComputePass | null = null;
+    private outputGuideData = false;
+    private sampleGuideData: Buffer | null = null;
     private tracePass: ComputePass | null = null;
     private frameCount = 0;
     private sampleGenerator: SampleGenerator;
@@ -69,7 +74,7 @@ export class PathTracer extends RenderPass {
     private misHeuristic = 0; // Balance
     private useAlphaTest = true;
     private adjustShadingNormals = false;
-    private emissiveSampler = "Uniform";
+    private emissiveSampler = "LightBVH"; // native default (PathTracer.h)
     private powerSampler: EmissivePowerSampler | null = null;
     private lightBVHSampler: LightBVHSampler | null = null;
 
@@ -85,7 +90,7 @@ export class PathTracer extends RenderPass {
         this.useNEE = props.get("useNEE", true);
         this.useMIS = props.get("useMIS", true);
         this.useAlphaTest = props.get("useAlphaTest", true);
-        this.emissiveSampler = props.get("emissiveSampler", "Uniform");
+        this.emissiveSampler = props.get("emissiveSampler", "LightBVH");
         if (!(this.emissiveSampler in kEmissiveSamplerTypes)) {
             throw new Error(`PathTracer: unknown emissiveSampler '${this.emissiveSampler}'`);
         }
@@ -102,6 +107,25 @@ export class PathTracer extends RenderPass {
             .texture2D(w, h)
             .format(ResourceFormat.RGBA32Float)
             .bindFlags(ResourceBindFlags.UnorderedAccess | ResourceBindFlags.ShaderResource);
+        // Guide outputs (kOutputChannels formats), resolved from per-sample
+        // guide data when connected. rayCount/pathLength need PixelStats
+        // (pending); they allocate but stay zero.
+        const guide: [string, string, ResourceFormat][] = [
+            ["albedo", "Output albedo (linear)", ResourceFormat.RGBA8Unorm],
+            ["specularAlbedo", "Output specular albedo (linear)", ResourceFormat.RGBA8Unorm],
+            ["indirectAlbedo", "Output indirect albedo (linear)", ResourceFormat.RGBA8Unorm],
+            ["guideNormal", "Output guide normal (linear)", ResourceFormat.RGBA16Float],
+            ["reflectionPosW", "Output reflection pos (world space)", ResourceFormat.RGBA32Float],
+            ["rayCount", "Per-pixel ray count", ResourceFormat.R32Uint],
+            ["pathLength", "Per-pixel path length", ResourceFormat.R32Uint],
+        ];
+        for (const [name, desc, format] of guide) {
+            r.addOutput(name, desc)
+                .texture2D(w, h)
+                .format(format)
+                .bindFlags(ResourceBindFlags.UnorderedAccess | ResourceBindFlags.ShaderResource)
+                .flags(FieldFlags.Optional);
+        }
         return r;
     }
 
@@ -147,7 +171,7 @@ export class PathTracer extends RenderPass {
             USE_SDF_GRIDS: 0,
             USE_HAIR_MATERIAL: 0,
             USE_VIEW_DIR: 0,
-            OUTPUT_GUIDE_DATA: 0,
+            OUTPUT_GUIDE_DATA: this.outputGuideData ? 1 : 0,
             OUTPUT_NRD_DATA: 0,
             OUTPUT_NRD_ADDITIONAL_DATA: 0,
         }).addAll(this.sampleGenerator.getDefines());
@@ -183,7 +207,16 @@ export class PathTracer extends RenderPass {
         var_["sampleCount"] = this.dummyTexUint;
         var_["sampleOffset"] = this.dummyTexUint;
         var_["sampleColor"] = this.dummyBufferA;
-        var_["sampleGuideData"] = this.dummyBufferB;
+        var_["sampleGuideData"] = this.outputGuideData ? this.sampleGuideData! : this.dummyBufferB;
+    }
+
+    /** Sets a member only if it survived DCE in this kernel variant. */
+    private trySet(var_: ShaderVar, name: string, value: unknown): void {
+        try {
+            (var_ as Record<string, unknown>)[name] = value;
+        } catch {
+            /* binding absent in this variant */
+        }
     }
 
     override execute(ctx: RenderContext, renderData: RenderData): void {
@@ -193,6 +226,15 @@ export class PathTracer extends RenderPass {
         const frameDim: [number, number] = [color.width, color.height];
         const tiles = [Math.ceil(frameDim[0] / kScreenTileDim), Math.ceil(frameDim[1] / kScreenTileDim)];
 
+        // Mirrors PathTracer::beginFrame: guide data is produced when any of
+        // the guide outputs is connected (drives OUTPUT_GUIDE_DATA).
+        const kGuideOutputs = ["albedo", "specularAlbedo", "indirectAlbedo", "guideNormal", "reflectionPosW"] as const;
+        const outputGuideData = kGuideOutputs.some((name) => renderData.getTexture(name) !== undefined);
+        if (outputGuideData !== this.outputGuideData) {
+            this.outputGuideData = outputGuideData;
+            this.generatePass = null;
+        }
+
         if (!this.generatePass) {
             if (this.emissiveSampler === "LightBVH" && this.scene.useEmissiveLights && !this.lightBVHSampler) {
                 this.lightBVHSampler = new LightBVHSampler(this.device, this.scene.getEmissiveTriangles());
@@ -200,6 +242,22 @@ export class PathTracer extends RenderPass {
             const defines = this.getStaticDefines();
             this.generatePass = ComputePass.create(this.device, { path: kGeneratePathsFile, defines });
             this.tracePass = ComputePass.create(this.device, { path: kTracePassFile, defines });
+            this.resolvePass = this.outputGuideData ? ComputePass.create(this.device, { path: kResolvePassFile, defines }) : null;
+        }
+
+        // Per-sample guide data buffer (GuideData = uint4 + float3 + float = 32B),
+        // one sample per pixel padded to whole screen tiles (spp == 1).
+        if (this.outputGuideData) {
+            const sampleCount = tiles[0]! * tiles[1]! * kScreenTileDim * kScreenTileDim;
+            if (!this.sampleGuideData || this.sampleGuideData.size < sampleCount * 32) {
+                this.sampleGuideData = new Buffer(this.device, {
+                    size: sampleCount * 32,
+                    structSize: 32,
+                    bindFlags: ResourceBindFlags.ShaderResource | ResourceBindFlags.UnorderedAccess,
+                    memoryType: MemoryType.DeviceLocal,
+                    name: "PathTracer::sampleGuideData",
+                });
+            }
         }
 
         // Generate paths: primary hits from the V-buffer; misses write background.
@@ -232,6 +290,39 @@ export class PathTracer extends RenderPass {
                 envSampler["importanceMap"] = this.dummyTexFloat!;
             }
             this.tracePass!.execute(ctx, frameDim[0], frameDim[1]);
+        }
+
+        // Resolve guide data into the connected outputs (mirrors resolvePass;
+        // with fixed spp == 1 the color loop is compiled out).
+        if (this.outputGuideData && this.resolvePass) {
+            const root = this.resolvePass.getRootVar();
+            const cb = root["CB"]!["gResolvePass"] as ShaderVar;
+            const p = cb["params"] as ShaderVar;
+            p["useFixedSeed"] = 0;
+            p["fixedSeed"] = 1;
+            p["lodBias"] = 0;
+            p["specularRoughnessThreshold"] = 0.25;
+            p["frameDim"] = frameDim;
+            p["screenTiles"] = tiles;
+            p["frameCount"] = this.frameCount;
+            p["seed"] = this.frameCount;
+            this.trySet(cb, "sampleGuideData", this.sampleGuideData!);
+            this.trySet(cb, "sampleColor", this.dummyBufferA!);
+            this.trySet(cb, "sampleCount", this.dummyTexUint!);
+            this.trySet(cb, "sampleOffset", this.dummyTexUint!);
+            // NRD-only members that survive DCE with OUTPUT_NRD_DATA=0.
+            this.trySet(cb, "primaryHitDiffuseReflectance", this.dummyTexFloat!);
+            this.trySet(cb, "sampleNRDRadiance", this.dummyBufferA!);
+            this.trySet(cb, "sampleNRDHitDist", this.dummyBufferA!);
+            this.trySet(cb, "sampleNRDEmission", this.dummyBufferA!);
+            this.trySet(cb, "sampleNRDReflectance", this.dummyBufferA!);
+            this.trySet(cb, "sampleNRDPrimaryHitNeeOnDelta", this.dummyBufferA!);
+            for (const name of ["albedo", "specularAlbedo", "indirectAlbedo", "guideNormal", "reflectionPosW"]) {
+                const key = `output${name[0]!.toUpperCase()}${name.slice(1)}`;
+                this.trySet(cb, key, renderData.getTexture(name) ?? this.dummyTexFloat!);
+            }
+            this.trySet(cb, "outputColor", this.dummyTexFloat!);
+            this.resolvePass.execute(ctx, frameDim[0], frameDim[1]);
         }
 
         this.frameCount++;
