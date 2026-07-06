@@ -99,9 +99,10 @@ export class SceneDebugger extends RenderPass {
             };
             this.meshToBlasID = make(ids, "SceneDebugger::meshToBlasID");
             this.instanceInfo = make(new Uint32Array(count), "SceneDebugger::instanceInfo");
+            // WGSL std430 PixelData (float3 members pad to 16B): 176 bytes.
             this.pixelData = new Buffer(this.device, {
-                size: 124,
-                structSize: 124,
+                size: 176,
+                structSize: 176,
                 bindFlags: ResourceBindFlags.ShaderResource | ResourceBindFlags.UnorderedAccess,
                 memoryType: MemoryType.DeviceLocal,
                 name: "SceneDebugger::pixelData",

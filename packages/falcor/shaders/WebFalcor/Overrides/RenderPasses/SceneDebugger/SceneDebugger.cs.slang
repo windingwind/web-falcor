@@ -84,6 +84,7 @@ struct SceneDebugger
         // Trace primary ray.
         const Ray ray = gScene.camera.computeRayPinhole(pixel, params.frameDim);
 
+
         float3 color = float3(0);
 
         HitInfo hit;

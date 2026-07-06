@@ -5,15 +5,9 @@
  *
  * Regenerate: Mogwai --script tests/oracle/render-native-imgtest-scenedebugger.py --headless
  *
- * ⚠ QUARANTINED (.gpu.wip): web renders all-black — every pixel early-outs,
- * strongly suggesting params.frameDim (CB.gSceneDebugger.params.frameDim,
- * a doubly-nested uniform member next to resource members in one struct)
- * never lands in the uniform buffer. Native oracle is good (FaceNormal:
- * miss=0.5-gray, normals remapped). Shader compiles (after ShadingData
- * brace-init fix); gridVolumes dummy binding added to Scene.ts.
- * NEXT: instrument ParameterBlock's mixed-struct uniform offset resolution
- * for CB.gSceneDebugger.params.* (compare against PathTracer's working
- * CB.gPathGenerator.params.* path).
+ * (Historical: first landed all-black — an undersized pixelData buffer
+ * (124 B C-packed vs 176 B WGSL std430, float3 pads to 16 B) invalidated
+ * the whole command buffer. Structured-buffer sizes must use WGSL layout.)
  */
 
 import { initScripting, runGraphScript, runSceneScript } from "@web-falcor/falcor";
@@ -41,8 +35,6 @@ gpuTest("ImageTestSceneDebugger.matchesNativeOracle", async ({ device }) => {
     const { data, width, height } = parseExr(await res.arrayBuffer(), 1015) as { data: Float32Array; width: number; height: number };
     expectEq(width, size, "oracle resolution");
 
-    const wpx = (x: number, y: number) => [web[(y * size + x) * 4], web[(y * size + x) * 4 + 1], web[(y * size + x) * 4 + 2]];
-    console.error(`# sd web center=${wpx(128, 128)} corner=${wpx(5, 5)}`);
     let sum = 0;
     let bad = 0;
     for (let y = 0; y < size; y++) {
