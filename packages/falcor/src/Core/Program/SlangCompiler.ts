@@ -197,10 +197,24 @@ export class SlangCompiler {
         this.fsOwnerKey = defines.key();
     }
 
+    /** Sessions hold compiled-module caches that grow the wasm heap; past
+     *  ~20 program variants slang-wasm aborts ("unreachable"). Keep an LRU of
+     *  recent sessions and delete() evicted ones (embind teardown). */
+    private static readonly kMaxSessions = 6;
+
     private getSession(defines: DefineList): SlangSessionApi {
         const key = defines.key();
         let session = this.sessions.get(key) ?? null;
-        if (!session) {
+        if (session) {
+            // LRU touch.
+            this.sessions.delete(key);
+            this.sessions.set(key, session);
+        } else {
+            while (this.sessions.size >= SlangCompiler.kMaxSessions) {
+                const [oldKey, old] = this.sessions.entries().next().value as [string, SlangSessionApi];
+                this.sessions.delete(oldKey);
+                (old as { delete?: () => void }).delete?.();
+            }
             session = slangGlobalSession!.createSession(wgslTargetId) ?? null;
             if (!session) throw new RuntimeError("Failed to create Slang session");
             this.sessions.set(key, session);

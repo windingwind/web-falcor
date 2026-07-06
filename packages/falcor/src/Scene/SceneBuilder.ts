@@ -21,6 +21,13 @@ import { float2, float3, float4 } from "../Utils/Math/Vector.js";
 import { float4x4, matrixFromTranslation, matrixFromScaling, mulMat } from "../Utils/Math/Matrix.js";
 import { RuntimeError } from "../Core/Error.js";
 
+/** The python prelude wraps bridge objects in a setattr guard; JS entry
+ *  points unwrap back to the underlying bridge instance. */
+function unwrapGuard<T>(obj: T): T {
+    const inner = (obj as { _o?: T })._o;
+    return inner ?? obj;
+}
+
 /** TriangleMesh geometry in local space (mirrors Falcor::TriangleMesh). */
 export interface TriangleMeshDesc {
     vertices: StaticVertex[];
@@ -297,7 +304,7 @@ export class SceneBuilderBridge {
     cameraSpeed = 1;
 
     addCamera(camera: CameraBridge): void {
-        this.camera = camera;
+        this.camera = unwrapGuard(camera);
     }
 
     importScene(path: string): void {
@@ -306,7 +313,7 @@ export class SceneBuilderBridge {
 
     addTriangleMesh(mesh: TriangleMeshDesc, material: MaterialBridge): number {
         this.meshGeometry.push(mesh);
-        this.meshMaterials.push(material);
+        this.meshMaterials.push(unwrapGuard(material));
         return this.meshGeometry.length - 1;
     }
 
@@ -322,7 +329,7 @@ export class SceneBuilderBridge {
     }
 
     addLight(light: LightBridge): void {
-        this.lights.push(light);
+        this.lights.push(unwrapGuard(light));
     }
 
     /** Fetches referenced assets and constructs the Scene. */

@@ -130,6 +130,38 @@ class EnvMap:
         return _makeEnvMap(path)
     def __new__(cls, path):
         return _makeEnvMap(path)
+
+# Guard: python setattr on JS proxies silently creates properties, so a typo'd
+# or unimplemented bridge property would be DROPPED. Wrap the factories so
+# unknown attribute writes raise instead (mirrors pybind11 strictness).
+def _guarded(factory, known):
+    def make(*args):
+        obj = factory(*args)
+        class Guard:
+            __slots__ = ('_o',)
+            def __init__(self, o): object.__setattr__(self, '_o', o)
+            def __getattr__(self, k): return getattr(object.__getattribute__(self, '_o'), k)
+            def __setattr__(self, k, v):
+                if k not in known:
+                    raise AttributeError(f'unsupported property: {k} (web bridge)')
+                setattr(object.__getattribute__(self, '_o'), k, v)
+        return Guard(obj)
+    return make
+
+_matProps = {'baseColor', 'specularParams', 'transmissionColor', 'emissiveColor',
+             'emissiveFactor', 'doubleSided', 'roughness', 'metallic',
+             'indexOfRefraction', 'specularTransmission', 'diffuseTransmission', 'thinSurface'}
+_lightProps = {'position', 'intensity', 'direction', 'angle'}
+_camProps = {'position', 'target', 'up', 'focalLength'}
+StandardMaterial = _guarded(StandardMaterial, _matProps)
+ClothMaterial = _guarded(ClothMaterial, _matProps)
+HairMaterial = _guarded(HairMaterial, _matProps)
+PBRTDiffuseMaterial = _guarded(PBRTDiffuseMaterial, _matProps)
+PBRTConductorMaterial = _guarded(PBRTConductorMaterial, _matProps)
+PointLight = _guarded(PointLight, _lightProps)
+DirectionalLight = _guarded(DirectionalLight, _lightProps)
+DistantLight = _guarded(DistantLight, _lightProps)
+Camera = _guarded(Camera, _camProps)
 `;
 
 /**

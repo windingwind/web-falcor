@@ -57,7 +57,6 @@ gpuTest("ConvergenceTest.matchesNativeOracle", async ({ device }) => {
     }
     const mean = sum / (size * size * 3);
     const rel = sum / Math.max(refSum, 1e-6);
-    console.error(`# convergencePT: meanAbs=${mean.toExponential(2)} rel=${rel.toExponential(2)} bad=${badPixels}`);
     expectEq(mean < 5e-3, true, `radiance mean abs diff ${mean}`);
     expectEq(badPixels < size * 8, true, `bad pixels ${badPixels}`);
 });
