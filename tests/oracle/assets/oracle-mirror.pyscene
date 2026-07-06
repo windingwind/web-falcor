@@ -1,0 +1,32 @@
+# Minimal delta-reflection scene: perfect mirror reflecting colored quads.
+mirrorMat = StandardMaterial('Mirror')
+mirrorMat.baseColor = float4(1.0, 1.0, 1.0, 1.0)
+mirrorMat.roughness = 0.0
+mirrorMat.metallic = 1.0
+
+redMat = StandardMaterial('Red')
+redMat.baseColor = float4(0.8, 0.1, 0.1, 1.0)
+redMat.roughness = 0.6
+blueMat = StandardMaterial('Blue')
+blueMat.baseColor = float4(0.1, 0.2, 0.8, 1.0)
+blueMat.roughness = 0.6
+
+quadMesh = TriangleMesh.createQuad(float2(1.5, 1.5))
+sceneBuilder.addMeshInstance(
+    sceneBuilder.addNode('Mirror', Transform(translation=float3(0.5, 0.5, -0.5), rotationEulerDeg=float3(80.0, 0.0, 0.0))),
+    sceneBuilder.addTriangleMesh(quadMesh, mirrorMat)
+)
+smallQuad = TriangleMesh.createQuad(float2(0.6, 0.6))
+sceneBuilder.addMeshInstance(
+    sceneBuilder.addNode('Red', Transform(translation=float3(0.0, 0.4, 1.0), rotationEulerDeg=float3(70.0, 20.0, 0.0))),
+    sceneBuilder.addTriangleMesh(smallQuad, redMat)
+)
+sceneBuilder.addMeshInstance(
+    sceneBuilder.addNode('Blue', Transform(translation=float3(1.0, 0.6, 1.2), rotationEulerDeg=float3(60.0, -25.0, 0.0))),
+    sceneBuilder.addTriangleMesh(smallQuad, blueMat)
+)
+
+light = PointLight('L')
+light.position = float3(0.5, 1.5, 1.5)
+light.intensity = float3(6.0, 6.0, 6.0)
+sceneBuilder.addLight(light)
