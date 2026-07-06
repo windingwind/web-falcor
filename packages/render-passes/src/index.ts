@@ -16,3 +16,5 @@ export * from "./PathTracer/PathTracer.js";
 export * from "./Utils/Composite.js";
 export * from "./Utils/CrossFade.js";
 export * from "./Utils/GaussianBlur.js";
+export * from "./DebugPasses/ComparisonPass.js";
+export * from "./DebugPasses/ColorMapPass.js";

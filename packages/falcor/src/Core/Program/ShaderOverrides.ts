@@ -60,4 +60,6 @@ export const kShaderOverrides: Readonly<Record<string, string>> = {
     "RenderPasses/Utils/CrossFade/CrossFade.cs.slang": "WebFalcor/Overrides/RenderPasses/Utils/CrossFade/CrossFade.cs.slang",
     // Typed buffers (Buffer<T>) don't exist in WGSL -> structured buffer.
     "RenderPasses/Utils/GaussianBlur/GaussianBlur.ps.slang": "WebFalcor/Overrides/RenderPasses/Utils/GaussianBlur/GaussianBlur.ps.slang",
+    // bool in uniform address space is non-host-shareable in WGSL -> uint.
+    "RenderPasses/DebugPasses/Comparison.ps.slang": "WebFalcor/Overrides/RenderPasses/DebugPasses/Comparison.ps.slang",
 };

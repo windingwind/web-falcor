@@ -379,6 +379,10 @@ more than 0.05). Suite: `npm run test:gpu` (53 GPU tests + 23 unit green).
 | upstream image test `CompositePass.py` (jpg+png ImageLoaders, EXR oracle) | scaled add compositing | 2.3e-3 † | 14 px > 0.02 |
 | upstream image test `CrossFadePass.py` (jpg+png ImageLoaders, EXR oracle) | auto-fade frame counting (frame 0 ⇒ out = A) | 2.3e-3 † | 14 px > 0.02 |
 
+| upstream image test `ColorMapPass.py` (hdr, PNG oracle) | Jet color map + auto-range (frame-0 static range, reduction consumed a frame later like native) | sRGB MSE 3.8e-7 | max 1 byte |
+| upstream image test `SideBySide.py` (jpg ×2 raw/sRGB, PNG oracle) | ComparisonPass split view | sRGB MSE 4.4e-5 † | max 22 bytes |
+| upstream image test `SplitScreen.py` (jpg ×2 raw/sRGB, PNG oracle) | interactive split (headless no-mouse state) | sRGB MSE 4.4e-5 † | max 22 bytes |
+
 † residual is entirely the jpg *input decode* (browser vs FreeImage IDCT/chroma
 upsampling, ≤3 sRGB LSB): the png-fed pixels contribute zero error (Composite
 and CrossFade have identical stats), and the hdr-fed GaussianBlur sits at 4.2e-5.
@@ -394,10 +398,10 @@ output is diffed against native Mogwai running the same file.
 
 | Status | Count | Graphs |
 |---|---|---|
-| ✅ verified vs native | 6 | MinimalPathTracer, ToneMapping, VBufferRT, CompositePass, CrossFadePass, GaussianBlur |
+| ✅ verified vs native | 9 | MinimalPathTracer, ToneMapping, VBufferRT, CompositePass, CrossFadePass, GaussianBlur, ColorMapPass, SideBySide, SplitScreen |
 | 🟢 runnable now (passes exist; oracle pending) | 1 | VBufferRTInline (same pass; inline variant is our default) |
 | 🟡 needs PathTracer optional outputs + resolve pass | 5 | PathTracer, PathTracerAdaptive, PathTracerDielectrics, PathTracerMaterials, SDFEditorRenderGraphV2* |
-| 🟡 needs missing SMALL passes (ports are mechanical) | 7 | ColorMapPass, ModulateIllumination, SideBySide, SplitScreen, SimplePostFX, HalfRes, FLIPPass |
+| 🟡 needs missing SMALL passes (ports are mechanical) | 4 | ModulateIllumination, SimplePostFX, HalfRes, FLIPPass |
 | 🟡 needs GBufferRaster extra channels / GBufferRT pass | 7 | GBufferRaster, GBufferRasterAlpha, GBufferRT, GBufferRTInline, GBufferRTTexGrads, MVecRT, MVecRaster |
 | 🟡 needs larger pass ports (M8 scope) | 7 | SVGF, TAA, VBufferRaster, VBufferRasterAlpha, BSDFViewer, WhittedRayTracer, SceneDebugger |
 | 🟡 M8 flagship items | 4 | RTXDI, WARDiffPathTracer ×3 |
