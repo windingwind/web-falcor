@@ -69,6 +69,18 @@ export class GltfImporter {
     }
 
     static async importFromBytes(device: Device, bytes: Uint8Array, baseUrl = "", lights: AnalyticLight[] = []): Promise<Scene> {
+        const textureManager = new TextureManager();
+        const { meshes, materials } = await GltfImporter.parseToDescs(bytes, baseUrl, textureManager);
+        return new Scene(device, meshes, materials, lights, textureManager);
+    }
+
+    /** Parses glTF into scene descriptors without constructing GPU resources
+     *  (shared by importFromBytes and the pyscene SceneBuilder bridge). */
+    static async parseToDescs(
+        bytes: Uint8Array,
+        baseUrl = "",
+        textureManager = new TextureManager(),
+    ): Promise<{ meshes: SceneMeshDesc[]; materials: SceneMaterialDesc[] }> {
         let json: GltfJson;
         let binChunk: Uint8Array | null = null;
 
@@ -141,7 +153,6 @@ export class GltfImporter {
         };
 
         // Decode images -> TextureManager (baseColor textures are sRGB).
-        const textureManager = new TextureManager();
         const textureIDs = new Map<number, number>();
         for (let t = 0; t < (json.textures ?? []).length; t++) {
             const tex = json.textures![t]!;
@@ -242,6 +253,6 @@ export class GltfImporter {
         for (const rootNode of sceneDef?.nodes ?? []) visit(rootNode, float4x4.identity());
         if (meshDescs.length === 0) throw new RuntimeError("GltfImporter: no triangle meshes found");
 
-        return new Scene(device, meshDescs, materials, lights, textureManager);
+        return { meshes: meshDescs, materials };
     }
 }

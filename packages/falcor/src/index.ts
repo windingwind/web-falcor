@@ -52,6 +52,7 @@ export * from "./Utils/SampleGenerators/CPUSampleGenerator.js";
 export * from "./Utils/Sampling/SampleGenerator.js";
 export * from "./Utils/Logger.js";
 export * from "./Scene/Scene.js";
+export * from "./Scene/SceneBuilder.js";
 export * from "./Scene/Importer/GltfImporter.js";
 export * from "./Scene/Material/TextureManager.js";
 export * from "./Scene/Lights/EnvMap.js";

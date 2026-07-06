@@ -12,6 +12,11 @@ import { RenderGraph } from "../../RenderGraph/RenderGraph.js";
 import { createPass } from "../../RenderGraph/RenderPass.js";
 import { Properties } from "../Properties.js";
 import { RuntimeError } from "../../Core/Error.js";
+import { LightBridge, MaterialBridge, SceneBuilderBridge, TriangleMesh, makeTransform } from "../../Scene/SceneBuilder.js";
+import type { Scene } from "../../Scene/Scene.js";
+import { LightType } from "../../Scene/SceneData.js";
+import { MaterialType } from "../../Scene/Material/MaterialData.js";
+import { float2, float3, float4 } from "../Math/Vector.js";
 
 interface PyodideApi {
     registerJsModule(name: string, module: object): void;
@@ -70,4 +75,58 @@ export async function runGraphScript(device: Device, source: string): Promise<Re
 
     if (graphs.length === 0) throw new RuntimeError("Graph script did not register a graph via m.addGraph()");
     return graphs;
+}
+
+/** Python prelude adapting pythonic pyscene API (kwargs, class-style ctors)
+ *  to the JS SceneBuilder bridge. */
+const kScenePrelude = `
+import sys
+sys.modules.pop('webfalcor_scene', None)  # registerJsModule per call; defeat import caching
+from webfalcor_scene import (sceneBuilder, TriangleMesh, float2, float3, float4,
+    PointLight, DirectionalLight, StandardMaterial, ClothMaterial, HairMaterial,
+    PBRTDiffuseMaterial, PBRTConductorMaterial, _makeTransform, _makeEnvMap)
+
+def Transform(translation=None, rotationEuler=None, rotationEulerDeg=None, scaling=None):
+    return _makeTransform(translation, rotationEuler, rotationEulerDeg, scaling)
+
+class EnvMap:
+    @staticmethod
+    def createFromFile(path):
+        return _makeEnvMap(path)
+    def __new__(cls, path):
+        return _makeEnvMap(path)
+`;
+
+/**
+ * Executes an unmodified .pyscene through the SceneBuilder bridge and
+ * resolves the resulting scene (assets fetched relative to baseUrl).
+ */
+export async function runSceneScript(device: Device, source: string, baseUrl: string): Promise<Scene> {
+    if (!pyodide) throw new RuntimeError("Call initScripting() first");
+    const builder = new SceneBuilderBridge();
+
+    const sceneModule = {
+        sceneBuilder: builder,
+        // Pyodide calls JS classes without `new` — expose factories.
+        TriangleMesh: {
+            createQuad: (size?: float2) => TriangleMesh.createQuad(size),
+        },
+        float2: (x = 0, y = 0) => new float2(x, y),
+        float3: (x = 0, y = 0, z = 0) => new float3(x, y, z),
+        float4: (x = 0, y = 0, z = 0, w = 0) => new float4(x, y, z, w),
+        PointLight: (name = "") => new LightBridge(LightType.Point, name),
+        DirectionalLight: (name = "") => new LightBridge(LightType.Directional, name),
+        StandardMaterial: (name = "") => new MaterialBridge(MaterialType.Standard, name),
+        ClothMaterial: (name = "") => new MaterialBridge(MaterialType.Cloth, name),
+        HairMaterial: (name = "") => new MaterialBridge(MaterialType.Hair, name),
+        PBRTDiffuseMaterial: (name = "") => new MaterialBridge(MaterialType.PBRTDiffuse, name),
+        PBRTConductorMaterial: (name = "") => new MaterialBridge(MaterialType.PBRTConductor, name),
+        _makeTransform: makeTransform,
+        _makeEnvMap: (path: string) => ({ path }),
+    };
+    pyodide.registerJsModule("webfalcor_scene", sceneModule);
+
+    pyodide.runPython(kScenePrelude + "\n" + source);
+
+    return builder.resolve(device, baseUrl);
 }
