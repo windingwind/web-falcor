@@ -48,7 +48,11 @@ export class PathTracer extends RenderPass {
     private generatePass: ComputePass | null = null;
     private resolvePass: ComputePass | null = null;
     private outputGuideData = false;
+    private fixedSampleCount = true;
     private sampleGuideData: Buffer | null = null;
+    private sampleColor: Buffer | null = null;
+    private sampleOffset: Texture | null = null;
+    private sampleCountInput: Texture | null = null;
     private tracePass: ComputePass | null = null;
     private frameCount = 0;
     private sampleGenerator: SampleGenerator;
@@ -105,13 +109,17 @@ export class PathTracer extends RenderPass {
         }
         // PathTracer defaults to TinyUniform (unlike MinimalPathTracer).
         this.sampleGenerator = SampleGenerator.create(device, SAMPLE_GENERATOR_TINY_UNIFORM);
-        if (this.samplesPerPixel !== 1) throw new Error("PathTracer v1 supports fixed spp == 1 only");
+        if (this.samplesPerPixel !== 1) throw new Error("PathTracer supports fixed spp == 1 (or the variable sampleCount input)");
     }
 
     override reflect(compileData: CompileData): RenderPassReflection {
         const r = new RenderPassReflection();
         const [w, h] = compileData.defaultTexDims;
         r.addInput("vbuffer", "Fullscreen V-buffer for the primary hits").bindFlags(ResourceBindFlags.ShaderResource);
+        r.addInput("sampleCount", "Sample count buffer (integer format)")
+            .format(ResourceFormat.R8Uint)
+            .bindFlags(ResourceBindFlags.ShaderResource)
+            .flags(FieldFlags.Optional);
         r.addOutput("color", "Output color (linear)")
             .texture2D(w, h)
             .format(ResourceFormat.RGBA32Float)
@@ -149,7 +157,7 @@ export class PathTracer extends RenderPass {
     private getStaticDefines() {
         const scene = this.scene!;
         return scene.getSceneDefines().addAll({
-            SAMPLES_PER_PIXEL: this.samplesPerPixel,
+            SAMPLES_PER_PIXEL: this.fixedSampleCount ? this.samplesPerPixel : 0,
             MAX_SURFACE_BOUNCES: this.maxSurfaceBounces,
             MAX_DIFFUSE_BOUNCES: this.maxDiffuseBounces,
             MAX_SPECULAR_BOUNCES: this.maxSpecularBounces,
@@ -219,9 +227,9 @@ export class PathTracer extends RenderPass {
             this.dummySampler = new Sampler(this.device, {});
         }
         var_["viewDir"] = this.dummyTexFloat;
-        var_["sampleCount"] = this.dummyTexUint;
-        var_["sampleOffset"] = this.dummyTexUint;
-        var_["sampleColor"] = this.dummyBufferA;
+        var_["sampleCount"] = this.sampleCountInput ?? this.dummyTexUint;
+        var_["sampleOffset"] = this.sampleOffset ?? this.dummyTexUint;
+        var_["sampleColor"] = this.sampleColor ?? this.dummyBufferA;
         var_["sampleGuideData"] = this.outputGuideData ? this.sampleGuideData! : this.dummyBufferB;
     }
 
@@ -245,8 +253,13 @@ export class PathTracer extends RenderPass {
         // the guide outputs is connected (drives OUTPUT_GUIDE_DATA).
         const kGuideOutputs = ["albedo", "specularAlbedo", "indirectAlbedo", "guideNormal", "reflectionPosW"] as const;
         const outputGuideData = kGuideOutputs.some((name) => renderData.getTexture(name) !== undefined);
-        if (outputGuideData !== this.outputGuideData) {
+        // Mirrors PathTracer::beginFrame: the sample count is variable when the
+        // sampleCount input is connected (SAMPLES_PER_PIXEL define becomes 0).
+        this.sampleCountInput = renderData.getTexture("sampleCount") ?? null;
+        const fixedSampleCount = this.sampleCountInput === null;
+        if (outputGuideData !== this.outputGuideData || fixedSampleCount !== this.fixedSampleCount) {
             this.outputGuideData = outputGuideData;
+            this.fixedSampleCount = fixedSampleCount;
             this.generatePass = null;
         }
 
@@ -257,13 +270,16 @@ export class PathTracer extends RenderPass {
             const defines = this.getStaticDefines();
             this.generatePass = ComputePass.create(this.device, { path: kGeneratePathsFile, defines });
             this.tracePass = ComputePass.create(this.device, { path: kTracePassFile, defines });
-            this.resolvePass = this.outputGuideData ? ComputePass.create(this.device, { path: kResolvePassFile, defines }) : null;
+            this.resolvePass =
+                this.outputGuideData || !this.fixedSampleCount ? ComputePass.create(this.device, { path: kResolvePassFile, defines }) : null;
         }
 
-        // Per-sample guide data buffer (GuideData = uint4 + float3 + float = 32B),
-        // one sample per pixel padded to whole screen tiles (spp == 1).
+        // Per-sample buffers, padded to whole screen tiles; variable mode
+        // budgets kMaxSamplesPerPixel = 16 samples per pixel (native assert:
+        // tile 16x16 x 16 spp fits 16-bit sample offsets).
+        const sppBudget = this.fixedSampleCount ? this.samplesPerPixel : 16;
+        const sampleCount = tiles[0]! * tiles[1]! * kScreenTileDim * kScreenTileDim * sppBudget;
         if (this.outputGuideData) {
-            const sampleCount = tiles[0]! * tiles[1]! * kScreenTileDim * kScreenTileDim;
             if (!this.sampleGuideData || this.sampleGuideData.size < sampleCount * 32) {
                 this.sampleGuideData = new Buffer(this.device, {
                     size: sampleCount * 32,
@@ -271,6 +287,29 @@ export class PathTracer extends RenderPass {
                     bindFlags: ResourceBindFlags.ShaderResource | ResourceBindFlags.UnorderedAccess,
                     memoryType: MemoryType.DeviceLocal,
                     name: "PathTracer::sampleGuideData",
+                });
+            }
+        }
+        if (!this.fixedSampleCount) {
+            // ColorType at COLOR_FORMAT LogLuvHDR = one packed uint per sample.
+            if (!this.sampleColor || this.sampleColor.size < sampleCount * 4) {
+                this.sampleColor = new Buffer(this.device, {
+                    size: sampleCount * 4,
+                    structSize: 4,
+                    bindFlags: ResourceBindFlags.ShaderResource | ResourceBindFlags.UnorderedAccess,
+                    memoryType: MemoryType.DeviceLocal,
+                    name: "PathTracer::sampleColor",
+                });
+            }
+            // Native uses R16Uint; WGSL storage requires r32uint (values < 2^16).
+            if (!this.sampleOffset || this.sampleOffset.width !== frameDim[0] || this.sampleOffset.height !== frameDim[1]) {
+                this.sampleOffset = new Texture(this.device, {
+                    type: ResourceType.Texture2D,
+                    width: frameDim[0],
+                    height: frameDim[1],
+                    format: ResourceFormat.R32Uint,
+                    bindFlags: ResourceBindFlags.ShaderResource | ResourceBindFlags.UnorderedAccess,
+                    name: "PathTracer::sampleOffset",
                 });
             }
         }
@@ -309,7 +348,7 @@ export class PathTracer extends RenderPass {
 
         // Resolve guide data into the connected outputs (mirrors resolvePass;
         // with fixed spp == 1 the color loop is compiled out).
-        if (this.outputGuideData && this.resolvePass) {
+        if ((this.outputGuideData || !this.fixedSampleCount) && this.resolvePass) {
             const root = this.resolvePass.getRootVar();
             const cb = root["CB"]!["gResolvePass"] as ShaderVar;
             const p = cb["params"] as ShaderVar;
@@ -321,10 +360,10 @@ export class PathTracer extends RenderPass {
             p["screenTiles"] = tiles;
             p["frameCount"] = this.frameCount;
             p["seed"] = this.frameCount;
-            this.trySet(cb, "sampleGuideData", this.sampleGuideData!);
-            this.trySet(cb, "sampleColor", this.dummyBufferA!);
-            this.trySet(cb, "sampleCount", this.dummyTexUint!);
-            this.trySet(cb, "sampleOffset", this.dummyTexUint!);
+            this.trySet(cb, "sampleGuideData", this.sampleGuideData ?? this.dummyBufferB!);
+            this.trySet(cb, "sampleColor", this.sampleColor ?? this.dummyBufferA!);
+            this.trySet(cb, "sampleCount", this.sampleCountInput ?? this.dummyTexUint!);
+            this.trySet(cb, "sampleOffset", this.sampleOffset ?? this.dummyTexUint!);
             // NRD-only members that survive DCE with OUTPUT_NRD_DATA=0.
             this.trySet(cb, "primaryHitDiffuseReflectance", this.dummyTexFloat!);
             this.trySet(cb, "sampleNRDRadiance", this.dummyBufferA!);
@@ -336,7 +375,7 @@ export class PathTracer extends RenderPass {
                 const key = `output${name[0]!.toUpperCase()}${name.slice(1)}`;
                 this.trySet(cb, key, renderData.getTexture(name) ?? this.dummyTexFloat!);
             }
-            this.trySet(cb, "outputColor", this.dummyTexFloat!);
+            this.trySet(cb, "outputColor", this.fixedSampleCount ? this.dummyTexFloat! : color);
             this.resolvePass.execute(ctx, frameDim[0], frameDim[1]);
         }
 

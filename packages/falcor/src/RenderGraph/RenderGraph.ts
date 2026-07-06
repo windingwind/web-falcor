@@ -235,7 +235,13 @@ export class RenderGraph {
     }
 
     private allocateField(field: Field): Texture {
-        const format = field.format_ === ResourceFormat.Unknown ? ResourceFormat.RGBA32Float : field.format_;
+        let format = field.format_ === ResourceFormat.Unknown ? ResourceFormat.RGBA32Float : field.format_;
+        // WebGPU has no r8uint/r16uint storage textures: promote UAV-bound
+        // narrow uint formats to r32uint (uint reads are value-identical).
+        const wantsUav = field.bindFlags_ === ResourceBindFlags.None || (field.bindFlags_ & ResourceBindFlags.UnorderedAccess) !== 0;
+        if (wantsUav && (format === ResourceFormat.R8Uint || format === ResourceFormat.R16Uint)) {
+            format = ResourceFormat.R32Uint;
+        }
         const bindFlags =
             field.bindFlags_ === ResourceBindFlags.None
                 ? ResourceBindFlags.ShaderResource | ResourceBindFlags.UnorderedAccess | ResourceBindFlags.RenderTarget

@@ -390,6 +390,7 @@ more than 0.05). Suite: `npm run test:gpu` (53 GPU tests + 23 unit green).
 | upstream image test `PathTracerMaterials.py` over its own upstream scene (material_test, 4 frames) | 99-material zoo: metallic/roughness/transmission/delta/thin/IoR/diffuseTransmission rows, emissive strips, heavy instancing | sRGB MSE 1.3e-4 | 377 @0.05 |
 | upstream image test `VBufferRTInline.py` — depth / viewW (mvec loose: native frame-0 prev-camera) | inline ray queries (the web-default path) | 1.1e-4 / 6.1e-5 | 0 / 0 |
 | upstream image tests `GBufferRTTexGrads.py` (texGrads byte-exact) + `MVecRT.py` over cornell (jittered mvec, 4 frames: 3.1e-8, 0 bad — reprojection exactly cancels the bit-exact stratified jitter) | camera viewProjMatNoJitter/prev matrices | byte-exact / 3.1e-8 | 0 / 0 |
+| upstream image test `PathTracerAdaptive.py` over cornell (density-map-driven 0..16 spp, 4 frames) | variable sample counts: subgroup tile prefix in GeneratePaths, per-sample LogLuv color buffer, resolve averaging | sRGB MSE 5.8e-4 | 318 @0.05 (stochastic) |
 | upstream image test `BSDFViewer.py` over cornell (material sphere viewer, 4 accumulated frames) | BSDF evaluation viewer + importance sampling | 1.9e-4 | 10 |
 | upstream image test `SceneDebugger.py` over cornell (FaceNormal visualization, primary inline rays) | debug-view pass + gridVolumes scene binding | 1.0e-5 | 0 |
 | upstream image test `WhittedRayTracer.py` over cornell (GBufferRT → Whitted megakernel → ToneMapper) | perfect reflect/refract chains, RayCones Unified texLOD, per-light shadow rays | **byte-exact** (sRGB MSE 0) | 0 |
@@ -417,7 +418,7 @@ output is diffed against native Mogwai running the same file.
 
 \* PathTracer.py: rayCount/pathLength outputs allocate but await the PixelStats port; the other 8 marked outputs verified.
 | 🟢 runnable now (passes exist; oracle pending) | 1 | VBufferRTInline (same pass; inline variant is our default) |
-| 🟡 PathTracer siblings | 2 | PathTracerAdaptive (dynamic spp / sampleCount input unsupported), SDFEditorRenderGraphV2 (SDF grids) |
+| 🟡 PathTracer siblings | 1 | SDFEditorRenderGraphV2 (SDF grids, M7 remainder) |
 | 🟠 runnable on web; native oracle impossible on this machine | 1 | HalfRes (needs FBX importer for Arcade.pyscene; and the oracle GPU lacks ROV support, so native Mogwai cannot run GBufferRaster-based graphs at all) |
 | 🟡 GBuffer remainder | 3 | GBufferRaster, GBufferRasterAlpha, MVecRaster — ⚠ all raster-based: native-ROV oracle blocker |
 | 🟡 needs larger pass ports (M8 scope) | 4 | SVGF, TAA (pass portable; graph oracle ROV-blocked), VBufferRaster, VBufferRasterAlpha |

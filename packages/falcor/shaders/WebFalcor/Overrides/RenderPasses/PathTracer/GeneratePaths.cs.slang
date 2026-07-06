@@ -177,14 +177,22 @@ struct PathGenerator
         GroupMemoryBarrierWithGroupSync();
 
         // Compute the prefix sum over the warp totals in shared memory.
-        // The first N threads in the thread group perform this computation.
-        if (threadIdx < kWarpCount)
+        // WebFalcor: Tint requires subgroup ops in (analyzably) uniform control
+        // flow — all threads participate with masked inputs instead of the
+        // native `if (threadIdx < kWarpCount)` guard; results are identical.
         {
-            // Compute the prefix sum over the sample counts.
-            uint samples = gSamplesOffset[threadIdx];
-            gSamplesOffset[threadIdx] = WavePrefixSum(samples);
+            uint warpTotal = threadIdx < kWarpCount ? gSamplesOffset[threadIdx] : 0;
+            uint warpPrefix = WavePrefixSum(warpTotal);
+            if (threadIdx < kWarpCount)
+            {
+                gSamplesOffset[threadIdx] = warpPrefix;
+            }
         }
         GroupMemoryBarrierWithGroupSync();
+
+        // Hoisted out of the bounds check for the same uniformity reason
+        // (out-of-bounds threads contribute spp = 0).
+        const uint threadSamplePrefix = WavePrefixSum(spp);
 #endif
 
         if (all(pixel < params.frameDim))
@@ -199,7 +207,7 @@ struct PathGenerator
             outIdx = outTileOffset + threadIdx * kSamplesPerPixel;
 #else
             {
-                uint outSampleOffset = gSamplesOffset[warpIdx] + WavePrefixSum(spp);
+                uint outSampleOffset = gSamplesOffset[warpIdx] + threadSamplePrefix;
                 outIdx = outTileOffset + outSampleOffset;
 
                 // Write sample offset lookup table. This will be used by later passes.

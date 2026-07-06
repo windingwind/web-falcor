@@ -26,8 +26,12 @@ Texture2D<float4> B;
 #elif OUTPUT_FORMAT == OUTPUT_FORMAT_FLOAT
 WTexture2D<float4> output;
 #elif OUTPUT_FORMAT == OUTPUT_FORMAT_UINT
+// Web: integer graph outputs are allocated r32uint (no narrow-uint storage
+// in WebGPU); extra components of the 4-wide store are dropped.
+[format("r32ui")]
 WTexture2D<uint4> output;
 #elif OUTPUT_FORMAT == OUTPUT_FORMAT_SINT
+[format("r32i")]
 WTexture2D<int4> output;
 #else
 #error OUTPUT_FORMAT unknown
