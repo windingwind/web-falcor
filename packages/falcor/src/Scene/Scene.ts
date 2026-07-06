@@ -210,6 +210,7 @@ export class Scene {
         make("materialData", blobBytes, 128);
         make("materialBuffer0", new Uint32Array(4), 4);
         make("curveDummy", new Uint32Array(16), 32); // StaticCurveVertexData-sized dummy
+        make("gridVolumeDummy", new Uint32Array(64), 256); // GridVolumeData-sized dummy (2x float4x4 + params)
 
         // Material textures packed into one array (DESIGN.md §6.2).
         const packed = textureManager.build(this.device);
@@ -353,6 +354,12 @@ export class Scene {
         scene["curveVertices"] = this.buffers["curveDummy"]!;
         scene["prevCurveVertices"] = this.buffers["curveDummy"]!;
         scene["curveIndices"] = this.buffers["curveDummy"]!;
+        try {
+            // Only referenced by volume-aware passes (binding absent otherwise).
+            scene["gridVolumes"] = this.buffers["gridVolumeDummy"]!;
+        } catch {
+            /* binding absent in this variant */
+        }
         scene["indexData"]["data0"] = this.buffers["indices"]!;
 
         // Env map (dummy black texture + zeroed uniforms when absent).
