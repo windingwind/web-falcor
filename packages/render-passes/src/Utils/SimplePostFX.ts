@@ -8,6 +8,9 @@
  */
 
 import {
+    IOSize,
+    parseIOSize,
+    calculateIOSize,
     ComputePass,
     Properties,
     RenderData,
@@ -49,6 +52,8 @@ export class SimplePostFX extends RenderPass {
     private colorOffsetScalar = 0;
     private colorScaleScalar = 0;
     private colorPowerScalar = 0;
+    private outputSize = IOSize.Default;
+    private fixedOutputSize: [number, number] = [512, 512];
 
     private downsamplePass: ComputePass;
     private upsamplePass: ComputePass;
@@ -74,7 +79,9 @@ export class SimplePostFX extends RenderPass {
         this.colorOffsetScalar = props.get("colorOffsetScalar", 0);
         this.colorScaleScalar = props.get("colorScaleScalar", 0);
         this.colorPowerScalar = props.get("colorPowerScalar", 0);
-        // 'outputSize'/'fixedOutputSize' accepted; IOSize plumbing lands with HalfRes.
+        this.outputSize = parseIOSize(props.getOpt("outputSize"));
+        const fixed = props.getOpt<number[]>("fixedOutputSize");
+        if (fixed) this.fixedOutputSize = [fixed[0]!, fixed[1]!];
 
         this.downsamplePass = ComputePass.create(device, { path: kShaderFile, csEntry: "downsample" });
         this.upsamplePass = ComputePass.create(device, { path: kShaderFile, csEntry: "upsample" });
@@ -103,7 +110,7 @@ export class SimplePostFX extends RenderPass {
 
     override reflect(compileData: CompileData): RenderPassReflection {
         const r = new RenderPassReflection();
-        const [w, h] = compileData.defaultTexDims;
+        const [w, h] = calculateIOSize(this.outputSize, this.fixedOutputSize, compileData.defaultTexDims);
         r.addInput("src", "Source texture").bindFlags(ResourceBindFlags.ShaderResource);
         r.addOutput("dst", "post-effected output texture")
             .bindFlags(ResourceBindFlags.RenderTarget | ResourceBindFlags.ShaderResource | ResourceBindFlags.UnorderedAccess)

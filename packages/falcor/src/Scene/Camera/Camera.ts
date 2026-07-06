@@ -58,9 +58,27 @@ export class Camera {
     private jitter = new float2(0, 0);
     private dirty = true;
     private data: CameraData | null = null;
+    private jitterPattern: { generator: import("../../Utils/SampleGenerators/CPUSampleGenerator.js").CPUSampleGenerator | null; scale: float2 } = {
+        generator: null,
+        scale: new float2(0, 0),
+    };
 
     constructor(name = "Camera") {
         this.name = name;
+    }
+
+    /** Mirrors Camera::setPatternGenerator (jitter applied each beginFrame). */
+    setPatternGenerator(generator: typeof this.jitterPattern.generator, scale: float2): void {
+        this.jitterPattern = { generator, scale };
+        if (!generator) this.setJitter(0, 0);
+    }
+
+    /** Mirrors the jitter part of Camera::beginFrame (called once per frame). */
+    beginFrame(): void {
+        if (this.jitterPattern.generator) {
+            const j = this.jitterPattern.generator.next();
+            this.setJitter(Math.fround(j.x * this.jitterPattern.scale.x), Math.fround(j.y * this.jitterPattern.scale.y));
+        }
     }
 
     setPosition(p: float3): void { this.position = p.clone(); this.dirty = true; }

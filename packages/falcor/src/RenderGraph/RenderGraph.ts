@@ -263,9 +263,12 @@ export class RenderGraph {
         this.compiled = null; // reflection may depend on loaded assets (e.g. ImageLoader size)
     }
 
-    /** Mirrors RenderGraphExe::execute. */
+    /** Mirrors RenderGraphExe::execute (plus Mogwai's per-frame scene tick). */
     execute(ctx: RenderContext): void {
         if (!this.compiled) this.compile(ctx);
+        // Native Mogwai calls Scene::update() (camera beginFrame: jitter pattern
+        // advance) before executing the graph each frame; web folds it in here.
+        this.scene?.camera.beginFrame();
         for (const { pass, resources } of this.compiled!) {
             pass.execute(ctx, new RenderData(resources, this.defaultDims));
         }

@@ -29,10 +29,18 @@ import {
     VertexLayout,
     Topology,
     InputClass,
+    IOSize,
+    parseIOSize,
+    calculateIOSize,
+    StratifiedSamplePattern,
+    HaltonSamplePattern,
+    DxSamplePattern,
+    float2,
     makeRootVar,
     mergeWgslBindings,
     registerRenderPass,
     type CompileData,
+    type CPUSampleGenerator,
     type Device,
     type ProgramVersion,
     type RenderContext,
@@ -60,14 +68,25 @@ export class GBufferRaster extends RenderPass {
     private state: GraphicsState | null = null;
     private pipelineLayout: GPUPipelineLayout | null = null;
     private depthTex: Texture | null = null;
+    private outputSize = IOSize.Default;
+    private sampleCount = 16;
+    private sampleGenerator: CPUSampleGenerator | null = null;
 
-    constructor(device: Device, _props: Properties) {
+    constructor(device: Device, props: Properties) {
         super(device);
+        this.outputSize = parseIOSize(props.getOpt("outputSize"));
+        this.sampleCount = props.get("sampleCount", 16);
+        // Mirrors GBufferBase::updateSamplePattern (Center -> no generator).
+        const pattern = props.get<string>("samplePattern", "Center");
+        if (pattern === "Stratified") this.sampleGenerator = new StratifiedSamplePattern(this.sampleCount);
+        else if (pattern === "Halton") this.sampleGenerator = new HaltonSamplePattern(this.sampleCount);
+        else if (pattern === "DirectX") this.sampleGenerator = new DxSamplePattern(this.sampleCount);
+        if (this.sampleGenerator) this.sampleCount = this.sampleGenerator.getSampleCount();
     }
 
     override reflect(compileData: CompileData): RenderPassReflection {
         const r = new RenderPassReflection();
-        const [w, h] = compileData.defaultTexDims;
+        const [w, h] = calculateIOSize(this.outputSize, [512, 512], compileData.defaultTexDims);
         for (const ch of kChannels) {
             r.addOutput(ch.name, `G-buffer ${ch.name}`)
                 .texture2D(w, h)
@@ -145,6 +164,11 @@ export class GBufferRaster extends RenderPass {
     override execute(ctx: RenderContext, renderData: RenderData): void {
         if (!this.scene) return;
         if (!this.version) this.createProgram();
+
+        // Mirrors GBufferBase::updateFrameDim: the camera jitters by the sample
+        // pattern scaled to the pass resolution (first sample lands next frame).
+        const dim = renderData.getTexture("posW")!;
+        this.scene.camera.setPatternGenerator(this.sampleGenerator, new float2(Math.fround(1 / dim.width), Math.fround(1 / dim.height)));
 
         const fbo = new Fbo();
         kChannels.forEach((ch, i) => fbo.attachColorTarget(renderData.getTexture(ch.name)!, i));

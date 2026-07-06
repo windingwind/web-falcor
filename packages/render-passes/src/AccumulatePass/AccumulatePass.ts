@@ -6,6 +6,9 @@
  */
 
 import {
+    IOSize,
+    parseIOSize,
+    calculateIOSize,
     Buffer,
     ComputePass,
     Logger,
@@ -32,6 +35,7 @@ export enum AccumulatePrecision {
 
 export class AccumulatePass extends RenderPass {
     private enabled = true;
+    private outputSize = IOSize.Default;
     private precision = AccumulatePrecision.Single;
     private autoReset = true;
     private frameCount = 0;
@@ -47,6 +51,7 @@ export class AccumulatePass extends RenderPass {
 
     override setProperties(props: Properties): void {
         this.enabled = props.get("enabled", true);
+        this.outputSize = parseIOSize(props.getOpt("outputSize"));
         const mode = props.getOpt<string | number>("precisionMode");
         if (mode !== undefined) {
             const parsed = typeof mode === "string" ? AccumulatePrecision[mode as keyof typeof AccumulatePrecision] : mode;
@@ -67,10 +72,12 @@ export class AccumulatePass extends RenderPass {
         this.frameCount = 0;
     }
 
-    override reflect(_compileData: CompileData): RenderPassReflection {
+    override reflect(compileData: CompileData): RenderPassReflection {
         const r = new RenderPassReflection();
+        const [w, h] = calculateIOSize(this.outputSize, [512, 512], compileData.defaultTexDims);
         r.addInput("input", "Input data to be temporally accumulated").bindFlags(ResourceBindFlags.ShaderResource);
         r.addOutput("output", "Accumulated output")
+            .texture2D(w, h)
             .format(ResourceFormat.RGBA32Float)
             .bindFlags(ResourceBindFlags.UnorderedAccess | ResourceBindFlags.ShaderResource | ResourceBindFlags.RenderTarget);
         return r;

@@ -5,6 +5,9 @@
  */
 
 import {
+    IOSize,
+    parseIOSize,
+    calculateIOSize,
     Fbo,
     FullScreenPass,
     Properties,
@@ -35,6 +38,7 @@ export class ToneMapper extends RenderPass {
     private exposureCompensation = 0;
     private clamp = true;
     private outputFormat = ResourceFormat.RGBA8UnormSrgb;
+    private outputSize = IOSize.Default;
     private pass: FullScreenPass | null = null;
     private fbo = new Fbo();
 
@@ -44,6 +48,7 @@ export class ToneMapper extends RenderPass {
     }
 
     override setProperties(props: Properties): void {
+        this.outputSize = parseIOSize(props.getOpt("outputSize"), this.outputSize);
         const op = props.getOpt<string | number>("operator");
         if (op !== undefined) {
             this.operator = (typeof op === "string" ? ToneMapOperator[op as keyof typeof ToneMapOperator] : op) ?? ToneMapOperator.Aces;
@@ -65,10 +70,12 @@ export class ToneMapper extends RenderPass {
         });
     }
 
-    override reflect(_compileData: CompileData): RenderPassReflection {
+    override reflect(compileData: CompileData): RenderPassReflection {
         const r = new RenderPassReflection();
+        const [w, h] = calculateIOSize(this.outputSize, [512, 512], compileData.defaultTexDims);
         r.addInput("src", "Source texture").bindFlags(ResourceBindFlags.ShaderResource);
         r.addOutput("dst", "Tone-mapped output")
+            .texture2D(w, h)
             .format(this.outputFormat)
             .bindFlags(ResourceBindFlags.RenderTarget | ResourceBindFlags.ShaderResource);
         return r;
