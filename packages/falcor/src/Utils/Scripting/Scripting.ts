@@ -61,6 +61,8 @@ export async function runGraphScript(device: Device, source: string): Promise<Re
         RenderGraph: (name: string) => new RenderGraph(device, name),
         createPass: (type: string, props?: unknown) =>
             createPass(device, type, new Properties((toJs(props) as Record<string, never>) ?? {})),
+        // Output-channel marker flags (markOutput's optional second argument).
+        TextureChannelFlags: { Red: 1, Green: 2, Blue: 4, Alpha: 8, RGB: 7, RGBA: 15 },
     };
     pyodide.registerJsModule("falcor", falcorModule);
 

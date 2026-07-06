@@ -51,7 +51,10 @@ export class ToneMapper extends RenderPass {
         }
         this.exposureCompensation = props.get("exposureCompensation", 0);
         this.clamp = props.get("clamp", true);
-        if (props.has("outputFormat")) this.pass = null;
+        const fmt = props.getOpt<string | number>("outputFormat");
+        if (fmt !== undefined) {
+            this.outputFormat = (typeof fmt === "string" ? ResourceFormat[fmt as keyof typeof ResourceFormat] : fmt) ?? this.outputFormat;
+        }
     }
 
     override getProperties(): Properties {

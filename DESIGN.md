@@ -372,6 +372,7 @@ more than 0.05). Suite: `npm run test:gpu` (53 GPU tests + 23 unit green).
 | Delta reflection (perfect mirror, point + emissive lit) | delta-lobe paths | 6.1e-5 / 2.9e-5 | 0 / 1 |
 | DistantLight minimal scene | distant-light packing/sampling | 1.0e-4 | 0 |
 | **upstream `convergence_test.pyscene`, unmodified** | 16-material stress (mirrors/metals/glass/thin, 4 area lights) | 3.2e-2 ⚠ | 6338 — combined delta-lobe/caustic paths; isolated features all match, combination residual under investigation |
+| **upstream image test `MinimalPathTracer.py` graph + `cornell_box.pyscene`, both unmodified** | full Mogwai workflow: graph script + scene script + 4-pass chain | 1.5e-4 | 72 (silhouette) |
 
 RNG parity is exact: TinyUniform (LCG+TEA) and xoshiro128** (SplitMix64 seeding
 emulated as paired u32) produce bit-identical streams, so 1-spp renders match
