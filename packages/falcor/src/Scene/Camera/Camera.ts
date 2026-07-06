@@ -65,6 +65,7 @@ export class Camera {
         scale: new float2(0, 0),
     };
     private prevViewProjMatNoJitter: float4x4 | null = null;
+    private lastFrameViewProjMatNoJitter: float4x4 | null = null;
 
     constructor(name = "Camera") {
         this.name = name;
@@ -76,15 +77,18 @@ export class Camera {
         if (!generator) this.setJitter(0, 0);
     }
 
-    /** Mirrors Camera::beginFrame: jitter pattern advance + prev-matrix roll
-     *  (native keeps mPrevData = last frame's data; first frame: prev == cur). */
+    /** Mirrors Camera::beginFrame: jitter pattern advance + prev-matrix roll.
+     *  prev must be the matrix USED last frame (native mPrevData), not a
+     *  recompute — position/target may have changed since the last frame. */
     beginFrame(): void {
-        this.prevViewProjMatNoJitter = this.getData().viewProjMatNoJitter.clone();
         if (this.jitterPattern.generator) {
             const j = this.jitterPattern.generator.next();
             this.setJitter(Math.fround(j.x * this.jitterPattern.scale.x), Math.fround(j.y * this.jitterPattern.scale.y));
         }
-        this.dirty = true; // prev matrix changed
+        const cur = this.getData().viewProjMatNoJitter.clone();
+        this.prevViewProjMatNoJitter = this.lastFrameViewProjMatNoJitter ?? cur;
+        this.lastFrameViewProjMatNoJitter = cur;
+        this.dirty = true; // data.prevViewProjMatNoJitter must be rebuilt
     }
 
     setPosition(p: float3): void { this.position = p.clone(); this.dirty = true; }

@@ -24,4 +24,5 @@ export * from "./Utils/SimplePostFX.js";
 export * from "./Utils/FLIPPass.js";
 export * from "./WhittedRayTracer/WhittedRayTracer.js";
 export * from "./SceneDebugger/SceneDebugger.js";
+export * from "./TAA/TAA.js";
 export * from "./BSDFViewer/BSDFViewer.js";
