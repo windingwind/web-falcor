@@ -76,6 +76,28 @@ export function transformVector(m: float4x4, d: float3): float3 {
     return new float3(v.x, v.y, v.z);
 }
 
+/** Axis-angle rotation (MatrixMath.h rotate() with identity base; axis normalized). */
+export function matrixFromRotationAxisAngle(angle: number, axis_: float3): float4x4 {
+    const c = Math.cos(angle);
+    const s = Math.sin(angle);
+    const len = Math.hypot(axis_.x, axis_.y, axis_.z) || 1;
+    const ax = axis_.x / len;
+    const ay = axis_.y / len;
+    const az = axis_.z / len;
+    const t = 1 - c;
+    const m = float4x4.identity();
+    m.set(0, 0, c + t * ax * ax);
+    m.set(0, 1, t * ay * ax - s * az);
+    m.set(0, 2, t * az * ax + s * ay);
+    m.set(1, 0, t * ax * ay + s * az);
+    m.set(1, 1, c + t * ay * ay);
+    m.set(1, 2, t * az * ay - s * ax);
+    m.set(2, 0, t * ax * az - s * ay);
+    m.set(2, 1, t * ay * az + s * ax);
+    m.set(2, 2, c + t * az * az);
+    return m;
+}
+
 export function transpose(m: float4x4): float4x4 {
     const out = new float4x4();
     for (let r = 0; r < 4; r++) for (let c = 0; c < 4; c++) out.set(r, c, m.get(c, r));

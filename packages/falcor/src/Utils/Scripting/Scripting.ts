@@ -83,7 +83,7 @@ const kScenePrelude = `
 import sys
 sys.modules.pop('webfalcor_scene', None)  # registerJsModule per call; defeat import caching
 from webfalcor_scene import (sceneBuilder, _TriangleMesh,
-    PointLight, DirectionalLight, StandardMaterial, ClothMaterial, HairMaterial,
+    PointLight, DirectionalLight, DistantLight, StandardMaterial, ClothMaterial, HairMaterial,
     PBRTDiffuseMaterial, PBRTConductorMaterial, Camera, _makeTransform, _makeEnvMap)
 
 # Python-side vector types with arithmetic (upstream pyscenes do e.g. size / 2);
@@ -152,6 +152,7 @@ export async function runSceneScript(device: Device, source: string, baseUrl: st
         Camera: (_name = "") => new CameraBridge(),
         PointLight: (name = "") => new LightBridge(LightType.Point, name),
         DirectionalLight: (name = "") => new LightBridge(LightType.Directional, name),
+        DistantLight: (name = "") => new LightBridge(LightType.Distant, name),
         StandardMaterial: (name = "") => new MaterialBridge(MaterialType.Standard, name),
         ClothMaterial: (name = "") => new MaterialBridge(MaterialType.Cloth, name),
         HairMaterial: (name = "") => new MaterialBridge(MaterialType.Hair, name),

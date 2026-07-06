@@ -4,6 +4,7 @@
  */
 
 import { float2, float3, float4 } from "../Utils/Math/Vector.js";
+import { float4x4, inverse, matrixFromRotationAxisAngle, transpose } from "../Utils/Math/Matrix.js";
 import { f32tof16 } from "./Material/MaterialData.js";
 
 export interface StaticVertex {
@@ -150,6 +151,8 @@ export interface AnalyticLight {
     dirW?: float3;
     /** Emitted radiance/intensity. */
     intensity: float3;
+    /** Distant light: half-angle subtended by the light (radians). */
+    angle?: number;
 }
 
 export const kLightDataSize = 224; // 6x16B rows + 2x 64B float4x4 (rows at 96/160)
@@ -161,7 +164,12 @@ export function packLights(lights: AnalyticLight[]): ArrayBuffer {
     lights.forEach((light, i) => {
         const base = i * kLightDataSize;
         const posW = light.posW ?? new float3(0, 0, 0);
-        const dirW = light.dirW ?? new float3(0, -1, 0);
+        let dirW = light.dirW ?? new float3(0, -1, 0);
+        if (light.type === LightType.Directional || light.type === LightType.Distant) {
+            // Native setWorldDirection normalizes.
+            const len = Math.hypot(dirW.x, dirW.y, dirW.z) || 1;
+            dirW = new float3(dirW.x / len, dirW.y / len, dirW.z / len);
+        }
         dv.setFloat32(base + 0, posW.x, true);
         dv.setFloat32(base + 4, posW.y, true);
         dv.setFloat32(base + 8, posW.z, true);
@@ -174,13 +182,32 @@ export function packLights(lights: AnalyticLight[]): ArrayBuffer {
         dv.setFloat32(base + 36, light.intensity.y, true);
         dv.setFloat32(base + 40, light.intensity.z, true);
         dv.setFloat32(base + 44, -1, true); // cosOpeningAngle
-        dv.setFloat32(base + 48, 0.9999893, true); // cosSubtendedAngle
+        // cosSubtendedAngle: distant lights use cos(half-angle); default = sun.
+        const cosSubtended = light.type === LightType.Distant && light.angle !== undefined ? Math.cos(light.angle) : 0.9999893;
+        dv.setFloat32(base + 48, cosSubtended, true);
         dv.setFloat32(base + 52, 0, true); // penumbraAngle
-        // rows 4-5 (tangent/surfaceArea/bitangent) zeroed; matrices identity at 96/160.
-        for (let m = 0; m < 2; m++) {
-            const mBase = base + 96 + m * 64;
-            for (let d = 0; d < 4; d++) dv.setFloat32(mBase + d * 20, 1, true); // diagonal (row stride 16 + 4)
+
+        // transMat/transMatIT at 96/160. Distant lights orient the sampling disk
+        // (DistantLight::update): rotation aligning up=(0,0,1) with -dirW.
+        let transMat = float4x4.identity();
+        if (light.type === LightType.Distant) {
+            const nd = [-dirW.x, -dirW.y, -dirW.z];
+            const len = Math.hypot(nd[0]!, nd[1]!, nd[2]!) || 1;
+            const d = [nd[0]! / len, nd[1]! / len, nd[2]! / len];
+            const axis = [0 * d[2]! - 1 * d[1]!, 1 * d[0]! - 0 * d[2]!, 0 * d[1]! - 0 * d[0]!]; // cross(up=(0,0,1), d)
+            const sinTheta = Math.hypot(axis[0]!, axis[1]!, axis[2]!);
+            if (sinTheta > 0) {
+                const cosTheta = d[2]!; // dot(up, d)
+                transMat = matrixFromRotationAxisAngle(Math.acos(cosTheta), new float3(axis[0]!, axis[1]!, axis[2]!));
+            }
         }
+        const transMatIT = inverse(transpose(transMat));
+        const writeMat = (offset: number, m: float4x4) => {
+            const a = m.toArray();
+            for (let k = 0; k < 16; k++) dv.setFloat32(base + offset + k * 4, a[k]!, true);
+        };
+        writeMat(96, transMat);
+        writeMat(160, transMatIT);
     });
     return buffer;
 }

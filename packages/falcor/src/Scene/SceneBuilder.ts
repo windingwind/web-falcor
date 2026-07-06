@@ -153,6 +153,8 @@ export class MaterialBridge {
     private _emissiveColor = new float3(0, 0, 0);
     emissiveFactor = 1;
     doubleSided = false;
+    indexOfRefraction = 1.5;
+    specularTransmission = 0;
 
     constructor(
         public readonly materialType: MaterialType,
@@ -190,13 +192,14 @@ export class MaterialBridge {
     toDesc(): SceneMaterialDesc {
         const emissive = this._emissiveColor.x !== 0 || this._emissiveColor.y !== 0 || this._emissiveColor.z !== 0;
         return {
-            header: { materialType: this.materialType, doubleSided: this.doubleSided, emissive },
+            header: { materialType: this.materialType, doubleSided: this.doubleSided, emissive, ior: this.indexOfRefraction },
             basic: {
                 baseColor: this._baseColor,
                 specular: this._specularParams,
                 transmission: this._transmissionColor,
                 emissive: this._emissiveColor,
                 emissiveFactor: this.emissiveFactor,
+                specularTransmission: this.specularTransmission,
             },
         };
     }
@@ -206,6 +209,8 @@ export class LightBridge {
     private _position = new float3(0, 0, 0);
     private _intensity = new float3(1, 1, 1);
     private _direction = new float3(0, -1, 0);
+    /** DistantLight: half-angle (radians); default = sun (DistantLight ctor). */
+    angle = 0.5 * 0.53 * (Math.PI / 180);
     constructor(
         public readonly lightType: LightType,
         public readonly name: string,
@@ -358,6 +363,7 @@ export class SceneBuilderBridge {
             posW: l.getPosition(),
             dirW: l.getDirection(),
             intensity: l.getIntensity(),
+            angle: l.angle,
         }));
 
         const scene = new Scene(device, meshes, materials, lights, textureManager);
