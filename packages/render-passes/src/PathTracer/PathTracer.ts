@@ -12,6 +12,7 @@
 import {
     Buffer,
     ComputePass,
+    EmissivePowerSampler,
     EnvMapSampler,
     MemoryType,
     Properties,
@@ -36,7 +37,7 @@ const kGeneratePathsFile = "RenderPasses/PathTracer/GeneratePaths.cs.slang";
 const kTracePassFile = "RenderPasses/PathTracer/TracePass.rt.slang";
 
 /** Mirrors EmissiveLightSamplerType (EmissiveLightSamplerType.slangh). */
-const kEmissiveSamplerUniform = 0;
+const kEmissiveSamplerTypes: Record<string, number> = { Uniform: 0, LightBVH: 1, Power: 2 };
 
 const kScreenTileDim = 16;
 
@@ -67,6 +68,8 @@ export class PathTracer extends RenderPass {
     private misHeuristic = 0; // Balance
     private useAlphaTest = true;
     private adjustShadingNormals = false;
+    private emissiveSampler = "Uniform";
+    private powerSampler: EmissivePowerSampler | null = null;
 
     constructor(device: Device, props: Properties) {
         super(device);
@@ -80,6 +83,10 @@ export class PathTracer extends RenderPass {
         this.useNEE = props.get("useNEE", true);
         this.useMIS = props.get("useMIS", true);
         this.useAlphaTest = props.get("useAlphaTest", true);
+        this.emissiveSampler = props.get("emissiveSampler", "Uniform");
+        if (!(this.emissiveSampler in kEmissiveSamplerTypes) || this.emissiveSampler === "LightBVH") {
+            throw new Error(`PathTracer: unsupported emissiveSampler '${this.emissiveSampler}' (Uniform/Power)`);
+        }
         // PathTracer defaults to TinyUniform (unlike MinimalPathTracer).
         this.sampleGenerator = SampleGenerator.create(device, SAMPLE_GENERATOR_TINY_UNIFORM);
         if (this.samplesPerPixel !== 1) throw new Error("PathTracer v1 supports fixed spp == 1 only");
@@ -127,7 +134,7 @@ export class PathTracer extends RenderPass {
             COLOR_FORMAT: 1, // ColorFormat::LogLuvHDR (native default; unused at spp==1)
             MIS_HEURISTIC: this.misHeuristic,
             MIS_POWER_EXPONENT: "2.0",
-            _EMISSIVE_LIGHT_SAMPLER_TYPE: kEmissiveSamplerUniform,
+            _EMISSIVE_LIGHT_SAMPLER_TYPE: kEmissiveSamplerTypes[this.emissiveSampler]!,
             INTERIOR_LIST_SLOT_COUNT: 2,
             GBUFFER_ADJUST_SHADING_NORMALS: 0,
             USE_ENV_LIGHT: scene.useEnvLight ? 1 : 0,
@@ -204,6 +211,10 @@ export class PathTracer extends RenderPass {
             this.scene.bindShaderData(root);
             const block = root["gPathTracer"] as ShaderVar;
             this.bindPathTracerData(block, vbuffer, color, frameDim);
+            if (this.emissiveSampler === "Power" && this.scene.useEmissiveLights) {
+                if (!this.powerSampler) this.powerSampler = new EmissivePowerSampler(this.device, this.scene.getEmissiveFluxes());
+                this.powerSampler.bindShaderData(block["emissiveSampler"] as ShaderVar);
+            }
             const envSampler = block["envMapSampler"] as ShaderVar;
             if (this.scene.useEnvLight) {
                 if (!this.envMapSampler) this.envMapSampler = new EnvMapSampler(this.device, ctx, this.scene.getEnvMap()!);

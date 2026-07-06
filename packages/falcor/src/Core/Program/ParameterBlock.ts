@@ -109,6 +109,12 @@ export class ParameterBlock {
         }
     }
 
+    /** Fields with leading underscores (e.g. `_emissivePower`) collapse in
+     *  Slang's WGSL name mangling: `a__b` emits as `a_b`. */
+    private lookupWgsl(flatName: string): WgslBinding | undefined {
+        return this.wgslByName.get(flatName) ?? this.wgslByName.get(flatName.replace(/_+/g, "_"));
+    }
+
     private registerParameter(p: SlangReflectionParameter, path: string[]): void {
         const type = p.type ?? { kind: "unknown" };
         const flatName = path.join("_");
@@ -120,7 +126,7 @@ export class ParameterBlock {
             const element = (type.elementType?.fields ? type.elementType : type.elementVarLayout?.type) ?? type.elementType ?? { kind: "struct" };
             // Implicit uniform buffer for the block's uniform members. The exact
             // std140 size (incl. trailing padding) comes from elementVarLayout.
-            const wb = this.wgslByName.get(flatName);
+            const wb = this.lookupWgsl(flatName);
             if (wb && wb.layoutEntry.buffer?.type === "uniform" && hasUniformContent(element)) {
                 const uniformBinding = type.elementVarLayout?.bindings?.find((b) => b.kind === "uniform");
                 this.addCBufferSlot(key, wb, element, uniformBinding?.size);
@@ -142,7 +148,7 @@ export class ParameterBlock {
             return;
         }
 
-        const wb = this.wgslByName.get(flatName);
+        const wb = this.lookupWgsl(flatName);
         if (!wb) return; // statically unused or uniform member (lives in parent cbuffer)
         if (wb.layoutEntry.buffer?.type === "uniform" && type.kind !== "resource") return;
         this.slots.set(key, { kind: "resource", binding: wb, resource: null });

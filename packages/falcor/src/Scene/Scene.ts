@@ -65,6 +65,7 @@ export class Scene {
     private materialTypes = new Set<MaterialType>();
     private emissiveTriangleCount = 0;
     private emissiveMeshCount = 0;
+    private emissiveFluxes = new Float32Array(0);
 
     constructor(
         public readonly device: Device,
@@ -174,6 +175,9 @@ export class Scene {
         );
         this.emissiveTriangleCount = lc.triangleCount;
         this.emissiveMeshCount = lc.meshCount;
+        this.emissiveFluxes = new Float32Array(lc.triangleCount);
+        const fluxView = new DataView(lc.fluxData);
+        for (let i = 0; i < lc.triangleCount; i++) this.emissiveFluxes[i] = fluxView.getFloat32(i * 32, true);
         make("emissiveTriangles", lc.triangleData, 64);
         make("emissiveFlux", lc.fluxData, 32);
         make("emissiveActiveTriangles", lc.activeTriangles, 4);
@@ -210,6 +214,11 @@ export class Scene {
 
     setEnvMap(envMap: EnvMap | null): void {
         this.envMap = envMap;
+    }
+
+    /** Per-emissive-triangle flux in LightCollection order (for power sampling). */
+    getEmissiveFluxes(): Float32Array {
+        return this.emissiveFluxes;
     }
 
     getEnvMap(): EnvMap | null {
