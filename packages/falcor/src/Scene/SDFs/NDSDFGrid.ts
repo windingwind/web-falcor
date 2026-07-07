@@ -19,6 +19,61 @@ function bitScanReverse(v: number): number {
     return 31 - Math.clz32(v);
 }
 
+/**
+ * Mirrors SDFGrid::generateCheeseValues corner-value generation (shared by
+ * all grid types; quantization differs per type). Bit-exact vs gcc — see
+ * tests/oracle/ndsdf-cheese-ref.cpp.
+ */
+export function generateCheeseCornerValues(gridWidth: number, seed: number): Float32Array {
+    const kHalfCheeseExtent = 0.4;
+    const kHoleCount = 32;
+    const holes = new Float32Array(kHoleCount * 4);
+
+    const rng = new Mt19937(seed);
+    // gcc evaluates float3(dist, dist, dist) constructor args RIGHT-TO-LEFT:
+    // x receives the 3rd draw, y the 2nd, z the 1st (pinned by the C++ ref).
+    for (let s = 0; s < kHoleCount; s++) {
+        const d1 = canonicalFloat(rng);
+        const d2 = canonicalFloat(rng);
+        const d3 = canonicalFloat(rng);
+        holes[s * 4] = f(f(2 * kHalfCheeseExtent * d3) - kHalfCheeseExtent);
+        holes[s * 4 + 1] = f(f(2 * kHalfCheeseExtent * d2) - kHalfCheeseExtent);
+        holes[s * 4 + 2] = f(f(2 * kHalfCheeseExtent * d1) - kHalfCheeseExtent);
+        holes[s * 4 + 3] = f(f(canonicalFloat(rng) * 0.2) + 0.01);
+    }
+
+    const gridWidthInValues = gridWidth + 1;
+    const cornerValues = new Float32Array(gridWidthInValues ** 3);
+    const len3 = (x: number, y: number, z: number) => f(Math.sqrt(f(f(f(x * x) + f(y * y)) + f(z * z))));
+
+    for (let z = 0; z < gridWidthInValues; z++) {
+        for (let y = 0; y < gridWidthInValues; y++) {
+            for (let x = 0; x < gridWidthInValues; x++) {
+                const plx = f(f(x / gridWidth) - 0.5);
+                const ply = f(f(y / gridWidth) - 0.5);
+                const plz = f(f(z / gridWidth) - 0.5);
+
+                // Box.
+                const dx = f(Math.abs(plx) - kHalfCheeseExtent);
+                const dy = f(Math.abs(ply) - kHalfCheeseExtent);
+                const dz = f(Math.abs(plz) - kHalfCheeseExtent);
+                const outsideDist = len3(Math.max(dx, 0), Math.max(dy, 0), Math.max(dz, 0));
+                const insideDist = Math.min(Math.max(Math.max(dx, dy), dz), 0);
+                let sd = f(outsideDist + insideDist);
+
+                // Holes.
+                for (let s = 0; s < kHoleCount; s++) {
+                    const hd = f(len3(f(plx - holes[s * 4]!), f(ply - holes[s * 4 + 1]!), f(plz - holes[s * 4 + 2]!)) - holes[s * 4 + 3]!);
+                    sd = Math.max(sd, -hd);
+                }
+
+                cornerValues[x + gridWidthInValues * (y + gridWidthInValues * z)] = Math.min(Math.max(sd, -kSqrt3), kSqrt3);
+            }
+        }
+    }
+    return cornerValues;
+}
+
 export class NDSDFGrid {
     readonly narrowBandThickness: number;
     gridWidth = 0;
@@ -39,56 +94,9 @@ export class NDSDFGrid {
         return bitScanReverse(this.coarsestLODGridWidth);
     }
 
-    /** Mirrors SDFGrid::generateCheeseValues (mt19937(seed) hole placement). */
+    /** Mirrors SDFGrid::generateCheeseValues. */
     generateCheeseValues(gridWidth: number, seed: number): void {
-        const kHalfCheeseExtent = 0.4;
-        const kHoleCount = 32;
-        const holes = new Float32Array(kHoleCount * 4);
-
-        const rng = new Mt19937(seed);
-        // gcc evaluates float3(dist, dist, dist) constructor args RIGHT-TO-LEFT:
-        // x receives the 3rd draw, y the 2nd, z the 1st (pinned by the C++ ref).
-        for (let s = 0; s < kHoleCount; s++) {
-            const d1 = canonicalFloat(rng);
-            const d2 = canonicalFloat(rng);
-            const d3 = canonicalFloat(rng);
-            holes[s * 4] = f(f(2 * kHalfCheeseExtent * d3) - kHalfCheeseExtent);
-            holes[s * 4 + 1] = f(f(2 * kHalfCheeseExtent * d2) - kHalfCheeseExtent);
-            holes[s * 4 + 2] = f(f(2 * kHalfCheeseExtent * d1) - kHalfCheeseExtent);
-            holes[s * 4 + 3] = f(f(canonicalFloat(rng) * 0.2) + 0.01);
-        }
-
-        const gridWidthInValues = gridWidth + 1;
-        const cornerValues = new Float32Array(gridWidthInValues ** 3);
-        const len3 = (x: number, y: number, z: number) => f(Math.sqrt(f(f(f(x * x) + f(y * y)) + f(z * z))));
-
-        for (let z = 0; z < gridWidthInValues; z++) {
-            for (let y = 0; y < gridWidthInValues; y++) {
-                for (let x = 0; x < gridWidthInValues; x++) {
-                    const plx = f(f(x / gridWidth) - 0.5);
-                    const ply = f(f(y / gridWidth) - 0.5);
-                    const plz = f(f(z / gridWidth) - 0.5);
-
-                    // Box.
-                    const dx = f(Math.abs(plx) - kHalfCheeseExtent);
-                    const dy = f(Math.abs(ply) - kHalfCheeseExtent);
-                    const dz = f(Math.abs(plz) - kHalfCheeseExtent);
-                    const outsideDist = len3(Math.max(dx, 0), Math.max(dy, 0), Math.max(dz, 0));
-                    const insideDist = Math.min(Math.max(Math.max(dx, dy), dz), 0);
-                    let sd = f(outsideDist + insideDist);
-
-                    // Holes.
-                    for (let s = 0; s < kHoleCount; s++) {
-                        const hd = f(len3(f(plx - holes[s * 4]!), f(ply - holes[s * 4 + 1]!), f(plz - holes[s * 4 + 2]!)) - holes[s * 4 + 3]!);
-                        sd = Math.max(sd, -hd);
-                    }
-
-                    cornerValues[x + gridWidthInValues * (y + gridWidthInValues * z)] = Math.min(Math.max(sd, -kSqrt3), kSqrt3);
-                }
-            }
-        }
-
-        this.setValues(cornerValues, gridWidth);
+        this.setValues(generateCheeseCornerValues(gridWidth, seed), gridWidth);
     }
 
     /** Mirrors NDSDFGrid::setValuesInternal (LOD chain + snorm8 quantization). */
