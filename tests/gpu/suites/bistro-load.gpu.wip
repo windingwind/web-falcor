@@ -1,0 +1,97 @@
+/**
+ * QUARANTINED (.gpu.wip): manual capability probe, not a fast oracle — the
+ * FBX import alone takes 20-50s and depends on the large Bistro media asset.
+ * Run explicitly by renaming to .gpu.test.ts.
+ *
+ * STRESS / CAPABILITY probe — can we load and render a large real-world scene?
+ * BistroExterior.pyscene imports a 115 MB FBX (assimpjs) + a 4k HDR env map.
+ * This is far beyond the cornell/Arcade test scenes: hundreds of materials and
+ * textures, hundreds of thousands of triangles. Not a correctness oracle (no
+ * native comparison) — it reports whether the import + scene build + a render
+ * pass survive, and logs the scene stats + a coarse frame footprint.
+ *
+ * Serve path: /Falcor/media/Bistro_v5_2 (present in the media tree).
+ */
+
+import { initScripting, runSceneScript, RenderGraph, createPass, presentToCanvas, Texture, ResourceType, ResourceFormat, ResourceBindFlags, float3 } from "@web-falcor/falcor";
+import "@web-falcor/render-passes";
+import { gpuTest, expectEq } from "../harness/registry.js";
+
+const width = 512;
+const height = 288;
+
+gpuTest("BistroInterior.loadsAndRenders", async ({ device }) => {
+    await initScripting("/node_modules/pyodide");
+
+    const t0 = performance.now();
+    // Geometry-only descriptor for the smaller (41 MB) interior FBX — the 115 MB
+    // exterior exceeds the assimpjs WASM32 2 GB heap through the assjson export.
+    const src = 'sceneBuilder.importScene("BistroInterior.fbx")\n';
+    const scene = await runSceneScript(device, src, "/Falcor/media/Bistro_v5_2");
+    const loadMs = performance.now() - t0;
+    const s = scene.stats;
+    console.error(`# bistro: loaded in ${(loadMs / 1000).toFixed(1)}s — instances=${s.instances} materials=${s.materials} textures=${s.textures}`);
+    expectEq(s.instances > 0, true, "Bistro produced geometry instances");
+
+    // Auto-frame the camera on the scene AABB (the minimal descriptor sets no
+    // camera). Look at the center from outside the bounds along a diagonal.
+    const b = scene.worldBounds!;
+    const c: [number, number, number] = [(b.min[0] + b.max[0]) / 2, (b.min[1] + b.max[1]) / 2, (b.min[2] + b.max[2]) / 2];
+    const ext = Math.max(b.max[0] - b.min[0], b.max[1] - b.min[1], b.max[2] - b.min[2]);
+    console.error(`# bistro: bounds min=[${b.min.map((v) => v.toFixed(1))}] max=[${b.max.map((v) => v.toFixed(1))}] ext=${ext.toFixed(1)}`);
+    scene.camera.setPosition(new float3(c[0] + ext * 0.6, c[1] + ext * 0.4, c[2] + ext * 0.6));
+    scene.camera.setTarget(new float3(c[0], c[1], c[2]));
+    scene.camera.setUpVector(new float3(0, 1, 0));
+    scene.camera.setAspectRatio(width / height);
+
+    const graph = new RenderGraph(device, "Bistro");
+    graph.onResize(width, height);
+    // InstanceID pseudocolor: shows the 2000+ instances as distinct regions
+    // (proves structured geometry loaded, not one blob).
+    graph.addPass(createPass(device, "SceneDebugger", { mode: "InstanceID" }), "SceneDebugger");
+    graph.markOutput("SceneDebugger.output");
+    graph.setScene(scene);
+
+    const ctx = device.renderContext;
+    graph.execute(ctx);
+    const out = graph.getOutput("SceneDebugger.output")!;
+
+    // Present to a bgra8 target and read back (as the viewer would).
+    const present = new Texture(device, {
+        type: ResourceType.Texture2D,
+        width,
+        height,
+        mipLevels: 1,
+        format: ResourceFormat.BGRA8Unorm,
+        bindFlags: ResourceBindFlags.RenderTarget | ResourceBindFlags.ShaderResource,
+        name: "Bistro::present",
+    });
+    presentToCanvas(device, out, present.gpuTexture, "bgra8unorm");
+    const pixels = await ctx.readTextureSubresource(present);
+
+    let lit = 0;
+    for (let i = 0; i < width * height; i++) {
+        if (pixels[i * 4]! + pixels[i * 4 + 1]! + pixels[i * 4 + 2]! > 10) lit++;
+    }
+    // Coarse footprint dump so we can eyeball the geometry silhouette.
+    for (let gy = 0; gy < 18; gy++) {
+        let line = "";
+        for (let gx = 0; gx < 72; gx++) {
+            const x = Math.floor(((gx + 0.5) * width) / 72);
+            const y = Math.floor(((gy + 0.5) * height) / 18);
+            const i = (y * width + x) * 4;
+            const key = (pixels[i]! << 16) | (pixels[i + 1]! << 8) | pixels[i + 2]!;
+            line += key === 0 ? " " : " .:-=+*#%@&$".charAt(((pixels[i]! ^ pixels[i + 1]! ^ pixels[i + 2]!) % 11) + 1);
+        }
+        console.error(`#B ${line}`);
+    }
+    // Count distinct pseudocolors (proxy for distinct instances visible).
+    const colors = new Set<number>();
+    for (let i = 0; i < width * height; i++) {
+        const key = (pixels[i * 4]! << 16) | (pixels[i * 4 + 1]! << 8) | pixels[i * 4 + 2]!;
+        if (key !== 0) colors.add(key);
+    }
+    console.error(`# bistro: rendered — lit=${lit}/${width * height} distinctColors=${colors.size}`);
+    expectEq(lit > 20000, true, `Bistro frame too empty (${lit} lit px)`);
+    expectEq(colors.size > 20, true, `Bistro shows too few distinct instances (${colors.size})`);
+});

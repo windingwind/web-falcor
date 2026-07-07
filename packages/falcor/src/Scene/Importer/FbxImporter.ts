@@ -125,6 +125,7 @@ export class FbxImporter {
 
         // Textures (loaded per unique path; slot decides sRGB like loadMaterialTexture).
         const textureIDs = new Map<string, number>();
+        const skippedFormats = new Set<string>();
         const loadTexture = async (path: string, srgb: boolean): Promise<number | undefined> => {
             const norm = path.replace(/\\/g, "/");
             const key = `${norm}|${srgb}`;
@@ -132,10 +133,17 @@ export class FbxImporter {
             const url = baseUrl ? `${baseUrl}/${norm}` : norm;
             const res = await fetch(url);
             if (!res.ok) return undefined;
-            const bitmap = await createImageBitmap(await res.blob(), {
-                colorSpaceConversion: "none",
-                premultiplyAlpha: "none",
-            });
+            // The browser's createImageBitmap decodes png/jpg/webp/bmp only.
+            // GPU-compressed formats (DDS/BC, TGA — common in game assets like
+            // Bistro) need a dedicated decoder; skip them gracefully so the
+            // geometry still loads (material falls back to its base color).
+            let bitmap: ImageBitmap;
+            try {
+                bitmap = await createImageBitmap(await res.blob(), { colorSpaceConversion: "none", premultiplyAlpha: "none" });
+            } catch {
+                skippedFormats.add(norm.slice(norm.lastIndexOf(".")).toLowerCase());
+                return undefined;
+            }
             const id = textureManager.addTexture({ bitmap, srgb });
             textureIDs.set(key, id);
             return id;
@@ -241,6 +249,9 @@ export class FbxImporter {
         visit(json.rootnode, float4x4.identity());
         if (meshDescs.length === 0) throw new RuntimeError("FbxImporter: no triangle meshes found");
 
+        if (skippedFormats.size > 0) {
+            console.warn(`FbxImporter: skipped textures with undecodable formats [${[...skippedFormats].join(", ")}] (need a DDS/BC or TGA decoder); materials fall back to base color.`);
+        }
         return { meshes: meshDescs, materials, materialNames };
     }
 }

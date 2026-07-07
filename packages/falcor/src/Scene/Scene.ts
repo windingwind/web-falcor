@@ -63,6 +63,15 @@ export interface SceneMaterialDesc {
 export class Scene {
     readonly camera = new Camera();
     readonly gridVolumes: import("./Volume/GridVolume.js").GridVolume[] = [];
+
+    /** Scene size counters (diagnostics; mirrors Scene::getSceneStats subset). */
+    get stats(): { instances: number; materials: number; textures: number } {
+        return { instances: this.instanceCount, materials: this.materialCount, textures: this.textureCount };
+    }
+
+    /** World-space geometry AABB (BVH root); null for geometry-less scenes. */
+    worldBounds: { min: [number, number, number]; max: [number, number, number] } | null = null;
+
     private gridCount = 0;
     private grid0Stats: { minIndex: [number, number, number]; minValue: number; maxIndex: [number, number, number]; maxValue: number } | null = null;
     private buffers: Record<string, Buffer> = {};
@@ -210,6 +219,13 @@ export class Scene {
             }
         });
         const bvh = buildBvh(bvhTris);
+        // Whole-scene AABB = BVH root node bounds (nodes[0] = [min.xyz, _][max.xyz, _]).
+        if (bvhTris.length > 0) {
+            this.worldBounds = {
+                min: [bvh.nodes[0]!, bvh.nodes[1]!, bvh.nodes[2]!],
+                max: [bvh.nodes[4]!, bvh.nodes[5]!, bvh.nodes[6]!],
+            };
+        }
         // One merged buffer (16-storage-buffer budget): nodes then triangles.
         const bvhMerged = new Float32Array(bvh.nodes.length + bvh.tris.length);
         bvhMerged.set(bvh.nodes, 0);
