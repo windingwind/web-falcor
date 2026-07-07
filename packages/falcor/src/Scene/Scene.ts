@@ -66,6 +66,9 @@ export class Scene {
     private drawList: { indexCount: number; firstIndex: number; baseVertex: number; firstInstance: number }[] = [];
 
     private lightCount = 0;
+    /** Analytic light descriptors (RTXDI needs types/order). */
+    readonly analyticLights: AnalyticLight[] = [];
+    emissiveActiveTriangleCount = 0;
     private bvhTrisOffset = 0;
     private envMap: EnvMap | null = null;
     private hasEmissiveMaterials = false;
@@ -175,6 +178,7 @@ export class Scene {
 
         // Analytic lights.
         this.lightCount = lights.length;
+        this.analyticLights = lights;
         make("lights", packLights(lights), 224);
 
         // Emissive geometry (LightCollection).
@@ -197,6 +201,7 @@ export class Scene {
             }),
         );
         this.emissiveTriangleCount = lc.triangleCount;
+        this.emissiveActiveTriangleCount = lc.activeTriangles.length;
         this.emissiveMeshCount = lc.meshCount;
         this.emissiveFluxes = new Float32Array(lc.triangleCount);
         const fluxView = new DataView(lc.fluxData);

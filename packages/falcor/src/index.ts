@@ -56,6 +56,7 @@ export * from "./Scene/Scene.js";
 export * from "./Scene/Volume/Grid.js";
 export * from "./Scene/Volume/GridVolume.js";
 export * from "./Scene/Volume/VDBLoader.js";
+export * from "./Rendering/RTXDI/RTXDI.js";
 export * from "./Scene/SceneBuilder.js";
 export * from "./Scene/Importer/GltfImporter.js";
 export * from "./Scene/Material/TextureManager.js";
