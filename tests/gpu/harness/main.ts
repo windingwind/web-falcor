@@ -5,7 +5,7 @@
  */
 
 import { Device, ProgramManager, initSlang } from "@web-falcor/falcor";
-import { tests, SkipError } from "./registry.js";
+import { tests, SkipError, artifacts, type Artifact } from "./registry.js";
 
 /** Fetches the Falcor shader tree and wires the program system (M2+ tests). */
 async function initProgramSystem(device: Device): Promise<void> {
@@ -55,6 +55,7 @@ declare global {
         __done: boolean;
         __results: TestResult[];
         __fatal?: string;
+        __artifacts: Artifact[];
     }
 }
 
@@ -102,6 +103,7 @@ async function run() {
         }
     }
     window.__results = results;
+    window.__artifacts = artifacts;
     window.__done = true;
 }
 

@@ -15,7 +15,7 @@
 
 import { initScripting, runSceneScript, RenderGraph, createPass, presentToCanvas, Texture, ResourceType, ResourceFormat, ResourceBindFlags, float3 } from "@web-falcor/falcor";
 import "@web-falcor/render-passes";
-import { gpuTest, expectEq } from "../harness/registry.js";
+import { gpuTest, expectEq, saveArtifact } from "../harness/registry.js";
 
 const width = 512;
 const height = 288;
@@ -73,6 +73,8 @@ gpuTest("BistroInterior.loadsAndRenders", async ({ device }) => {
     });
     presentToCanvas(device, out, present.gpuTexture, "bgra8unorm");
     const pixels = await ctx.readTextureSubresource(present);
+    // Save the frame as a viewable PNG (tests/gpu/out/bistro-interior-albedo.png).
+    await saveArtifact("bistro-interior-albedo", pixels, width, height);
 
     let lit = 0;
     for (let i = 0; i < width * height; i++) {

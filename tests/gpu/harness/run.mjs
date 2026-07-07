@@ -58,9 +58,22 @@ await page.waitForFunction(() => window.__done === true, undefined, { timeout: 1
 
 const fatal = await page.evaluate(() => window.__fatal);
 const results = (await page.evaluate(() => window.__results)) ?? [];
+const artifacts = (await page.evaluate(() => window.__artifacts)) ?? [];
 
 await browser.close();
 await vite.close();
+
+// Write any PNG artifacts tests saved (via saveArtifact) to tests/gpu/out/.
+if (artifacts.length > 0) {
+    const { writeFileSync, mkdirSync } = await import("node:fs");
+    const outDir = resolve(repoRoot, "tests/gpu/out");
+    mkdirSync(outDir, { recursive: true });
+    for (const a of artifacts) {
+        const file = resolve(outDir, `${a.name}.png`);
+        writeFileSync(file, Buffer.from(a.b64, "base64"));
+        console.log(`🖼  artifact: ${file} (${a.width}x${a.height})`);
+    }
+}
 
 if (fatal) {
     console.error(`FATAL: ${fatal}`);

@@ -24,6 +24,45 @@ export function gpuTest(name: string, fn: GpuTestFn): void {
     tests.push({ name, fn });
 }
 
+/** PNG artifacts a test asked to save; the Node runner writes them to disk. */
+export interface Artifact {
+    name: string;
+    b64: string;
+    width: number;
+    height: number;
+}
+export const artifacts: Artifact[] = [];
+
+/**
+ * Saves a texture readback as a viewable PNG (written to tests/gpu/out/<name>.png
+ * by the Node runner). `pixels` is the raw readback; pass bgra=true for a
+ * BGRA8 present target (channels are swapped to RGBA for the PNG).
+ */
+export async function saveArtifact(
+    name: string,
+    pixels: ArrayLike<number>,
+    width: number,
+    height: number,
+    bgra = true,
+): Promise<void> {
+    const rgba = new Uint8ClampedArray(width * height * 4);
+    for (let i = 0; i < width * height; i++) {
+        const r = bgra ? pixels[i * 4 + 2]! : pixels[i * 4]!;
+        const b = bgra ? pixels[i * 4]! : pixels[i * 4 + 2]!;
+        rgba[i * 4] = r;
+        rgba[i * 4 + 1] = pixels[i * 4 + 1]!;
+        rgba[i * 4 + 2] = b;
+        rgba[i * 4 + 3] = 255; // opaque (present targets carry no meaningful alpha)
+    }
+    const canvas = new OffscreenCanvas(width, height);
+    canvas.getContext("2d")!.putImageData(new ImageData(rgba, width, height), 0, 0);
+    const blob = await canvas.convertToBlob({ type: "image/png" });
+    const bytes = new Uint8Array(await blob.arrayBuffer());
+    let bin = "";
+    for (let i = 0; i < bytes.length; i++) bin += String.fromCharCode(bytes[i]!);
+    artifacts.push({ name, b64: btoa(bin), width, height });
+}
+
 /** Register a test that is expected to be skipped (feature unavailable etc.). */
 gpuTest.skipIf = (condition: (ctx: GpuTestContext) => string | null, name: string, fn: GpuTestFn): void => {
     tests.push({

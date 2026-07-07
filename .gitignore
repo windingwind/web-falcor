@@ -13,3 +13,4 @@ packages/falcor/shaders/generated/
 
 .vite/
 .DS_Store
+tests/gpu/out/
