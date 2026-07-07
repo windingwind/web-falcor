@@ -57,19 +57,22 @@ async function pool(items, fn) {
     process.stdout.write("\n");
 }
 
-async function fetchText(url, attempts = 4) {
+async function fetchWithRetry(url, read, attempts = 4) {
     for (let a = 1; ; a++) {
         try {
             const res = await fetch(url);
             if (!res.ok) throw new Error(`HTTP ${res.status}`);
-            return await res.text();
+            return await read(res);
         } catch (err) {
             if (a >= attempts) throw new Error(`${err.message} for ${url}`);
-            // Backoff on transient failures (429 / network blips) — matters at 340 files on CI.
-            await new Promise((r) => setTimeout(r, 300 * a * a));
+            // Backoff on transient failures (429 / network blips) — matters at
+            // 340 shader files + the slang-wasm download on CI.
+            await new Promise((r) => setTimeout(r, 400 * a * a));
         }
     }
 }
+const fetchText = (url) => fetchWithRetry(url, (res) => res.text());
+const fetchBuffer = (url) => fetchWithRetry(url, async (res) => Buffer.from(await res.arrayBuffer()));
 
 async function fetchShaders() {
     const manifestPath = join(repoRoot, "packages/falcor/shaders/generated/shader-file-list.json");
@@ -111,9 +114,7 @@ async function fetchSlangWasm() {
         return;
     }
     console.log(`Downloading slang-wasm ${SLANG_VERSION} (~25 MB)…`);
-    const res = await fetch(SLANG_WASM_URL);
-    if (!res.ok) throw new Error(`HTTP ${res.status} for ${SLANG_WASM_URL}`);
-    const zipBytes = Buffer.from(await res.arrayBuffer());
+    const zipBytes = await fetchBuffer(SLANG_WASM_URL);
     const scratch = join(tmpdir(), `slang-wasm-${process.pid}`);
     rmSync(scratch, { recursive: true, force: true });
     mkdirSync(scratch, { recursive: true });

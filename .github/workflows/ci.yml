@@ -19,6 +19,10 @@ jobs:
   build:
     name: typecheck + unit tests
     runs-on: ubuntu-latest
+    # Playwright is only used by the (local-only) GPU harness; don't download
+    # browsers during npm ci for the unit-test job.
+    env:
+      PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: 1
     steps:
       - uses: actions/checkout@v4
 
