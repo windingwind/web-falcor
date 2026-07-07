@@ -157,7 +157,7 @@ export class RTXDI {
     // Resources.
     private lightInfoBuffer: Buffer | null = null;
     private lightTileBuffer: Buffer | null = null;
-    private compactLightInfoBuffer: Buffer | null = null;
+    private compactLightOffset = 1;
     private reservoirBuffer: Buffer | null = null;
     private surfaceDataBuffer: Buffer | null = null;
     private neighborOffsetsBuffer: Buffer | null = null;
@@ -300,9 +300,9 @@ export class RTXDI {
         };
 
         // RIS light tiles (env tiles use the same count/size like Falcor).
+        // Compact light info lives in the lightInfo buffer (see updateLights).
         const risElements = Math.max(tileCount * tileSize * 2, 1);
         this.lightTileBuffer = makeBuffer("RTXDI::lightTile", risElements * 8, 8);
-        this.compactLightInfoBuffer = makeBuffer("RTXDI::compactLightInfo", risElements * 2 * kPackedPolymorphicLightSize, kPackedPolymorphicLightSize);
         this.reservoirBuffer = makeBuffer("RTXDI::reservoirs", this.reservoirArrayPitch * kMaxReservoirs * kPackedReservoirSize, kPackedReservoirSize);
         ctx.clearBuffer(this.reservoirBuffer);
         this.surfaceDataBuffer = makeBuffer("RTXDI::surfaceData", 2 * this.frameDim[0] * this.frameDim[1] * kPackedSurfaceDataSize, kPackedSurfaceDataSize);
@@ -347,8 +347,13 @@ export class RTXDI {
             this.analyticLightIDBuffer.setBlob(new Uint8Array(analyticIDs.buffer));
         }
 
+        // One buffer holds the scene lights AND the compact-light-info region
+        // for the presampled tiles (same 32-byte struct; 16-storage-buffer
+        // budget — see the RTXDI.slang override).
+        const risElements = Math.max(this.options.presampledTileCount * this.options.presampledTileSize * 2, 1);
+        this.compactLightOffset = Math.max(this.totalLightCount, 1);
         this.lightInfoBuffer = new Buffer(this.device, {
-            size: Math.max(this.totalLightCount, 1) * kPackedPolymorphicLightSize,
+            size: (this.compactLightOffset + risElements * 2) * kPackedPolymorphicLightSize,
             structSize: kPackedPolymorphicLightSize,
             bindFlags: ResourceBindFlags.ShaderResource | ResourceBindFlags.UnorderedAccess,
             memoryType: MemoryType.DeviceLocal,
@@ -431,6 +436,37 @@ export class RTXDI {
 
         this.generateMips(ctx, this.envLightPdfTexture);
         this.envLightValid = true;
+    }
+
+    private dummyLightInfo: Buffer | null = null;
+    private dummyTexR32: Texture | null = null;
+
+    /** 1-element stand-ins for bindings whose real resources don't exist yet. */
+    private dummyLightInfoBuffer(): Buffer {
+        if (!this.dummyLightInfo) {
+            this.dummyLightInfo = new Buffer(this.device, {
+                size: kPackedPolymorphicLightSize,
+                structSize: kPackedPolymorphicLightSize,
+                bindFlags: ResourceBindFlags.ShaderResource | ResourceBindFlags.UnorderedAccess,
+                memoryType: MemoryType.DeviceLocal,
+                name: "RTXDI::dummyLightInfo",
+            });
+        }
+        return this.dummyLightInfo;
+    }
+
+    private dummyR32Tex(): Texture {
+        if (!this.dummyTexR32) {
+            this.dummyTexR32 = new Texture(this.device, {
+                type: ResourceType.Texture2D,
+                width: 1,
+                height: 1,
+                format: ResourceFormat.R32Float,
+                bindFlags: ResourceBindFlags.ShaderResource | ResourceBindFlags.UnorderedAccess,
+                name: "RTXDI::dummyR32",
+            });
+        }
+        return this.dummyTexR32;
     }
 
     /** Downsample chain via blits (mirrors Texture::generateMips box filtering). */
@@ -534,16 +570,22 @@ export class RTXDI {
         v["prevCameraW"] = prev.cameraW.toArray();
         v["prevCameraJitter"] = [prev.jitterX, prev.jitterY];
 
-        v["lightInfo"] = this.lightInfoBuffer!;
+        // Light buffers/PDF textures are created inside update() (updateLights /
+        // updateEnvLight) and the env resources never exist without an env
+        // light, but the gRTXDI bindings survive in every kernel's layout.
+        // Native binds null views (kernels that dereference them are never
+        // reached); WebGPU requires a resource per surviving binding, so nulls
+        // fall back to 1-element dummies.
+        v["lightInfo"] = this.lightInfoBuffer ?? this.dummyLightInfoBuffer();
+        v["webfalcorCompactLightOffset"] = this.compactLightOffset;
         v["surfaceData"] = this.surfaceDataBuffer!;
         v["risBuffer"] = this.lightTileBuffer!;
-        v["compactLightInfo"] = this.compactLightInfoBuffer!;
         v["reservoirs"] = this.reservoirBuffer!;
         v["neighborOffsets"] = this.neighborOffsetsBuffer!;
         if (motionVectors) v["motionVectors"] = motionVectors;
 
-        v["localLightPdfTexture"] = this.localLightPdfTexture!;
-        if (this.envLightLuminanceTexture) v["envLightLuminanceTexture"] = this.envLightLuminanceTexture;
-        if (this.envLightPdfTexture) v["envLightPdfTexture"] = this.envLightPdfTexture;
+        v["localLightPdfTexture"] = this.localLightPdfTexture ?? this.dummyR32Tex();
+        v["envLightLuminanceTexture"] = this.envLightLuminanceTexture ?? this.dummyR32Tex();
+        v["envLightPdfTexture"] = this.envLightPdfTexture ?? this.dummyR32Tex();
     }
 }

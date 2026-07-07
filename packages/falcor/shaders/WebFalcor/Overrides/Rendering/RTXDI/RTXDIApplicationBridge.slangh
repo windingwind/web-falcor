@@ -198,9 +198,9 @@ RAB_LightInfo RAB_LoadLightInfo(uint index, bool previousFrame)
 */
 bool RAB_StoreCompactLightInfo(uint linearIndex, RAB_LightInfo lightInfo)
 {
-    if (gRTXDI.storeCompactLightInfo) return false;
+    if (gRTXDI.storeCompactLightInfo != 0) return false;
 
-    gRTXDI.compactLightInfo[linearIndex] = lightInfo.pack();
+    gRTXDI.lightInfo[gRTXDI.webfalcorCompactLightOffset + linearIndex] = lightInfo.pack();
     return true;
 }
 
@@ -209,7 +209,7 @@ bool RAB_StoreCompactLightInfo(uint linearIndex, RAB_LightInfo lightInfo)
 */
 RAB_LightInfo RAB_LoadCompactLightInfo(uint linearIndex)
 {
-    return PolymorphicLight(gRTXDI.compactLightInfo[linearIndex]);
+    return PolymorphicLight(gRTXDI.lightInfo[gRTXDI.webfalcorCompactLightOffset + linearIndex]);
 }
 
 /** Translates the light index from the current frame to the previous frame

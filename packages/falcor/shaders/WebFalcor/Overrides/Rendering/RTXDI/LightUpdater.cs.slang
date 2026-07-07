@@ -27,11 +27,11 @@ struct LightUpdater
     uint firstInfiniteAnalyticLight;                        ///< Index of first infinite analytic light.
     uint envLightIndex;                                     ///< Index of the env map.
 
-    bool updateEmissiveLights;                              ///< True if emissive lights should be updated.
-    bool updateEmissiveLightsFlux;                          ///< True if emissive lights flux should be updated.
+    uint updateEmissiveLights;                              ///< True if emissive lights should be updated. (WebFalcor: bool -> uint, non-host-shareable in WGSL uniforms)
+    uint updateEmissiveLightsFlux;                          ///< True if emissive lights flux should be updated. (WebFalcor: bool -> uint)
 
-    bool updateAnalyticLights;                              ///< True if analytic lights should be updated.
-    bool updateAnalyticLightsFlux;                          ///< True if analytic lights flux should be updated.
+    uint updateAnalyticLights;                              ///< True if analytic lights should be updated. (WebFalcor: bool -> uint)
+    uint updateAnalyticLightsFlux;                          ///< True if analytic lights flux should be updated. (WebFalcor: bool -> uint)
 
     /** Update the light info and local light PDF texture.
     */
@@ -64,12 +64,12 @@ struct LightUpdater
             light.edge1 = et.posW[2] - et.posW[0];
             light.averageRadiance = luminance(ef.averageRadiance);
 
-            if (updateEmissiveLights || updateEmissiveLightsFlux)
+            if (updateEmissiveLights != 0 || updateEmissiveLightsFlux != 0)
             {
                 lightInfo[lightIdx] = light.pack();
             }
 
-            if (updateEmissiveLightsFlux)
+            if (updateEmissiveLightsFlux != 0)
             {
                 localLightPdf[RTXDI_LinearIndexToZCurve(lightIdx)] = light.getFlux();
             }
@@ -85,12 +85,12 @@ struct LightUpdater
             AnalyticLight light;
             light.lightID = lightID;
 
-            if (updateAnalyticLights || updateAnalyticLightsFlux)
+            if (updateAnalyticLights != 0 || updateAnalyticLightsFlux != 0)
             {
                 lightInfo[lightIdx] = light.pack();
             }
 
-            if (updateAnalyticLightsFlux && lightIdx < firstInfiniteAnalyticLight)
+            if (updateAnalyticLightsFlux != 0 && lightIdx < firstInfiniteAnalyticLight)
             {
                 localLightPdf[RTXDI_LinearIndexToZCurve(lightIdx)] = light.getFlux();
             }

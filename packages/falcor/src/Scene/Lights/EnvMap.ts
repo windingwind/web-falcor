@@ -52,7 +52,7 @@ export class EnvMap {
         });
         device.gpuDevice.queue.writeTexture(
             { texture: this.texture.gpuTexture },
-            image.data,
+            image.data as Float32Array<ArrayBuffer>,
             { bytesPerRow: image.width * 16 },
             { width: image.width, height: image.height, depthOrArrayLayers: 1 },
         );

@@ -4,7 +4,7 @@
  * (hardware WebGPU via Vulkan; requires an X display — run under `xvfb-run -a`),
  * executes the browser-side runner, reports results.
  *
- * Usage: xvfb-run -a node tests/gpu/harness/run.mjs [--swiftshader]
+ * Usage: xvfb-run -a node tests/gpu/harness/run.mjs [--swiftshader] [--filter <substring>]
  */
 
 import { createServer } from "vite";
@@ -14,6 +14,8 @@ import { fileURLToPath } from "node:url";
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../../..");
 const useSwiftShader = process.argv.includes("--swiftshader");
+const filterIdx = process.argv.indexOf("--filter");
+const filter = filterIdx >= 0 ? process.argv[filterIdx + 1] : undefined;
 
 const vite = await createServer({
     root: repoRoot,
@@ -28,7 +30,7 @@ const vite = await createServer({
 });
 await vite.listen();
 const port = vite.config.server.port === 0 ? vite.httpServer.address().port : vite.config.server.port;
-const url = `http://127.0.0.1:${port}/tests/gpu/harness/index.html`;
+const url = `http://127.0.0.1:${port}/tests/gpu/harness/index.html${filter ? `?filter=${encodeURIComponent(filter)}` : ""}`;
 
 const args = ["--enable-unsafe-webgpu", "--no-sandbox", "--disable-gpu-sandbox", "--ignore-gpu-blocklist"];
 if (useSwiftShader) {

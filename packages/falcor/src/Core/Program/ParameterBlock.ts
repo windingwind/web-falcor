@@ -263,7 +263,7 @@ export class ParameterBlock {
                 throw new RuntimeError(`Unexpected matrix layout for '${member.name}': float${rows}x${cols} in ${size} bytes`);
             }
         } else {
-            throw new RuntimeError(`Setting '${type.kind}' uniforms not implemented yet`);
+            throw new RuntimeError(`Setting '${type.kind}' uniforms not implemented yet (member '${member.name}')`);
         }
     }
 

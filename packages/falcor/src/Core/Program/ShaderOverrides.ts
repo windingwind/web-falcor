@@ -88,4 +88,6 @@ export const kShaderOverrides: Readonly<Record<string, string>> = {
     "Rendering/RTXDI/SurfaceData.slang": "WebFalcor/Overrides/Rendering/RTXDI/SurfaceData.slang",
     "Rendering/RTXDI/LightUpdater.cs.slang": "WebFalcor/Overrides/Rendering/RTXDI/LightUpdater.cs.slang",
     "RenderPasses/RTXDIPass/LoadShadingData.slang": "WebFalcor/Overrides/RenderPasses/RTXDIPass/LoadShadingData.slang",
+    // Outputs moved into the FinalShading block (max 4 bind groups) + write-only.
+    "RenderPasses/RTXDIPass/FinalShading.cs.slang": "WebFalcor/Overrides/RenderPasses/RTXDIPass/FinalShading.cs.slang",
 };

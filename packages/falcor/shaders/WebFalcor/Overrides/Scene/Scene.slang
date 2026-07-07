@@ -77,10 +77,12 @@ struct Scene
     // path; M6's SoftwareRT binds its BVH via SceneRayQuery instead.
 
     // Instance transforms
+    // WebFalcor: world + inverse-transpose matrices share ONE buffer each for
+    // current/prev (storage-buffer budget, same pattern as the BVH merge):
+    // world at [0, webfalcorInvTransposeOffset), inverse-transpose after.
     [root] StructuredBuffer<float4x4> worldMatrices;
-    [root] StructuredBuffer<float4x4> inverseTransposeWorldMatrices;
     StructuredBuffer<float4x4> prevWorldMatrices;
-    StructuredBuffer<float4x4> prevInverseTransposeWorldMatrices;
+    uint webfalcorInvTransposeOffset;
 
     // Instances
     [root] StructuredBuffer<GeometryInstanceData> geometryInstances;
@@ -155,7 +157,7 @@ struct Scene
 
     float4x4 loadInstanceFromWorld(const uint matrixID)
     {
-        return transpose(inverseTransposeWorldMatrices[matrixID]);
+        return transpose(worldMatrices[webfalcorInvTransposeOffset + matrixID]);
     }
 
     float4x4 getWorldFromInstance(const GeometryInstanceID instanceID)
@@ -182,12 +184,12 @@ struct Scene
 
     float3x3 loadInverseTransposeWorldMatrix(const uint matrixID)
     {
-        return float3x3(inverseTransposeWorldMatrices[matrixID]);
+        return float3x3(worldMatrices[webfalcorInvTransposeOffset + matrixID]);
     }
 
     float3x3 loadPrevInverseTransposeWorldMatrix(const uint matrixID)
     {
-        return float3x3(prevInverseTransposeWorldMatrices[matrixID]);
+        return float3x3(prevWorldMatrices[webfalcorInvTransposeOffset + matrixID]);
     }
 
     float4x4 getWorldMatrix(const GeometryInstanceID instanceID)

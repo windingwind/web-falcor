@@ -70,6 +70,7 @@ export class Scene {
     readonly analyticLights: AnalyticLight[] = [];
     emissiveActiveTriangleCount = 0;
     private bvhTrisOffset = 0;
+    private invTransposeOffset = 0;
     private envMap: EnvMap | null = null;
     private hasEmissiveMaterials = false;
     private materialTypes = new Set<MaterialType>();
@@ -144,15 +145,16 @@ export class Scene {
         make("geometryInstances", packGeometryInstances(instances), 32);
 
         // Node transforms: one node per mesh (globalMatrixID == mesh index).
-        const world = new Float32Array(meshes.length * 16);
-        const invT = new Float32Array(meshes.length * 16);
+        // One merged buffer (16-storage-buffer budget, same pattern as the
+        // BVH merge): world matrices then inverse-transpose matrices.
+        const world = new Float32Array(meshes.length * 2 * 16);
         meshes.forEach((mesh, i) => {
             const m = mesh.transform ?? float4x4.identity();
             world.set(m.toArray(), i * 16);
-            invT.set(transpose(inverse(m)).toArray(), i * 16);
+            world.set(transpose(inverse(m)).toArray(), (meshes.length + i) * 16);
         });
         make("worldMatrices", world, 64);
-        make("inverseTransposeWorldMatrices", invT, 64);
+        this.invTransposeOffset = meshes.length;
 
         // Software RT BVH over world-space triangles (DESIGN.md §5).
         const bvhTris: BvhTriangle[] = [];
@@ -427,9 +429,8 @@ export class Scene {
 
         // Geometry.
         scene["worldMatrices"] = this.buffers["worldMatrices"]!;
-        scene["inverseTransposeWorldMatrices"] = this.buffers["inverseTransposeWorldMatrices"]!;
         scene["prevWorldMatrices"] = this.buffers["worldMatrices"]!;
-        scene["prevInverseTransposeWorldMatrices"] = this.buffers["inverseTransposeWorldMatrices"]!;
+        scene["webfalcorInvTransposeOffset"] = this.invTransposeOffset;
         scene["geometryInstances"] = this.buffers["geometryInstances"]!;
         scene["meshes"] = this.buffers["meshes"]!;
         scene["vertices"]["data0"] = this.buffers["vertices"]!;

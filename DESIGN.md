@@ -263,7 +263,7 @@ Importers (plugin package, like upstream):
 | `Lights/` Emissive samplers (Uniform/Power/LightBVH), `LightBVH(+Builder/Refit)`, `EnvMapSampler` | ✅ | pure Slang + compute; LightBVH build is compute shaders already |
 | `Materials/` all BSDF modules (Lambert, OrenNayar, Disney/Frostbite diffuse, GGX iso/aniso, StandardBSDF, Sheen, Hair Chiang16, Cloth, MERL/RGL, PBRT set, LayeredBSDF, Fresnel/Microfacet/NDF, TexLOD) | ✅ | compile as-is to WGSL; TexLOD ray-cone variants fine, ray-diff variants fine |
 | `Volumes/` grid volumes (NanoVDB), GridVolumeSampler, phase functions | ✅ GPU-verified | Full chain verified vs native: browser parses the UNMODIFIED smoke.pyscene/.vdb -> byte-identical NanoVDB buffer -> gScene.grid0 + gridVolumes GPU plumbing -> SceneDebugger's 500-step ray-marched transmittance matches native at mean 3.7e-5 / 0 bad px (feature-smoke-debugger). PNanoVDB point lookups GPU-exact (0/500). NOTE: no upstream render pass consumes GridVolumeSampler in light transport in this drop (PathTracer handles homogeneous media only) — SceneDebugger is the upstream GPU consumer. ⚠ native openvdb broken on this machine -> native oracles use .nvdb (byte-identical, tools/vdb/) |
-| `RTXDI/` | 🟡 | RTXDI **SDK** is open source (BSD): the resampling shaders port; visibility rays go through SoftwareRT. Full ReSTIR DI parity feasible but scheduled late |
+| `RTXDI/` | ✅ GPU-verified | Full ReSTIR DI port: RTXDI SDK 1.3.0 resampling shaders (WGSL via 6 overrides), host orchestration (rtxdi::Context math, LightUpdater/EnvLightUpdater, presampling, spatiotemporal resampling), visibility rays through SoftwareRT. Upstream RTXDI.py over Arcade matches native at bias <6e-4, ≤5/3600 bad 8x8 blocks (frames 1/16/64). Web divergences: localLightPdf R32Float (no r16float storage), boiling filter compiled out (WaveActiveCountBits unmapped; native default off), lightInfo+compactLightInfo share one buffer (16-storage-buffer budget) |
 | `Utils/PixelStats` | ✅ ported | per-pixel counters ported (binding array + texture atomics -> one packed `Atomic<uint>` buffer, 5 regions; rayCount/pathLength verified vs native per-pixel). Aggregate CPU-readback stats (`getStats()`) pending |
 
 ### 6.4 `RenderGraph/`
@@ -404,6 +404,7 @@ more than 0.05). Suite: `npm run test:gpu` (53 GPU tests + 23 unit green).
 | smoke volume scene (upstream SceneDebugger.py over smoke.pyscene; web parses the original .vdb in-browser, native loads the byte-identical .nvdb) | GridVolumes GPU chain (NanoVDB buffer, gScene grid plumbing, PNanoVDB WGSL traversal, 500-step transmittance march) | mean 3.7e-5 | 0 @1e-2 |
 | Arcade.pyscene via FBX import (upstream GBufferRT.py over the upstream Arcade scene) | FbxImporter (assimpjs WASM + AssimpImporter Default-mode port): posW/faceNormalW/texC exact, tangentW, guideNormalW (normal mapping), diffuse, emissive x150 factor | 1e-4 / 1e-5 / 1.1e-4 / 6.7e-4 / 6.4e-4 / 1.0e-4 / 1.4e-2 | 0 / 0 / 0 / 190 / 142 / 192 / 139 |
 | upstream test_PathTracer.py + test_MinimalPathTracer.py REPLICAS (Arcade, 640x360, frame 128 — the exact upstream harness parameters) | LightCollection textured-emissive integration (analytic triangle-texel coverage, EmissiveIntegrator semantics) | bias -6.1e-4 / -3.7e-4 (unbiased) | PT: 36/3600 bad 8x8 blocks (NEE sequences decorrelate: flux-table float rounding -> different RNG consumption -> per-pixel speckle with zero bias); MPT: 1297 rel-bad px (fireflies at the x150 emitter) |
+| upstream test_RTXDI.py REPLICA (unmodified RTXDI.py graph over Arcade, 640x360, frames 1/16/64) | full ReSTIR DI: presampled RIS tiles, candidate generation + visibility, spatiotemporal reservoir resampling, final shading (SDK 1.3.0 kernels) | bias -3.6e-4 / -4.2e-4 / -5.9e-4 | 5 / 4 / 3 of 3600 bad 8x8 blocks (RIS tile picks decorrelate via R32-vs-R16 PDF rounding) |
 
 † residual is entirely the jpg *input decode* (browser vs FreeImage IDCT/chroma
 upsampling, ≤3 sRGB LSB): the png-fed pixels contribute zero error (Composite
@@ -420,13 +421,13 @@ output is diffed against native Mogwai running the same file.
 
 | Status | Count | Graphs |
 |---|---|---|
-| ✅ verified vs native | 14 | MinimalPathTracer, ToneMapping, VBufferRT, CompositePass, CrossFadePass, GaussianBlur, ColorMapPass, SideBySide, SplitScreen, ModulateIllumination, SimplePostFX, FLIPPass, PathTracer, PathTracerDielectrics |
+| ✅ verified vs native | 15 | MinimalPathTracer, ToneMapping, VBufferRT, CompositePass, CrossFadePass, GaussianBlur, ColorMapPass, SideBySide, SplitScreen, ModulateIllumination, SimplePostFX, FLIPPass, PathTracer, PathTracerDielectrics, RTXDI |
 | 🟢 runnable now (passes exist; oracle pending) | 1 | VBufferRTInline (same pass; inline variant is our default) |
 | 🟡 PathTracer siblings | 1 | SDFEditorRenderGraphV2 (SDF grids, M7 remainder) |
 | 🟠 runnable on web; native oracle impossible on this machine | 1 | HalfRes (needs FBX importer for Arcade.pyscene; and the oracle GPU lacks ROV support, so native Mogwai cannot run GBufferRaster-based graphs at all) |
 | 🟡 GBuffer remainder | 3 | GBufferRaster, GBufferRasterAlpha, MVecRaster — ⚠ all raster-based: native-ROV oracle blocker |
 | 🟡 needs larger pass ports (M8 scope) | 4 | SVGF + TAA (both passes PORTED + feature-verified vs native via GBufferRT feature graphs — TAA mse 8.4e-7, SVGF mean 4.2e-4; the upstream graphs themselves stay oracle-blocked: GBufferRaster needs ROV the native driver lacks), VBufferRaster, VBufferRasterAlpha |
-| 🟡 M8 flagship items | 4 | RTXDI, WARDiffPathTracer ×3 |
+| 🟡 M8 flagship items | 3 | WARDiffPathTracer ×3 |
 | ❌ impossible on web (CUDA/driver tech) | 2 | OptixDenoiser, DLSS |
 
 \* also needs SDF grid geometry (M7 remainder).
@@ -484,7 +485,7 @@ output is diffed against native Mogwai running the same file.
 | PathTracer | ✅ core | SoftwareRT megakernel, oracle-verified w/ NEE+MIS, Uniform/Power emissive samplers + EnvMapSampler (§7.1). v1 limits: fixed spp=1, no guide/NRD outputs, LightBVH sampler pending, volumes/SDF pending |
 | PixelInspectorPass | ✅ | |
 | RenderPassTemplate | ✅ | |
-| RTXDIPass | 🟡 shaders WGSL-ready | ALL 11 kernels (7 resampling entries + LightUpdater/EnvLightUpdater/ReflectTypes + PrepareSurfaceData/FinalShading) compile to WGSL with 5 small overrides: texel buffers -> structured (SDK accesses via RTXDI_* defines, transparent), boiling filter compiled out (WaveActiveCountBits unmapped for WGSL; native default strength 0 = off), brace-init fixes. Remaining: host port (RTXDI.cpp orchestration + rtxdi::Context params), RTXDIPass.ts, Arcade oracle |
+| RTXDIPass | ✅ verified vs native | Full port (PrepareSurfaceData + ReSTIR spatiotemporal resampling + FinalShading). Upstream RTXDI.py replica over Arcade at frames 1/16/64: bias <6e-4, ≤5/3600 bad 8x8 blocks. Overrides: texel buffers -> structured, boiling filter compiled out (WaveActiveCountBits; native default off), bool cbuffer members -> uint (non-host-shareable), outputs moved into the FinalShading block (4-bind-group cap) + write-only, lightInfo+compactLightInfo merged (16-storage-buffer cap) |
 | SceneDebugger | ✅ | |
 | SDFEditor | ✅ | pure compute + UI |
 | SimplePostFX | ✅ | |

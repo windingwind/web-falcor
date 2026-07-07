@@ -27,3 +27,4 @@ export * from "./SceneDebugger/SceneDebugger.js";
 export * from "./TAA/TAA.js";
 export * from "./SVGFPass/SVGFPass.js";
 export * from "./BSDFViewer/BSDFViewer.js";
+export * from "./RTXDIPass/RTXDIPass.js";

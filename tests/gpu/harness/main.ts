@@ -69,16 +69,20 @@ async function run() {
     const modules = import.meta.glob(["/packages/*/src/**/*.gpu.test.ts", "/tests/gpu/suites/**/*.gpu.test.ts"]);
     for (const load of Object.values(modules)) await load();
 
+    // Name-substring filter (dev-only: `npm run test:gpu -- --filter <substr>`).
+    const filter = new URLSearchParams(location.search).get("filter");
+    const selected = filter ? tests.filter((t) => t.name.includes(filter)) : tests;
+
     const device = await Device.create();
     const info = device.adapter.info;
     log(`# adapter: ${info?.vendor ?? "?"} ${info?.architecture ?? "?"}`);
     const t0 = performance.now();
     await initProgramSystem(device);
     log(`# program system ready in ${(performance.now() - t0).toFixed(0)}ms`);
-    log(`# tests: ${tests.length}`);
+    log(`# tests: ${selected.length}${filter ? ` (filter '${filter}' of ${tests.length})` : ""}`);
 
     const results: TestResult[] = [];
-    for (const test of tests) {
+    for (const test of selected) {
         const start = performance.now();
         try {
             await test.fn({ device });

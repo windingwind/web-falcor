@@ -62,10 +62,10 @@ export function generateTangents(vertices: StaticVertex[], indices: Uint32Array)
             const l2 = Math.hypot(d2.x, d2.y, d2.z);
             const cos = l1 > 0 && l2 > 0 ? Math.min(1, Math.max(-1, (d1.x * d2.x + d1.y * d2.y + d1.z * d2.z) / (l1 * l2))) : 1;
             const w = Math.acos(cos);
-            accum[a * 3] += (os[0]! / len) * w;
-            accum[a * 3 + 1] += (os[1]! / len) * w;
-            accum[a * 3 + 2] += (os[2]! / len) * w;
-            orient[a] += area > 0 ? w : -w;
+            accum[a * 3]! += (os[0]! / len) * w;
+            accum[a * 3 + 1]! += (os[1]! / len) * w;
+            accum[a * 3 + 2]! += (os[2]! / len) * w;
+            orient[a]! += area > 0 ? w : -w;
         }
     }
 

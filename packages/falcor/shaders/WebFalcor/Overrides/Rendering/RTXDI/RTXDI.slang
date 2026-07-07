@@ -42,8 +42,8 @@ struct RTXDI
     float3  prevCameraW;
     float2  prevCameraJitter;
 
-    bool    storeCompactLightInfo;                      ///< Enable storing compact light info for presampled light tiles.
-    bool    useEmissiveTextures;                        ///< Lookup final triangle emission in emissive texture.
+    uint    storeCompactLightInfo;                      ///< Enable storing compact light info for presampled light tiles. (WebFalcor: bool -> uint, non-host-shareable in WGSL uniforms)
+    uint    useEmissiveTextures;                        ///< Lookup final triangle emission in emissive texture. (WebFalcor: bool -> uint)
 
     // Parameters to control how RTXDI generates initial light candidate samples.
     uint    localLightCandidateCount;                   ///< Number of initial candidates (per pixel) on local lights.
@@ -65,16 +65,19 @@ struct RTXDI
 
     // Parameters needed to control RTXDI's temporal reuse (and spatiotemporal reuse).
     float   boilingFilterStrength;                      ///< 0 = off, 1 = full strength.
-    bool    enableVisibilityShortcut;                   ///< Should we use a visibility shortcut?  (Degrades quality somewhat)
-    bool    enablePermutationSampling;                  ///< Enables permuting the pixels sampled from the previous frame (noisier but more denoiser friendly).
+    uint    enableVisibilityShortcut;                   ///< Should we use a visibility shortcut? (Degrades quality somewhat; WebFalcor: bool -> uint)
+    uint    enablePermutationSampling;                  ///< Enables permuting the pixels sampled from the previous frame. (WebFalcor: bool -> uint)
 
     // Parameters only valid during shading (i.e., after calling RTXDI::update() in your C++ code).
     uint    finalShadingReservoir;                      ///< Reservoir where the final samples are stored (needed to extract them for the user).
 
     // Texture and buffer resources used in the RTXDI bridge.
-    StructuredBuffer<PackedPolymorphicLight> lightInfo;             ///< Buffer storing information about all the lights in the scene.
+    // WebFalcor: lightInfo and compactLightInfo share ONE buffer (same
+    // 32-byte struct; 16-storage-buffer budget): lights at
+    // [0, webfalcorCompactLightOffset), compact light info after.
+    RWStructuredBuffer<PackedPolymorphicLight> lightInfo;           ///< Buffer storing information about all the lights in the scene + compact light info region.
+    uint webfalcorCompactLightOffset;                               ///< First compact-light-info element in lightInfo.
     RWStructuredBuffer<uint2> risBuffer;                                      ///< Buffer storing presampled light tiles.
-    RWStructuredBuffer<PackedPolymorphicLight> compactLightInfo;    ///< Optional buffer storing compact light info for samples in the light tile buffer for improved coherence.
     RWStructuredBuffer<PackedSurfaceData> surfaceData;              ///< Buffer storing the surface data for the current and previous frames.
     StructuredBuffer<float2> neighborOffsets;                                 ///< Buffer storing a poisson(-ish) distribution of offsets for sampling randomized neighbors.
     RWStructuredBuffer<RTXDI_PackedReservoir> reservoirs;           ///< Buffer storing reservoirs.
@@ -370,8 +373,8 @@ extension RTXDI
             tparams.biasCorrectionMode = gRTXDI.biasCorrectionMode;
             tparams.depthThreshold = gRTXDI.depthThreshold;
             tparams.normalThreshold = gRTXDI.normalThreshold;
-            tparams.enableVisibilityShortcut = gRTXDI.enableVisibilityShortcut;
-            tparams.enablePermutationSampling = gRTXDI.enablePermutationSampling;
+            tparams.enableVisibilityShortcut = gRTXDI.enableVisibilityShortcut != 0;
+            tparams.enablePermutationSampling = gRTXDI.enablePermutationSampling != 0;
 
             // Execute resampling.
             RAB_LightSample selectedSample = {};
@@ -422,8 +425,8 @@ extension RTXDI
             stparams.numSamples = gRTXDI.spatialSampleCount + 1;
             stparams.numDisocclusionBoostSamples = gRTXDI.disocclusionSampleCount;
             stparams.samplingRadius = gRTXDI.samplingRadius;
-            stparams.enableVisibilityShortcut = gRTXDI.enableVisibilityShortcut;
-            stparams.enablePermutationSampling = gRTXDI.enablePermutationSampling;
+            stparams.enableVisibilityShortcut = gRTXDI.enableVisibilityShortcut != 0;
+            stparams.enablePermutationSampling = gRTXDI.enablePermutationSampling != 0;
 
             // Execute resampling.
             RAB_LightSample selectedSample = {};
