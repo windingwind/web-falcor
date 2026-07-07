@@ -264,7 +264,7 @@ Importers (plugin package, like upstream):
 | `Materials/` all BSDF modules (Lambert, OrenNayar, Disney/Frostbite diffuse, GGX iso/aniso, StandardBSDF, Sheen, Hair Chiang16, Cloth, MERL/RGL, PBRT set, LayeredBSDF, Fresnel/Microfacet/NDF, TexLOD) | ✅ | compile as-is to WGSL; TexLOD ray-cone variants fine, ray-diff variants fine |
 | `Volumes/` grid volumes (NanoVDB), GridVolumeSampler, phase functions | ✅ GPU-verified | Full chain verified vs native: browser parses the UNMODIFIED smoke.pyscene/.vdb -> byte-identical NanoVDB buffer -> gScene.grid0 + gridVolumes GPU plumbing -> SceneDebugger's 500-step ray-marched transmittance matches native at mean 3.7e-5 / 0 bad px (feature-smoke-debugger). PNanoVDB point lookups GPU-exact (0/500). NOTE: no upstream render pass consumes GridVolumeSampler in light transport in this drop (PathTracer handles homogeneous media only) — SceneDebugger is the upstream GPU consumer. ⚠ native openvdb broken on this machine -> native oracles use .nvdb (byte-identical, tools/vdb/) |
 | `RTXDI/` | ✅ GPU-verified | Full ReSTIR DI port: RTXDI SDK 1.3.0 resampling shaders (WGSL via 6 overrides), host orchestration (rtxdi::Context math, LightUpdater/EnvLightUpdater, presampling, spatiotemporal resampling), visibility rays through SoftwareRT. Upstream RTXDI.py over Arcade matches native at bias <6e-4, ≤5/3600 bad 8x8 blocks (frames 1/16/64). Web divergences: localLightPdf R32Float (no r16float storage), boiling filter compiled out (WaveActiveCountBits unmapped; native default off), lightInfo+compactLightInfo share one buffer (16-storage-buffer budget) |
-| `SDFs/` NDSDFGrid (+ base/voxel utils) | ✅ GPU-verified | Full ND chain: pyscene bridge (createNDGrid/generateCheeseValues, bit-exact host build incl. gcc mt19937 + RIGHT-TO-LEFT float3 ctor draws), R8Snorm Z-stacked LOD atlas (WGSL has no binding arrays; LOD widths 1+(c<<lod) are no mip chain), sphere tracing through SoftwareRT (upstream SDFGridIntersector). Web render matches a faithful CPU port of intersectSDF PIXEL-EXACTLY (0/230400; oracle mask committed). ⚠ native NDSDF is broken on this machine (SPIR-V offset texel fetches): gradients NaN, footprint dilated +24568 px, mesh-less TLAS instance IDs off by one — background still verified vs native. SparseBrickSet (createSBS): CPU brick build (validity→prefix-sum→bricks+AABBs) + brick-AABB-loop tracing; SDFSBS.pyscene body matches the shared surface footprint at 3/230400 px (native can't oracle SBS — Mogwai core-dumps the brick BLAS build). SVS/SVO compile to WGSL; hosts pending |
+| `SDFs/` NDSDFGrid (+ base/voxel utils) | ✅ GPU-verified | Full ND chain: pyscene bridge (createNDGrid/generateCheeseValues, bit-exact host build incl. gcc mt19937 + RIGHT-TO-LEFT float3 ctor draws), R8Snorm Z-stacked LOD atlas (WGSL has no binding arrays; LOD widths 1+(c<<lod) are no mip chain), sphere tracing through SoftwareRT (upstream SDFGridIntersector). Web render matches a faithful CPU port of intersectSDF PIXEL-EXACTLY (0/230400; oracle mask committed). ⚠ native NDSDF is broken on this machine (SPIR-V offset texel fetches): gradients NaN, footprint dilated +24568 px, mesh-less TLAS instance IDs off by one — background still verified vs native. SparseBrickSet (createSBS): CPU brick build (validity→prefix-sum→bricks+AABBs) + brick-AABB-loop tracing; SDFSBS.pyscene body matches the shared surface footprint at 3/230400 px (native can't oracle SBS — Mogwai core-dumps the brick BLAS build). SVS/SVO compile to WGSL and the hosts are portable, but their runtime puts one AABB per SURFACE VOXEL (tens of thousands for the cheese) — impractical on the linear brick-loop; a procedural-AABB BVH over the SDF primitives would be needed (the triangle BVH is a natural base). NDSDF (dense) + SBS (sparse-brick) already cover both SDF representation classes |
 | `Utils/PixelStats` | ✅ ported | per-pixel counters ported (binding array + texture atomics -> one packed `Atomic<uint>` buffer, 5 regions; rayCount/pathLength verified vs native per-pixel). Aggregate CPU-readback stats (`getStats()`) pending |
 
 ### 6.4 `RenderGraph/`
@@ -323,10 +323,16 @@ Settings (JSON + localStorage), CryptoUtils (SHA-1 → WebCrypto), Threading/Tas
 ### 6.9 `DiffRendering/` (WARDiffPathTracer)
 
 Slang **autodiff is a compiler feature**, not an API feature — `fwd_diff`/`bwd_diff`
-lower to plain compute code, so it compiles to WGSL. Gradient accumulation needs the
-float-atomic CAS shim. The PyTorch training loop does not exist in-browser; gradients
-are exposed as buffers (readable into JS / ONNX-web pipelines). Marked 🟡 (mechanism
-works; ecosystem differs).
+lower to plain compute code, so it compiles to WGSL. **VERIFIED on-device** (M8
+feasibility gate): the `autodiff-feasibility` GPU test runs a `bwd_diff`/`fwd_diff`
+kernel through the real WebGPU device and both produce the exact analytic gradient
+(f(x)=x²k+sin(x) → 2xk+cos(x) = 11.58385 at x=2,k=3). So differentiable rendering is
+portable in principle — the full WARDiffPathTracer port (WAR reparameterization,
+DiffSceneQuery, the diff RT megakernel) is a large pending effort but not blocked at
+the language level. Gradient accumulation needs the float-atomic CAS shim. The PyTorch
+training loop does not exist in-browser; gradients are exposed as buffers (readable
+into JS / ONNX-web pipelines). Marked 🟡 (mechanism works and is device-verified;
+full pass + ecosystem pending).
 
 ## 7. Testing strategy
 
@@ -426,11 +432,11 @@ output is diffed against native Mogwai running the same file.
 |---|---|---|
 | ✅ verified vs native | 15 | MinimalPathTracer, ToneMapping, VBufferRT, CompositePass, CrossFadePass, GaussianBlur, ColorMapPass, SideBySide, SplitScreen, ModulateIllumination, SimplePostFX, FLIPPass, PathTracer, PathTracerDielectrics, RTXDI |
 | 🟢 runnable now (passes exist; oracle pending) | 1 | VBufferRTInline (same pass; inline variant is our default) |
-| 🟡 PathTracer siblings | 1 | SDFEditorRenderGraphV2 (needs SBS-type SDF grids; NDSDF chain verified) |
+| 🟠 asset-blocked | 1 | SDFEditorRenderGraphV2 (SDFEditorSceneTwoSDFs.pyscene references `one_primitive_edited.sdfg`, absent from this Falcor drop → scene unloadable natively too; SBS grid chain itself is verified) |
 | 🟠 runnable on web; native oracle impossible on this machine | 1 | HalfRes (needs FBX importer for Arcade.pyscene; and the oracle GPU lacks ROV support, so native Mogwai cannot run GBufferRaster-based graphs at all) |
 | 🟡 GBuffer remainder | 3 | GBufferRaster, GBufferRasterAlpha, MVecRaster — ⚠ all raster-based: native-ROV oracle blocker |
 | 🟡 needs larger pass ports (M8 scope) | 4 | SVGF + TAA (both passes PORTED + feature-verified vs native via GBufferRT feature graphs — TAA mse 8.4e-7, SVGF mean 4.2e-4; the upstream graphs themselves stay oracle-blocked: GBufferRaster needs ROV the native driver lacks), VBufferRaster, VBufferRasterAlpha |
-| 🟡 M8 flagship items | 3 | WARDiffPathTracer ×3 |
+| 🟡 M8 flagship items | 3 | WARDiffPathTracer ×3 (Slang autodiff device-verified §6.9; full diff-RT port pending) |
 | ❌ impossible on web (CUDA/driver tech) | 2 | OptixDenoiser, DLSS |
 
 \* also needs SDF grid geometry (M7 remainder).
@@ -482,7 +488,7 @@ output is diffed against native Mogwai running the same file.
 | ImageLoader | ✅ | EXR/DDS via WASM codecs |
 | MinimalPathTracer | ✅ | SoftwareRT megakernel; oracle-verified (9.5e-7, §7.1) |
 | ModulateIllumination | ✅ | |
-| NRDPass | 🟡 | NRD shader source is public (HLSL) → genuine port attempted in M8 (ReBLUR/SIGMA subset); host SDK reimplemented in TS. SVGF ✅ available meanwhile (§11.4) |
+| NRDPass | 🟠 SDK absent | The NRD SDK is NOT bundled in this Falcor drop (`external/packman` has no `nrd/`; NRDPass loads `nrd/Shaders/Source/*.hlsl` that don't exist) → the denoiser shaders can't be compiled here. Host pass is portable; shaders need the SDK checkout. SVGF ✅ available meanwhile (§11.4) |
 | OptixDenoiser | ❌ | requires CUDA+OptiX. Same substitutes as NRD |
 | OverlaySamplePass | ✅ | |
 | PathTracer | ✅ core | SoftwareRT megakernel, oracle-verified w/ NEE+MIS, Uniform/Power emissive samplers + EnvMapSampler (§7.1). v1 limits: fixed spp=1, no guide/NRD outputs, LightBVH sampler pending, volumes/SDF pending |
