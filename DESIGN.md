@@ -25,12 +25,7 @@ map below.
 | §8–§9 | [docs/parity-matrix.md](docs/parity-matrix.md) | Feature parity matrix (platform/core, all 31 render passes, ecosystem) · known behavioral divergences |
 | §10–§11 | [docs/roadmap.md](docs/roadmap.md) | Roadmap (M0–M8) · resolved design questions |
 
-## Status legend
+## Status markers
 
-Used throughout the parity matrix and mapping tables:
-
-- ✅ **Portable** — direct implementation, same behavior.
-- 🟡 **Emulated** — same API and observable behavior, different mechanism (e.g. software ray tracing in compute).
-- 🔶 **Replaced** — same purpose, different technology (e.g. Python → TypeScript scripting), API kept shape-compatible.
-- ❌ **Impossible** — cannot be provided on the web platform; API exists but throws `UnsupportedFeatureError`.
-- 🟠 **Blocked** — a tooling or asset gap (not a web-platform limitation), with the specific blocker documented.
+The ✅ / 🟡 / 🔶 / ❌ / 🟠 markers used throughout the parity matrix and mapping
+tables are defined in [architecture.md §1](docs/architecture.md#1-goals-and-ground-rules).

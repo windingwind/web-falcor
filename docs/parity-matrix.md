@@ -2,8 +2,8 @@
 
 Part of the [web-falcor design docs](../DESIGN.md). Section numbers (§8–§9) are
 kept stable across the split so the `§N` cross-references throughout the docs
-stay valid. Status legend: ✅ portable · 🟡 emulated · 🔶 replaced · ❌ impossible
-· 🟠 blocked (tooling/asset).
+stay valid. The ✅ / 🟡 / 🔶 / ❌ / 🟠 status markers are defined in
+[architecture.md §1](architecture.md#1-goals-and-ground-rules).
 
 ## 8. Feature parity matrix
 

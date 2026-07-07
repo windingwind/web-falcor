@@ -16,8 +16,8 @@ stay valid.
    hand-porting to WGSL. Verified working: Slang v2026.12.2 compiles
    `Utils.Math.*` / `Utils.Sampling.*` modules directly to WGSL
    (see `packages/falcor/shaders/SanityCompute.cs.slang` → `generated/`).
-3. **Feature-gap honesty.** Everything that cannot work in the browser is marked in the
-   parity matrix (§8) with one of:
+3. **Feature-gap honesty.** Every feature is classified in the parity matrix (§8) with
+   one of these status markers (the canonical legend, used throughout the docs):
    - ✅ **Portable** — direct implementation, same behavior.
    - 🟡 **Emulated** — same API and observable behavior, different mechanism
      (e.g. software ray tracing in compute).
@@ -25,6 +25,9 @@ stay valid.
      scripting), API kept shape-compatible.
    - ❌ **Impossible** — cannot be provided on the web platform at all; API exists but
      throws `UnsupportedFeatureError` with a pointer to this document.
+   - 🟠 **Blocked** — a tooling or asset gap (*not* a web-platform limitation) that
+     prevents completion, with the specific blocker documented (e.g. a slangc crash,
+     or an SDK/asset absent from this Falcor drop).
 4. **Verifiability.** The native `./Falcor` build is the oracle: image regression tests
    render the same scene + render graph in native Falcor and in web-falcor (headless
    Chromium on this host's RTX 5090) and compare with Falcor's own `ImageCompare`
