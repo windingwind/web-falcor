@@ -14,6 +14,7 @@ import { Grid } from "./Volume/Grid.js";
 import { GridVolume, type GridSlot } from "./Volume/GridVolume.js";
 import { Scene, type SceneMaterialDesc, type SceneMeshDesc } from "./Scene.js";
 import { GltfImporter } from "./Importer/GltfImporter.js";
+import { FbxImporter } from "./Importer/FbxImporter.js";
 import { TextureManager } from "./Material/TextureManager.js";
 import { EnvMap } from "./Lights/EnvMap.js";
 import { generateTangents } from "./TangentSpace.js";
@@ -389,6 +390,27 @@ export class SceneBuilderBridge {
         this.lights.push(unwrapGuard(light));
     }
 
+    /** Deferred material edits from getMaterial() (imports resolve later). */
+    materialEdits: { name: string; prop: string; value: unknown }[] = [];
+
+    getMaterial(name: string): unknown {
+        const edits = this.materialEdits;
+        const matName = String(name);
+        // Recorder handle: property writes apply after the import resolves.
+        return new Proxy(
+            {},
+            {
+                set(_t, prop, value) {
+                    edits.push({ name: matName, prop: String(prop), value: Number(value) });
+                    return true;
+                },
+                get(_t, prop) {
+                    throw new RuntimeError(`SceneBuilder.getMaterial('${matName}').${String(prop)}: reads are unsupported on the web bridge (deferred import)`);
+                },
+            },
+        );
+    }
+
     addGridVolume(volume: GridVolumeBridge): void {
         const v = unwrapGuard(volume);
         // Eager-copy scalar props (albedo may be a python float3 proxy).
@@ -408,16 +430,42 @@ export class SceneBuilderBridge {
         const meshes: SceneMeshDesc[] = [];
         const materials: SceneMaterialDesc[] = [];
 
+        const importedMaterialNames: string[] = [];
         for (const cmd of this.commands) {
             if (cmd.kind === "import") {
                 const url = baseUrl ? `${baseUrl}/${cmd.path}` : cmd.path;
                 const res = await fetch(url);
                 if (!res.ok) throw new RuntimeError(`SceneBuilder: failed to fetch '${url}' (${res.status})`);
-                const parsed = await GltfImporter.parseToDescs(new Uint8Array(await res.arrayBuffer()), url, textureManager);
+                const bytes = new Uint8Array(await res.arrayBuffer());
                 const materialOffset = materials.length;
-                materials.push(...parsed.materials);
-                for (const m of parsed.meshes) meshes.push({ ...m, materialID: m.materialID + materialOffset });
+                if (cmd.path.toLowerCase().endsWith(".fbx")) {
+                    const dir = url.slice(0, url.lastIndexOf("/"));
+                    const parsed = await FbxImporter.parseToDescs(bytes, dir, textureManager);
+                    materials.push(...parsed.materials);
+                    importedMaterialNames.push(...parsed.materialNames);
+                    for (const m of parsed.meshes) meshes.push({ ...m, materialID: m.materialID + materialOffset });
+                } else {
+                    const parsed = await GltfImporter.parseToDescs(bytes, url, textureManager);
+                    materials.push(...parsed.materials);
+                    importedMaterialNames.push(...parsed.materials.map(() => ""));
+                    for (const m of parsed.meshes) meshes.push({ ...m, materialID: m.materialID + materialOffset });
+                }
             }
+        }
+
+        // Apply deferred getMaterial() edits (mirrors pyscene mutations after importScene).
+        for (const edit of this.materialEdits) {
+            const idx = importedMaterialNames.indexOf(edit.name);
+            if (idx < 0) throw new RuntimeError(`SceneBuilder.getMaterial: unknown material '${edit.name}'`);
+            const mat = materials[idx]!;
+            if (edit.prop === "emissiveFactor") mat.basic.emissiveFactor = Number(edit.value);
+            else if (edit.prop === "roughness") {
+                const sp = mat.basic.specular ?? new float4(0, 1, 0, 0);
+                mat.basic.specular = new float4(sp.x, Number(edit.value), sp.z, sp.w);
+            } else if (edit.prop === "metallic") {
+                const sp = mat.basic.specular ?? new float4(0, 1, 0, 0);
+                mat.basic.specular = new float4(sp.x, sp.y, Number(edit.value), sp.w);
+            } else throw new RuntimeError(`SceneBuilder.getMaterial: unsupported property '${edit.prop}'`);
         }
 
         // Builder-added meshes (instanced via nodes).

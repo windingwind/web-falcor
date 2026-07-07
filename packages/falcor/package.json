@@ -12,5 +12,8 @@
   "scripts": {
     "typecheck": "tsc --noEmit",
     "test": "vitest run"
+  },
+  "dependencies": {
+    "assimpjs": "^0.0.10"
   }
 }

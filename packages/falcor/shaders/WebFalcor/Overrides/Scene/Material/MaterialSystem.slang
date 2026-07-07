@@ -334,7 +334,15 @@ struct MaterialSystem
         case TextureHandle::Mode::Texture:
             {
                 const uint textureID = handle.getTextureID();
-                const float2 scaledUV = uv * materialTextureUvScale[textureID];
+                // Textures smaller than the array layer sit top-left with a
+                // uvScale; WRAP addressing must apply in TEXTURE space before
+                // scaling (out-of-range UVs would otherwise land in the
+                // layer's padding). frac() replicates repeat addressing.
+                const float2 uvScale = materialTextureUvScale[textureID];
+                float2 wrappedUV = uv;
+                if (any(uvScale < float2(1.f)))
+                    wrappedUV = frac(uv);
+                const float2 scaledUV = wrappedUV * uvScale;
                 return lod.sampleTexture(materialTexturesArray, s, float3(scaledUV, textureID));
             }
         default:
