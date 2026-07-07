@@ -12,7 +12,7 @@ import { RenderGraph } from "../../RenderGraph/RenderGraph.js";
 import { createPass } from "../../RenderGraph/RenderPass.js";
 import { Properties } from "../Properties.js";
 import { RuntimeError } from "../../Core/Error.js";
-import { CameraBridge, LightBridge, MaterialBridge, SceneBuilderBridge, TriangleMesh, makeTransform } from "../../Scene/SceneBuilder.js";
+import { CameraBridge, GridVolumeBridge, LightBridge, MaterialBridge, SceneBuilderBridge, TriangleMesh, makeTransform } from "../../Scene/SceneBuilder.js";
 import type { Scene } from "../../Scene/Scene.js";
 import { LightType } from "../../Scene/SceneData.js";
 import { MaterialType } from "../../Scene/Material/MaterialData.js";
@@ -91,7 +91,7 @@ import sys
 sys.modules.pop('webfalcor_scene', None)  # registerJsModule per call; defeat import caching
 from webfalcor_scene import (sceneBuilder, _TriangleMesh,
     PointLight, DirectionalLight, DistantLight, StandardMaterial, ClothMaterial, HairMaterial,
-    PBRTDiffuseMaterial, PBRTConductorMaterial, Camera, _makeTransform, _makeEnvMap)
+    PBRTDiffuseMaterial, PBRTConductorMaterial, Camera, _makeTransform, _makeEnvMap, _GridVolume)
 
 # Python-side vector types with arithmetic (upstream pyscenes do e.g. size / 2);
 # the JS bridge reads .x/.y/.z/.w off any object.
@@ -170,6 +170,19 @@ PointLight = _guarded(PointLight, _lightProps)
 DirectionalLight = _guarded(DirectionalLight, _lightProps)
 DistantLight = _guarded(DistantLight, _lightProps)
 Camera = _guarded(Camera, _camProps)
+
+# Grid volumes (smoke.pyscene etc.); GridSlot values are bridge slot strings.
+class _GridSlot:
+    Density = 'density'
+    Emission = 'emission'
+_gvProps = {'name', 'densityScale', 'emissionScale', 'albedo', 'anisotropy',
+            'emissionMode', 'emissionTemperature'}
+_GridVolumeGuarded = _guarded(_GridVolume, _gvProps)
+class GridVolume:
+    GridSlot = _GridSlot
+    def __new__(cls, name=''):
+        return _GridVolumeGuarded(name)
+Volume = GridVolume  # legacy pyscene alias (volume_test.pyscene)
 `;
 
 /**
@@ -200,6 +213,7 @@ export async function runSceneScript(device: Device, source: string, baseUrl: st
         PBRTConductorMaterial: (name = "") => new MaterialBridge(MaterialType.PBRTConductor, name),
         _makeTransform: makeTransform,
         _makeEnvMap: (path: string) => ({ path, intensity: 1 }),
+        _GridVolume: (name = "") => new GridVolumeBridge(name),
     };
     pyodide.registerJsModule("webfalcor_scene", sceneModule);
 

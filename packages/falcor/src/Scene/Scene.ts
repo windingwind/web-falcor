@@ -51,6 +51,7 @@ export interface SceneMaterialDesc {
 
 export class Scene {
     readonly camera = new Camera();
+    readonly gridVolumes: import("./Volume/GridVolume.js").GridVolume[] = [];
     private buffers: Record<string, Buffer> = {};
     private textureArray: Texture;
     private dummyTexture: Texture;
@@ -77,7 +78,8 @@ export class Scene {
         lights: AnalyticLight[] = [],
         textureManager: TextureManager = new TextureManager(),
     ) {
-        assert(meshes.length > 0 && materials.length > 0, "Scene requires geometry and materials");
+        // Geometry-less scenes are legal (pure-volume scenes like smoke.pyscene):
+        // buffers pad to one zeroed struct and ray queries simply miss.
         this.hasEmissiveMaterials = materials.some((m) => m.header?.emissive ?? false);
 
         // Concatenate mesh geometry into global vertex/index buffers.
@@ -118,7 +120,10 @@ export class Scene {
 
         const storage = ResourceBindFlags.ShaderResource | ResourceBindFlags.UnorderedAccess;
         const make = (name: string, data: ArrayBufferView | ArrayBuffer, structSize: number, extraFlags = ResourceBindFlags.None) => {
-            const bytes = data instanceof ArrayBuffer ? new Uint8Array(data) : new Uint8Array(data.buffer, data.byteOffset, data.byteLength);
+            let bytes = data instanceof ArrayBuffer ? new Uint8Array(data) : new Uint8Array(data.buffer, data.byteOffset, data.byteLength);
+            // WebGPU forbids zero-size storage bindings: pad empty buffers to
+            // one zeroed struct (counts gate all shader-side access).
+            if (bytes.byteLength === 0) bytes = new Uint8Array(Math.max(structSize, 4));
             const buf = new Buffer(this.device, { size: bytes.byteLength, structSize, bindFlags: storage | extraFlags, memoryType: MemoryType.DeviceLocal, name: `Scene::${name}` });
             buf.setBlob(bytes);
             this.buffers[name] = buf;

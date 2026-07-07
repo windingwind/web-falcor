@@ -10,6 +10,8 @@
  */
 
 import type { Device } from "../Core/API/Device.js";
+import { Grid } from "./Volume/Grid.js";
+import { GridVolume, type GridSlot } from "./Volume/GridVolume.js";
 import { Scene, type SceneMaterialDesc, type SceneMeshDesc } from "./Scene.js";
 import { GltfImporter } from "./Importer/GltfImporter.js";
 import { TextureManager } from "./Material/TextureManager.js";
@@ -297,6 +299,26 @@ export function makeTransform(
     return m;
 }
 
+/** Recorded GridVolume state (eager copies; PyProxies die at script exit). */
+export class GridVolumeBridge {
+    name: string;
+    densityScale = 1;
+    emissionScale = 1;
+    albedo: { x: number; y: number; z: number } = { x: 1, y: 1, z: 1 };
+    anisotropy = 0;
+    emissionTemperature = 0;
+    grids: { slot: string; path: string; gridname: string }[] = [];
+
+    constructor(name = "") {
+        this.name = String(name);
+    }
+
+    loadGrid(slot: unknown, path: unknown, gridname: unknown): boolean {
+        this.grids.push({ slot: String(slot), path: String(path), gridname: String(gridname) });
+        return true;
+    }
+}
+
 interface EnvMapRef {
     path: string;
     intensity: number;
@@ -314,6 +336,7 @@ export class SceneBuilderBridge {
     private meshInstanced = new Map<number, float4x4[]>();
     private nodes: float4x4[] = [];
     private lights: LightBridge[] = [];
+    private gridVolumesList: GridVolumeBridge[] = [];
     private _envMap: EnvMapRef | null = null;
     camera: CameraBridge | null = null;
 
@@ -364,6 +387,19 @@ export class SceneBuilderBridge {
 
     addLight(light: LightBridge): void {
         this.lights.push(unwrapGuard(light));
+    }
+
+    addGridVolume(volume: GridVolumeBridge): void {
+        const v = unwrapGuard(volume);
+        // Eager-copy scalar props (albedo may be a python float3 proxy).
+        const copy = new GridVolumeBridge(v.name);
+        copy.densityScale = Number(v.densityScale);
+        copy.emissionScale = Number(v.emissionScale);
+        copy.albedo = { x: Number(v.albedo.x), y: Number(v.albedo.y), z: Number(v.albedo.z) };
+        copy.anisotropy = Number(v.anisotropy);
+        copy.emissionTemperature = Number(v.emissionTemperature);
+        copy.grids = v.grids.map((g) => ({ slot: String(g.slot), path: String(g.path), gridname: String(g.gridname) }));
+        this.gridVolumesList.push(copy);
     }
 
     /** Fetches referenced assets and constructs the Scene. */
@@ -425,6 +461,19 @@ export class SceneBuilderBridge {
             envMap.intensity = this.envMap.intensity;
             if (this.envMap.rotation) envMap.setRotation([this.envMap.rotation.x, this.envMap.rotation.y, this.envMap.rotation.z]);
             scene.setEnvMap(envMap);
+        }
+        for (const v of this.gridVolumesList) {
+            const vol = new GridVolume(v.name);
+            vol.densityScale = v.densityScale;
+            vol.emissionScale = v.emissionScale;
+            vol.albedo = new float3(v.albedo.x, v.albedo.y, v.albedo.z);
+            vol.anisotropy = v.anisotropy;
+            vol.emissionTemperature = v.emissionTemperature;
+            for (const g of v.grids) {
+                const url = baseUrl ? `${baseUrl}/${g.path}` : g.path;
+                vol.setGrid(g.slot as GridSlot, await Grid.createFromUrl(device, url, g.gridname));
+            }
+            scene.gridVolumes.push(vol);
         }
         return scene;
     }
