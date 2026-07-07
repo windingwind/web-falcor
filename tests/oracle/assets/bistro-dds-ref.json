@@ -1,0 +1,1 @@
+{"Antenna_Metal_BaseColor.dds": {"w": 2048, "h": 2048, "mips": 12, "fourcc": "DXT1", "fmt": "BC1", "bb": 8, "level0Bytes": 2097152}, "Antenna_Metal_Normal.dds": {"w": 2048, "h": 2048, "mips": 12, "fourcc": "ATI2", "fmt": "BC5", "bb": 16, "level0Bytes": 4194304}, "Ashtray_BaseColor.dds": {"w": 16, "h": 16, "mips": 5, "fourcc": "DXT5", "fmt": "BC3", "bb": 16, "level0Bytes": 256}}

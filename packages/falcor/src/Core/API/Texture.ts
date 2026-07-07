@@ -138,11 +138,14 @@ export class Texture extends Resource {
         const blocksH = Math.ceil(h / blockDim);
         const view =
             data instanceof ArrayBuffer ? new Uint8Array(data) : new Uint8Array(data.buffer, data.byteOffset, data.byteLength);
+        // writeTexture to a compressed format requires the copy extent to be a
+        // multiple of the block size (4) — the sub-4 tail mips (2x2, 1x1) round
+        // up to one block; the texture's physical mip is block-padded to match.
         this.device.gpuDevice.queue.writeTexture(
             { texture: this.gpuTexture, mipLevel, origin: { x: 0, y: 0, z: arraySlice } },
             view as Uint8Array<ArrayBuffer>,
             { bytesPerRow: blocksW * bpb, rowsPerImage: blocksH },
-            { width: w, height: h, depthOrArrayLayers: d },
+            { width: blocksW * blockDim, height: blocksH * blockDim, depthOrArrayLayers: d },
         );
     }
 
