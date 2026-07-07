@@ -14,6 +14,7 @@ import { Grid } from "./Volume/Grid.js";
 import { GridVolume, type GridSlot } from "./Volume/GridVolume.js";
 import { NDSDFGrid } from "./SDFs/NDSDFGrid.js";
 import { SDFSBS } from "./SDFs/SDFSBS.js";
+import { SDFSVS } from "./SDFs/SDFSVS.js";
 import type { SceneSDFGridDesc } from "./Scene.js";
 import { Scene, type SceneMaterialDesc, type SceneMeshDesc } from "./Scene.js";
 import { GltfImporter } from "./Importer/GltfImporter.js";
@@ -303,7 +304,7 @@ export function makeTransform(
     return m;
 }
 
-export type SDFGridType = "ndsdf" | "sbs";
+export type SDFGridType = "ndsdf" | "sbs" | "svs";
 
 /** Recorded SDF grid state (mirrors SDFGrid python bindings; ND + SBS types). */
 export class SDFGridBridge {
@@ -533,11 +534,12 @@ export class SceneBuilderBridge {
         // SDF grids (ND + SBS implementations; instances reference builder nodes).
         const sdfGrids: SceneSDFGridDesc[] = [];
         const builtSdfGrids = this.sdfGridsList.map(({ grid, material }) => {
-            const built: NDSDFGrid | SDFSBS = grid.type === "sbs" ? new SDFSBS(grid.brickWidth) : new NDSDFGrid(grid.narrowBandThickness);
+            const built: NDSDFGrid | SDFSBS | SDFSVS =
+                grid.type === "sbs" ? new SDFSBS(grid.brickWidth) : grid.type === "svs" ? new SDFSVS() : new NDSDFGrid(grid.narrowBandThickness);
             for (const op of grid.ops) {
                 if (op.kind === "cheese") built.generateCheeseValues(op.gridWidth, op.seed);
             }
-            const built_ok = built instanceof SDFSBS ? built.brickCount > 0 : built.lodCount > 0;
+            const built_ok = built instanceof SDFSBS ? built.brickCount > 0 : built instanceof SDFSVS ? built.voxelCount > 0 : built.lodCount > 0;
             if (!built_ok) throw new RuntimeError("SDFGrid: no values set (only generateCheeseValues is supported so far)");
             let materialID = materialIDs.get(material);
             if (materialID === undefined) {

@@ -94,4 +94,6 @@ export const kShaderOverrides: Readonly<Record<string, string>> = {
     "Scene/SDFs/NormalizedDenseSDFGrid/NDSDFGrid.slang": "WebFalcor/Overrides/Scene/SDFs/NormalizedDenseSDFGrid/NDSDFGrid.slang",
     // brickID != UINT32_MAX promotes to i64 (unsupported in WGSL) -> 0xffffffffu.
     "Scene/SDFs/SparseBrickSet/SDFSBS.slang": "WebFalcor/Overrides/Scene/SDFs/SparseBrickSet/SDFSBS.slang",
+    // Per-voxel AABBs moved into the shared SDF BVH buffer (16-storage-buffer cap).
+    "Scene/SDFs/SparseVoxelSet/SDFSVS.slang": "WebFalcor/Overrides/Scene/SDFs/SparseVoxelSet/SDFSVS.slang",
 };
