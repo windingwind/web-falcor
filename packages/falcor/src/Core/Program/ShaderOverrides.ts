@@ -96,4 +96,6 @@ export const kShaderOverrides: Readonly<Record<string, string>> = {
     "Scene/SDFs/SparseBrickSet/SDFSBS.slang": "WebFalcor/Overrides/Scene/SDFs/SparseBrickSet/SDFSBS.slang",
     // Per-voxel AABBs moved into the shared SDF BVH buffer (16-storage-buffer cap).
     "Scene/SDFs/SparseVoxelSet/SDFSVS.slang": "WebFalcor/Overrides/Scene/SDFs/SparseVoxelSet/SDFSVS.slang",
+    // decodeHit avoids decodeLocation's >2^63 Morton unshift masks (Tint abstract-int).
+    "Scene/SDFs/SparseVoxelOctree/SDFSVO.slang": "WebFalcor/Overrides/Scene/SDFs/SparseVoxelOctree/SDFSVO.slang",
 };

@@ -199,7 +199,7 @@ class SDFGrid:
         return _SDFGridCreate('svs', 5.0, 7)
     @staticmethod
     def createSVO(**kwargs):
-        raise NotImplementedError('web SDFGrid: SparseVoxelOctree not ported yet (NDGrid/SBS available)')
+        return _SDFGridCreate('svo', 5.0, 7)
 `;
 
 /**

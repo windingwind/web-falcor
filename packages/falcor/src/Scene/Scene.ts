@@ -38,10 +38,11 @@ import { assert, RuntimeError } from "../Core/Error.js";
 import type { NDSDFGrid } from "./SDFs/NDSDFGrid.js";
 import { SDFSBS } from "./SDFs/SDFSBS.js";
 import { SDFSVS } from "./SDFs/SDFSVS.js";
+import { SDFSVO } from "./SDFs/SDFSVO.js";
 
 /** One SDF grid instance (mirrors Scene::mSDFGrids + mSDFGridDesc + instance). */
 export interface SceneSDFGridDesc {
-    grid: NDSDFGrid | SDFSBS | SDFSVS;
+    grid: NDSDFGrid | SDFSBS | SDFSVS | SDFSVO;
     materialID: number;
     transform?: float4x4;
 }
@@ -87,6 +88,7 @@ export class Scene {
     private sdfSampler: Sampler | null = null;
     private sbsResources: { aabbs: Buffer; indirection: Texture; bricks: Texture; sampler: Sampler } | null = null;
     private svsResources: { voxels: Buffer } | null = null;
+    private svoResources: { svo: Buffer } | null = null;
     private sdfBvhBuffers: { buf: Buffer; primOffset: number } | null = null;
     private envMap: EnvMap | null = null;
     private hasEmissiveMaterials = false;
@@ -477,6 +479,31 @@ export class Scene {
         }
     }
 
+    /** Binds gScene.sdfGrid0 for the SparseVoxelOctree implementation. */
+    private bindSdfSvo(scene: ShaderVar, grid: SDFSVO): void {
+        if (!this.svoResources) {
+            const storage = ResourceBindFlags.ShaderResource | ResourceBindFlags.UnorderedAccess;
+            // SDFSVOVoxel StructuredBuffer: 24-byte stride (relationData + pad +
+            // uint2 locationCode + uint2 packedValues).
+            const svo = new Buffer(this.device, {
+                size: Math.max(grid.svoData.byteLength, 24),
+                structSize: 24,
+                bindFlags: storage,
+                memoryType: MemoryType.DeviceLocal,
+                name: "Scene::sdfGrid0Svo",
+            });
+            svo.setBlob(new Uint8Array(grid.svoData.buffer, grid.svoData.byteOffset, grid.svoData.byteLength));
+            this.svoResources = { svo };
+        }
+        try {
+            const v = scene["sdfGrid0"] as ShaderVar;
+            v["svo"] = this.svoResources.svo;
+            v["levelCount"] = grid.levelCount;
+        } catch (e) {
+            console.error(`# sdfGrid0 (SVO) bind failed: ${e}`);
+        }
+    }
+
     getSceneDefines(): DefineList {
         return new DefineList().addAll({
             SCENE_GEOMETRY_TYPES: (1 << GeometryType.TriangleMesh) | (this.sdfGrids.length > 0 ? 1 << GeometryType.SDFGrid : 0),
@@ -484,9 +511,9 @@ export class Scene {
             // Mirrors Scene::getSceneSDFGridDefines (defaults for all types:
             // VoxelSphereTracing, NumericDiscontinuous, 256 iterations).
             SCENE_SDF_GRID_COUNT: this.sdfGrids.length,
-            SCENE_SDF_GRID_MAX_LOD_COUNT: this.sdfGrids.length > 0 ? Math.max(...this.sdfGrids.map((g) => (g.grid instanceof SDFSBS || g.grid instanceof SDFSVS ? 32 - Math.clz32(g.grid.gridWidth) : g.grid.lodCount))) : 0,
+            SCENE_SDF_GRID_MAX_LOD_COUNT: this.sdfGrids.length > 0 ? Math.max(...this.sdfGrids.map((g) => (g.grid instanceof SDFSBS || g.grid instanceof SDFSVS ? 32 - Math.clz32(g.grid.gridWidth) : g.grid instanceof SDFSVO ? g.grid.levelCount : g.grid.lodCount))) : 0,
             // 1 = NormalizedDenseGrid, 2 = SparseVoxelSet, 3 = SparseBrickSet (all grids in a scene share a type).
-            SCENE_SDF_GRID_IMPLEMENTATION: this.sdfGrids.length > 0 ? (this.sdfGrids[0]!.grid instanceof SDFSBS ? 3 : this.sdfGrids[0]!.grid instanceof SDFSVS ? 2 : 1) : 0,
+            SCENE_SDF_GRID_IMPLEMENTATION: this.sdfGrids.length > 0 ? (this.sdfGrids[0]!.grid instanceof SDFSBS ? 3 : this.sdfGrids[0]!.grid instanceof SDFSVS ? 2 : this.sdfGrids[0]!.grid instanceof SDFSVO ? 4 : 1) : 0,
             SCENE_SDF_GRID_IMPLEMENTATION_NDSDF: 1,
             SCENE_SDF_GRID_IMPLEMENTATION_SVS: 2,
             SCENE_SDF_GRID_IMPLEMENTATION_SBS: 3,
@@ -656,6 +683,7 @@ export class Scene {
         const grid0 = this.sdfGrids.length > 0 ? this.sdfGrids[0]!.grid : null;
         const sbsGrid = grid0 instanceof SDFSBS ? grid0 : null;
         const svsGrid = grid0 instanceof SDFSVS ? grid0 : null;
+        const svoGrid = grid0 instanceof SDFSVO ? grid0 : null;
         // SBS/SVS traverse a BVH over their primitive AABBs (bricks/voxels).
         const sdfAabbs = sbsGrid ? sbsGrid.aabbs : svsGrid ? svsGrid.aabbs : null;
         try {
@@ -691,6 +719,7 @@ export class Scene {
             if (this.sdfGrids.length > 1) throw new RuntimeError("Scene: only one SDF grid supported (gScene.sdfGrid0; WGSL has no binding arrays)");
             if (sbsGrid) this.bindSdfSbs(scene, sbsGrid);
             else if (svsGrid) this.bindSdfSvs(scene, svsGrid);
+            else if (svoGrid) this.bindSdfSvo(scene, svoGrid);
             else this.bindSdfNd(scene, this.sdfGrids[0]!.grid as NDSDFGrid);
         }
 
