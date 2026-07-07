@@ -1,0 +1,48 @@
+name: CI
+
+# Validates the "just want to use it" setup path (no Falcor clone, no native
+# CMake build) and runs typecheck + the unit suite. GPU image tests need real
+# hardware WebGPU + the Falcor media tree, so they run locally, not here
+# (see README → Full setup).
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: typecheck + unit tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      # The 22 MB slang-wasm build is stable per release; cache it so setup-web
+      # skips the download on cache hit.
+      - name: Cache slang-wasm
+        uses: actions/cache@v4
+        with:
+          path: tools/slang-wasm
+          key: slang-wasm-2026.12.2
+
+      - name: Fetch shaders + slang-wasm (no Falcor clone)
+        run: node scripts/setup-web.mjs
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Unit tests
+        run: npm test

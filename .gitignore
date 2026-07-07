@@ -8,8 +8,11 @@ node_modules/
 dist/
 *.tsbuildinfo
 
-# Generated shader artifacts
-packages/falcor/shaders/generated/
+# Generated shader artifacts — except the shader manifest, which is a tracked
+# generated file (like a lockfile): it lists the upstream Falcor shader sources
+# so scripts/setup-web.mjs can fetch them without cloning Falcor.
+packages/falcor/shaders/generated/*
+!packages/falcor/shaders/generated/shader-file-list.json
 
 .vite/
 .DS_Store

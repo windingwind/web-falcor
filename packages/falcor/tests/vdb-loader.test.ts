@@ -6,7 +6,7 @@
  */
 
 import { describe, expect, it } from "vitest";
-import { readFileSync } from "node:fs";
+import { readFileSync, existsSync } from "node:fs";
 import { parseOpenVDBFloatGrid, buildNanoVDBGrid, extractGridFromNVDB } from "../src/Scene/Volume/VDBLoader.js";
 
 const root = new URL("../../..", import.meta.url).pathname;
@@ -15,7 +15,12 @@ const load = (p: string) => {
     return b.buffer.slice(b.byteOffset, b.byteOffset + b.byteLength);
 };
 
-describe("VDBLoader", () => {
+// smoke.vdb is Falcor media (not fetched by scripts/setup-web.mjs); skip when
+// absent (e.g. CI without the full media download). Runs in full locally.
+const hasMedia = existsSync(root + "Falcor/media/test_scenes/volumes/smoke.vdb");
+
+describe.skipIf(!hasMedia)("VDBLoader", () => {
+    if (!hasMedia) return; // skipIf still runs the collector; don't do eager IO
     const vdb = load("Falcor/media/test_scenes/volumes/smoke.vdb");
     const ref = JSON.parse(readFileSync(root + "tests/oracle/assets/smoke-vdb-samples.json", "utf8"));
     const grid = parseOpenVDBFloatGrid(vdb, "density");

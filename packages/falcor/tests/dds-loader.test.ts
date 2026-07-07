@@ -5,7 +5,7 @@
  */
 
 import { describe, expect, it } from "vitest";
-import { readFileSync } from "node:fs";
+import { readFileSync, existsSync } from "node:fs";
 import { resolve } from "node:path";
 import { parseDDS } from "../src/Scene/Importer/DDSLoader.js";
 import { ResourceFormat, getFormatBytesPerBlock } from "../src/Core/API/Formats.js";
@@ -24,7 +24,10 @@ const fmtName: Record<number, string> = {
     [ResourceFormat.BC5Unorm]: "BC5",
 };
 
-describe("DDSLoader (Bistro BC textures)", () => {
+// Skips when the Bistro media isn't present (e.g. CI without the full Falcor
+// media download); runs in full locally. Parser correctness is also covered
+// GPU-side by dds-cpu-decode/dds-bc-upload against the hardware BC decode.
+describe.skipIf(!existsSync(bistro))("DDSLoader (Bistro BC textures)", () => {
     for (const [file, e] of Object.entries(ref)) {
         it(`parses ${file} (${e.fmt} ${e.w}x${e.h})`, () => {
             const isColor = file.includes("BaseColor");

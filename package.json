@@ -8,6 +8,7 @@
     "packages/*"
   ],
   "scripts": {
+    "setup:web": "node scripts/setup-web.mjs",
     "build": "npm run build --workspaces --if-present",
     "shaders": "node packages/slang-compiler/bin/compile-shaders.js",
     "dev": "npm run dev --workspace=@web-falcor/mogwai",
