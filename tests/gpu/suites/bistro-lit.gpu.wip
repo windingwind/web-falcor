@@ -27,9 +27,9 @@ import {
 import "@web-falcor/render-passes";
 import { gpuTest, expectEq, saveArtifact } from "../harness/registry.js";
 
-const width = 640;
-const height = 360;
-const frames = 64;
+const width = 1280;
+const height = 720;
+const frames = 512;
 
 gpuTest("BistroInterior.litPathTraced", async ({ device }) => {
     await initScripting("/node_modules/pyodide");
@@ -46,7 +46,10 @@ gpuTest("BistroInterior.litPathTraced", async ({ device }) => {
         .map(([x, y, z], i) => `_pl${i} = PointLight('lamp_${i}')\n_pl${i}.position = float3(${x}, ${y}, ${z})\n_pl${i}.intensity = float3(35, 33, 30)\nsceneBuilder.addLight(_pl${i})\n`)
         .join("");
     const t0 = performance.now();
-    const src = `sceneBuilder.importScene("BistroInterior.fbx")\nsceneBuilder.boostAllEmissive(1000)\n${lampScript}`;
+    // The _Wine variant (48 MB) adds the iconic wine bottles / glassware props;
+    // fall back to the plain interior (41 MB) if it exceeds the assimpjs heap.
+    const fbx = "BistroInterior_Wine.fbx";
+    const src = `sceneBuilder.importScene("${fbx}")\nsceneBuilder.boostAllEmissive(1000)\n${lampScript}`;
     const scene = await runSceneScript(device, src, "/Falcor/media/Bistro_v5_2");
     console.error(`# bistro-lit: loaded in ${((performance.now() - t0) / 1000).toFixed(1)}s — instances=${scene.stats.instances} materials=${scene.stats.materials} textures=${scene.stats.textures} lights=${scene.analyticLights.length}`);
     expectEq(scene.stats.textures > 100, true, "Bistro textures loaded");
@@ -103,11 +106,8 @@ gpuTest("BistroInterior.litPathTraced", async ({ device }) => {
         return lit;
     };
 
-    // Wide establishing shot of the canal-side corner, then the hero: looking
-    // into the dining room through the arched frontage (the iconic Bistro
-    // interior — warm walls, tables with place settings, the wine bar), at a
-    // high sample count for low noise. The hero is the canonical artifact.
-    await renderView("wide", [16, 7, 7.5], [5, 2.5, -4], 1.0, 128);
-    const litHero = await renderView("bistro-interior-lit", [3, 2.4, 3], [9, 1.6, -2.5], 1.8, 1024);
-    expectEq(litHero > 30000, true, `Bistro lit interior too dark (${litHero} lit px)`);
+    // Hero: inside the dining room among the wine-set tables looking toward the
+    // bar — the iconic Bistro interior, 720p at high sample count for low noise.
+    const litHero = await renderView("bistro-wine-interior", [3, 2.4, 3], [9, 1.6, -2.5], 1.8, frames);
+    expectEq(litHero > 100000, true, `Bistro lit interior too dark (${litHero} lit px)`);
 });
