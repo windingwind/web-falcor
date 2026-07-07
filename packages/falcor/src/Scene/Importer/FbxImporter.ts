@@ -19,6 +19,7 @@ import { float4x4, mulMat } from "../../Utils/Math/Matrix.js";
 import { RuntimeError } from "../../Core/Error.js";
 import { generateTangents } from "../TangentSpace.js";
 import { packTextureHandle, TextureHandleMode } from "../Material/MaterialData.js";
+import { decodeDDSToRGBA } from "./DDSLoader.js";
 import type { SceneMaterialDesc, SceneMeshDesc } from "../Scene.js";
 import type { StaticVertex } from "../SceneData.js";
 import type { TextureManager } from "../Material/TextureManager.js";
@@ -133,15 +134,26 @@ export class FbxImporter {
             const url = baseUrl ? `${baseUrl}/${norm}` : norm;
             const res = await fetch(url);
             if (!res.ok) return undefined;
+            const ext = norm.slice(norm.lastIndexOf(".")).toLowerCase();
             // The browser's createImageBitmap decodes png/jpg/webp/bmp only.
-            // GPU-compressed formats (DDS/BC, TGA — common in game assets like
-            // Bistro) need a dedicated decoder; skip them gracefully so the
-            // geometry still loads (material falls back to its base color).
+            // BC-compressed DDS (the common game-asset format — Bistro, Sponza,
+            // SunTemple) is decoded here on the CPU to RGBA8 at a bounded size
+            // (decodeDDSToRGBA caps the mip) so it feeds the existing RGBA8
+            // texture-array path. Other undecodable formats (e.g. TGA) still
+            // skip gracefully so geometry loads with a base-colour fallback.
             let bitmap: ImageBitmap;
             try {
-                bitmap = await createImageBitmap(await res.blob(), { colorSpaceConversion: "none", premultiplyAlpha: "none" });
+                if (ext === ".dds") {
+                    const { width, height, rgba } = decodeDDSToRGBA(await res.arrayBuffer(), srgb, 512);
+                    // ImageData holds raw RGBA already — no colour-space/premultiply
+                    // decode step applies, so createImageBitmap needs no options.
+                    const imageData = new ImageData(new Uint8ClampedArray(rgba), width, height);
+                    bitmap = await createImageBitmap(imageData);
+                } else {
+                    bitmap = await createImageBitmap(await res.blob(), { colorSpaceConversion: "none", premultiplyAlpha: "none" });
+                }
             } catch {
-                skippedFormats.add(norm.slice(norm.lastIndexOf(".")).toLowerCase());
+                skippedFormats.add(ext);
                 return undefined;
             }
             const id = textureManager.addTexture({ bitmap, srgb });

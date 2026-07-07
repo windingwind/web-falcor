@@ -38,10 +38,17 @@ const kModes: Record<string, number> = {
     BackfacingShadingNormal: 15, TexCoords: 16, BSDFProperties: 17,
 };
 
+/** Mirrors SceneDebuggerBSDFProperty (SharedTypes.slang). */
+const kBSDFProps: Record<string, number> = {
+    Emission: 0, Roughness: 1, GuideNormal: 2, DiffuseReflectionAlbedo: 3, DiffuseTransmissionAlbedo: 4,
+    SpecularReflectionAlbedo: 5, SpecularTransmissionAlbedo: 6, SpecularReflectance: 7, IsTransmissive: 8,
+};
+
 export class SceneDebugger extends RenderPass {
     private pass: ComputePass | null = null;
     private frameCount = 0;
     private mode = kModes["FaceNormal"]!;
+    private bsdfProperty = 0;
     private pixelData: Buffer | null = null;
     private dummyVbuffer: Texture | null = null;
     private meshToBlasID: Buffer | null = null;
@@ -51,6 +58,10 @@ export class SceneDebugger extends RenderPass {
         super(device);
         const mode = props.getOpt<string | number>("mode");
         if (mode !== undefined) this.mode = (typeof mode === "string" ? kModes[mode] : mode) ?? this.mode;
+        // Which BSDF property BSDFProperties mode visualizes (SceneDebuggerBSDFProperty:
+        // 0 Emission, 1 Roughness, 2 GuideNormal, 3 DiffuseReflectionAlbedo, ...).
+        const bp = props.getOpt<string | number>("bsdfProperty");
+        if (bp !== undefined) this.bsdfProperty = (typeof bp === "string" ? kBSDFProps[bp] : bp) ?? this.bsdfProperty;
     }
 
     override reflect(compileData: CompileData): RenderPassReflection {
@@ -116,7 +127,7 @@ export class SceneDebugger extends RenderPass {
         p["mode"] = this.mode;
         p["frameDim"] = [w, h];
         p["frameCount"] = this.frameCount;
-        p["bsdfProperty"] = 0;
+        p["bsdfProperty"] = this.bsdfProperty;
         p["bsdfIndex"] = 0;
         p["selectedPixel"] = [0, 0];
         p["flipSign"] = 0;

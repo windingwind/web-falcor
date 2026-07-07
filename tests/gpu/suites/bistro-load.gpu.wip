@@ -32,6 +32,10 @@ gpuTest("BistroInterior.loadsAndRenders", async ({ device }) => {
     const s = scene.stats;
     console.error(`# bistro: loaded in ${(loadMs / 1000).toFixed(1)}s — instances=${s.instances} materials=${s.materials} textures=${s.textures}`);
     expectEq(s.instances > 0, true, "Bistro produced geometry instances");
+    // DDS/BC textures are now CPU-decoded (decodeDDSToRGBA) into the RGBA8 array
+    // instead of being skipped — Bistro's materials are almost entirely .dds, so
+    // a loaded texture count in the hundreds proves the DDS path works at scale.
+    expectEq(s.textures > 100, true, `Bistro loaded too few textures (${s.textures}) — DDS decode path not engaged`);
 
     // Auto-frame the camera on the scene AABB (the minimal descriptor sets no
     // camera). Look at the center from outside the bounds along a diagonal.
@@ -46,9 +50,10 @@ gpuTest("BistroInterior.loadsAndRenders", async ({ device }) => {
 
     const graph = new RenderGraph(device, "Bistro");
     graph.onResize(width, height);
-    // InstanceID pseudocolor: shows the 2000+ instances as distinct regions
-    // (proves structured geometry loaded, not one blob).
-    graph.addPass(createPass(device, "SceneDebugger", { mode: "InstanceID" }), "SceneDebugger");
+    // BSDFProperties visualizes the shaded material albedo (base color * loaded
+    // base-color texture) unlit — so the frame directly shows Bistro's decoded
+    // DDS textures mapped onto the geometry, not just an instance pseudocolor.
+    graph.addPass(createPass(device, "SceneDebugger", { mode: "BSDFProperties", bsdfProperty: "DiffuseReflectionAlbedo" }), "SceneDebugger");
     graph.markOutput("SceneDebugger.output");
     graph.setScene(scene);
 

@@ -11,6 +11,8 @@ import { gpuTest, expectEq } from "../harness/registry.js";
 
 gpuTest("DDSUpload.samplesBistroBC1Texture", async ({ device }) => {
     expectEq(device.getSupportedFeatures().textureCompressionBC, true, "device supports texture-compression-bc");
+    const lim = device.adapter.limits;
+    console.error(`# device-limits: maxTextureArrayLayers=${lim.maxTextureArrayLayers} maxTextureDimension2D=${lim.maxTextureDimension2D} maxSampledTextures=${lim.maxSampledTexturesPerShaderStage}`);
 
     // A 2048x2048 BC1 (DXT1) base-color texture with real content.
     const buf = await (await fetch("/Falcor/media/Bistro_v5_2/Textures/Antenna_Metal_BaseColor.dds")).arrayBuffer();
