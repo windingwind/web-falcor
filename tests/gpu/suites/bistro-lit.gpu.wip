@@ -1,0 +1,113 @@
+/**
+ * QUARANTINED (.gpu.wip): manual capability probe, not a fast oracle — the FBX
+ * import + path-trace accumulation takes ~1 min. Run explicitly by renaming to
+ * .gpu.test.ts.
+ *
+ * FULLY LIT Bistro Interior — the full PathTracer graph (VBufferRT -> PathTracer
+ * -> Accumulate -> ToneMapper) over the DDS-textured Bistro scene, lit by the
+ * san_giuseppe_bridge_4k environment map plus the scene's own emissive surfaces
+ * (boosted like BistroInterior_Wine.pyscene). Accumulates N frames for a clean
+ * image and saves it to tests/gpu/out/bistro-interior-lit.png. Proves the DDS
+ * textures render under real global illumination, not just as flat albedo.
+ */
+
+import {
+    initScripting,
+    runSceneScript,
+    EnvMap,
+    RenderGraph,
+    createPass,
+    presentToCanvas,
+    Texture,
+    ResourceType,
+    ResourceFormat,
+    ResourceBindFlags,
+    float3,
+} from "@web-falcor/falcor";
+import "@web-falcor/render-passes";
+import { gpuTest, expectEq, saveArtifact } from "../harness/registry.js";
+
+const width = 640;
+const height = 360;
+const frames = 64;
+
+gpuTest("BistroInterior.litPathTraced", async ({ device }) => {
+    await initScripting("/node_modules/pyodide");
+
+    // Import the interior FBX, boost emissives, and add the 12-lamp ring that
+    // lights the bar (positions/intensities from BistroInterior_Wine_lightring.
+    // pyscene). The environment map below adds outdoor fill through the openings.
+    const lamps: [number, number, number][] = [
+        [9.63, 1.2, 1.23], [10.401, 2.2, 2.83], [8.63, 3.0, 2.962], [7.63, 1.2, 4.43],
+        [6.63, 2.2, 2.962], [4.859, 3.0, 2.83], [5.63, 1.2, 1.23], [4.859, 2.2, -0.37],
+        [6.63, 3.0, -0.502], [7.63, 1.2, -1.97], [8.63, 2.2, -0.502], [10.401, 3.0, -0.37],
+    ];
+    const lampScript = lamps
+        .map(([x, y, z], i) => `_pl${i} = PointLight('lamp_${i}')\n_pl${i}.position = float3(${x}, ${y}, ${z})\n_pl${i}.intensity = float3(35, 33, 30)\nsceneBuilder.addLight(_pl${i})\n`)
+        .join("");
+    const t0 = performance.now();
+    const src = `sceneBuilder.importScene("BistroInterior.fbx")\nsceneBuilder.boostAllEmissive(1000)\n${lampScript}`;
+    const scene = await runSceneScript(device, src, "/Falcor/media/Bistro_v5_2");
+    console.error(`# bistro-lit: loaded in ${((performance.now() - t0) / 1000).toFixed(1)}s — instances=${scene.stats.instances} materials=${scene.stats.materials} textures=${scene.stats.textures} lights=${scene.analyticLights.length}`);
+    expectEq(scene.stats.textures > 100, true, "Bistro textures loaded");
+    expectEq(scene.analyticLights.length, 12, "12 lamp point lights added");
+
+    // Environment light — a 4k outdoor HDR (present in the Bistro media tree).
+    scene.setEnvMap(await EnvMap.createFromUrl(device, "/Falcor/media/Bistro_v5_2/san_giuseppe_bridge_4k.hdr"));
+
+    const ctx = device.renderContext;
+    const present = new Texture(device, {
+        type: ResourceType.Texture2D,
+        width,
+        height,
+        mipLevels: 1,
+        format: ResourceFormat.BGRA8Unorm,
+        bindFlags: ResourceBindFlags.RenderTarget | ResourceBindFlags.ShaderResource,
+        name: "BistroLit::present",
+    });
+
+    // Render one camera view through a fresh PathTracer graph (fresh graph =
+    // fresh accumulation) with a manual exposure (the ToneMapper's autoExposure
+    // is not yet implemented, so exposureCompensation is the exposure control).
+    const renderView = async (name: string, pos: number[], target: number[], ev: number, spp = frames) => {
+        scene.camera.setPosition(new float3(pos[0]!, pos[1]!, pos[2]!));
+        scene.camera.setTarget(new float3(target[0]!, target[1]!, target[2]!));
+        scene.camera.setUpVector(new float3(0, 1, 0));
+        scene.camera.setAspectRatio(width / height);
+
+        const graph = new RenderGraph(device, `BistroLit_${name}`);
+        graph.onResize(width, height);
+        graph.addPass(createPass(device, "VBufferRT", { useAlphaTest: false }), "VBufferRT");
+        graph.addPass(createPass(device, "PathTracer", { samplesPerPixel: 1, emissiveSampler: "Uniform" }), "PathTracer");
+        graph.addPass(createPass(device, "AccumulatePass", { enabled: true, precisionMode: "Single" }), "Accumulate");
+        graph.addPass(createPass(device, "ToneMapper", { exposureCompensation: ev }), "ToneMapper");
+        graph.addEdge("VBufferRT.vbuffer", "PathTracer.vbuffer");
+        graph.addEdge("PathTracer.color", "Accumulate.input");
+        graph.addEdge("Accumulate.output", "ToneMapper.src");
+        graph.markOutput("ToneMapper.dst");
+        graph.setScene(scene);
+
+        for (let f = 0; f < spp; f++) graph.execute(ctx);
+        await device.gpuDevice.queue.onSubmittedWorkDone();
+        presentToCanvas(device, graph.getOutput("ToneMapper.dst")!, present.gpuTexture, "bgra8unorm");
+        const pixels = await ctx.readTextureSubresource(present);
+        await saveArtifact(`bistro-lit-${name}`, pixels, width, height);
+        let sum = 0;
+        let lit = 0;
+        for (let i = 0; i < width * height; i++) {
+            const s = pixels[i * 4]! + pixels[i * 4 + 1]! + pixels[i * 4 + 2]!;
+            sum += s;
+            if (s > 12) lit++;
+        }
+        console.error(`# bistro-lit ${name}: mean=${(sum / (width * height * 3)).toFixed(1)} lit=${lit}/${width * height}`);
+        return lit;
+    };
+
+    // Wide establishing shot of the canal-side corner, then the hero: looking
+    // into the dining room through the arched frontage (the iconic Bistro
+    // interior — warm walls, tables with place settings, the wine bar), at a
+    // high sample count for low noise. The hero is the canonical artifact.
+    await renderView("wide", [16, 7, 7.5], [5, 2.5, -4], 1.0, 128);
+    const litHero = await renderView("bistro-interior-lit", [3, 2.4, 3], [9, 1.6, -2.5], 1.8, 1024);
+    expectEq(litHero > 30000, true, `Bistro lit interior too dark (${litHero} lit px)`);
+});

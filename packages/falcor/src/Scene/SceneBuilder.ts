@@ -413,6 +413,18 @@ export class SceneBuilderBridge {
     /** Deferred material edits from getMaterial() (imports resolve later). */
     materialEdits: { name: string; prop: string; value: unknown }[] = [];
 
+    /**
+     * Multiplier applied to every imported material's emissiveFactor in
+     * resolve(). Mirrors the common pyscene idiom of boosting all emissives to
+     * expose an interior (BistroInterior_Wine.pyscene does `*= 1000`), which the
+     * web bridge can't express as a per-material loop (materials aren't known
+     * until the import resolves). Non-emissive materials stay dark.
+     */
+    globalEmissiveScale = 1;
+    boostAllEmissive(scale: number): void {
+        this.globalEmissiveScale *= Number(scale);
+    }
+
     getMaterial(name: string): unknown {
         const edits = this.materialEdits;
         const matName = String(name);
@@ -502,6 +514,12 @@ export class SceneBuilderBridge {
                 const sp = mat.basic.specular ?? new float4(0, 1, 0, 0);
                 mat.basic.specular = new float4(sp.x, sp.y, Number(edit.value), sp.w);
             } else throw new RuntimeError(`SceneBuilder.getMaterial: unsupported property '${edit.prop}'`);
+        }
+
+        // Global emissive boost (see globalEmissiveScale) — scales every imported
+        // material's emissive contribution so interior emissives read as lights.
+        if (this.globalEmissiveScale !== 1) {
+            for (const mat of materials) mat.basic.emissiveFactor = (mat.basic.emissiveFactor ?? 1) * this.globalEmissiveScale;
         }
 
         // Builder-added meshes (instanced via nodes).
