@@ -484,7 +484,7 @@ output is diffed against native Mogwai running the same file.
 | PathTracer | ✅ core | SoftwareRT megakernel, oracle-verified w/ NEE+MIS, Uniform/Power emissive samplers + EnvMapSampler (§7.1). v1 limits: fixed spp=1, no guide/NRD outputs, LightBVH sampler pending, volumes/SDF pending |
 | PixelInspectorPass | ✅ | |
 | RenderPassTemplate | ✅ | |
-| RTXDIPass | 🟡 | RTXDI SDK shaders are BSD-licensed & portable; visibility via SoftwareRT; scheduled after PathTracer |
+| RTXDIPass | 🟡 shaders WGSL-ready | ALL 11 kernels (7 resampling entries + LightUpdater/EnvLightUpdater/ReflectTypes + PrepareSurfaceData/FinalShading) compile to WGSL with 5 small overrides: texel buffers -> structured (SDK accesses via RTXDI_* defines, transparent), boiling filter compiled out (WaveActiveCountBits unmapped for WGSL; native default strength 0 = off), brace-init fixes. Remaining: host port (RTXDI.cpp orchestration + rtxdi::Context params), RTXDIPass.ts, Arcade oracle |
 | SceneDebugger | ✅ | |
 | SDFEditor | ✅ | pure compute + UI |
 | SimplePostFX | ✅ | |

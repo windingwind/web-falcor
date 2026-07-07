@@ -81,4 +81,11 @@ export const kShaderOverrides: Readonly<Record<string, string>> = {
     "Rendering/Utils/PixelStats.slang": "WebFalcor/Overrides/Rendering/Utils/PixelStats.slang",
     // bool in cbuffer is non-host-shareable in WGSL -> uint flag.
     "RenderPasses/TAA/TAA.ps.slang": "WebFalcor/Overrides/RenderPasses/TAA/TAA.ps.slang",
+    // RTXDI: no texel buffers in WGSL (structured swap), boiling filter
+    // compiled out (WaveActiveCountBits unmapped), brace-init fixes.
+    "Rendering/RTXDI/RTXDI.slang": "WebFalcor/Overrides/Rendering/RTXDI/RTXDI.slang",
+    "Rendering/RTXDI/RTXDIApplicationBridge.slangh": "WebFalcor/Overrides/Rendering/RTXDI/RTXDIApplicationBridge.slangh",
+    "Rendering/RTXDI/SurfaceData.slang": "WebFalcor/Overrides/Rendering/RTXDI/SurfaceData.slang",
+    "Rendering/RTXDI/LightUpdater.cs.slang": "WebFalcor/Overrides/Rendering/RTXDI/LightUpdater.cs.slang",
+    "RenderPasses/RTXDIPass/LoadShadingData.slang": "WebFalcor/Overrides/RenderPasses/RTXDIPass/LoadShadingData.slang",
 };
