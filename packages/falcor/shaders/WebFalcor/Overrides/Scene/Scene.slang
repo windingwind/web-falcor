@@ -78,9 +78,15 @@ struct Scene
     // (procedural AABBs have no software-BVH entries; counts are tiny).
     uint webfalcorSdfInstanceFirst;
     uint webfalcorSdfInstanceCount;
-    // SparseBrickSet: brick count for the RaytracingInline brick-AABB loop
-    // (no procedural BLAS on the software RT path). Zero for other grid types.
+    // SparseBrickSet/SparseVoxelSet: procedural-primitive count + a BVH over
+    // the primitive AABBs (no procedural BLAS on the software RT path). The
+    // RaytracingInline override traverses this to prune tens of thousands of
+    // voxel AABBs to the few a ray crosses. Zero/empty for other grid types.
     uint webfalcorSdfBrickCount;
+    // One merged buffer (16-storage-buffer budget): BVH nodes (2x float4 each)
+    // at [0, webfalcorSdfPrimOffset), then primitive indices packed 4-per-float4.
+    StructuredBuffer<float4> webfalcorSdfBvh;
+    uint webfalcorSdfPrimOffset; // float4 index where the packed prim indices begin
 
     // WebFalcor: RaytracingAccelerationStructure has no WGSL representation
     // (slangc emits an invalid empty-typed binding). Removed for the raster

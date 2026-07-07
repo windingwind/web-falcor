@@ -16,7 +16,7 @@ import { DefineList } from "../Core/Program/DefineList.js";
 import type { ShaderVar } from "../Core/Program/ParameterBlock.js";
 import { Camera } from "./Camera/Camera.js";
 import { float4x4, transpose, inverse } from "../Utils/Math/Matrix.js";
-import { buildBvh, type BvhTriangle } from "./SoftwareRT/Bvh.js";
+import { buildBvh, buildAabbBvh, type BvhTriangle } from "./SoftwareRT/Bvh.js";
 import { packLights, type AnalyticLight } from "./SceneData.js";
 import { TextureManager } from "./Material/TextureManager.js";
 import type { EnvMap } from "./Lights/EnvMap.js";
@@ -85,6 +85,7 @@ export class Scene {
     private sdfAtlasTexture: Texture | null = null;
     private sdfSampler: Sampler | null = null;
     private sbsResources: { aabbs: Buffer; indirection: Texture; bricks: Texture; sampler: Sampler } | null = null;
+    private sdfBvhBuffers: { buf: Buffer; primOffset: number } | null = null;
     private envMap: EnvMap | null = null;
     private hasEmissiveMaterials = false;
     private materialTypes = new Set<MaterialType>();
@@ -134,8 +135,8 @@ export class Scene {
                 geometryIndex: 0,
             });
         });
-        // SDF grid instances append after the triangle instances (the
-        // RaytracingInline override loops them linearly; no BVH entries).
+        // SDF grid instances append after the triangle instances (they are
+        // not in the triangle BVH; SBS/SVS use a separate primitive-AABB BVH).
         this.sdfInstanceFirst = instances.length;
         sdfGrids.forEach((desc, i) => {
             instances.push({
@@ -615,12 +616,36 @@ export class Scene {
         // SDF grids (one instance set; sdfGrid0 bindings survive only with
         // SCENE_SDF_GRID_COUNT > 0 — trySet semantics via try/catch).
         const sbsGrid = this.sdfGrids.length > 0 && this.sdfGrids[0]!.grid instanceof SDFSBS ? (this.sdfGrids[0]!.grid as SDFSBS) : null;
+        // SBS/SVS traverse a BVH over their primitive AABBs (bricks/voxels).
+        const sdfAabbs = sbsGrid ? sbsGrid.aabbs : null;
         try {
             scene["webfalcorSdfInstanceFirst"] = this.sdfInstanceFirst;
             scene["webfalcorSdfInstanceCount"] = this.sdfGrids.length;
-            scene["webfalcorSdfBrickCount"] = sbsGrid ? sbsGrid.brickCount : 0;
+            scene["webfalcorSdfBrickCount"] = sdfAabbs ? sdfAabbs.length : 0;
         } catch {
             /* SDF-less kernel variant */
+        }
+        if (sdfAabbs) {
+            if (!this.sdfBvhBuffers) {
+                const bvh = buildAabbBvh(sdfAabbs);
+                // One merged float4 buffer (16-storage-buffer budget): BVH nodes
+                // (2 float4/node), then prim indices packed 4-per-float4.
+                const nodeFloat4s = bvh.nodes.length / 4;
+                const primFloat4s = Math.ceil(bvh.primIndices.length / 4);
+                const merged = new Float32Array((nodeFloat4s + primFloat4s) * 4);
+                merged.set(bvh.nodes, 0);
+                new Uint32Array(merged.buffer).set(bvh.primIndices, nodeFloat4s * 4);
+                const storage = ResourceBindFlags.ShaderResource | ResourceBindFlags.UnorderedAccess;
+                const buf = new Buffer(this.device, { size: merged.byteLength, structSize: 16, bindFlags: storage, memoryType: MemoryType.DeviceLocal, name: "Scene::sdfBvh" });
+                buf.setBlob(new Uint8Array(merged.buffer));
+                this.sdfBvhBuffers = { buf, primOffset: nodeFloat4s };
+            }
+            try {
+                scene["webfalcorSdfBvh"] = this.sdfBvhBuffers.buf;
+                scene["webfalcorSdfPrimOffset"] = this.sdfBvhBuffers.primOffset;
+            } catch {
+                /* bindings absent in NDSDF/SVO kernel variant */
+            }
         }
         if (this.sdfGrids.length > 0) {
             if (this.sdfGrids.length > 1) throw new RuntimeError("Scene: only one SDF grid supported (gScene.sdfGrid0; WGSL has no binding arrays)");

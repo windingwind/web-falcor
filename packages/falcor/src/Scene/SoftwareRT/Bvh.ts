@@ -35,6 +35,97 @@ interface BuildEntry {
     max: float3;
 }
 
+export interface AabbBvhResult {
+    /** 8 floats per node: [min.xyz, bits(leftFirst)], [max.xyz, bits(count)]. */
+    nodes: Float32Array;
+    /** Ordered primitive indices (leaf reads [leftFirst, leftFirst+count)). */
+    primIndices: Uint32Array;
+    nodeCount: number;
+}
+
+/**
+ * Median-split BVH over procedural AABBs, consumed by the SDF brick/voxel
+ * traversal in the RaytracingInline override (SBS bricks, SVS voxels). Same
+ * node layout as buildBvh; leaves hold primitive indices instead of triangles.
+ * A ray prunes tens of thousands of voxel AABBs to the handful it crosses,
+ * which the flat per-primitive loop could not do at interactive speed.
+ */
+export function buildAabbBvh(aabbs: { min: [number, number, number]; max: [number, number, number] }[]): AabbBvhResult {
+    if (aabbs.length === 0) {
+        // Root LEAF with zero primitives (same empty-scene reasoning as buildBvh).
+        const nodes = new Float32Array(8);
+        new Uint32Array(nodes.buffer)[7] = 0;
+        return { nodes, primIndices: new Uint32Array(1), nodeCount: 1 };
+    }
+
+    interface Entry {
+        index: number;
+        cx: number;
+        cy: number;
+        cz: number;
+        min: [number, number, number];
+        max: [number, number, number];
+    }
+    const entries: Entry[] = aabbs.map((a, i) => ({
+        index: i,
+        cx: (a.min[0] + a.max[0]) / 2,
+        cy: (a.min[1] + a.max[1]) / 2,
+        cz: (a.min[2] + a.max[2]) / 2,
+        min: a.min,
+        max: a.max,
+    }));
+
+    const nodes = new Float32Array(2 * aabbs.length * 8 + 8);
+    const nodesU32 = new Uint32Array(nodes.buffer);
+    let nodeCount = 0;
+    const ordered: number[] = [];
+    const kLeafSize = 4;
+
+    const bounds = (list: Entry[]): [number[], number[]] => {
+        const mn = [Infinity, Infinity, Infinity];
+        const mx = [-Infinity, -Infinity, -Infinity];
+        for (const e of list)
+            for (let c = 0; c < 3; c++) {
+                mn[c] = Math.min(mn[c]!, e.min[c]!);
+                mx[c] = Math.max(mx[c]!, e.max[c]!);
+            }
+        return [mn, mx];
+    };
+
+    const write = (index: number, mn: number[], mx: number[], leftFirst: number, count: number) => {
+        nodes[index * 8 + 0] = mn[0]!;
+        nodes[index * 8 + 1] = mn[1]!;
+        nodes[index * 8 + 2] = mn[2]!;
+        nodesU32[index * 8 + 3] = leftFirst;
+        nodes[index * 8 + 4] = mx[0]!;
+        nodes[index * 8 + 5] = mx[1]!;
+        nodes[index * 8 + 6] = mx[2]!;
+        nodesU32[index * 8 + 7] = count;
+    };
+
+    const build = (list: Entry[]): number => {
+        const nodeIndex = nodeCount++;
+        const [mn, mx] = bounds(list);
+        if (list.length <= kLeafSize) {
+            write(nodeIndex, mn, mx, ordered.length, list.length);
+            for (const e of list) ordered.push(e.index);
+            return nodeIndex;
+        }
+        const ext = [mx[0]! - mn[0]!, mx[1]! - mn[1]!, mx[2]! - mn[2]!];
+        const axis = ext[0]! > ext[1]! ? (ext[0]! > ext[2]! ? 0 : 2) : ext[1]! > ext[2]! ? 1 : 2;
+        const key = (e: Entry) => (axis === 0 ? e.cx : axis === 1 ? e.cy : e.cz);
+        const sorted = [...list].sort((a, b) => key(a) - key(b));
+        const half = Math.ceil(sorted.length / 2);
+        build(sorted.slice(0, half)); // left = nodeIndex + 1
+        const rightIndex = build(sorted.slice(half));
+        write(nodeIndex, mn, mx, rightIndex, 0);
+        return nodeIndex;
+    };
+    build(entries);
+
+    return { nodes: nodes.subarray(0, nodeCount * 8), primIndices: new Uint32Array(ordered), nodeCount };
+}
+
 export function buildBvh(triangles: BvhTriangle[]): BvhBuildResult {
     const entries: BuildEntry[] = triangles.map((t, i) => {
         const min = new float3(
