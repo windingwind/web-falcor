@@ -1,0 +1,15 @@
+
+smokeVolume = GridVolume('smoke')
+smokeVolume.loadGrid(GridVolume.GridSlot.Density, '/share/Projekte/npvs/neuralgi/web-falcor/tests/oracle/assets/smoke.nvdb', 'density')
+smokeVolume.densityScale = 0.5
+smokeVolume.albedo = float3(0.5, 0.5, 0.5)
+sceneBuilder.addGridVolume(smokeVolume)
+
+camera = Camera()
+camera.position = float3(25, 0, 55)
+camera.target = float3(0, 25, 0)
+camera.up = float3(0, 1, 0)
+sceneBuilder.addCamera(camera)
+
+sceneBuilder.envMap = EnvMap('/share/Projekte/npvs/neuralgi/web-falcor/Falcor/media/test_scenes/envmaps/20060807_wells6_hd.hdr')
+sceneBuilder.envMap.intensity = 1.5

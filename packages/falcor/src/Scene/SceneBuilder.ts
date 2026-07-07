@@ -475,6 +475,7 @@ export class SceneBuilderBridge {
             }
             scene.gridVolumes.push(vol);
         }
+        scene.finalizeGridVolumes();
         return scene;
     }
 }

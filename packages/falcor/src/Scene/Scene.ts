@@ -34,7 +34,7 @@ import {
     type StaticVertex,
 } from "./SceneData.js";
 import { packBasicMaterialBlob, MaterialType, type BasicMaterialDesc, type MaterialHeaderDesc } from "./Material/MaterialData.js";
-import { assert } from "../Core/Error.js";
+import { assert, RuntimeError } from "../Core/Error.js";
 
 export interface SceneMeshDesc {
     vertices: StaticVertex[];
@@ -52,6 +52,8 @@ export interface SceneMaterialDesc {
 export class Scene {
     readonly camera = new Camera();
     readonly gridVolumes: import("./Volume/GridVolume.js").GridVolume[] = [];
+    private gridCount = 0;
+    private grid0Stats: { minIndex: [number, number, number]; minValue: number; maxIndex: [number, number, number]; maxValue: number } | null = null;
     private buffers: Record<string, Buffer> = {};
     private textureArray: Texture;
     private dummyTexture: Texture;
@@ -277,7 +279,7 @@ export class Scene {
     getSceneDefines(): DefineList {
         return new DefineList().addAll({
             SCENE_GEOMETRY_TYPES: 1 << GeometryType.TriangleMesh,
-            SCENE_GRID_COUNT: 0,
+            SCENE_GRID_COUNT: this.gridCount,
             SCENE_SDF_GRID_COUNT: 0,
             SCENE_HAS_INDEXED_VERTICES: 1,
             SCENE_HAS_16BIT_INDICES: 0,
@@ -301,7 +303,9 @@ export class Scene {
             FALCOR_MATERIAL_INSTANCE_SIZE: 256,
             // Static material dispatch (MaterialFactory override) — mirrors
             // MaterialSystem::getTypeConformances() type registration.
-            WEBFALCOR_MTL_STANDARD: this.materialTypes.has(MaterialType.Standard) ? 1 : 0,
+            // Material-less scenes (pure volumes) still need one registered type:
+            // the factory's fallback return must exist for WGSL (E41009).
+            WEBFALCOR_MTL_STANDARD: this.materialTypes.has(MaterialType.Standard) || this.materialTypes.size === 0 ? 1 : 0,
             WEBFALCOR_MTL_CLOTH: this.materialTypes.has(MaterialType.Cloth) ? 1 : 0,
             WEBFALCOR_MTL_HAIR: this.materialTypes.has(MaterialType.Hair) ? 1 : 0,
             WEBFALCOR_MTL_PBRT_DIFFUSE: this.materialTypes.has(MaterialType.PBRTDiffuse) ? 1 : 0,
@@ -314,6 +318,66 @@ export class Scene {
             FALCOR_NVAPI_AVAILABLE: 0,
             SAMPLE_GENERATOR_TYPE: 0, // TinyUniform (SampleGeneratorType.slangh)
         });
+    }
+
+    /**
+     * Uploads grid-volume GPU data after resolve() populates gridVolumes
+     * (web divergence: volumes load asynchronously after construction).
+     * One grid supported (gScene.grid0 — WGSL has no binding arrays).
+     */
+    finalizeGridVolumes(): void {
+        if (this.gridVolumes.length === 0) return;
+        const grids: import("./Volume/Grid.js").Grid[] = [];
+        const gridIndex = (g: import("./Volume/Grid.js").Grid | undefined): number => {
+            if (!g) return 0xffffffff;
+            let i = grids.indexOf(g);
+            if (i < 0) {
+                i = grids.length;
+                grids.push(g);
+            }
+            return i;
+        };
+
+        // GridVolumeData: 192 B per volume (2x float4x4 + 4x 16 B rows).
+        const data = new ArrayBuffer(this.gridVolumes.length * 192);
+        const f32 = new Float32Array(data);
+        const u32 = new Uint32Array(data);
+        this.gridVolumes.forEach((vol, vi) => {
+            const o = vi * 48; // floats
+            // Mirrors Scene::updateGridVolumes: the uploaded transform merges the
+            // volume transform (identity: no animation yet) with the density
+            // grid's index->world map, so invTransform maps world -> INDEX space.
+            const identity = [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1];
+            f32.set(vol.densityGrid ? vol.densityGrid.indexToWorldMatrix : identity, o);
+            f32.set(vol.densityGrid ? vol.densityGrid.worldToIndexMatrix : identity, o + 16);
+            const b = vol.bounds ?? { min: [0, 0, 0], max: [0, 0, 0] };
+            f32.set(b.min, o + 32);
+            f32[o + 35] = vol.densityScale;
+            f32.set(b.max, o + 36);
+            f32[o + 39] = vol.emissionScale;
+            u32[o + 40] = gridIndex(vol.densityGrid);
+            u32[o + 41] = gridIndex(vol.emissionGrid);
+            u32[o + 42] = 0; // flags (emission mode Direct)
+            f32[o + 43] = vol.anisotropy;
+            f32[o + 44] = vol.albedo.x;
+            f32[o + 45] = vol.albedo.y;
+            f32[o + 46] = vol.albedo.z;
+            f32[o + 47] = vol.emissionTemperature;
+        });
+        const storage = ResourceBindFlags.ShaderResource | ResourceBindFlags.UnorderedAccess;
+        const volBuf = new Buffer(this.device, { size: data.byteLength, structSize: 192, bindFlags: storage, memoryType: MemoryType.DeviceLocal, name: "Scene::gridVolumes" });
+        volBuf.setBlob(new Uint8Array(data));
+        this.buffers["gridVolumesData"] = volBuf;
+
+        if (grids.length > 1) throw new RuntimeError("Scene: only one grid supported (gScene.grid0; WGSL has no binding arrays)");
+        if (grids.length === 1) {
+            const g = grids[0]!;
+            const buf = new Buffer(this.device, { size: g.gridBuffer.byteLength, structSize: 4, bindFlags: storage, memoryType: MemoryType.DeviceLocal, name: "Scene::grid0" });
+            buf.setBlob(g.gridBuffer);
+            this.buffers["grid0"] = buf;
+            this.grid0Stats = { minIndex: g.minIndex, minValue: g.minValue, maxIndex: g.maxIndex, maxValue: g.maxValue };
+        }
+        this.gridCount = grids.length;
     }
 
     /** Mirrors Scene::bindShaderData: fills the gScene parameter block. */
@@ -361,9 +425,10 @@ export class Scene {
         scene["curveIndices"] = this.buffers["curveDummy"]!;
         try {
             // Only referenced by volume-aware passes (binding absent otherwise).
-            scene["gridVolumes"] = this.buffers["gridVolumeDummy"]!;
-        } catch {
-            /* binding absent in this variant */
+            scene["gridVolumeCount"] = this.gridVolumes.length;
+            scene["gridVolumes"] = this.buffers["gridVolumesData"] ?? this.buffers["gridVolumeDummy"]!;
+        } catch (e) {
+            if (this.gridVolumes.length > 0) console.error(`# gridVolumes bind failed: ${e}`);
         }
         scene["indexData"]["data0"] = this.buffers["indices"]!;
 
@@ -387,11 +452,19 @@ export class Scene {
         lightCollection["meshData"] = this.buffers["emissiveMeshData"]!;
         lightCollection["perMeshInstanceOffset"] = this.buffers["emissivePerMeshInstanceOffset"]!;
 
-        // Grid volume single instance (dummy; SCENE_GRID_COUNT=0 keeps it unreachable).
-        scene["grid0"]["buf"] = this.buffers["materialBuffer0"]!;
+        // Grid volume single instance (NanoVDB buffer when loaded; dummies keep
+        // SCENE_GRID_COUNT=0 variants bindable). Bricked-grid textures stay
+        // dummies: the upstream consumers use the NanoVDB lookup path.
+        scene["grid0"]["buf"] = this.buffers["grid0"] ?? this.buffers["materialBuffer0"]!;
         scene["grid0"]["rangeTex"] = this.gridRangeTex;
         scene["grid0"]["indirectionTex"] = this.gridIndirectionTex;
         scene["grid0"]["atlasTex"] = this.gridAtlasTex;
+        if (this.grid0Stats) {
+            scene["grid0"]["minIndex"] = this.grid0Stats.minIndex;
+            scene["grid0"]["minValue"] = this.grid0Stats.minValue;
+            scene["grid0"]["maxIndex"] = this.grid0Stats.maxIndex;
+            scene["grid0"]["maxValue"] = this.grid0Stats.maxValue;
+        }
 
         // Light profile (disabled; dummy bindings).
         scene["materials"]["lightProfile"]["texture"] = this.dummyTexture;

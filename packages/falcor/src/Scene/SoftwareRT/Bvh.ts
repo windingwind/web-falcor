@@ -56,6 +56,18 @@ export function buildBvh(triangles: BvhTriangle[]): BvhBuildResult {
     let nodeCount = 0;
     const orderedTris: number[] = [];
 
+    // Geometry-less scenes: an all-zero root is a degenerate INTERIOR node
+    // whose child pointer loops back to itself -> the traversal spins forever
+    // for rays crossing the origin. An inverted (+inf/-inf) AABB is no fix:
+    // slab intersectors min/max-swap per axis, so an inverted box HITS
+    // everything. Emit a root LEAF with one degenerate triangle instead --
+    // the leaf branch always terminates and the triangle never intersects.
+    if (triangles.length === 0) {
+        nodesU32[3] = 0; // leftFirst
+        nodesU32[7] = 1; // triCount: one degenerate (all-zero) triangle
+        return { nodes: nodes.subarray(0, 8), tris: new Float32Array(12), nodeCount: 1 };
+    }
+
     const writeNode = (index: number, min: float3, max: float3, leftFirst: number, count: number) => {
         nodes[index * 8 + 0] = min.x;
         nodes[index * 8 + 1] = min.y;

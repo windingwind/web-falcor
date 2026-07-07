@@ -67,6 +67,27 @@ export class Grid {
         return this.view.getFloat32(this.rootOffset + 36, true);
     }
 
+    /** Mirrors Grid::getTransform: index -> world (NanoVDB Map affine +
+     *  translation), row-major with translation in column 3 (elements 3/7/11)
+     *  — the shader's mul(M, float4(p,1)) convention, GPU-verified via the
+     *  GridVolumeProbe in smoke-scene.gpu.test.ts. */
+    get indexToWorldMatrix(): number[] {
+        const m = 296; // Map offset in GridData
+        const a = (i: number) => this.view.getFloat32(m + i * 4, true); // mMatF 3x3 row-major
+        const t = (i: number) => this.view.getFloat32(m + 72 + i * 4, true); // mVecF (after matF+invMatF)
+        return [a(0), a(1), a(2), t(0), a(3), a(4), a(5), t(1), a(6), a(7), a(8), t(2), 0, 0, 0, 1];
+    }
+
+    /** Mirrors Grid::getInvTransform (uses the stored inverse map). */
+    get worldToIndexMatrix(): number[] {
+        const m = 296;
+        const inv = (i: number) => this.view.getFloat32(m + 36 + i * 4, true); // mInvMatF 3x3 row-major
+        const t = (i: number) => this.view.getFloat32(m + 72 + i * 4, true);
+        // inverse = [invA | -invA*t]
+        const it = [0, 1, 2].map((r) => -(inv(r * 3) * t(0) + inv(r * 3 + 1) * t(1) + inv(r * 3 + 2) * t(2)));
+        return [inv(0), inv(1), inv(2), it[0]!, inv(3), inv(4), inv(5), it[1]!, inv(6), inv(7), inv(8), it[2]!, 0, 0, 0, 1];
+    }
+
     /** World-space AABB of active voxels (GridData::mWorldBBox). */
     get worldBounds(): { min: [number, number, number]; max: [number, number, number] } {
         const o = 560;
