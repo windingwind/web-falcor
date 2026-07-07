@@ -108,6 +108,11 @@ export class RenderGraph {
         return this.allocated.get(ref);
     }
 
+    /** Marked output refs ("Pass.field"), in mark order (RenderGraph::getOutputName). */
+    getOutputNames(): string[] {
+        return this.outputs.map((o) => `${o.pass}.${o.field}`);
+    }
+
     /** Topological order over pass dependencies (RenderGraphCompiler::sortPasses). */
     private sortPasses(): string[] {
         const inDegree = new Map<string, number>();

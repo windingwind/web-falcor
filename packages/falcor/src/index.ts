@@ -12,6 +12,7 @@ export * from "./Core/API/Resource.js";
 export * from "./Core/API/Buffer.js";
 export * from "./Core/API/Texture.js";
 export * from "./Core/API/Sampler.js";
+export * from "./Core/API/Present.js";
 export * from "./Core/API/Fence.js";
 export * from "./Core/API/GpuTimer.js";
 export * from "./Core/API/CopyContext.js";

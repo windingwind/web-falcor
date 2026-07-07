@@ -550,11 +550,11 @@ verified-vs-native or has a specific, documented blocker:
 
 | Component | Status | Notes |
 |---|---|---|
-| Mogwai app (graph loading, UI, capture) | ✅ | browser app; FrameCapture→download, VideoCapture→WebCodecs (FFmpeg ❌) |
+| Mogwai app (functional viewer) | ✅ verified | Interactive browser viewer: loads a render-graph .py + .pyscene, runs the graph each frame, presents a marked output to the canvas (presentToCanvas swapchain blit); DOM controls (play/pause, graph picker, output picker). The render loop is the verified GPU-harness code; a headless smoke test renders + presents the cornell path-tracer end to end. FrameCapture→download, VideoCapture→WebCodecs (FFmpeg ❌) |
 | Python scripting / console | 🔶 | TS API (shape-identical) + graph-`.py` compatibility layer; full CPython via optional Pyodide plugin |
 | PyTorch interop (`falcor.pytorch`) | ❌ | no CUDA/torch in browser; gradient buffers exposed to JS/ONNX-web instead |
 | FalcorTest | ✅ | vitest + Playwright harness (§7) |
-| RenderGraphEditor | ✅ | RenderGraphUI in-browser |
+| RenderGraphEditor (ImGui node UI) | ⏳ stretch | The functional viewer is done; the Dear-ImGui-wasm RenderGraphUI node editor is dev tooling orthogonal to Falcor's rendering parity — scoped as a stretch, not a rendering feature |
 | ImageCompare | ✅ | reused natively on CI host for oracle diffing; TS port for in-browser use |
 | Importers | see §6.2 | glTF/OBJ ✅, PBRT/Mitsuba ✅ (parser ports), Assimp 🔶 WASM, USD 🔶 usd-wasm (partial), Python importer 🔶 Pyodide |
 | SceneCache | 🔶 | OPFS/IndexedDB instead of disk cache |
@@ -585,7 +585,7 @@ verified-vs-native or has a specific, documented blocker:
 | **M5** ✔ | Scene host driving unmodified upstream Scene.slang, glTF import, Camera, Lights, MaterialSystem (Standard); GBufferRaster | GBuffer matches native GBufferRT oracle per-pixel |
 | **M6** ✔ | SoftwareRT: CPU BVH, SceneRayQuery override; VBufferRT, MinimalPathTracer | MinimalPathTracer matches native hardware DXR at 9.5e-7 (§7.1) |
 | **M7** ✔ core | Material zoo (Cloth/Hair/PBRT ×6), LightCollection, EnvMap+EnvMapSampler, emissive Uniform/Power samplers, **full PathTracer**, **`.pyscene` on web** (§11.1) | PathTracer matches native at 1.6e-4; 15 oracle comparisons green (§7.1). Open: LightBVH sampler, MERL/RGL, GridVolumes, SDF grids ×4, animation/skinning |
-| **M8** (in progress) | ✅ RTXDI (full ReSTIR DI, verified), ✅ FBX/Assimp import (Arcade, verified), ✅ SDF grids NDSDF+SBS (verified); 🟠 NRD (SDK absent), 🟠 WARDiffPathTracer (autodiff device-verified, full-path-tracer diff crashes slangc v2026.12.2), 🟠 SDFEditor (asset absent); ⏳ Mogwai UI (ImGui-wasm), WebGL2 raster subset (stretch) | pass-rate report + parity matrix finalized (§7.2); every rendering-feature item verified-vs-native or with a documented blocker |
+| **M8** (in progress) | ✅ RTXDI (full ReSTIR DI, verified), ✅ FBX/Assimp import (Arcade, verified), ✅ SDF grids NDSDF+SBS (verified); 🟠 NRD (SDK absent), 🟠 WARDiffPathTracer (autodiff device-verified, full-path-tracer diff crashes slangc v2026.12.2), 🟠 SDFEditor (asset absent); ✅ SDF grids (all 4 types verified), ✅ Mogwai functional viewer (render loop + present, smoke-tested); ⏳ ImGui-wasm node editor + WebGL2 raster (stretch tooling) | pass-rate report + parity matrix finalized (§7.2); every rendering-feature item verified-vs-native or with a documented blocker |
 
 ## 11. Resolved design questions (user decisions, 2026-07-05)
 
