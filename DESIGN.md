@@ -368,7 +368,7 @@ JS / ONNX-web pipelines.
 All comparisons render the identical scene/camera/seed natively (Mogwai
 `--headless`, hardware Vulkan RT) and on web (WebGPU compute + software BVH),
 then diff per-pixel (mean |Δ| over RGB; "bad" = pixels with any channel off by
-more than 0.05). Suite: `npm run test:gpu` (53 GPU tests + 23 unit green).
+more than 0.05). Suite: `npm run test:gpu` (102 GPU tests + 40 unit green as of M8).
 
 | Oracle | Web pass under test | mean abs Δ | bad px (of 65536) |
 |---|---|---|---|
@@ -440,8 +440,32 @@ native to float tolerance rather than statistically.
 
 ### 7.2 Upstream image-test graph pass-rate (tests/image_tests/renderpasses/graphs, 39 graphs)
 
-Status as of M7+verify. "Verified" = the unmodified graph runs on web and its
+Status as of **M8**. "Verified" = the unmodified graph runs on web and its
 output is diffed against native Mogwai running the same file.
+
+**M8 overall-verify summary.** Every rendering-feature milestone item is either
+verified-vs-native or has a specific, documented blocker:
+
+- **Verified vs native** (image/feature oracles, §7.1): MinimalPathTracer,
+  PathTracer (+Dielectrics, guide outputs, PixelStats), RTXDI (full ReSTIR DI),
+  TAA, SVGF, GridVolumes (NanoVDB), FBX import (Arcade), NDSDF + SBS SDF grids,
+  and the small-pass suite (ToneMapping, Composite, CrossFade, GaussianBlur,
+  ColorMap, SideBySide, SplitScreen, ModulateIllumination, SimplePostFX, FLIP,
+  Whitted). **102 GPU + 40 unit tests green.**
+- **Asset-blocked** (missing from this Falcor drop, unloadable natively too):
+  NRDPass (NRD SDK shaders absent), SDFEditorRenderGraphV2 (`one_primitive_edited.sdfg`
+  absent).
+- **Compiler-blocked**: WARDiffPathTracer — the autodiff primitive is
+  device-verified, but slangc v2026.12.2 segfaults differentiating the full
+  path tracer (§6.9).
+- **Runtime-impractical without new infra**: SVS/SVO SDF grids (one AABB per
+  surface voxel → need a procedural-AABB BVH; NDSDF + SBS already cover both
+  SDF representation classes).
+- **Native-oracle-impossible on this host**: all raster-GBuffer graphs (the
+  oracle GPU's Vulkan driver lacks ROVs, so native Mogwai can't build
+  GBufferRaster at all) — their passes are ported and cross-verified through
+  the RT-GBuffer feature graphs instead.
+- **Impossible on the web platform**: OptixDenoiser, DLSS (CUDA/driver tech).
 
 | Status | Count | Graphs |
 |---|---|---|
@@ -560,7 +584,7 @@ output is diffed against native Mogwai running the same file.
 | **M5** ✔ | Scene host driving unmodified upstream Scene.slang, glTF import, Camera, Lights, MaterialSystem (Standard); GBufferRaster | GBuffer matches native GBufferRT oracle per-pixel |
 | **M6** ✔ | SoftwareRT: CPU BVH, SceneRayQuery override; VBufferRT, MinimalPathTracer | MinimalPathTracer matches native hardware DXR at 9.5e-7 (§7.1) |
 | **M7** ✔ core | Material zoo (Cloth/Hair/PBRT ×6), LightCollection, EnvMap+EnvMapSampler, emissive Uniform/Power samplers, **full PathTracer**, **`.pyscene` on web** (§11.1) | PathTracer matches native at 1.6e-4; 15 oracle comparisons green (§7.1). Open: LightBVH sampler, MERL/RGL, GridVolumes, SDF grids ×4, animation/skinning |
-| **M8** | Mogwai UI (ImGui-wasm, RenderGraphUI, capture), RTXDI, NRD port, WARDiffPathTracer, Assimp/USD importers, WebGL2 raster subset (stretch) | upstream image-test graph suite pass-rate report; parity matrix finalized |
+| **M8** (in progress) | ✅ RTXDI (full ReSTIR DI, verified), ✅ FBX/Assimp import (Arcade, verified), ✅ SDF grids NDSDF+SBS (verified); 🟠 NRD (SDK absent), 🟠 WARDiffPathTracer (autodiff device-verified, full-path-tracer diff crashes slangc v2026.12.2), 🟠 SDFEditor (asset absent); ⏳ Mogwai UI (ImGui-wasm), WebGL2 raster subset (stretch) | pass-rate report + parity matrix finalized (§7.2); every rendering-feature item verified-vs-native or with a documented blocker |
 
 ## 11. Resolved design questions (user decisions, 2026-07-05)
 
