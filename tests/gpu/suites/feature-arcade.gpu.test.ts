@@ -89,6 +89,8 @@ gpuTest("FeatureArcade.matchesNativeOracle", async ({ device }) => {
     // Geometry first (posW/faceNormalW), then materials (diffuse), then texturing.
     await compare("GBufferRT.posW", "oracle-feature-arcade.GBufferRT.posW.0.exr", 3, 1e-3, 120, 1e-2);
     await compare("GBufferRT.faceNormalW", "oracle-feature-arcade.GBufferRT.faceNormalW.0.exr", 3, 1e-3, 120, 1e-2);
+    await compare("GBufferRT.tangentW", "oracle-feature-arcade.GBufferRT.tangentW.0.exr", 3, 5e-3, 400, 5e-2);
+    await compare("GBufferRT.guideNormalW", "oracle-feature-arcade.GBufferRT.guideNormalW.0.exr", 3, 5e-3, 400, 5e-2);
     await compare("GBufferRT.texC", "oracle-feature-arcade.GBufferRT.texC.0.exr", 2, 1e-3, 120, 1e-2);
     // Residual bad pixels are atlas-layer wrap seams: textures smaller than
     // the packed array emulate repeat addressing via frac(), which cannot

@@ -402,7 +402,8 @@ more than 0.05). Suite: `npm run test:gpu` (53 GPU tests + 23 unit green).
 | TAA feature graph (upstream TAA.py wiring with GBufferRT instead of ROV-blocked GBufferRaster; 8 Halton-jittered frames, history exercised) | TAA pass port | sRGB MSE 8.4e-7 | 2 px >3 LSB (float-vs-sRGB-quantized history, documented) |
 | SVGF feature graph (upstream SVGF.py wiring, GBufferRT + PathTracer over sphere_array; 4 frames temporal + a-trous) | SVGF pass port (5 kernels verbatim) | mean 4.2e-4 | 104 @0.05 (filtered stochastic tail; PT input itself 284) |
 | smoke volume scene (upstream SceneDebugger.py over smoke.pyscene; web parses the original .vdb in-browser, native loads the byte-identical .nvdb) | GridVolumes GPU chain (NanoVDB buffer, gScene grid plumbing, PNanoVDB WGSL traversal, 500-step transmittance march) | mean 3.7e-5 | 0 @1e-2 |
-| Arcade.pyscene via FBX import (upstream GBufferRT.py over the upstream Arcade scene) | FbxImporter (assimpjs WASM + AssimpImporter Default-mode port): posW/faceNormalW/texC exact, diffuse, emissive x150 factor | 1e-4 / 1e-5 / 1.1e-4 / 1.4e-4 / 1.4e-2 | 0 / 0 / 0 / 317 (atlas wrap seams) / 139 (x150 screen border) |
+| Arcade.pyscene via FBX import (upstream GBufferRT.py over the upstream Arcade scene) | FbxImporter (assimpjs WASM + AssimpImporter Default-mode port): posW/faceNormalW/texC exact, tangentW, guideNormalW (normal mapping), diffuse, emissive x150 factor | 1e-4 / 1e-5 / 1.1e-4 / 6.7e-4 / 6.4e-4 / 1.0e-4 / 1.4e-2 | 0 / 0 / 0 / 190 / 142 / 192 / 139 |
+| (quarantined .gpu.wip) upstream test_PathTracer/test_MinimalPathTracer over Arcade at 640x360/frame 128 | pending: LightCollection textured-emissive flux (the Cabinet screen light is texture-driven; web integrates constants only -> NEE misses the main light) | PT mean 0.32 / MPT mean 9.7e-3 | tracked |
 
 † residual is entirely the jpg *input decode* (browser vs FreeImage IDCT/chroma
 upsampling, ≤3 sRGB LSB): the png-fed pixels contribute zero error (Composite

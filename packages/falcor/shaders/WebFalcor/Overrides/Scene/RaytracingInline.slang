@@ -83,9 +83,9 @@ bool traverseBvh(const Ray ray, const bool anyHit, const bool useAlphaTest,
                 for (uint i = 0; i < triCount; i++)
                 {
                     const uint tri = leftFirst + i;
-                    const float4 t0 = gScene.webfalcorBvhTris[tri * 3];
-                    const float4 t1 = gScene.webfalcorBvhTris[tri * 3 + 1];
-                    const float4 t2 = gScene.webfalcorBvhTris[tri * 3 + 2];
+                    const float4 t0 = gScene.webfalcorBvhNodes[gScene.webfalcorBvhTrisOffset + tri * 3];
+                    const float4 t1 = gScene.webfalcorBvhNodes[gScene.webfalcorBvhTrisOffset + tri * 3 + 1];
+                    const float4 t2 = gScene.webfalcorBvhNodes[gScene.webfalcorBvhTrisOffset + tri * 3 + 2];
                     float t;
                     float2 uv;
                     if (intersectTriangle(ray.origin, ray.dir, ray.tMin, hitT, t0.xyz, t1.xyz, t2.xyz, t, uv))

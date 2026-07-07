@@ -33,56 +33,68 @@ export class TextureManager {
     }
 
     /**
-     * Builds the packed array texture (at least one layer; a white fallback
-     * when the scene has no textures) plus per-texture uv scales.
+     * Builds two packed array textures (sRGB and linear colorspaces; each at
+     * least one layer with a white fallback) plus per-texture info: uv scale
+     * (textures smaller than the layer sit top-left), array selector and
+     * layer index. Mirrors native per-slot sRGB semantics — normal/specular
+     * maps must NOT be sRGB-decoded on sample.
      */
-    build(device: Device): { array: Texture; uvScale: Float32Array } {
-        const layers = Math.max(this.sources.length, 1);
-        const width = Math.max(1, ...this.sources.map((s) => s.bitmap.width));
-        const height = Math.max(1, ...this.sources.map((s) => s.bitmap.height));
+    build(device: Device): { array: Texture; arrayLinear: Texture; texInfo: Float32Array } {
+        const makeArray = (sources: { source: TextureSource; id: number }[], srgb: boolean, name: string) => {
+            const layers = Math.max(sources.length, 1);
+            const width = Math.max(1, ...sources.map((s) => s.source.bitmap.width));
+            const height = Math.max(1, ...sources.map((s) => s.source.bitmap.height));
+            const array = new Texture(device, {
+                type: ResourceType.Texture2D,
+                width,
+                height,
+                arraySize: layers,
+                mipLevels: 1,
+                format: srgb ? ResourceFormat.RGBA8UnormSrgb : ResourceFormat.RGBA8Unorm,
+                bindFlags: ResourceBindFlags.ShaderResource | ResourceBindFlags.RenderTarget,
+                name,
+            });
+            if (sources.length === 0) {
+                device.gpuDevice.queue.writeTexture(
+                    { texture: array.gpuTexture, origin: { x: 0, y: 0, z: 0 } },
+                    new Uint8Array([255, 255, 255, 255]),
+                    { bytesPerRow: 4 },
+                    { width: 1, height: 1, depthOrArrayLayers: 1 },
+                );
+            }
+            sources.forEach(({ source }, layer) => {
+                const w = Math.min(source.bitmap.width, width);
+                const h = Math.min(source.bitmap.height, height);
+                device.gpuDevice.queue.copyExternalImageToTexture(
+                    { source: source.bitmap },
+                    { texture: array.gpuTexture, origin: { x: 0, y: 0, z: layer } },
+                    { width: w, height: h, depthOrArrayLayers: 1 },
+                );
+            });
+            return { array, width, height };
+        };
 
-        const array = new Texture(device, {
-            type: ResourceType.Texture2D,
-            width,
-            height,
-            arraySize: layers,
-            mipLevels: 1,
-            format: ResourceFormat.RGBA8UnormSrgb,
-            bindFlags: ResourceBindFlags.ShaderResource | ResourceBindFlags.RenderTarget,
-            name: "TextureManager::materialTexturesArray",
+        const srgbSources = this.sources.map((source, id) => ({ source, id })).filter((s) => s.source.srgb);
+        const linearSources = this.sources.map((source, id) => ({ source, id })).filter((s) => !s.source.srgb);
+        const srgbArr = makeArray(srgbSources, true, "TextureManager::materialTexturesArray");
+        const linArr = makeArray(linearSources, false, "TextureManager::materialTexturesArrayLinear");
+
+        // Per-texture info (indexed by textureID): uvScale.xy, arraySelector
+        // (0 = sRGB, 1 = linear), layer index within its array.
+        const texInfo = new Float32Array(Math.max(this.sources.length, 1) * 4);
+        texInfo.set([1, 1, 0, 0]);
+        srgbSources.forEach(({ source, id }, layer) => {
+            texInfo[id * 4] = source.bitmap.width / srgbArr.width;
+            texInfo[id * 4 + 1] = source.bitmap.height / srgbArr.height;
+            texInfo[id * 4 + 2] = 0;
+            texInfo[id * 4 + 3] = layer;
         });
-
-        if (this.sources.length === 0) {
-            device.gpuDevice.queue.writeTexture(
-                { texture: array.gpuTexture, origin: { x: 0, y: 0, z: 0 } },
-                new Uint8Array([255, 255, 255, 255]),
-                { bytesPerRow: 4 },
-                { width: 1, height: 1, depthOrArrayLayers: 1 },
-            );
-        }
-
-        this.sources.forEach((source, layer) => {
-            // copyExternalImageToTexture resizes nothing: sizes must match. For
-            // mismatched sizes, draw-based resize would go here; v1 requires
-            // uniform dimensions per scene or accepts top-left placement.
-            const w = Math.min(source.bitmap.width, width);
-            const h = Math.min(source.bitmap.height, height);
-            device.gpuDevice.queue.copyExternalImageToTexture(
-                { source: source.bitmap },
-                { texture: array.gpuTexture, origin: { x: 0, y: 0, z: layer } },
-                { width: w, height: h, depthOrArrayLayers: 1 },
-            );
+        linearSources.forEach(({ source, id }, layer) => {
+            texInfo[id * 4] = source.bitmap.width / linArr.width;
+            texInfo[id * 4 + 1] = source.bitmap.height / linArr.height;
+            texInfo[id * 4 + 2] = 1;
+            texInfo[id * 4 + 3] = layer;
         });
-
-        const uvScale = new Float32Array(layers * 2);
-        this.sources.forEach((source, layer) => {
-            uvScale[layer * 2] = source.bitmap.width / width;
-            uvScale[layer * 2 + 1] = source.bitmap.height / height;
-        });
-        if (this.sources.length === 0) {
-            uvScale[0] = 1;
-            uvScale[1] = 1;
-        }
-        return { array, uvScale };
+        return { array: srgbArr.array, arrayLinear: linArr.array, texInfo };
     }
 }

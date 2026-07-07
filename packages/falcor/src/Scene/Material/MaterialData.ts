@@ -124,7 +124,10 @@ export function packBasicMaterialBlob(header: MaterialHeaderDesc, mat: BasicMate
 
     // Payload starts at byte 16 (BasicMaterialData layout).
     let off = 16;
-    dv.setUint32(off, 0, true); off += 4; // flags (shading model MetalRough=0, normal map type from texNormalMap)
+    // flags: bit 0 shading model (MetalRough=0), bits 1-2 normal map type
+    // (None=0, RGB=1 - standard 8-bit normal maps; native detects RG/BC5,
+    // which the web texture pipeline does not produce).
+    dv.setUint32(off, mat.texNormalMap !== undefined ? 1 << 1 : 0, true); off += 4;
     dv.setFloat32(off, mat.emissiveFactor ?? 1, true); off += 4;
 
     const bc = mat.baseColor ?? new float4(1, 1, 1, 1);

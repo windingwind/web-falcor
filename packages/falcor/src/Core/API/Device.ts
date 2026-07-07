@@ -83,6 +83,7 @@ export class Device {
             requiredFeatures: features,
             requiredLimits: {
                 maxStorageBuffersPerShaderStage: adapter.limits.maxStorageBuffersPerShaderStage,
+                maxSampledTexturesPerShaderStage: adapter.limits.maxSampledTexturesPerShaderStage,
                 maxBufferSize: adapter.limits.maxBufferSize,
                 maxStorageBufferBindingSize: adapter.limits.maxStorageBufferBindingSize,
                 // Falcor kernels use up to 1024-thread groups (e.g. ParallelReduction,

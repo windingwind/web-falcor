@@ -66,7 +66,8 @@ struct MaterialSystem
     // documented in the parity matrix; revisit for scenes with mixed sampler modes).
     SamplerState materialSampler0;
     Texture2DArray<float4> materialTexturesArray;
-    StructuredBuffer<float2> materialTextureUvScale;
+    StructuredBuffer<float4> materialTextureUvScale; ///< Per-texture: uvScale.xy, arraySelector (0 sRGB / 1 linear), layer.
+    Texture2DArray materialTexturesArrayLinear; ///< Linear-colorspace textures (normal/specular maps).
     Texture2D<float4> webfalcorDummyTexture;
     ByteAddressBuffer materialBuffer0;
     Texture3D<float4> materialTexture3D0;
@@ -291,10 +292,13 @@ struct MaterialSystem
         case TextureHandle::Mode::Texture:
             {
                 uint elements;
-                materialTexturesArray.GetDimensions(0, info.width, info.height, elements, info.mipLevels);
-                const float2 uvScale = materialTextureUvScale[handle.getTextureID()];
-                info.width = uint(info.width * uvScale.x);
-                info.height = uint(info.height * uvScale.y);
+                const float4 texInfo = materialTextureUvScale[handle.getTextureID()];
+                if (texInfo.z > 0.5f)
+                    materialTexturesArrayLinear.GetDimensions(0, info.width, info.height, elements, info.mipLevels);
+                else
+                    materialTexturesArray.GetDimensions(0, info.width, info.height, elements, info.mipLevels);
+                info.width = uint(info.width * texInfo.x);
+                info.height = uint(info.height * texInfo.y);
             }
             info.depth = 1;
         default:
@@ -334,16 +338,19 @@ struct MaterialSystem
         case TextureHandle::Mode::Texture:
             {
                 const uint textureID = handle.getTextureID();
-                // Textures smaller than the array layer sit top-left with a
-                // uvScale; WRAP addressing must apply in TEXTURE space before
-                // scaling (out-of-range UVs would otherwise land in the
-                // layer's padding). frac() replicates repeat addressing.
-                const float2 uvScale = materialTextureUvScale[textureID];
+                // Per-texture info: uvScale.xy (textures smaller than the
+                // layer sit top-left), array selector, layer. WRAP addressing
+                // must apply in TEXTURE space before the layer scale (out of
+                // range UVs would otherwise land in the layer's padding);
+                // frac() replicates repeat addressing.
+                const float4 texInfo = materialTextureUvScale[textureID];
                 float2 wrappedUV = uv;
-                if (any(uvScale < float2(1.f)))
+                if (any(texInfo.xy < float2(1.f)))
                     wrappedUV = frac(uv);
-                const float2 scaledUV = wrappedUV * uvScale;
-                return lod.sampleTexture(materialTexturesArray, s, float3(scaledUV, textureID));
+                const float2 scaledUV = wrappedUV * texInfo.xy;
+                if (texInfo.z > 0.5f)
+                    return lod.sampleTexture(materialTexturesArrayLinear, s, float3(scaledUV, texInfo.w));
+                return lod.sampleTexture(materialTexturesArray, s, float3(scaledUV, texInfo.w));
             }
         default:
             return float4(0.f);

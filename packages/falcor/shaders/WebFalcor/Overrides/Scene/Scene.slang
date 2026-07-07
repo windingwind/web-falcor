@@ -67,8 +67,10 @@ struct Scene
     // Raytracing
     // WebFalcor SoftwareRT (DESIGN.md §5): BVH buffers consumed by the
     // RaytracingInline override. Nodes: 2x float4 each; tris: 3x float4 each.
+    // One merged buffer (storage-buffer budget: 16 per stage on the dev GPU):
+    // BVH nodes at [0, webfalcorBvhTrisOffset), triangles after.
     StructuredBuffer<float4> webfalcorBvhNodes;
-    StructuredBuffer<float4> webfalcorBvhTris;
+    uint webfalcorBvhTrisOffset;
 
     // WebFalcor: RaytracingAccelerationStructure has no WGSL representation
     // (slangc emits an invalid empty-typed binding). Removed for the raster

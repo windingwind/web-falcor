@@ -56,6 +56,7 @@ export class Scene {
     private grid0Stats: { minIndex: [number, number, number]; minValue: number; maxIndex: [number, number, number]; maxValue: number } | null = null;
     private buffers: Record<string, Buffer> = {};
     private textureArray: Texture;
+    private textureArrayLinear: Texture;
     private dummyTexture: Texture;
     private texture3D: Texture;
     private sampler: Sampler;
@@ -65,6 +66,7 @@ export class Scene {
     private drawList: { indexCount: number; firstIndex: number; baseVertex: number; firstInstance: number }[] = [];
 
     private lightCount = 0;
+    private bvhTrisOffset = 0;
     private envMap: EnvMap | null = null;
     private hasEmissiveMaterials = false;
     private materialTypes = new Set<MaterialType>();
@@ -164,8 +166,12 @@ export class Scene {
             }
         });
         const bvh = buildBvh(bvhTris);
-        make("bvhNodes", bvh.nodes, 16);
-        make("bvhTris", bvh.tris, 16);
+        // One merged buffer (16-storage-buffer budget): nodes then triangles.
+        const bvhMerged = new Float32Array(bvh.nodes.length + bvh.tris.length);
+        bvhMerged.set(bvh.nodes, 0);
+        bvhMerged.set(bvh.tris, bvh.nodes.length);
+        this.bvhTrisOffset = bvh.nodes.length / 4;
+        make("bvhNodes", bvhMerged, 16);
 
         // Analytic lights.
         this.lightCount = lights.length;
@@ -222,8 +228,9 @@ export class Scene {
         // Material textures packed into one array (DESIGN.md §6.2).
         const packed = textureManager.build(this.device);
         this.textureArray = packed.array;
+        this.textureArrayLinear = packed.arrayLinear;
         this.textureCount = Math.max(textureManager.count, 1);
-        make("materialTextureUvScale", packed.uvScale, 8);
+        make("materialTextureUvScale", packed.texInfo, 16);
         this.dummyTexture = this.device.createTexture2D(1, 1, ResourceFormat.RGBA32Float, 1, 1, new Float32Array([0, 0, 0, 0]));
         this.texture3D = this.device.createTexture3D(1, 1, 1, ResourceFormat.RGBA32Float, 1);
         this.gridRangeTex = this.device.createTexture3D(1, 1, 1, ResourceFormat.RG32Float, 1);
@@ -415,7 +422,7 @@ export class Scene {
         scene["meshes"] = this.buffers["meshes"]!;
         scene["vertices"]["data0"] = this.buffers["vertices"]!;
         scene["webfalcorBvhNodes"] = this.buffers["bvhNodes"]!;
-        scene["webfalcorBvhTris"] = this.buffers["bvhTris"]!;
+        scene["webfalcorBvhTrisOffset"] = this.bvhTrisOffset;
         scene["lights"] = this.buffers["lights"]!;
         scene["lightCount"] = this.lightCount;
         scene["prevVertices"] = this.buffers["vertices"]!;
@@ -476,6 +483,7 @@ export class Scene {
         materials["materialData"] = this.buffers["materialData"]!;
         materials["materialSampler0"] = this.sampler;
         materials["materialTexturesArray"] = this.textureArray;
+        materials["materialTexturesArrayLinear"] = this.textureArrayLinear;
         materials["materialTextureUvScale"] = this.buffers["materialTextureUvScale"]!;
         materials["webfalcorDummyTexture"] = this.dummyTexture;
         materials["materialBuffer0"] = this.buffers["materialBuffer0"]!;
