@@ -33,6 +33,31 @@ export class TextureManager {
     }
 
     /**
+     * Reads a texture back as linear float RGB (sRGB-decoded when flagged) for
+     * CPU-side integration (mirrors GPU nearest-sampling of mip 0).
+     */
+    readLinearPixels(textureID: number): { width: number; height: number; rgb: Float32Array } | null {
+        const source = this.sources[textureID];
+        if (!source) return null;
+        const { bitmap, srgb } = source;
+        const canvas = new OffscreenCanvas(bitmap.width, bitmap.height);
+        const c2d = canvas.getContext("2d", { willReadFrequently: true })!;
+        c2d.drawImage(bitmap, 0, 0);
+        const bytes = c2d.getImageData(0, 0, bitmap.width, bitmap.height).data;
+        const rgb = new Float32Array(bitmap.width * bitmap.height * 3);
+        const decode = (b: number) => {
+            const c = b / 255;
+            return srgb ? (c <= 0.04045 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4)) : c;
+        };
+        for (let i = 0; i < bitmap.width * bitmap.height; i++) {
+            rgb[i * 3] = decode(bytes[i * 4]!);
+            rgb[i * 3 + 1] = decode(bytes[i * 4 + 1]!);
+            rgb[i * 3 + 2] = decode(bytes[i * 4 + 2]!);
+        }
+        return { width: bitmap.width, height: bitmap.height, rgb };
+    }
+
+    /**
      * Builds two packed array textures (sRGB and linear colorspaces; each at
      * least one layer with a white fallback) plus per-texture info: uv scale
      * (textures smaller than the layer sit top-left), array selector and

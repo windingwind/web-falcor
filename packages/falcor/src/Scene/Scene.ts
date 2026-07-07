@@ -183,9 +183,16 @@ export class Scene {
             materials.map((m) => {
                 const em = m.basic.emissive;
                 const factor = m.basic.emissiveFactor ?? 1;
+                // Textured emissives integrate per triangle (EmissiveIntegrator
+                // semantics); texture handle low bits = textureID (mode bits high).
+                const texEmissive = m.basic.texEmissive;
+                const emissiveTexture =
+                    texEmissive !== undefined ? (textureManager.readLinearPixels(texEmissive & 0x1fffffff) ?? undefined) : undefined;
                 return {
                     emissive: m.header?.emissive ?? false,
                     radiance: [(em?.x ?? 0) * factor, (em?.y ?? 0) * factor, (em?.z ?? 0) * factor] as [number, number, number],
+                    emissiveTexture,
+                    emissiveFactor: factor,
                 };
             }),
         );
