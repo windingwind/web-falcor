@@ -72,6 +72,13 @@ struct Scene
     StructuredBuffer<float4> webfalcorBvhNodes;
     uint webfalcorBvhTrisOffset;
 
+    // WebFalcor SoftwareRT: SDF grid instances live at
+    // [webfalcorSdfInstanceFirst, +Count) in geometryInstances and are
+    // intersected by a linear loop in the RaytracingInline override
+    // (procedural AABBs have no software-BVH entries; counts are tiny).
+    uint webfalcorSdfInstanceFirst;
+    uint webfalcorSdfInstanceCount;
+
     // WebFalcor: RaytracingAccelerationStructure has no WGSL representation
     // (slangc emits an invalid empty-typed binding). Removed for the raster
     // path; M6's SoftwareRT binds its BVH via SceneRayQuery instead.

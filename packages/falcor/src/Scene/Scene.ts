@@ -9,7 +9,7 @@
 import type { Device } from "../Core/API/Device.js";
 import { Buffer } from "../Core/API/Buffer.js";
 import { Texture } from "../Core/API/Texture.js";
-import { Sampler } from "../Core/API/Sampler.js";
+import { Sampler, TextureFilteringMode, TextureAddressingMode } from "../Core/API/Sampler.js";
 import { ResourceBindFlags, MemoryType, ResourceType } from "../Core/API/Types.js";
 import { ResourceFormat } from "../Core/API/Formats.js";
 import { DefineList } from "../Core/Program/DefineList.js";
@@ -35,6 +35,14 @@ import {
 } from "./SceneData.js";
 import { packBasicMaterialBlob, MaterialType, type BasicMaterialDesc, type MaterialHeaderDesc } from "./Material/MaterialData.js";
 import { assert, RuntimeError } from "../Core/Error.js";
+import type { NDSDFGrid } from "./SDFs/NDSDFGrid.js";
+
+/** One SDF grid instance (mirrors Scene::mSDFGrids + mSDFGridDesc + instance). */
+export interface SceneSDFGridDesc {
+    grid: NDSDFGrid;
+    materialID: number;
+    transform?: float4x4;
+}
 
 export interface SceneMeshDesc {
     vertices: StaticVertex[];
@@ -71,6 +79,10 @@ export class Scene {
     emissiveActiveTriangleCount = 0;
     private bvhTrisOffset = 0;
     private invTransposeOffset = 0;
+    readonly sdfGrids: SceneSDFGridDesc[];
+    private sdfInstanceFirst = 0;
+    private sdfAtlasTexture: Texture | null = null;
+    private sdfSampler: Sampler | null = null;
     private envMap: EnvMap | null = null;
     private hasEmissiveMaterials = false;
     private materialTypes = new Set<MaterialType>();
@@ -85,7 +97,9 @@ export class Scene {
         materials: SceneMaterialDesc[],
         lights: AnalyticLight[] = [],
         textureManager: TextureManager = new TextureManager(),
+        sdfGrids: SceneSDFGridDesc[] = [],
     ) {
+        this.sdfGrids = sdfGrids;
         // Geometry-less scenes are legal (pure-volume scenes like smoke.pyscene):
         // buffers pad to one zeroed struct and ray queries simply miss.
         this.hasEmissiveMaterials = materials.some((m) => m.header?.emissive ?? false);
@@ -118,6 +132,21 @@ export class Scene {
                 geometryIndex: 0,
             });
         });
+        // SDF grid instances append after the triangle instances (the
+        // RaytracingInline override loops them linearly; no BVH entries).
+        this.sdfInstanceFirst = instances.length;
+        sdfGrids.forEach((desc, i) => {
+            instances.push({
+                type: GeometryType.SDFGrid,
+                globalMatrixID: meshes.length + i,
+                materialID: desc.materialID,
+                geometryID: i,
+                vbOffset: 0,
+                ibOffset: 0,
+                instanceIndex: meshes.length + i,
+                geometryIndex: 0,
+            });
+        });
         this.instanceCount = instances.length;
         this.drawList = meshDescs.map((m, i) => ({
             indexCount: m.indexCount,
@@ -144,17 +173,20 @@ export class Scene {
         make("meshes", packMeshDescs(meshDescs), 32);
         make("geometryInstances", packGeometryInstances(instances), 32);
 
-        // Node transforms: one node per mesh (globalMatrixID == mesh index).
-        // One merged buffer (16-storage-buffer budget, same pattern as the
-        // BVH merge): world matrices then inverse-transpose matrices.
-        const world = new Float32Array(meshes.length * 2 * 16);
-        meshes.forEach((mesh, i) => {
-            const m = mesh.transform ?? float4x4.identity();
+        // Node transforms: one node per mesh, then one per SDF grid instance
+        // (globalMatrixID indexes this order). One merged buffer
+        // (16-storage-buffer budget, same pattern as the BVH merge): world
+        // matrices then inverse-transpose matrices.
+        const nodeCount = meshes.length + sdfGrids.length;
+        const world = new Float32Array(nodeCount * 2 * 16);
+        const putNode = (i: number, m: float4x4) => {
             world.set(m.toArray(), i * 16);
-            world.set(transpose(inverse(m)).toArray(), (meshes.length + i) * 16);
-        });
+            world.set(transpose(inverse(m)).toArray(), (nodeCount + i) * 16);
+        };
+        meshes.forEach((mesh, i) => putNode(i, mesh.transform ?? float4x4.identity()));
+        sdfGrids.forEach((desc, i) => putNode(meshes.length + i, desc.transform ?? float4x4.identity()));
         make("worldMatrices", world, 64);
-        this.invTransposeOffset = meshes.length;
+        this.invTransposeOffset = nodeCount;
 
         // Software RT BVH over world-space triangles (DESIGN.md §5).
         const bvhTris: BvhTriangle[] = [];
@@ -299,9 +331,27 @@ export class Scene {
     /** Mirrors Scene::getSceneDefines(). */
     getSceneDefines(): DefineList {
         return new DefineList().addAll({
-            SCENE_GEOMETRY_TYPES: 1 << GeometryType.TriangleMesh,
+            SCENE_GEOMETRY_TYPES: (1 << GeometryType.TriangleMesh) | (this.sdfGrids.length > 0 ? 1 << GeometryType.SDFGrid : 0),
             SCENE_GRID_COUNT: this.gridCount,
-            SCENE_SDF_GRID_COUNT: 0,
+            // Mirrors Scene::getSceneSDFGridDefines (defaults for all types:
+            // VoxelSphereTracing, NumericDiscontinuous, 256 iterations).
+            SCENE_SDF_GRID_COUNT: this.sdfGrids.length,
+            SCENE_SDF_GRID_MAX_LOD_COUNT: this.sdfGrids.length > 0 ? Math.max(...this.sdfGrids.map((g) => g.grid.lodCount)) : 0,
+            SCENE_SDF_GRID_IMPLEMENTATION: this.sdfGrids.length > 0 ? 1 : 0, // NormalizedDenseGrid
+            SCENE_SDF_GRID_IMPLEMENTATION_NDSDF: 1,
+            SCENE_SDF_GRID_IMPLEMENTATION_SVS: 2,
+            SCENE_SDF_GRID_IMPLEMENTATION_SBS: 3,
+            SCENE_SDF_GRID_IMPLEMENTATION_SVO: 4,
+            SCENE_SDF_NO_INTERSECTION_METHOD: 0,
+            SCENE_SDF_NO_VOXEL_SOLVER: 1,
+            SCENE_SDF_VOXEL_SPHERE_TRACING: 2,
+            SCENE_SDF_NO_GRADIENT_EVALUATION_METHOD: 0,
+            SCENE_SDF_GRADIENT_NUMERIC_DISCONTINUOUS: 1,
+            SCENE_SDF_GRADIENT_NUMERIC_CONTINUOUS: 2,
+            SCENE_SDF_VOXEL_INTERSECTION_METHOD: 2,
+            SCENE_SDF_GRADIENT_EVALUATION_METHOD: 1,
+            SCENE_SDF_SOLVER_MAX_ITERATION_COUNT: 256,
+            SCENE_SDF_OPTIMIZE_VISIBILITY_RAYS: 1,
             SCENE_HAS_INDEXED_VERTICES: 1,
             SCENE_HAS_16BIT_INDICES: 0,
             SCENE_HAS_32BIT_INDICES: 1,
@@ -451,6 +501,53 @@ export class Scene {
             if (this.gridVolumes.length > 0) console.error(`# gridVolumes bind failed: ${e}`);
         }
         scene["indexData"]["data0"] = this.buffers["indices"]!;
+
+        // SDF grids (one instance set; sdfGrid0 bindings survive only with
+        // SCENE_SDF_GRID_COUNT > 0 — trySet semantics via try/catch).
+        try {
+            scene["webfalcorSdfInstanceFirst"] = this.sdfInstanceFirst;
+            scene["webfalcorSdfInstanceCount"] = this.sdfGrids.length;
+        } catch {
+            /* SDF-less kernel variant */
+        }
+        if (this.sdfGrids.length > 0) {
+            if (this.sdfGrids.length > 1) throw new RuntimeError("Scene: only one SDF grid supported (gScene.sdfGrid0; WGSL has no binding arrays)");
+            const grid = this.sdfGrids[0]!.grid;
+            if (!this.sdfAtlasTexture) {
+                const atlas = grid.buildAtlas();
+                this.sdfAtlasTexture = new Texture(this.device, {
+                    type: ResourceType.Texture3D,
+                    width: atlas.width,
+                    height: atlas.height,
+                    depth: atlas.depth,
+                    format: ResourceFormat.R8Snorm,
+                    bindFlags: ResourceBindFlags.ShaderResource,
+                    name: "Scene::sdfGrid0Atlas",
+                });
+                this.sdfAtlasTexture.setSubresourceBlob(0, 0, new Uint8Array(atlas.data.buffer));
+                // Native NDSDFGrid::SharedData sampler: linear min/mag/mip, clamp.
+                this.sdfSampler = new Sampler(this.device, {
+                    magFilter: TextureFilteringMode.Linear,
+                    minFilter: TextureFilteringMode.Linear,
+                    mipFilter: TextureFilteringMode.Linear,
+                    addressModeU: TextureAddressingMode.Clamp,
+                    addressModeV: TextureAddressingMode.Clamp,
+                    addressModeW: TextureAddressingMode.Clamp,
+                });
+            }
+            try {
+                const v = scene["sdfGrid0"] as ShaderVar;
+                v["atlasTexture"] = this.sdfAtlasTexture;
+                v["sampler"] = this.sdfSampler!;
+                v["lodCount"] = grid.lodCount;
+                v["coarsestLODAsLevel"] = grid.coarsestLODAsLevel;
+                v["coarsestLODGridWidth"] = grid.coarsestLODGridWidth;
+                v["coarsestLODNormalizationFactor"] = grid.coarsestLODNormalizationFactor;
+                v["narrowBandThickness"] = grid.narrowBandThickness;
+            } catch (e) {
+                console.error(`# sdfGrid0 bind failed: ${e}`);
+            }
+        }
 
         // Env map (dummy black texture + zeroed uniforms when absent).
         if (this.envMap) {

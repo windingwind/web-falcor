@@ -1,0 +1,107 @@
+/**
+ * FEATURE VERIFY — SDF grids on GPU vs native, two scenes:
+ *
+ * 1) The upstream scene test test_NDSDFGrids.py scene: unmodified
+ *    NDSDFGrid.pyscene (SDFGrid.createNDGrid(narrowBandThickness=2.5) +
+ *    generateCheeseValues(128, 0) — fully procedural, bit-exact host build),
+ *    SceneDebugger mode 'GeometryID', 640x360, frame 64. Exact per-pixel
+ *    footprint compare (sphere-traced hit/miss silhouette). InstanceID is
+ *    not comparable on this scene: the native MESH-LESS TLAS reports
+ *    CommittedInstanceID()+1 (local native artifact; with a mesh present the
+ *    IDs are correct — see the oracle script header).
+ * 2) tests/oracle/assets/ndsdf-mesh.pyscene (floor quad + the same cheese),
+ *    mode 'InstanceID': verifies instance ordering (mesh 0, SDF 1) and
+ *    triangle-BVH vs SDF closest-hit competition.
+ *
+ * The default FaceNormal mode is also not comparable on this machine (native
+ * NDSDF gradients come out NaN; web normals are geometrically consistent).
+ *
+ * Regenerate the oracles with:
+ *   Falcor/build/linux-gcc/bin/Debug/Mogwai --script tests/oracle/render-native-feature-ndsdf.py --headless
+ */
+
+import { initScripting, runGraphScript, runSceneScript } from "@web-falcor/falcor";
+import "@web-falcor/render-passes";
+import parseExr from "parse-exr";
+import { gpuTest, expectEq } from "../harness/registry.js";
+
+const width = 640;
+const height = 360;
+
+async function runCase(
+    device: Parameters<Parameters<typeof gpuTest>[1]>[0]["device"],
+    mode: string,
+    sceneUrl: string,
+    oracleName: string,
+): Promise<void> {
+    const source = `
+from falcor import *
+g = RenderGraph('SceneDebugger')
+SceneDebugger = createPass('SceneDebugger', {'mode': '${mode}'})
+g.addPass(SceneDebugger, 'SceneDebugger')
+g.markOutput('SceneDebugger.output')
+m.addGraph(g)
+`;
+    const [graph] = await runGraphScript(device, source);
+    const sceneSource = await (await fetch(sceneUrl)).text();
+    const scene = await runSceneScript(device, sceneSource, sceneUrl.slice(0, sceneUrl.lastIndexOf("/")));
+    scene.camera.setAspectRatio(width / height);
+
+    graph!.onResize(width, height);
+    graph!.setScene(scene);
+    const ctx = device.renderContext;
+    for (let f = 0; f < 64; f++) graph!.execute(ctx);
+
+    const web = new Float32Array((await ctx.readTextureSubresource(graph!.getOutput("SceneDebugger.output")!)).buffer);
+
+    const res = await fetch(`/tests/oracle/out-native/${oracleName}.SceneDebugger.output.64.exr`);
+    const { data, width: nw, height: nh } = parseExr(await res.arrayBuffer(), 1015) as { data: Float32Array; width: number; height: number };
+    expectEq(nw, width, "oracle resolution");
+
+    let sum = 0;
+    let bad = 0;
+    for (let y = 0; y < height; y++) {
+        for (let x = 0; x < width; x++) {
+            const wi = (y * width + x) * 4;
+            const ni = ((nh - 1 - y) * nw + x) * 4;
+            let pixelMax = 0;
+            for (let c = 0; c < 3; c++) {
+                const d = Math.abs(web[wi + c]! - data[ni + c]!);
+                sum += d;
+                pixelMax = Math.max(pixelMax, d);
+            }
+            if (pixelMax > 1e-2) bad++;
+        }
+    }
+    const mean = sum / (width * height * 3);
+    console.error(`# ${oracleName} (${mode}): mean=${mean.toExponential(2)} bad@1e-2=${bad}`);
+    // ASCII footprint diff: '.' match-bg, '#' match-body, 'W' web-only, 'N' native-only.
+    for (let gy = 0; gy < 30; gy++) {
+        let line = "";
+        for (let gx = 0; gx < 96; gx++) {
+            const x = Math.floor(((gx + 0.5) * width) / 96);
+            const y = Math.floor(((gy + 0.5) * height) / 30);
+            const wi = (y * width + x) * 4;
+            const ni = ((nh - 1 - y) * nw + x) * 4;
+            const webBody = Math.abs(web[wi]! - 0.153) < 0.05;
+            const natBody = Math.abs(data[ni]! - 0.153) < 0.05;
+            line += webBody && natBody ? "#" : webBody ? "W" : natBody ? "N" : ".";
+        }
+        console.error(`#F ${line}`);
+    }
+    for (const [px, py] of [[320, 180], [320, 120], [260, 180], [400, 200], [10, 10]] as const) {
+        const wi = (py * width + px) * 4;
+        const ni = ((nh - 1 - py) * nw + px) * 4;
+        console.error(`#   (${px},${py}) web=${web[wi]!.toFixed(3)},${web[wi + 1]!.toFixed(3)},${web[wi + 2]!.toFixed(3)} nat=${data[ni]!.toFixed(3)},${data[ni + 1]!.toFixed(3)},${data[ni + 2]!.toFixed(3)}`);
+    }
+    // Constant pseudocolors per ID: only sphere-traced silhouette pixels may
+    // flip on float divergence.
+    expectEq(mean < 1e-3, true, `${oracleName} mean ${mean}`);
+    expectEq(bad <= 400, true, `${oracleName} bad pixels ${bad}`);
+}
+
+gpuTest("FeatureNDSDFGrid.matchesNativeOracle", async ({ device }) => {
+    await initScripting("/node_modules/pyodide");
+    await runCase(device, "GeometryID", "/Falcor/tests/image_tests/scene/scenes/NDSDFGrid.pyscene", "oracle-feature-ndsdf");
+    await runCase(device, "InstanceID", "/tests/oracle/assets/ndsdf-mesh.pyscene", "oracle-feature-ndsdf-mesh");
+});

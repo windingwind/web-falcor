@@ -6,14 +6,19 @@
  * bound as gScene.webfalcorBvhNodes/webfalcorBvhTris). The public surface
  * (SceneRayQuery<UseAlphaTest> implementing ISceneRayQuery) matches upstream.
  *
- * v1 semantics: triangle geometry only; RAY_FLAG_ACCEPT_FIRST_HIT honored via
- * traceVisibilityRay; instanceInclusionMask ignored (all scenes use 0xff so
- * far -- divergence recorded in the parity matrix).
+ * Semantics: triangle geometry via the BVH; SDF grid instances via a linear
+ * loop (SDFGridIntersector — upstream code; instance counts are tiny).
+ * RAY_FLAG_ACCEPT_FIRST_HIT honored via traceVisibilityRay;
+ * instanceInclusionMask ignored (all scenes use 0xff so far -- divergence
+ * recorded in the parity matrix).
  */
 #include "Scene/SceneDefines.slangh"
 
 __exported import Scene.Shading;
 __exported import Scene.SceneRayQueryInterface;
+#if SCENE_SDF_GRID_COUNT > 0
+import Scene.Intersection;
+#endif
 
 /** Moller-Trumbore against a precomputed (v0, e1, e2) triangle. */
 bool intersectTriangle(const float3 origin, const float3 dir, const float tMin, const float tMax,
@@ -133,6 +138,47 @@ bool traverseBvh(const Ray ray, const bool anyHit, const bool useAlphaTest,
     return found;
 }
 
+#if SCENE_SDF_GRID_COUNT > 0
+/** Closest SDF grid instance hit (mirrors the native sdfGridIntersection shader
+    over procedural AABBs; linear loop instead — see header note). */
+bool intersectSdfGrids(const Ray ray, const float tMaxIn, out uint outInstance, out SDFGridHitData outHitData, out float outT)
+{
+    outInstance = 0;
+    outHitData = {};
+    outT = tMaxIn;
+    bool found = false;
+    for (uint i = 0; i < gScene.webfalcorSdfInstanceCount; i++)
+    {
+        GeometryInstanceID instanceID;
+        instanceID.index = gScene.webfalcorSdfInstanceFirst + i;
+        Ray clipped = ray;
+        clipped.tMax = outT;
+        SDFGridHitData hitData;
+        float t;
+        if (SDFGridIntersector::intersect(clipped, instanceID, 0, hitData, t))
+        {
+            outT = t;
+            outInstance = instanceID.index;
+            outHitData = hitData;
+            found = true;
+        }
+    }
+    return found;
+}
+
+/** Any-hit over SDF grid instances (visibility rays). */
+bool intersectSdfGridsAny(const Ray ray)
+{
+    for (uint i = 0; i < gScene.webfalcorSdfInstanceCount; i++)
+    {
+        GeometryInstanceID instanceID;
+        instanceID.index = gScene.webfalcorSdfInstanceFirst + i;
+        if (SDFGridIntersector::intersectAny(ray, instanceID, 0)) return true;
+    }
+    return false;
+}
+#endif
+
 /** Scene ray query (mirrors upstream SceneRayQuery<UseAlphaTest>). */
 struct SceneRayQuery<let UseAlphaTest : int> : ISceneRayQuery
 {
@@ -152,6 +198,23 @@ struct SceneRayQuery<let UseAlphaTest : int> : ISceneRayQuery
             hit = HitInfo(triangleHit);
             hitT = t;
         }
+#if SCENE_SDF_GRID_COUNT > 0
+        {
+            // SDF grids compete with the closest triangle hit.
+            const float sdfTMax = hit.isValid() ? hitT : ray.tMax;
+            uint sdfInstance;
+            SDFGridHitData sdfHitData;
+            float sdfT;
+            if (intersectSdfGrids(ray, sdfTMax, sdfInstance, sdfHitData, sdfT))
+            {
+                SDFGridHit sdfGridHit;
+                sdfGridHit.instanceID.index = sdfInstance;
+                sdfGridHit.hitData = sdfHitData;
+                hit = HitInfo(sdfGridHit);
+                hitT = sdfT;
+            }
+        }
+#endif
         return hit;
     }
 
@@ -160,6 +223,10 @@ struct SceneRayQuery<let UseAlphaTest : int> : ISceneRayQuery
         uint instance, primitive;
         float2 barycentrics;
         float t;
-        return !traverseBvh(ray, true, UseAlphaTest != 0, instance, primitive, barycentrics, t);
+        if (traverseBvh(ray, true, UseAlphaTest != 0, instance, primitive, barycentrics, t)) return false;
+#if SCENE_SDF_GRID_COUNT > 0
+        if (intersectSdfGridsAny(ray)) return false;
+#endif
+        return true;
     }
 };

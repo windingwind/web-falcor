@@ -12,6 +12,8 @@
 import type { Device } from "../Core/API/Device.js";
 import { Grid } from "./Volume/Grid.js";
 import { GridVolume, type GridSlot } from "./Volume/GridVolume.js";
+import { NDSDFGrid } from "./SDFs/NDSDFGrid.js";
+import type { SceneSDFGridDesc } from "./Scene.js";
 import { Scene, type SceneMaterialDesc, type SceneMeshDesc } from "./Scene.js";
 import { GltfImporter } from "./Importer/GltfImporter.js";
 import { FbxImporter } from "./Importer/FbxImporter.js";
@@ -300,6 +302,15 @@ export function makeTransform(
     return m;
 }
 
+/** Recorded SDF grid state (mirrors SDFGrid python bindings; ND grid only). */
+export class SDFGridBridge {
+    ops: { kind: "cheese"; gridWidth: number; seed: number }[] = [];
+    constructor(readonly narrowBandThickness: number) {}
+    generateCheeseValues(gridWidth: number, seed: number): void {
+        this.ops.push({ kind: "cheese", gridWidth: Number(gridWidth), seed: Number(seed) });
+    }
+}
+
 /** Recorded GridVolume state (eager copies; PyProxies die at script exit). */
 export class GridVolumeBridge {
     name: string;
@@ -411,6 +422,22 @@ export class SceneBuilderBridge {
         );
     }
 
+    private sdfGridsList: { grid: SDFGridBridge; material: MaterialBridge }[] = [];
+    private sdfInstances: { nodeID: number; sdfGridID: number }[] = [];
+
+    addSDFGrid(grid: SDFGridBridge, material: MaterialBridge): number {
+        const g = unwrapGuard(grid) as SDFGridBridge;
+        const copy = new SDFGridBridge(Number(g.narrowBandThickness));
+        copy.ops = g.ops.map((o) => ({ ...o }));
+        this.sdfGridsList.push({ grid: copy, material: unwrapGuard(material) });
+        return this.sdfGridsList.length - 1;
+    }
+
+    addSDFGridInstance(nodeID: number, sdfGridID: number): void {
+        if (!this.nodes[nodeID]) throw new RuntimeError(`addSDFGridInstance: unknown node ${nodeID}`);
+        this.sdfInstances.push({ nodeID: Number(nodeID), sdfGridID: Number(sdfGridID) });
+    }
+
     addGridVolume(volume: GridVolumeBridge): void {
         const v = unwrapGuard(volume);
         // Eager-copy scalar props (albedo may be a python float3 proxy).
@@ -496,7 +523,29 @@ export class SceneBuilderBridge {
             angle: l.angle,
         }));
 
-        const scene = new Scene(device, meshes, materials, lights, textureManager);
+        // SDF grids (ND implementation; instances reference builder nodes).
+        const sdfGrids: SceneSDFGridDesc[] = [];
+        const builtSdfGrids = this.sdfGridsList.map(({ grid, material }) => {
+            const nd = new NDSDFGrid(grid.narrowBandThickness);
+            for (const op of grid.ops) {
+                if (op.kind === "cheese") nd.generateCheeseValues(op.gridWidth, op.seed);
+            }
+            if (nd.lodCount === 0) throw new RuntimeError("SDFGrid: no values set (only generateCheeseValues is supported so far)");
+            let materialID = materialIDs.get(material);
+            if (materialID === undefined) {
+                materialID = materials.length;
+                materials.push(material.toDesc());
+                materialIDs.set(material, materialID);
+            }
+            return { nd, materialID };
+        });
+        for (const inst of this.sdfInstances) {
+            const built = builtSdfGrids[inst.sdfGridID];
+            if (!built) throw new RuntimeError(`addSDFGridInstance: unknown SDF grid ${inst.sdfGridID}`);
+            sdfGrids.push({ grid: built.nd, materialID: built.materialID, transform: this.nodes[inst.nodeID]! });
+        }
+
+        const scene = new Scene(device, meshes, materials, lights, textureManager, sdfGrids);
         if (this.camera) {
             scene.camera.setPosition(this.camera.getPosition());
             scene.camera.setTarget(this.camera.getTarget());
