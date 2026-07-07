@@ -323,16 +323,31 @@ Settings (JSON + localStorage), CryptoUtils (SHA-1 → WebCrypto), Threading/Tas
 ### 6.9 `DiffRendering/` (WARDiffPathTracer)
 
 Slang **autodiff is a compiler feature**, not an API feature — `fwd_diff`/`bwd_diff`
-lower to plain compute code, so it compiles to WGSL. **VERIFIED on-device** (M8
-feasibility gate): the `autodiff-feasibility` GPU test runs a `bwd_diff`/`fwd_diff`
-kernel through the real WebGPU device and both produce the exact analytic gradient
-(f(x)=x²k+sin(x) → 2xk+cos(x) = 11.58385 at x=2,k=3). So differentiable rendering is
-portable in principle — the full WARDiffPathTracer port (WAR reparameterization,
-DiffSceneQuery, the diff RT megakernel) is a large pending effort but not blocked at
-the language level. Gradient accumulation needs the float-atomic CAS shim. The PyTorch
-training loop does not exist in-browser; gradients are exposed as buffers (readable
-into JS / ONNX-web pipelines). Marked 🟡 (mechanism works and is device-verified;
-full pass + ecosystem pending).
+lower to plain compute code, so it compiles to WGSL. **The primitive is VERIFIED
+on-device** (M8 feasibility gate): the `autodiff-feasibility` GPU test runs a
+`bwd_diff`/`fwd_diff` kernel through the real WebGPU device and both produce the exact
+analytic gradient (f(x)=x²k+sin(x) → 2xk+cos(x) = 11.58385 at x=2,k=3).
+
+**BUT the full WARDiffPathTracer is blocked by a compiler crash** (🟠, tooling, not a
+web limitation). Porting the pass past the mechanical steps —
+
+1. RT-pipeline raygen → compute megakernel over `SceneRayQuery` (`import
+   Scene.Raytracing` is vestigial; the diff-scene queries already use
+   `SceneRayQuery`/`RaytracingInline`);
+2. `TriangleHit` brace-init → member-wise (the HitInfo override adds an
+   `__init(PackedHitInfo)` that shadows aggregate init);
+3. explicit `detach()` at each implicit derivative-drop into a non-differentiable
+   path record (newer Slang enforces `E41031` where 2024.1.34 did not) —
+
+reaches a point where **`slangc` v2026.12.2 SEGFAULTS while differentiating the full
+`tracePaths` path tracer**, for BOTH forward and reverse mode and BOTH the `wgsl` and
+`hlsl` targets (so it is an autodiff-codegen crash, not a WGSL issue). Native Falcor
+builds this pass with Slang **2024.1.34** (no WGSL backend, but does not crash on the
+autodiff). The web port is therefore gated on a Slang version that has both the WGSL
+backend **and** the fix for this large-function autodiff crash. When unblocked, the
+mechanical override recipe above applies; gradient accumulation needs the float-atomic
+CAS shim, and the PyTorch training loop is replaced by gradient buffers readable into
+JS / ONNX-web pipelines.
 
 ## 7. Testing strategy
 
@@ -436,7 +451,7 @@ output is diffed against native Mogwai running the same file.
 | 🟠 runnable on web; native oracle impossible on this machine | 1 | HalfRes (needs FBX importer for Arcade.pyscene; and the oracle GPU lacks ROV support, so native Mogwai cannot run GBufferRaster-based graphs at all) |
 | 🟡 GBuffer remainder | 3 | GBufferRaster, GBufferRasterAlpha, MVecRaster — ⚠ all raster-based: native-ROV oracle blocker |
 | 🟡 needs larger pass ports (M8 scope) | 4 | SVGF + TAA (both passes PORTED + feature-verified vs native via GBufferRT feature graphs — TAA mse 8.4e-7, SVGF mean 4.2e-4; the upstream graphs themselves stay oracle-blocked: GBufferRaster needs ROV the native driver lacks), VBufferRaster, VBufferRasterAlpha |
-| 🟡 M8 flagship items | 3 | WARDiffPathTracer ×3 (Slang autodiff device-verified §6.9; full diff-RT port pending) |
+| 🟠 compiler-blocked | 3 | WARDiffPathTracer ×3 — autodiff primitive device-verified, but slangc v2026.12.2 segfaults differentiating the full path tracer (§6.9) |
 | ❌ impossible on web (CUDA/driver tech) | 2 | OptixDenoiser, DLSS |
 
 \* also needs SDF grid geometry (M7 remainder).
@@ -503,7 +518,7 @@ output is diffed against native Mogwai running the same file.
 | TestPasses | ✅/❌ | GPU-test passes ✅; PyTorch interop pass ❌ (CUDA) |
 | ToneMapper | ✅ | |
 | Utils (Composite/CrossFade/GaussianBlur) | ✅ | |
-| WARDiffPathTracer | 🟡 | §6.9 |
+| WARDiffPathTracer | 🟠 compiler-blocked | §6.9 (autodiff primitive works; full-path-tracer diff crashes slangc v2026.12.2) |
 | WhittedRayTracer | 🟡 | SoftwareRT, recursion → loop |
 
 ### 8.3 Ecosystem / tooling
