@@ -66,7 +66,7 @@ export class HaltonSamplePattern implements CPUSampleGenerator {
 }
 
 /** std::mt19937 (32-bit Mersenne Twister, default seed 5489). */
-class Mt19937 {
+export class Mt19937 {
     private mt = new Uint32Array(624);
     private index = 625;
 
@@ -120,7 +120,7 @@ function uniformInt(rng: Mt19937, b: number): number {
 }
 
 /** libstdc++ std::generate_canonical<float, 24, mt19937>: one draw, float math. */
-function canonicalFloat(rng: Mt19937): number {
+export function canonicalFloat(rng: Mt19937): number {
     let ret = Math.fround(Math.fround(rng.next()) / 4294967296);
     if (ret >= 1) ret = 0.99999994; // nextafter(1.f, 0.f)
     return ret;

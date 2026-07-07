@@ -90,4 +90,6 @@ export const kShaderOverrides: Readonly<Record<string, string>> = {
     "RenderPasses/RTXDIPass/LoadShadingData.slang": "WebFalcor/Overrides/RenderPasses/RTXDIPass/LoadShadingData.slang",
     // Outputs moved into the FinalShading block (max 4 bind groups) + write-only.
     "RenderPasses/RTXDIPass/FinalShading.cs.slang": "WebFalcor/Overrides/RenderPasses/RTXDIPass/FinalShading.cs.slang",
+    // Per-LOD Texture3D binding array -> one R8Snorm atlas stacked along Z.
+    "Scene/SDFs/NormalizedDenseSDFGrid/NDSDFGrid.slang": "WebFalcor/Overrides/Scene/SDFs/NormalizedDenseSDFGrid/NDSDFGrid.slang",
 };
