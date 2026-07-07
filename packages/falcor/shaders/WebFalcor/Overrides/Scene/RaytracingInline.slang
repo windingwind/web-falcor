@@ -139,8 +139,19 @@ bool traverseBvh(const Ray ray, const bool anyHit, const bool useAlphaTest,
 }
 
 #if SCENE_SDF_GRID_COUNT > 0
-/** Closest SDF grid instance hit (mirrors the native sdfGridIntersection shader
-    over procedural AABBs; linear loop instead — see header note). */
+// The native SDF path puts each procedural primitive (whole grid for NDSDF/SVO;
+// one AABB per brick for SBS/SVS) in the BLAS, so the closest-hit shader calls
+// intersectSDF once per primitive the ray crosses. WebFalcor's software RT has
+// no procedural BLAS, so we loop the primitives here: NDSDF/SVO have a single
+// primitive (ID 0); SBS/SVS loop their brick AABBs (intersectSDF clips to
+// aabbs[primitiveID] and rejects fast, so the loop is mostly AABB tests).
+#if SCENE_SDF_GRID_IMPLEMENTATION == SCENE_SDF_GRID_IMPLEMENTATION_SBS || SCENE_SDF_GRID_IMPLEMENTATION == SCENE_SDF_GRID_IMPLEMENTATION_SVS
+#define WEBFALCOR_SDF_PRIMITIVE_COUNT gScene.webfalcorSdfBrickCount
+#else
+#define WEBFALCOR_SDF_PRIMITIVE_COUNT 1u
+#endif
+
+/** Closest SDF grid instance hit (see the primitive-loop note above). */
 bool intersectSdfGrids(const Ray ray, const float tMaxIn, out uint outInstance, out SDFGridHitData outHitData, out float outT)
 {
     outInstance = 0;
@@ -151,16 +162,19 @@ bool intersectSdfGrids(const Ray ray, const float tMaxIn, out uint outInstance, 
     {
         GeometryInstanceID instanceID;
         instanceID.index = gScene.webfalcorSdfInstanceFirst + i;
-        Ray clipped = ray;
-        clipped.tMax = outT;
-        SDFGridHitData hitData;
-        float t;
-        if (SDFGridIntersector::intersect(clipped, instanceID, 0, hitData, t))
+        for (uint prim = 0; prim < WEBFALCOR_SDF_PRIMITIVE_COUNT; prim++)
         {
-            outT = t;
-            outInstance = instanceID.index;
-            outHitData = hitData;
-            found = true;
+            Ray clipped = ray;
+            clipped.tMax = outT;
+            SDFGridHitData hitData;
+            float t;
+            if (SDFGridIntersector::intersect(clipped, instanceID, prim, hitData, t))
+            {
+                outT = t;
+                outInstance = instanceID.index;
+                outHitData = hitData;
+                found = true;
+            }
         }
     }
     return found;
@@ -173,7 +187,10 @@ bool intersectSdfGridsAny(const Ray ray)
     {
         GeometryInstanceID instanceID;
         instanceID.index = gScene.webfalcorSdfInstanceFirst + i;
-        if (SDFGridIntersector::intersectAny(ray, instanceID, 0)) return true;
+        for (uint prim = 0; prim < WEBFALCOR_SDF_PRIMITIVE_COUNT; prim++)
+        {
+            if (SDFGridIntersector::intersectAny(ray, instanceID, prim)) return true;
+        }
     }
     return false;
 }

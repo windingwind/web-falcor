@@ -36,10 +36,11 @@ import {
 import { packBasicMaterialBlob, MaterialType, type BasicMaterialDesc, type MaterialHeaderDesc } from "./Material/MaterialData.js";
 import { assert, RuntimeError } from "../Core/Error.js";
 import type { NDSDFGrid } from "./SDFs/NDSDFGrid.js";
+import { SDFSBS } from "./SDFs/SDFSBS.js";
 
 /** One SDF grid instance (mirrors Scene::mSDFGrids + mSDFGridDesc + instance). */
 export interface SceneSDFGridDesc {
-    grid: NDSDFGrid;
+    grid: NDSDFGrid | SDFSBS;
     materialID: number;
     transform?: float4x4;
 }
@@ -83,6 +84,7 @@ export class Scene {
     private sdfInstanceFirst = 0;
     private sdfAtlasTexture: Texture | null = null;
     private sdfSampler: Sampler | null = null;
+    private sbsResources: { aabbs: Buffer; indirection: Texture; bricks: Texture; sampler: Sampler } | null = null;
     private envMap: EnvMap | null = null;
     private hasEmissiveMaterials = false;
     private materialTypes = new Set<MaterialType>();
@@ -329,6 +331,113 @@ export class Scene {
     }
 
     /** Mirrors Scene::getSceneDefines(). */
+    /** Binds gScene.sdfGrid0 for the NormalizedDenseGrid implementation. */
+    private bindSdfNd(scene: ShaderVar, grid: NDSDFGrid): void {
+        if (!this.sdfAtlasTexture) {
+            const atlas = grid.buildAtlas();
+            this.sdfAtlasTexture = new Texture(this.device, {
+                type: ResourceType.Texture3D,
+                width: atlas.width,
+                height: atlas.height,
+                depth: atlas.depth,
+                format: ResourceFormat.R8Snorm,
+                bindFlags: ResourceBindFlags.ShaderResource,
+                name: "Scene::sdfGrid0Atlas",
+            });
+            this.sdfAtlasTexture.setSubresourceBlob(0, 0, new Uint8Array(atlas.data.buffer));
+            // Native NDSDFGrid::SharedData sampler: linear min/mag/mip, clamp.
+            this.sdfSampler = new Sampler(this.device, {
+                magFilter: TextureFilteringMode.Linear,
+                minFilter: TextureFilteringMode.Linear,
+                mipFilter: TextureFilteringMode.Linear,
+                addressModeU: TextureAddressingMode.Clamp,
+                addressModeV: TextureAddressingMode.Clamp,
+                addressModeW: TextureAddressingMode.Clamp,
+            });
+        }
+        try {
+            const v = scene["sdfGrid0"] as ShaderVar;
+            v["atlasTexture"] = this.sdfAtlasTexture;
+            v["sampler"] = this.sdfSampler!;
+            v["lodCount"] = grid.lodCount;
+            v["coarsestLODAsLevel"] = grid.coarsestLODAsLevel;
+            v["coarsestLODGridWidth"] = grid.coarsestLODGridWidth;
+            v["coarsestLODNormalizationFactor"] = grid.coarsestLODNormalizationFactor;
+            v["narrowBandThickness"] = grid.narrowBandThickness;
+        } catch (e) {
+            console.error(`# sdfGrid0 (ND) bind failed: ${e}`);
+        }
+    }
+
+    /** Binds gScene.sdfGrid0 for the SparseBrickSet implementation. */
+    private bindSdfSbs(scene: ShaderVar, grid: SDFSBS): void {
+        if (!this.sbsResources) {
+            const storage = ResourceBindFlags.ShaderResource;
+            // AABB StructuredBuffer: 32-byte stride (min.xyz @0, max.xyz @16).
+            const aabbData = new Float32Array(grid.aabbs.length * 8);
+            grid.aabbs.forEach((a, i) => {
+                aabbData.set(a.min, i * 8);
+                aabbData.set(a.max, i * 8 + 4);
+            });
+            const aabbs = new Buffer(this.device, {
+                size: Math.max(aabbData.byteLength, 32),
+                structSize: 32,
+                bindFlags: storage | ResourceBindFlags.UnorderedAccess,
+                memoryType: MemoryType.DeviceLocal,
+                name: "Scene::sdfGrid0Aabbs",
+            });
+            aabbs.setBlob(new Uint8Array(aabbData.buffer));
+
+            const vbpa = grid.virtualBricksPerAxis;
+            const indirection = new Texture(this.device, {
+                type: ResourceType.Texture3D,
+                width: vbpa,
+                height: vbpa,
+                depth: vbpa,
+                format: ResourceFormat.R32Uint,
+                bindFlags: storage,
+                name: "Scene::sdfGrid0Indirection",
+            });
+            indirection.setSubresourceBlob(0, 0, new Uint8Array(grid.indirection.buffer));
+
+            const bricks = new Texture(this.device, {
+                type: ResourceType.Texture2D,
+                width: grid.brickTextureDimensions[0],
+                height: grid.brickTextureDimensions[1],
+                format: ResourceFormat.R32Float,
+                bindFlags: storage,
+                name: "Scene::sdfGrid0Bricks",
+            });
+            bricks.setSubresourceBlob(0, 0, new Uint8Array(grid.brickTexture.buffer));
+
+            // Native SDFSBS::SharedData sampler: linear, clamp (brick edges).
+            const sampler = new Sampler(this.device, {
+                magFilter: TextureFilteringMode.Linear,
+                minFilter: TextureFilteringMode.Linear,
+                mipFilter: TextureFilteringMode.Linear,
+                addressModeU: TextureAddressingMode.Clamp,
+                addressModeV: TextureAddressingMode.Clamp,
+                addressModeW: TextureAddressingMode.Clamp,
+            });
+            this.sbsResources = { aabbs, indirection, bricks, sampler };
+        }
+        try {
+            const v = scene["sdfGrid0"] as ShaderVar;
+            v["aabbs"] = this.sbsResources.aabbs;
+            v["indirectionBuffer"] = this.sbsResources.indirection;
+            v["bricks"] = this.sbsResources.bricks;
+            v["sampler"] = this.sbsResources.sampler;
+            v["virtualGridWidth"] = grid.gridWidth;
+            v["virtualBricksPerAxis"] = grid.virtualBricksPerAxis;
+            v["bricksPerAxis"] = grid.bricksPerAxis;
+            v["brickTextureDimensions"] = grid.brickTextureDimensions;
+            v["brickWidth"] = grid.brickWidth;
+            v["normalizationFactor"] = grid.normalizationFactor;
+        } catch (e) {
+            console.error(`# sdfGrid0 (SBS) bind failed: ${e}`);
+        }
+    }
+
     getSceneDefines(): DefineList {
         return new DefineList().addAll({
             SCENE_GEOMETRY_TYPES: (1 << GeometryType.TriangleMesh) | (this.sdfGrids.length > 0 ? 1 << GeometryType.SDFGrid : 0),
@@ -336,8 +445,9 @@ export class Scene {
             // Mirrors Scene::getSceneSDFGridDefines (defaults for all types:
             // VoxelSphereTracing, NumericDiscontinuous, 256 iterations).
             SCENE_SDF_GRID_COUNT: this.sdfGrids.length,
-            SCENE_SDF_GRID_MAX_LOD_COUNT: this.sdfGrids.length > 0 ? Math.max(...this.sdfGrids.map((g) => g.grid.lodCount)) : 0,
-            SCENE_SDF_GRID_IMPLEMENTATION: this.sdfGrids.length > 0 ? 1 : 0, // NormalizedDenseGrid
+            SCENE_SDF_GRID_MAX_LOD_COUNT: this.sdfGrids.length > 0 ? Math.max(...this.sdfGrids.map((g) => (g.grid instanceof SDFSBS ? 1 : g.grid.lodCount))) : 0,
+            // 1 = NormalizedDenseGrid, 3 = SparseBrickSet (all grids in a scene share a type).
+            SCENE_SDF_GRID_IMPLEMENTATION: this.sdfGrids.length > 0 ? (this.sdfGrids[0]!.grid instanceof SDFSBS ? 3 : 1) : 0,
             SCENE_SDF_GRID_IMPLEMENTATION_NDSDF: 1,
             SCENE_SDF_GRID_IMPLEMENTATION_SVS: 2,
             SCENE_SDF_GRID_IMPLEMENTATION_SBS: 3,
@@ -504,49 +614,18 @@ export class Scene {
 
         // SDF grids (one instance set; sdfGrid0 bindings survive only with
         // SCENE_SDF_GRID_COUNT > 0 — trySet semantics via try/catch).
+        const sbsGrid = this.sdfGrids.length > 0 && this.sdfGrids[0]!.grid instanceof SDFSBS ? (this.sdfGrids[0]!.grid as SDFSBS) : null;
         try {
             scene["webfalcorSdfInstanceFirst"] = this.sdfInstanceFirst;
             scene["webfalcorSdfInstanceCount"] = this.sdfGrids.length;
+            scene["webfalcorSdfBrickCount"] = sbsGrid ? sbsGrid.brickCount : 0;
         } catch {
             /* SDF-less kernel variant */
         }
         if (this.sdfGrids.length > 0) {
             if (this.sdfGrids.length > 1) throw new RuntimeError("Scene: only one SDF grid supported (gScene.sdfGrid0; WGSL has no binding arrays)");
-            const grid = this.sdfGrids[0]!.grid;
-            if (!this.sdfAtlasTexture) {
-                const atlas = grid.buildAtlas();
-                this.sdfAtlasTexture = new Texture(this.device, {
-                    type: ResourceType.Texture3D,
-                    width: atlas.width,
-                    height: atlas.height,
-                    depth: atlas.depth,
-                    format: ResourceFormat.R8Snorm,
-                    bindFlags: ResourceBindFlags.ShaderResource,
-                    name: "Scene::sdfGrid0Atlas",
-                });
-                this.sdfAtlasTexture.setSubresourceBlob(0, 0, new Uint8Array(atlas.data.buffer));
-                // Native NDSDFGrid::SharedData sampler: linear min/mag/mip, clamp.
-                this.sdfSampler = new Sampler(this.device, {
-                    magFilter: TextureFilteringMode.Linear,
-                    minFilter: TextureFilteringMode.Linear,
-                    mipFilter: TextureFilteringMode.Linear,
-                    addressModeU: TextureAddressingMode.Clamp,
-                    addressModeV: TextureAddressingMode.Clamp,
-                    addressModeW: TextureAddressingMode.Clamp,
-                });
-            }
-            try {
-                const v = scene["sdfGrid0"] as ShaderVar;
-                v["atlasTexture"] = this.sdfAtlasTexture;
-                v["sampler"] = this.sdfSampler!;
-                v["lodCount"] = grid.lodCount;
-                v["coarsestLODAsLevel"] = grid.coarsestLODAsLevel;
-                v["coarsestLODGridWidth"] = grid.coarsestLODGridWidth;
-                v["coarsestLODNormalizationFactor"] = grid.coarsestLODNormalizationFactor;
-                v["narrowBandThickness"] = grid.narrowBandThickness;
-            } catch (e) {
-                console.error(`# sdfGrid0 bind failed: ${e}`);
-            }
+            if (sbsGrid) this.bindSdfSbs(scene, sbsGrid);
+            else this.bindSdfNd(scene, this.sdfGrids[0]!.grid as NDSDFGrid);
         }
 
         // Env map (dummy black texture + zeroed uniforms when absent).

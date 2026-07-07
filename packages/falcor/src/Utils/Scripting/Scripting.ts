@@ -91,7 +91,7 @@ import sys
 sys.modules.pop('webfalcor_scene', None)  # registerJsModule per call; defeat import caching
 from webfalcor_scene import (sceneBuilder, _TriangleMesh,
     PointLight, DirectionalLight, DistantLight, StandardMaterial, ClothMaterial, HairMaterial,
-    PBRTDiffuseMaterial, PBRTConductorMaterial, Camera, _makeTransform, _makeEnvMap, _GridVolume, _SDFGridCreateND)
+    PBRTDiffuseMaterial, PBRTConductorMaterial, Camera, _makeTransform, _makeEnvMap, _GridVolume, _SDFGridCreate)
 
 # Python-side vector types with arithmetic (upstream pyscenes do e.g. size / 2);
 # the JS bridge reads .x/.y/.z/.w off any object.
@@ -185,21 +185,21 @@ class GridVolume:
         return _GridVolumeGuarded(name)
 Volume = GridVolume  # legacy pyscene alias (volume_test.pyscene)
 
-# SDF grids (NDSDFGrid implemented; sparse types pending — clear error beats
-# a silent wrong render).
+# SDF grids (NDSDFGrid + SparseBrickSet implemented; SVS/SVO pending — a
+# clear error beats a silent wrong render).
 class SDFGrid:
     @staticmethod
     def createNDGrid(narrowBandThickness=5.0):
-        return _SDFGridCreateND(narrowBandThickness)
+        return _SDFGridCreate('ndsdf', narrowBandThickness, 7)
+    @staticmethod
+    def createSBS(brickWidth=7, compressed=False, defaultGridWidth=256):
+        return _SDFGridCreate('sbs', 5.0, brickWidth)
     @staticmethod
     def createSVS(**kwargs):
-        raise NotImplementedError('web SDFGrid: SparseVoxelSet not ported yet (NDGrid available)')
-    @staticmethod
-    def createSBS(**kwargs):
-        raise NotImplementedError('web SDFGrid: SparseBrickSet not ported yet (NDGrid available)')
+        raise NotImplementedError('web SDFGrid: SparseVoxelSet not ported yet (NDGrid/SBS available)')
     @staticmethod
     def createSVO(**kwargs):
-        raise NotImplementedError('web SDFGrid: SparseVoxelOctree not ported yet (NDGrid available)')
+        raise NotImplementedError('web SDFGrid: SparseVoxelOctree not ported yet (NDGrid/SBS available)')
 `;
 
 /**
@@ -231,7 +231,7 @@ export async function runSceneScript(device: Device, source: string, baseUrl: st
         _makeTransform: makeTransform,
         _makeEnvMap: (path: string) => ({ path, intensity: 1 }),
         _GridVolume: (name = "") => new GridVolumeBridge(name),
-        _SDFGridCreateND: (narrowBandThickness = 5.0) => new SDFGridBridge(narrowBandThickness),
+        _SDFGridCreate: (type: string, narrowBandThickness = 5.0, brickWidth = 7) => new SDFGridBridge(type as "ndsdf" | "sbs", narrowBandThickness, brickWidth),
     };
     pyodide.registerJsModule("webfalcor_scene", sceneModule);
 

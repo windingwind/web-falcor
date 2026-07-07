@@ -13,6 +13,7 @@ import type { Device } from "../Core/API/Device.js";
 import { Grid } from "./Volume/Grid.js";
 import { GridVolume, type GridSlot } from "./Volume/GridVolume.js";
 import { NDSDFGrid } from "./SDFs/NDSDFGrid.js";
+import { SDFSBS } from "./SDFs/SDFSBS.js";
 import type { SceneSDFGridDesc } from "./Scene.js";
 import { Scene, type SceneMaterialDesc, type SceneMeshDesc } from "./Scene.js";
 import { GltfImporter } from "./Importer/GltfImporter.js";
@@ -302,10 +303,16 @@ export function makeTransform(
     return m;
 }
 
-/** Recorded SDF grid state (mirrors SDFGrid python bindings; ND grid only). */
+export type SDFGridType = "ndsdf" | "sbs";
+
+/** Recorded SDF grid state (mirrors SDFGrid python bindings; ND + SBS types). */
 export class SDFGridBridge {
     ops: { kind: "cheese"; gridWidth: number; seed: number }[] = [];
-    constructor(readonly narrowBandThickness: number) {}
+    constructor(
+        readonly type: SDFGridType,
+        readonly narrowBandThickness: number,
+        readonly brickWidth: number,
+    ) {}
     generateCheeseValues(gridWidth: number, seed: number): void {
         this.ops.push({ kind: "cheese", gridWidth: Number(gridWidth), seed: Number(seed) });
     }
@@ -427,7 +434,7 @@ export class SceneBuilderBridge {
 
     addSDFGrid(grid: SDFGridBridge, material: MaterialBridge): number {
         const g = unwrapGuard(grid) as SDFGridBridge;
-        const copy = new SDFGridBridge(Number(g.narrowBandThickness));
+        const copy = new SDFGridBridge(g.type, Number(g.narrowBandThickness), Number(g.brickWidth));
         copy.ops = g.ops.map((o) => ({ ...o }));
         this.sdfGridsList.push({ grid: copy, material: unwrapGuard(material) });
         return this.sdfGridsList.length - 1;
@@ -523,26 +530,27 @@ export class SceneBuilderBridge {
             angle: l.angle,
         }));
 
-        // SDF grids (ND implementation; instances reference builder nodes).
+        // SDF grids (ND + SBS implementations; instances reference builder nodes).
         const sdfGrids: SceneSDFGridDesc[] = [];
         const builtSdfGrids = this.sdfGridsList.map(({ grid, material }) => {
-            const nd = new NDSDFGrid(grid.narrowBandThickness);
+            const built: NDSDFGrid | SDFSBS = grid.type === "sbs" ? new SDFSBS(grid.brickWidth) : new NDSDFGrid(grid.narrowBandThickness);
             for (const op of grid.ops) {
-                if (op.kind === "cheese") nd.generateCheeseValues(op.gridWidth, op.seed);
+                if (op.kind === "cheese") built.generateCheeseValues(op.gridWidth, op.seed);
             }
-            if (nd.lodCount === 0) throw new RuntimeError("SDFGrid: no values set (only generateCheeseValues is supported so far)");
+            const built_ok = built instanceof SDFSBS ? built.brickCount > 0 : built.lodCount > 0;
+            if (!built_ok) throw new RuntimeError("SDFGrid: no values set (only generateCheeseValues is supported so far)");
             let materialID = materialIDs.get(material);
             if (materialID === undefined) {
                 materialID = materials.length;
                 materials.push(material.toDesc());
                 materialIDs.set(material, materialID);
             }
-            return { nd, materialID };
+            return { grid: built, materialID };
         });
         for (const inst of this.sdfInstances) {
             const built = builtSdfGrids[inst.sdfGridID];
             if (!built) throw new RuntimeError(`addSDFGridInstance: unknown SDF grid ${inst.sdfGridID}`);
-            sdfGrids.push({ grid: built.nd, materialID: built.materialID, transform: this.nodes[inst.nodeID]! });
+            sdfGrids.push({ grid: built.grid, materialID: built.materialID, transform: this.nodes[inst.nodeID]! });
         }
 
         const scene = new Scene(device, meshes, materials, lights, textureManager, sdfGrids);

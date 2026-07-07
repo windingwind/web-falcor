@@ -78,6 +78,9 @@ struct Scene
     // (procedural AABBs have no software-BVH entries; counts are tiny).
     uint webfalcorSdfInstanceFirst;
     uint webfalcorSdfInstanceCount;
+    // SparseBrickSet: brick count for the RaytracingInline brick-AABB loop
+    // (no procedural BLAS on the software RT path). Zero for other grid types.
+    uint webfalcorSdfBrickCount;
 
     // WebFalcor: RaytracingAccelerationStructure has no WGSL representation
     // (slangc emits an invalid empty-typed binding). Removed for the raster
