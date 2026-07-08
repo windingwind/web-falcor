@@ -1,12 +1,6 @@
 /**
- * SceneBuilder bridge for .pyscene execution (user decision docs §11.1:
- * the .py path is primary). Mirrors the subset of Falcor's SceneBuilder python
- * API used by scene files: importScene, TriangleMesh factories, BasicMaterial
- * subclasses, addNode/addMeshInstance, analytic lights and env maps.
- *
- * Python execution is synchronous, but asset loading on the web is not — so
- * builder calls record commands, and resolve() fetches assets and constructs
- * the Scene afterwards.
+ * SceneBuilder bridge for .pyscene execution (docs §11.1). Builder calls record
+ * commands synchronously; resolve() then fetches assets and constructs the Scene.
  */
 
 import type { Device } from "../Core/API/Device.js";
@@ -28,6 +22,7 @@ import { MaterialType } from "./Material/MaterialData.js";
 import { float2, float3, float4 } from "../Utils/Math/Vector.js";
 import { float4x4, matrixFromTranslation, matrixFromScaling, mulMat } from "../Utils/Math/Matrix.js";
 import { RuntimeError } from "../Core/Error.js";
+import { Logger } from "../Utils/Logger.js";
 
 /** The python prelude wraps bridge objects in a setattr guard; JS entry
  *  points unwrap back to the underlying bridge instance. */
@@ -129,6 +124,38 @@ export function toF3(v: { x: number; y: number; z: number } | null | undefined, 
 export function toF4(v: { x: number; y: number; z: number; w: number } | null | undefined, fallback?: float4): float4 {
     if (!v) return fallback ?? new float4(0, 0, 0, 0);
     return new float4(v.x, v.y, v.z, v.w);
+}
+
+/**
+ * Applies one deferred `getMaterial(name).<prop> = value` edit onto an imported
+ * material desc; returns false for an unrecognized prop so the caller can warn.
+ */
+function applyMaterialEdit(mat: SceneMaterialDesc, prop: string, value: unknown): boolean {
+    const header = (mat.header ??= {});
+    const basic = mat.basic;
+    const num = () => Number(value);
+    switch (prop) {
+        case "emissiveFactor": basic.emissiveFactor = num(); return true;
+        case "roughness": {
+            const sp = basic.specular ?? new float4(0, 1, 0, 0);
+            basic.specular = new float4(sp.x, num(), sp.z, sp.w); // specular.g = roughness
+            return true;
+        }
+        case "metallic": {
+            const sp = basic.specular ?? new float4(0, 1, 0, 0);
+            basic.specular = new float4(sp.x, sp.y, num(), sp.w); // specular.b = metallic
+            return true;
+        }
+        case "indexOfRefraction": header.ior = num(); return true;
+        case "specularTransmission": basic.specularTransmission = num(); return true;
+        case "diffuseTransmission": basic.diffuseTransmission = num(); return true;
+        case "doubleSided": header.doubleSided = Boolean(value); return true;
+        case "thinSurface": header.thinSurface = Boolean(value); return true;
+        case "nestedPriority": header.nestedPriority = num(); return true;
+        case "volumeAbsorption": basic.volumeAbsorption = toF3(value as { x: number; y: number; z: number }); return true;
+        case "baseColor": basic.baseColor = toF4(value as { x: number; y: number; z: number; w: number }); return true;
+        default: return false;
+    }
 }
 
 /** Camera description assembled in pyscenes (Camera() + sceneBuilder.addCamera). */
@@ -414,15 +441,39 @@ export class SceneBuilderBridge {
     materialEdits: { name: string; prop: string; value: unknown }[] = [];
 
     /**
-     * Multiplier applied to every imported material's emissiveFactor in
-     * resolve(). Mirrors the common pyscene idiom of boosting all emissives to
-     * expose an interior (BistroInterior_Wine.pyscene does `*= 1000`), which the
-     * web bridge can't express as a per-material loop (materials aren't known
-     * until the import resolves). Non-emissive materials stay dark.
+     * Multiplier applied to every imported material's emissiveFactor in resolve() —
+     * the web analog of the pyscene idiom that boosts all emissives (e.g. `*= 1000`).
      */
     globalEmissiveScale = 1;
     boostAllEmissive(scale: number): void {
         this.globalEmissiveScale *= Number(scale);
+    }
+
+    /**
+     * Yields one stand-in backing emissiveFactor with globalEmissiveScale, for the
+     * `for m in sceneBuilder.materials: m.emissiveFactor *= N` idiom; other writes warn.
+     */
+    get materials(): unknown[] {
+        const bridge = this;
+        const proxy = new Proxy(
+            {},
+            {
+                get(_t, prop) {
+                    if (typeof prop === "symbol") return undefined; // let pyodide probe iterator/thenable
+                    if (prop === "emissiveFactor") return bridge.globalEmissiveScale;
+                    return undefined; // other props unknown before import resolves
+                },
+                set(_t, prop, value) {
+                    if (prop === "emissiveFactor") {
+                        bridge.globalEmissiveScale = Number(value);
+                        return true;
+                    }
+                    Logger.warning(`sceneBuilder.materials[*].${String(prop)}: per-material writes over the whole list aren't supported pre-import; ignored`);
+                    return true;
+                },
+            },
+        );
+        return [proxy];
     }
 
     getMaterial(name: string): unknown {
@@ -433,7 +484,9 @@ export class SceneBuilderBridge {
             {},
             {
                 set(_t, prop, value) {
-                    edits.push({ name: matName, prop: String(prop), value: Number(value) });
+                    // Keep the raw value: bool (doubleSided) and float3 (volumeAbsorption)
+                    // props must survive to resolve(); Number() would mangle them.
+                    edits.push({ name: matName, prop: String(prop), value });
                     return true;
                 },
                 get(_t, prop) {
@@ -506,14 +559,9 @@ export class SceneBuilderBridge {
             const idx = importedMaterialNames.indexOf(edit.name);
             if (idx < 0) throw new RuntimeError(`SceneBuilder.getMaterial: unknown material '${edit.name}'`);
             const mat = materials[idx]!;
-            if (edit.prop === "emissiveFactor") mat.basic.emissiveFactor = Number(edit.value);
-            else if (edit.prop === "roughness") {
-                const sp = mat.basic.specular ?? new float4(0, 1, 0, 0);
-                mat.basic.specular = new float4(sp.x, Number(edit.value), sp.z, sp.w);
-            } else if (edit.prop === "metallic") {
-                const sp = mat.basic.specular ?? new float4(0, 1, 0, 0);
-                mat.basic.specular = new float4(sp.x, sp.y, Number(edit.value), sp.w);
-            } else throw new RuntimeError(`SceneBuilder.getMaterial: unsupported property '${edit.prop}'`);
+            if (!applyMaterialEdit(mat, edit.prop, edit.value)) {
+                Logger.warning(`SceneBuilder.getMaterial('${edit.name}').${edit.prop}: unsupported on the web bridge; ignored`);
+            }
         }
 
         // Global emissive boost (see globalEmissiveScale) — scales every imported
