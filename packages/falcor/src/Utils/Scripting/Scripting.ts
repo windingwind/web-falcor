@@ -127,6 +127,12 @@ class TriangleMesh:
     @staticmethod
     def createSphere(radius=1.0, segmentsU=32, segmentsV=32):
         return _TriangleMesh.createSphere(radius, segmentsU, segmentsV)
+    @staticmethod
+    def createDisk(radius=1.0, segments=32):
+        return _TriangleMesh.createDisk(radius, segments)
+    @staticmethod
+    def createFromFile(path, smoothNormals=False, flags=None):
+        return _TriangleMesh.createFromFile(path, smoothNormals)
 
 def Transform(translation=None, rotationEuler=None, rotationEulerDeg=None, scaling=None):
     return _makeTransform(translation, rotationEuler, rotationEulerDeg, scaling)
@@ -226,6 +232,8 @@ export async function runSceneScript(device: Device, source: string, baseUrl: st
             createQuad: (size?: { x: number; y: number } | null) => TriangleMesh.createQuad(size ? new float2(size.x, size.y) : undefined),
             createCube: (size?: VecLike | null) => TriangleMesh.createCube(size ? new float3(size.x, size.y, size.z) : undefined),
             createSphere: (radius?: number, segmentsU?: number, segmentsV?: number) => TriangleMesh.createSphere(radius, segmentsU, segmentsV),
+            createDisk: (radius?: number, segments?: number) => TriangleMesh.createDisk(radius, segments),
+            createFromFile: (path: string, smoothNormals?: boolean) => ({ vertices: [], indices: new Uint32Array(0), _fromFile: { path: String(path), smoothNormals: !!smoothNormals } }),
         },
         Camera: (_name = "") => new CameraBridge(),
         PointLight: (name = "") => new LightBridge(LightType.Point, name),

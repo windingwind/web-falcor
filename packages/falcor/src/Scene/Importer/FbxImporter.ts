@@ -334,4 +334,37 @@ export class FbxImporter {
         }
         return { meshes: meshDescs, materials, materialNames, nodes, animations, lights };
     }
+
+    /** Parses a single mesh asset (.obj/.ply/etc. via assimp) into one merged
+     *  local-space TriangleMesh, for TriangleMesh.createFromFile(). Materials and
+     *  node transforms are ignored (the caller assigns its own material/instance).
+     *  `filename` must keep the real extension so assimp picks the right importer. */
+    static async parseMeshOnly(bytes: Uint8Array, filename: string): Promise<{ vertices: StaticVertex[]; indices: Uint32Array }> {
+        const ajs = await getAssimp();
+        const files = new ajs.FileList();
+        files.AddFile(filename, bytes);
+        const result = ajs.ConvertFileList(files, "assjson");
+        if (!result.IsSuccess()) throw new RuntimeError(`TriangleMesh.createFromFile('${filename}'): assimp failed (${result.GetErrorCode()})`);
+        const json = JSON.parse(new TextDecoder().decode(result.GetFile(0).GetContent())) as AiScene;
+        const vertices: StaticVertex[] = [];
+        const indices: number[] = [];
+        for (const mesh of json.meshes ?? []) {
+            const base = vertices.length;
+            const count = mesh.vertices.length / 3;
+            const uvs = mesh.texturecoords?.[0];
+            for (let i = 0; i < count; i++) {
+                vertices.push({
+                    position: new float3(mesh.vertices[i * 3]!, mesh.vertices[i * 3 + 1]!, mesh.vertices[i * 3 + 2]!),
+                    normal: mesh.normals ? new float3(mesh.normals[i * 3]!, mesh.normals[i * 3 + 1]!, mesh.normals[i * 3 + 2]!) : new float3(0, 0, 1),
+                    tangent: new float4(0, 0, 0, 0),
+                    texCrd: uvs ? new float2(uvs[i * 2]!, uvs[i * 2 + 1]!) : new float2(0, 0),
+                });
+            }
+            for (const face of mesh.faces) if (face.length === 3) indices.push(base + face[0]!, base + face[1]!, base + face[2]!);
+        }
+        if (vertices.length === 0) throw new RuntimeError(`TriangleMesh.createFromFile('${filename}'): no geometry`);
+        const idx = new Uint32Array(indices);
+        generateTangents(vertices, idx);
+        return { vertices, indices: idx };
+    }
 }

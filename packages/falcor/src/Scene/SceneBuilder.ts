@@ -36,6 +36,8 @@ function unwrapGuard<T>(obj: T): T {
 export interface TriangleMeshDesc {
     vertices: StaticVertex[];
     indices: Uint32Array;
+    /** TriangleMesh.createFromFile: geometry is loaded from this asset in resolve(). */
+    _fromFile?: { path: string; smoothNormals: boolean };
 }
 
 /** Mirrors TriangleMesh factories (TriangleMesh.cpp). */
@@ -112,6 +114,22 @@ export const TriangleMesh = {
                 indices.push(i0, i1, i2, i2, i1, i3);
             }
         }
+        return { vertices, indices: new Uint32Array(indices) };
+    },
+
+    /** Disk in the XZ plane, normal +Y (mirrors TriangleMesh::createDisk). */
+    createDisk(radius = 1, segments = 32): TriangleMeshDesc {
+        const n = new float3(0, 1, 0);
+        const t0 = new float4(1, 0, 0, 1);
+        const vertices: StaticVertex[] = [{ position: new float3(0, 0, 0), normal: n, tangent: t0, texCrd: new float2(0.5, 0.5) }];
+        for (let i = 0; i <= segments; i++) {
+            const a = (i / segments) * 2 * Math.PI;
+            const x = Math.cos(a);
+            const z = Math.sin(a);
+            vertices.push({ position: new float3(x * radius, 0, z * radius), normal: n, tangent: t0, texCrd: new float2(0.5 + 0.5 * x, 0.5 + 0.5 * z) });
+        }
+        const indices: number[] = [];
+        for (let i = 1; i <= segments; i++) indices.push(0, i + 1, i); // CW from +Y for a +Y-facing front
         return { vertices, indices: new Uint32Array(indices) };
     },
 };
@@ -602,6 +620,18 @@ export class SceneBuilderBridge {
         // material's emissive contribution so interior emissives read as lights.
         if (this.globalEmissiveScale !== 1) {
             for (const mat of materials) mat.basic.emissiveFactor = (mat.basic.emissiveFactor ?? 1) * this.globalEmissiveScale;
+        }
+
+        // Resolve TriangleMesh.createFromFile() geometry (deferred async asset load).
+        for (const geo of this.meshGeometry) {
+            if (!geo._fromFile) continue;
+            const url = baseUrl ? `${baseUrl}/${geo._fromFile.path}` : geo._fromFile.path;
+            const res = await fetch(url);
+            if (!res.ok) throw new RuntimeError(`TriangleMesh.createFromFile: failed to fetch '${url}' (${res.status})`);
+            const loaded = await FbxImporter.parseMeshOnly(new Uint8Array(await res.arrayBuffer()), geo._fromFile.path);
+            geo.vertices = loaded.vertices;
+            geo.indices = loaded.indices;
+            geo._fromFile = undefined;
         }
 
         // Builder-added meshes (instanced via nodes).
