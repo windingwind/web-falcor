@@ -21,9 +21,11 @@ import { packLights, type AnalyticLight } from "./SceneData.js";
 import { TextureManager } from "./Material/TextureManager.js";
 import type { EnvMap } from "./Lights/EnvMap.js";
 import { buildLightCollection } from "./Lights/LightCollection.js";
+import { evaluateGlobals, computeSkinMatrices, skinVertices, type SceneAnimations, type SceneNode, type AnimationChannel, type SkinDesc } from "./Animation/SceneAnimation.js";
 import { decodeNormal2x16Host, type Vec3 } from "../Rendering/Lights/LightBVHTypes.js";
 import type { EmissiveTriangleInput } from "../Rendering/Lights/LightBVHBuilder.js";
 import { transformPoint } from "../Utils/Math/Matrix.js";
+import type { float3 } from "../Utils/Math/Vector.js";
 import {
     GeometryType,
     packGeometryInstances,
@@ -53,6 +55,11 @@ export interface SceneMeshDesc {
     materialID: number;
     /** World transform (row-major float4x4); identity if omitted. */
     transform?: float4x4;
+    /** Animated scenes: index into the node graph whose global matrix drives this
+     *  mesh's world transform (overrides `transform` each animated frame). */
+    nodeID?: number;
+    /** Skinned meshes: per-vertex joint binding; skinned to world in animate(). */
+    skin?: SkinDesc;
 }
 
 export interface SceneMaterialDesc {
@@ -91,6 +98,11 @@ export class Scene {
     emissiveActiveTriangleCount = 0;
     private bvhTrisOffset = 0;
     private invTransposeOffset = 0;
+    // Animation state (retained only for animated scenes; null otherwise).
+    private sourceMeshes: SceneMeshDesc[] | null = null;
+    private animData: SceneAnimations | null = null;
+    private animNodeCount = 0;
+    private bvhCapacityBytes = 0;
     readonly sdfGrids: SceneSDFGridDesc[];
     private sdfInstanceFirst = 0;
     private sdfAtlasTexture: Texture | null = null;
@@ -114,6 +126,8 @@ export class Scene {
         lights: AnalyticLight[] = [],
         textureManager: TextureManager = new TextureManager(),
         sdfGrids: SceneSDFGridDesc[] = [],
+        nodes: SceneNode[] = [],
+        animations: AnimationChannel[] = [],
     ) {
         this.sdfGrids = sdfGrids;
         // Geometry-less scenes are legal (pure-volume scenes like smoke.pyscene):
@@ -231,7 +245,28 @@ export class Scene {
         bvhMerged.set(bvh.nodes, 0);
         bvhMerged.set(bvh.tris, bvh.nodes.length);
         this.bvhTrisOffset = bvh.nodes.length / 4;
-        make("bvhNodes", bvhMerged, 16);
+        if (animations.length > 0 && nodes.length > 0) {
+            // Animated scenes rebuild the BVH every frame; over-allocate to the
+            // worst-case size (≤2N nodes + N tris) so animate() setBlobs in place —
+            // destroying/recreating a buffer still referenced by an in-flight submit
+            // is illegal.
+            const numTris = allIndices.length / 3;
+            this.bvhCapacityBytes = ((2 * numTris + 2) * 8 + numTris * 12) * 4;
+            const buf = new Buffer(this.device, { size: Math.max(this.bvhCapacityBytes, 16), structSize: 16, bindFlags: storage, memoryType: MemoryType.DeviceLocal, name: "Scene::bvhNodes" });
+            buf.setBlob(bvhMerged);
+            this.buffers["bvhNodes"] = buf;
+        } else {
+            make("bvhNodes", bvhMerged, 16);
+        }
+
+        // Retain source geometry + node graph for per-frame animation. Only for
+        // animated scenes, so static scenes (e.g. Bistro) keep zero overhead.
+        if (animations.length > 0 && nodes.length > 0) {
+            const duration = animations.reduce((d, ch) => Math.max(d, ch.times[ch.times.length - 1] ?? 0), 0);
+            this.sourceMeshes = meshes;
+            this.animData = { nodes, channels: animations, duration };
+            this.animNodeCount = nodeCount;
+        }
 
         // Analytic lights.
         this.lightCount = lights.length;
@@ -314,6 +349,85 @@ export class Scene {
 
     setEnvMap(envMap: EnvMap | null): void {
         this.envMap = envMap;
+    }
+
+    /** True if the scene has keyframe animations (and thus responds to animate()). */
+    isAnimated(): boolean {
+        return this.animData !== null;
+    }
+
+    /**
+     * Advances keyframe animation to `timeSec` (looped over the clip duration),
+     * re-uploading node world matrices and rebuilding the software-RT BVH over the
+     * new world-space triangles. Returns true if the scene animated (so the caller
+     * can reset accumulation); no-op for static scenes.
+     *
+     * Costs a full CPU BVH rebuild each call (no hardware/refit path yet), so it's
+     * intended for the small animated test scenes, not large static ones.
+     */
+    animate(timeSec: number): boolean {
+        if (!this.animData || !this.sourceMeshes) return false;
+        const meshes = this.sourceMeshes;
+        const dur = this.animData.duration;
+        const globals = evaluateGlobals(this.animData, dur > 0 ? timeSec % dur : 0);
+
+        // Per mesh: current world matrix + world-space vertex positions. Skinned
+        // meshes deform to world space on the CPU (identity world matrix, skinned
+        // verts written into the shared vertex buffer); rigid meshes ride their
+        // node's global matrix (object-space verts unchanged, matrix updated).
+        const worldMats: float4x4[] = [];
+        const worldPos: float3[][] = [];
+        let vbOffset = 0;
+        for (const mesh of meshes) {
+            if (mesh.skin) {
+                const skinned = skinVertices(mesh.vertices, mesh.skin, computeSkinMatrices(mesh.skin, globals));
+                this.buffers["vertices"]!.setBlob(packStaticVertices(skinned), vbOffset * 48);
+                worldMats.push(float4x4.identity());
+                worldPos.push(skinned.map((v) => v.position));
+            } else {
+                const m = mesh.nodeID !== undefined && globals[mesh.nodeID] ? globals[mesh.nodeID]! : (mesh.transform ?? float4x4.identity());
+                worldMats.push(m);
+                worldPos.push(mesh.vertices.map((v) => transformPoint(m, v.position)));
+            }
+            vbOffset += mesh.vertices.length;
+        }
+
+        // Rebuild the worldMatrices buffer (world + inverse-transpose halves) in place.
+        const nodeCount = this.animNodeCount;
+        const world = new Float32Array(nodeCount * 2 * 16);
+        const putNode = (i: number, m: float4x4) => {
+            world.set(m.toArray(), i * 16);
+            world.set(transpose(inverse(m)).toArray(), (nodeCount + i) * 16);
+        };
+        meshes.forEach((_m, i) => putNode(i, worldMats[i]!));
+        this.sdfGrids.forEach((desc, i) => putNode(meshes.length + i, desc.transform ?? float4x4.identity()));
+        this.buffers["worldMatrices"]!.setBlob(world);
+
+        // Rebuild the world-space triangle BVH over the current (rigid/skinned) verts.
+        const bvhTris: BvhTriangle[] = [];
+        meshes.forEach((mesh, meshID) => {
+            const wp = worldPos[meshID]!;
+            for (let p = 0; p < mesh.indices.length / 3; p++) {
+                bvhTris.push({
+                    v0: wp[mesh.indices[p * 3]!]!,
+                    v1: wp[mesh.indices[p * 3 + 1]!]!,
+                    v2: wp[mesh.indices[p * 3 + 2]!]!,
+                    instanceIndex: meshID,
+                    primitiveIndex: p,
+                });
+            }
+        });
+        const bvh = buildBvh(bvhTris);
+        if (bvhTris.length > 0) {
+            this.worldBounds = { min: [bvh.nodes[0]!, bvh.nodes[1]!, bvh.nodes[2]!], max: [bvh.nodes[4]!, bvh.nodes[5]!, bvh.nodes[6]!] };
+        }
+        const bvhMerged = new Float32Array(bvh.nodes.length + bvh.tris.length);
+        bvhMerged.set(bvh.nodes, 0);
+        bvhMerged.set(bvh.tris, bvh.nodes.length);
+        this.bvhTrisOffset = bvh.nodes.length / 4;
+        // Setblob in place into the worst-case-sized buffer (allocated in the ctor).
+        this.buffers["bvhNodes"]!.setBlob(bvhMerged.subarray(0, Math.min(bvhMerged.length, this.bvhCapacityBytes / 4)));
+        return true;
     }
 
     /** Per-emissive-triangle flux in LightCollection order (for power sampling). */

@@ -171,11 +171,16 @@ async function main() {
     const camControl = new CameraController(canvas);
     (window as unknown as { mogwai: ViewerState }).mogwai = state; // debug/test handle
 
+    let animStart = -1;
     function frame(now: number) {
         const cam = state.scene?.camera;
-        if (cam && camControl.update(cam, now) && state.graph) {
-            resetAccum(); // camera moved: restart path-tracer accumulation
+        let dirty = cam ? camControl.update(cam, now) : false;
+        // Advance scene animation (rebuilds geometry/BVH each frame; no-op if static).
+        if (state.playing && state.scene?.isAnimated()) {
+            if (animStart < 0) animStart = now;
+            if (state.scene.animate((now - animStart) / 1000)) dirty = true;
         }
+        if (dirty && state.graph) resetAccum(); // camera or geometry moved: restart accumulation
         if (state.playing && state.graph && state.output) {
             state.graph.execute(device.renderContext);
             const tex = state.graph.getOutput(state.output);

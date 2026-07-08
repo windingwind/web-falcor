@@ -12,6 +12,7 @@ import { SDFSVS } from "./SDFs/SDFSVS.js";
 import { SDFSVO } from "./SDFs/SDFSVO.js";
 import type { SceneSDFGridDesc } from "./Scene.js";
 import { Scene, type SceneMaterialDesc, type SceneMeshDesc } from "./Scene.js";
+import type { SceneNode, AnimationChannel } from "./Animation/SceneAnimation.js";
 import { GltfImporter } from "./Importer/GltfImporter.js";
 import { FbxImporter } from "./Importer/FbxImporter.js";
 import { TextureManager } from "./Material/TextureManager.js";
@@ -530,6 +531,8 @@ export class SceneBuilderBridge {
         const textureManager = new TextureManager();
         const meshes: SceneMeshDesc[] = [];
         const materials: SceneMaterialDesc[] = [];
+        const nodes: SceneNode[] = []; // retained scene-graph nodes (for animation)
+        const animations: AnimationChannel[] = [];
 
         const importedMaterialNames: string[] = [];
         for (const cmd of this.commands) {
@@ -549,7 +552,17 @@ export class SceneBuilderBridge {
                     const parsed = await GltfImporter.parseToDescs(bytes, url, textureManager);
                     materials.push(...parsed.materials);
                     importedMaterialNames.push(...parsed.materials.map(() => ""));
-                    for (const m of parsed.meshes) meshes.push({ ...m, materialID: m.materialID + materialOffset });
+                    // Offset the imported node graph so multiple imports don't collide.
+                    const nodeOffset = nodes.length;
+                    for (const n of parsed.nodes) nodes.push({ ...n, parent: n.parent >= 0 ? n.parent + nodeOffset : -1 });
+                    for (const ch of parsed.animations) animations.push({ ...ch, nodeID: ch.nodeID + nodeOffset });
+                    for (const m of parsed.meshes)
+                        meshes.push({
+                            ...m,
+                            materialID: m.materialID + materialOffset,
+                            nodeID: m.nodeID !== undefined ? m.nodeID + nodeOffset : undefined,
+                            skin: m.skin ? { ...m.skin, boneNodeIDs: m.skin.boneNodeIDs.map((n) => n + nodeOffset) } : undefined,
+                        });
                 }
             }
         }
@@ -622,7 +635,7 @@ export class SceneBuilderBridge {
             sdfGrids.push({ grid: built.grid, materialID: built.materialID, transform: this.nodes[inst.nodeID]! });
         }
 
-        const scene = new Scene(device, meshes, materials, lights, textureManager, sdfGrids);
+        const scene = new Scene(device, meshes, materials, lights, textureManager, sdfGrids, nodes, animations);
         if (this.camera) {
             scene.camera.setPosition(this.camera.getPosition());
             scene.camera.setTarget(this.camera.getTarget());
