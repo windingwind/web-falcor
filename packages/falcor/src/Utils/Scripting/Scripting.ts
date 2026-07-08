@@ -16,6 +16,7 @@ import { CameraBridge, GridVolumeBridge, LightBridge, MaterialBridge, SceneBuild
 import type { Scene } from "../../Scene/Scene.js";
 import { LightType, type StaticVertex } from "../../Scene/SceneData.js";
 import { MaterialType } from "../../Scene/Material/MaterialData.js";
+import { buildSphereGrid, buildBoxGrid } from "../../Scene/Volume/VDBLoader.js";
 import { float2, float3, float4 } from "../Math/Vector.js";
 
 interface PyodideApi {
@@ -91,7 +92,7 @@ import sys
 sys.modules.pop('webfalcor_scene', None)  # registerJsModule per call; defeat import caching
 from webfalcor_scene import (sceneBuilder, _TriangleMesh,
     PointLight, DirectionalLight, DistantLight, StandardMaterial, ClothMaterial, HairMaterial,
-    PBRTDiffuseMaterial, PBRTConductorMaterial, Camera, _makeTransform, _makeEnvMap, _GridVolume, _SDFGridCreate)
+    PBRTDiffuseMaterial, PBRTConductorMaterial, Camera, _makeTransform, _makeEnvMap, _GridVolume, _Grid, _SDFGridCreate)
 
 # Python-side vector types with arithmetic (upstream pyscenes do e.g. size / 2);
 # the JS bridge reads .x/.y/.z/.w off any object.
@@ -211,13 +212,22 @@ class _GridSlot:
     Density = 'density'
     Emission = 'emission'
 _gvProps = {'name', 'densityScale', 'emissionScale', 'albedo', 'anisotropy',
-            'emissionMode', 'emissionTemperature'}
+            'emissionMode', 'emissionTemperature', 'densityGrid'}
 _GridVolumeGuarded = _guarded(_GridVolume, _gvProps)
 class GridVolume:
     GridSlot = _GridSlot
     def __new__(cls, name=''):
         return _GridVolumeGuarded(name)
 Volume = GridVolume  # legacy pyscene alias (volume_test.pyscene)
+
+# Procedural density grids (two_volumes.pyscene).
+class Grid:
+    @staticmethod
+    def createSphere(radius, voxelSize):
+        return _Grid.createSphere(radius, voxelSize)
+    @staticmethod
+    def createBox(width, height, depth, voxelSize):
+        return _Grid.createBox(width, height, depth, voxelSize)
 
 # SDF grids (NDSDFGrid + SparseBrickSet implemented; SVS/SVO pending — a
 # clear error beats a silent wrong render).
@@ -290,6 +300,10 @@ export async function runSceneScript(device: Device, source: string, baseUrl: st
         _makeTransform: makeTransform,
         _makeEnvMap: (path: string) => ({ path, intensity: 1 }),
         _GridVolume: (name = "") => new GridVolumeBridge(name),
+        _Grid: {
+            createSphere: (radius: number, voxelSize: number) => ({ _proceduralGrid: buildSphereGrid(radius, voxelSize) }),
+            createBox: (width: number, height: number, depth: number, voxelSize: number) => ({ _proceduralGrid: buildBoxGrid(width, height, depth, voxelSize) }),
+        },
         _SDFGridCreate: (type: string, narrowBandThickness = 5.0, brickWidth = 7) => new SDFGridBridge(type as "ndsdf" | "sbs", narrowBandThickness, brickWidth),
     };
     pyodide.registerJsModule("webfalcor_scene", sceneModule);

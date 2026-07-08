@@ -6,6 +6,7 @@
 import type { Device } from "../Core/API/Device.js";
 import { Grid } from "./Volume/Grid.js";
 import { GridVolume, type GridSlot } from "./Volume/GridVolume.js";
+import { buildNanoVDBGrid, type ParsedFloatGrid } from "./Volume/VDBLoader.js";
 import { NDSDFGrid } from "./SDFs/NDSDFGrid.js";
 import { SDFSBS } from "./SDFs/SDFSBS.js";
 import { SDFSVS } from "./SDFs/SDFSVS.js";
@@ -414,6 +415,7 @@ export class GridVolumeBridge {
     anisotropy = 0;
     emissionTemperature = 0;
     grids: { slot: string; path: string; gridname: string }[] = [];
+    proceduralGrids: { slot: string; parsed: ParsedFloatGrid }[] = [];
 
     constructor(name = "") {
         this.name = String(name);
@@ -422,6 +424,11 @@ export class GridVolumeBridge {
     loadGrid(slot: unknown, path: unknown, gridname: unknown): boolean {
         this.grids.push({ slot: String(slot), path: String(path), gridname: String(gridname) });
         return true;
+    }
+
+    /** volume.densityGrid = Grid.createSphere/createBox(...) — a procedural grid. */
+    set densityGrid(g: { _proceduralGrid?: ParsedFloatGrid } | null) {
+        if (g?._proceduralGrid) this.proceduralGrids.push({ slot: "Density", parsed: g._proceduralGrid });
     }
 }
 
@@ -599,6 +606,7 @@ export class SceneBuilderBridge {
         copy.anisotropy = Number(v.anisotropy);
         copy.emissionTemperature = Number(v.emissionTemperature);
         copy.grids = v.grids.map((g) => ({ slot: String(g.slot), path: String(g.path), gridname: String(g.gridname) }));
+        copy.proceduralGrids = v.proceduralGrids.slice();
         this.gridVolumesList.push(copy);
     }
 
@@ -757,6 +765,9 @@ export class SceneBuilderBridge {
             for (const g of v.grids) {
                 const url = baseUrl ? `${baseUrl}/${g.path}` : g.path;
                 vol.setGrid(g.slot as GridSlot, await Grid.createFromUrl(device, url, g.gridname));
+            }
+            for (const pg of v.proceduralGrids) {
+                vol.setGrid(pg.slot as GridSlot, new Grid(device, buildNanoVDBGrid(pg.parsed)));
             }
             scene.gridVolumes.push(vol);
         }

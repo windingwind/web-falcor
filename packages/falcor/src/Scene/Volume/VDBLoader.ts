@@ -24,6 +24,59 @@ export interface ParsedFloatGrid {
     leafValues: Float32Array[];
 }
 
+/** Builds a ParsedFloatGrid by sampling a density function over a world-space AABB
+ *  at `voxelSize` resolution (for TriangleMesh-free procedural volumes). */
+function buildProceduralGrid(
+    density: (wx: number, wy: number, wz: number) => number,
+    minW: [number, number, number],
+    maxW: [number, number, number],
+    voxelSize: number,
+): ParsedFloatGrid {
+    const leafFloor = (w: number) => Math.floor(Math.floor(w / voxelSize) / 8) * 8;
+    const idxCeil = (w: number) => Math.ceil(w / voxelSize);
+    const leafOrigins: [number, number, number][] = [];
+    const leafMasks: Uint8Array[] = [];
+    const leafValues: Float32Array[] = [];
+    for (let lz = leafFloor(minW[2]); lz <= idxCeil(maxW[2]); lz += 8)
+        for (let ly = leafFloor(minW[1]); ly <= idxCeil(maxW[1]); ly += 8)
+            for (let lx = leafFloor(minW[0]); lx <= idxCeil(maxW[0]); lx += 8) {
+                const values = new Float32Array(512);
+                const mask = new Uint8Array(64);
+                let any = false;
+                for (let n = 0; n < 512; n++) {
+                    const ix = lx + (n & 7);
+                    const iy = ly + ((n >> 3) & 7);
+                    const iz = lz + ((n >> 6) & 7);
+                    const d = density(ix * voxelSize, iy * voxelSize, iz * voxelSize);
+                    if (d > 0) {
+                        values[n] = d;
+                        mask[n >> 3]! |= 1 << (n & 7);
+                        any = true;
+                    }
+                }
+                if (any) {
+                    leafOrigins.push([lx, ly, lz]);
+                    leafMasks.push(mask);
+                    leafValues.push(values);
+                }
+            }
+    return { translation: [0, 0, 0], scale: voxelSize, background: 0, leafOrigins, leafMasks, leafValues };
+}
+
+/** Procedural unit-density sphere (mirrors Grid::createSphere). */
+export function buildSphereGrid(radius: number, voxelSize: number): ParsedFloatGrid {
+    const r2 = radius * radius;
+    return buildProceduralGrid((x, y, z) => (x * x + y * y + z * z <= r2 ? 1 : 0), [-radius, -radius, -radius], [radius, radius, radius], voxelSize);
+}
+
+/** Procedural unit-density box (mirrors Grid::createBox). */
+export function buildBoxGrid(width: number, height: number, depth: number, voxelSize: number): ParsedFloatGrid {
+    const hx = width / 2;
+    const hy = height / 2;
+    const hz = depth / 2;
+    return buildProceduralGrid((x, y, z) => (Math.abs(x) <= hx && Math.abs(y) <= hy && Math.abs(z) <= hz ? 1 : 0), [-hx, -hy, -hz], [hx, hy, hz], voxelSize);
+}
+
 function halfToFloat(h: number): number {
     const s = (h & 0x8000) >> 15;
     const e = (h & 0x7c00) >> 10;
