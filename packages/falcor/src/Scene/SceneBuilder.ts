@@ -548,6 +548,7 @@ export class SceneBuilderBridge {
         const materials: SceneMaterialDesc[] = [];
         const nodes: SceneNode[] = []; // retained scene-graph nodes (for animation)
         const animations: AnimationChannel[] = [];
+        const importedLights: AnalyticLight[] = []; // lights from imported assets (FBX)
 
         const importedMaterialNames: string[] = [];
         for (const cmd of this.commands) {
@@ -565,6 +566,7 @@ export class SceneBuilderBridge {
                     const nodeOffset = nodes.length;
                     for (const n of parsed.nodes) nodes.push({ ...n, parent: n.parent >= 0 ? n.parent + nodeOffset : -1 });
                     for (const ch of parsed.animations) animations.push({ ...ch, nodeID: ch.nodeID + nodeOffset });
+                    importedLights.push(...parsed.lights);
                     for (const m of parsed.meshes)
                         meshes.push({ ...m, materialID: m.materialID + materialOffset, nodeID: m.nodeID !== undefined ? m.nodeID + nodeOffset : undefined });
                 } else {
@@ -629,6 +631,7 @@ export class SceneBuilderBridge {
             intensity: l.getIntensity(),
             angle: l.angle,
         }));
+        lights.push(...importedLights); // lights imported from FBX/assets
 
         // SDF grids (ND + SBS implementations; instances reference builder nodes).
         const sdfGrids: SceneSDFGridDesc[] = [];

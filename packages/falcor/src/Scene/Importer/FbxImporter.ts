@@ -14,15 +14,15 @@
  * geometry is verified against native renders instead of buffer equality.
  */
 
-import { float2, float3, float4 } from "../../Utils/Math/Vector.js";
-import { float4x4, mulMat } from "../../Utils/Math/Matrix.js";
+import { float2, float3, float4, normalize3 } from "../../Utils/Math/Vector.js";
+import { float4x4, mulMat, transformPoint, transformVector } from "../../Utils/Math/Matrix.js";
 import { RuntimeError } from "../../Core/Error.js";
 import { generateTangents } from "../TangentSpace.js";
 import { packTextureHandle, TextureHandleMode } from "../Material/MaterialData.js";
 import { decodeDDSToRGBA } from "./DDSLoader.js";
 import type { SceneMaterialDesc, SceneMeshDesc } from "../Scene.js";
 import { decomposeTRS, type SceneNode, type AnimationChannel } from "../Animation/SceneAnimation.js";
-import type { StaticVertex } from "../SceneData.js";
+import { LightType, type AnalyticLight, type StaticVertex } from "../SceneData.js";
 import type { TextureManager } from "../Material/TextureManager.js";
 
 interface AiProperty {
@@ -68,11 +68,19 @@ interface AiAnimation {
     channels: AiNodeAnim[];
 }
 
+interface AiLight {
+    name: string; // matches a node in the hierarchy (gives the light's world transform)
+    type: number; // aiLightSource: 1=directional, 2=point, 3=spot
+    diffusecolor?: number[];
+    direction?: number[];
+}
+
 interface AiScene {
     rootnode: AiNode;
     meshes: AiMesh[];
     materials: AiMaterial[];
     animations?: AiAnimation[];
+    lights?: AiLight[];
 }
 
 let assimpModule: unknown | null = null;
@@ -133,7 +141,7 @@ export class FbxImporter {
         bytes: Uint8Array,
         baseUrl: string,
         textureManager: TextureManager,
-    ): Promise<{ meshes: SceneMeshDesc[]; materials: SceneMaterialDesc[]; materialNames: string[]; nodes: SceneNode[]; animations: AnimationChannel[] }> {
+    ): Promise<{ meshes: SceneMeshDesc[]; materials: SceneMaterialDesc[]; materialNames: string[]; nodes: SceneNode[]; animations: AnimationChannel[]; lights: AnalyticLight[] }> {
         const ajs = await getAssimp();
         const files = new ajs.FileList();
         files.AddFile("scene.fbx", bytes);
@@ -268,13 +276,17 @@ export class FbxImporter {
         // Retained node graph for animation (assimp channels target nodes by name).
         const nodes: SceneNode[] = [];
         const nameToNodeID = new Map<string, number>();
+        const nameToWorld = new Map<string, float4x4>(); // for placing lights on their nodes
         const visit = (node: AiNode, parentWorld: float4x4, parentID: number) => {
             const local = new float4x4();
             for (let r = 0; r < 4; r++) for (let c = 0; c < 4; c++) local.set(r, c, node.transformation[r * 4 + c]!);
             const world = mulMat(parentWorld, local);
             const nodeID = nodes.length;
             nodes.push({ parent: parentID, ...decomposeTRS(local) });
-            if (node.name) nameToNodeID.set(node.name, nodeID);
+            if (node.name) {
+                nameToNodeID.set(node.name, nodeID);
+                nameToWorld.set(node.name, world);
+            }
             for (const mi of node.meshes ?? []) {
                 const { vertices, indices } = getMesh(mi);
                 meshDescs.push({ vertices, indices, materialID: json.meshes[mi]!.materialindex, transform: world, nodeID });
@@ -304,9 +316,22 @@ export class FbxImporter {
             }
         }
 
+        // Analytic lights (directional/point), placed by their node's world transform.
+        const lights: AnalyticLight[] = [];
+        for (const L of json.lights ?? []) {
+            const nodeWorld = nameToWorld.get(L.name) ?? float4x4.identity();
+            const c = L.diffusecolor ?? [1, 1, 1];
+            const intensity = new float3(c[0]!, c[1]!, c[2]!);
+            if (L.type === 1 && L.direction) {
+                lights.push({ type: LightType.Directional, dirW: normalize3(transformVector(nodeWorld, new float3(L.direction[0]!, L.direction[1]!, L.direction[2]!))), intensity });
+            } else if (L.type === 2) {
+                lights.push({ type: LightType.Point, posW: transformPoint(nodeWorld, new float3(0, 0, 0)), intensity });
+            }
+        }
+
         if (skippedFormats.size > 0) {
             console.warn(`FbxImporter: skipped textures with undecodable formats [${[...skippedFormats].join(", ")}] (need a DDS/BC or TGA decoder); materials fall back to base color.`);
         }
-        return { meshes: meshDescs, materials, materialNames, nodes, animations };
+        return { meshes: meshDescs, materials, materialNames, nodes, animations, lights };
     }
 }
