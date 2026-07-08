@@ -1,15 +1,6 @@
 /**
- * Mogwai (web) — the interactive viewer that ties the framework together,
- * mirroring Source/Mogwai's core loop: load a render-graph .py script + a
- * .pyscene, execute the graph each frame, and present a marked output to the
- * canvas. Plain-DOM controls (graph/scene pickers, play/pause, output picker,
- * frame counter) stand in for the native Dear ImGui panels; the ImGui-wasm
- * RenderGraphEditor node UI is a documented stretch (docs §8.3) — it is
- * dev tooling orthogonal to Falcor's rendering parity.
- *
- * The render loop (runGraphScript/runSceneScript/RenderGraph.execute) is the
- * same code the GPU test harness verifies against native; this module adds the
- * swapchain-present path and the browser wiring around it.
+ * Mogwai (web) — the interactive viewer: load a render-graph .py + .pyscene,
+ * execute the graph each frame, present the marked output to the canvas.
  */
 
 import { Device, Logger, ProgramManager, RenderGraph, createPass, initScripting, initSlang, runGraphScript, runSceneScript, runPbrtScene, presentToCanvas, type Scene } from "@web-falcor/falcor";
@@ -68,9 +59,7 @@ function buildDefaultGraph(device: Device, width: number, height: number, scene:
 
 /**
  * Fetches the Falcor shader tree and wires the program/Slang system onto the
- * device — the web analog of Falcor's shader plugin loading, and a port of the
- * GPU test harness's setup (tests/gpu/harness/main.ts). Without it
- * device.programManager is undefined and any pass's ComputePass/RasterPass throws.
+ * device; without it device.programManager is undefined and any pass throws.
  */
 async function initProgramSystem(device: Device): Promise<void> {
     const list = (await (await fetch("/packages/falcor/shaders/generated/shader-file-list.json")).json()) as {
@@ -81,30 +70,71 @@ async function initProgramSystem(device: Device): Promise<void> {
     };
     const sources = new Map<string, string>();
     const missing: string[] = [];
-    const fetchInto = async (urlBase: string, files: string[]) => {
-        await Promise.all(
-            files.map(async (f) => {
-                const res = await fetch(`${urlBase}/${f}`);
-                if (res.ok) sources.set(f, await res.text());
-                else missing.push(`${urlBase}/${f} (${res.status})`);
-            }),
-        );
-    };
-    await Promise.all([
-        fetchInto("/Falcor/Source/Falcor", list.falcorFiles),
-        fetchInto("/Falcor/Source", list.renderPassFiles),
-        fetchInto("/packages/falcor/shaders", list.localFiles),
-        ...(list.externalFiles ?? []).map(async ({ path, url }) => {
+    // Every source path to fetch, tagged with the ProgramManager registry key
+    // (Falcor/Source files keep their repo-relative key; local/external the manifest path).
+    const jobs: { url: string; key: string }[] = [
+        ...list.falcorFiles.map((f) => ({ url: `/Falcor/Source/Falcor/${f}`, key: f })),
+        ...list.renderPassFiles.map((f) => ({ url: `/Falcor/Source/${f}`, key: f })),
+        ...list.localFiles.map((f) => ({ url: `/packages/falcor/shaders/${f}`, key: f })),
+        ...(list.externalFiles ?? []).map(({ path, url }) => ({ url, key: path })),
+    ];
+    // Bounded concurrency: firing all ~400 fetches at once spikes renderer memory
+    // enough to tear the WebGPU context down; a worker pool keeps it flat.
+    const CONCURRENCY = 24;
+    let next = 0;
+    const worker = async () => {
+        while (next < jobs.length) {
+            const { url, key } = jobs[next++]!;
             const res = await fetch(url);
-            if (res.ok) sources.set(path, await res.text());
+            if (res.ok) sources.set(key, await res.text());
             else missing.push(`${url} (${res.status})`);
-        }),
-    ]);
+        }
+    };
+    await Promise.all(Array.from({ length: CONCURRENCY }, worker));
     if (missing.length > 0) {
         Logger.warning(`shader registry: ${missing.length} files failed to fetch; first: ${missing.slice(0, 3).join(", ")}`);
     }
     await initSlang("/tools/slang-wasm/slang-wasm.js");
     device.setProgramManager(new ProgramManager(device, (p) => sources.get(p), [...sources.keys()]));
+}
+
+/**
+ * Resolves a `?scene=`/`?graph=` param to a fetchable URL: absolute/http(s) pass
+ * through; a bare value resolves under /Falcor/media (so `?scene=Arcade/Arcade.pyscene` works).
+ */
+function resolveAssetUrl(value: string): string {
+    return value.startsWith("/") || /^https?:/i.test(value) ? value : `/Falcor/media/${value}`;
+}
+
+/**
+ * Loads initial content from URL params (`?graph=`/`?script=`, `?scene=`, `?output=`),
+ * falling back to the cornell-box path tracer when none are given.
+ */
+async function loadInitialContent(state: ViewerState, device: Device): Promise<void> {
+    const params = new URLSearchParams(location.search);
+    const sceneParam = params.get("scene");
+    const graphParam = params.get("graph") ?? params.get("script");
+    const outputParam = params.get("output");
+
+    if (sceneParam) {
+        const url = resolveAssetUrl(sceneParam);
+        await loadScene(state, url, url.slice(0, url.lastIndexOf("/")));
+    }
+    if (graphParam) {
+        await loadGraph(state, resolveAssetUrl(graphParam));
+    } else if (!sceneParam) {
+        // No URL content: default cornell box + the GPU-oracle-verified graph.
+        await loadScene(state, "/Falcor/media/test_scenes/cornell_box.pyscene", "/Falcor/media/test_scenes");
+        state.graph = buildDefaultGraph(device, canvas.width, canvas.height, state.scene!);
+        state.output = state.graph.getOutputNames()[0] ?? null;
+    } else {
+        // Scene but no graph: run the default path tracer over the chosen scene.
+        state.graph = buildDefaultGraph(device, canvas.width, canvas.height, state.scene!);
+        state.output = state.graph.getOutputNames()[0] ?? null;
+    }
+    if (outputParam && state.graph?.getOutputNames().includes(outputParam)) {
+        state.output = outputParam;
+    }
 }
 
 async function main() {
@@ -119,14 +149,12 @@ async function main() {
 
     const state: ViewerState = { device, context, format, graph: null, scene: null, output: null, frame: 0, playing: true };
 
-    // Default content: a path-traced cornell box (VBufferRT -> PathTracer),
-    // the same graph the GPU oracle verifies, so the viewer opens on pixels.
+    // Initial content from URL params (?scene=/?graph=/?output=), or the default
+    // cornell-box path tracer when none are given.
     try {
-        await loadScene(state, "/Falcor/media/test_scenes/cornell_box.pyscene", "/Falcor/media/test_scenes");
-        state.graph = buildDefaultGraph(device, canvas.width, canvas.height, state.scene!);
-        state.output = state.graph.getOutputNames()[0] ?? null;
+        await loadInitialContent(state, device);
     } catch (e) {
-        Logger.warning(`Mogwai: default content failed to load (${e})`);
+        Logger.warning(`Mogwai: content failed to load (${e})`);
     }
 
     wireControls(state);
