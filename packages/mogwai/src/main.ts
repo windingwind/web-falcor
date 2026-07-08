@@ -12,7 +12,8 @@
  * swapchain-present path and the browser wiring around it.
  */
 
-import { Device, Logger, RenderGraph, createPass, initScripting, runGraphScript, runSceneScript, runPbrtScene, presentToCanvas, type Scene } from "@web-falcor/falcor";
+import { Device, Logger, ProgramManager, RenderGraph, createPass, initScripting, initSlang, runGraphScript, runSceneScript, runPbrtScene, presentToCanvas, type Scene } from "@web-falcor/falcor";
+import "@web-falcor/render-passes";
 
 const canvas = document.getElementById("canvas") as HTMLCanvasElement;
 const status = document.getElementById("status") as HTMLDivElement;
@@ -65,6 +66,47 @@ function buildDefaultGraph(device: Device, width: number, height: number, scene:
     return graph;
 }
 
+/**
+ * Fetches the Falcor shader tree and wires the program/Slang system onto the
+ * device — the web analog of Falcor's shader plugin loading, and a port of the
+ * GPU test harness's setup (tests/gpu/harness/main.ts). Without it
+ * device.programManager is undefined and any pass's ComputePass/RasterPass throws.
+ */
+async function initProgramSystem(device: Device): Promise<void> {
+    const list = (await (await fetch("/packages/falcor/shaders/generated/shader-file-list.json")).json()) as {
+        falcorFiles: string[];
+        renderPassFiles: string[];
+        localFiles: string[];
+        externalFiles?: { path: string; url: string }[];
+    };
+    const sources = new Map<string, string>();
+    const missing: string[] = [];
+    const fetchInto = async (urlBase: string, files: string[]) => {
+        await Promise.all(
+            files.map(async (f) => {
+                const res = await fetch(`${urlBase}/${f}`);
+                if (res.ok) sources.set(f, await res.text());
+                else missing.push(`${urlBase}/${f} (${res.status})`);
+            }),
+        );
+    };
+    await Promise.all([
+        fetchInto("/Falcor/Source/Falcor", list.falcorFiles),
+        fetchInto("/Falcor/Source", list.renderPassFiles),
+        fetchInto("/packages/falcor/shaders", list.localFiles),
+        ...(list.externalFiles ?? []).map(async ({ path, url }) => {
+            const res = await fetch(url);
+            if (res.ok) sources.set(path, await res.text());
+            else missing.push(`${url} (${res.status})`);
+        }),
+    ]);
+    if (missing.length > 0) {
+        Logger.warning(`shader registry: ${missing.length} files failed to fetch; first: ${missing.slice(0, 3).join(", ")}`);
+    }
+    await initSlang("/tools/slang-wasm/slang-wasm.js");
+    device.setProgramManager(new ProgramManager(device, (p) => sources.get(p), [...sources.keys()]));
+}
+
 async function main() {
     const device = await Device.create();
     const context = canvas.getContext("webgpu");
@@ -72,6 +114,7 @@ async function main() {
     const format = navigator.gpu.getPreferredCanvasFormat();
     context.configure({ device: device.gpuDevice, format });
 
+    await initProgramSystem(device);
     await initScripting("/node_modules/pyodide");
 
     const state: ViewerState = { device, context, format, graph: null, scene: null, output: null, frame: 0, playing: true };
