@@ -39,6 +39,48 @@ npm run dev         # Mogwai dev server (needs a WebGPU browser)
 The common passes (path tracer, tone mapper, accumulate, scene debugger, …)
 build and run without them; RTXDI and GridVolume passes need the full setup.
 
+### Example scenes
+
+To try the app on real content, fetch Falcor's example scenes (also no clone —
+they come from the same media bundle Falcor's `setup.sh` pulls):
+
+```sh
+npm run download:scenes                 # all bundled scenes (~120 MB)
+npm run download:scenes -- --list       # list what's available
+npm run download:scenes -- Arcade       # just one scene (Arcade, test_scenes, …)
+npm run download:scenes -- Bistro       # a large ORCA scene by name
+npm run download:scenes -- cornell-box  # a Bitterli pbrt-v4 scene
+npm run download:scenes -- --all        # everything, incl. the big ORCA scenes
+```
+
+Scenes land under `Falcor/media/<Scene>/`, which the dev server serves at
+`/Falcor/media/…`. The Mogwai viewer loads `test_scenes/cornell_box.pyscene` by
+default.
+
+Three kinds of scene are covered by the one command:
+
+- **Bundled scenes** (`Arcade`, `test_scenes`, `inv_rendering_scenes`,
+  `test_images`) come from Falcor's official media bundle — one ~120 MB archive,
+  so naming scenes only limits what is written to disk, not the download.
+- **ORCA showcase scenes** (`Bistro`, `EmeraldSquare`, `SunTemple`, `ZeroDay`)
+  are large individual downloads (~0.3–1 GB each) fetched from
+  [NVIDIA ORCA](https://developer.nvidia.com/orca). They are opt-in: named
+  explicitly or via `--all`; the plain default only pulls the bundled scenes.
+- **Bitterli pbrt-v4 scenes** (`cornell-box`, `veach-mis`, `kitchen`,
+  `staircase`, … and any other name from the
+  [Rendering Resources](https://benedikt-bitterli.me/resources) page) are loaded
+  through web-falcor's pbrt-v4 importer (a port of Falcor's `PBRTImporter`
+  subset). `cornell-box` and `veach-mis` are GPU-verified end to end; other
+  scenes load best-effort (unsupported materials/textures fall back with a
+  warning).
+
+Extracting needs a `unzip` and/or 7-Zip CLI (`p7zip-full` / `7-zip`); the script
+prints install hints if one is missing.
+
+To load a pbrt scene in the viewer, point it at the `.pbrt` file, e.g.
+`Falcor/media/cornell-box/scene-v4.pbrt` (the importer dispatches on the
+`.pbrt` extension).
+
 ## Full setup (develop + run the GPU/oracle tests)
 
 The GPU image tests diff against **native Falcor** captures, which need the
