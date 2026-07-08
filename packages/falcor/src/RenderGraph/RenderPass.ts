@@ -9,6 +9,7 @@ import type { Texture } from "../Core/API/Texture.js";
 import { Properties } from "../Utils/Properties.js";
 import { RenderPassReflection } from "./RenderPassReflection.js";
 import type { Scene } from "../Scene/Scene.js";
+import type { UIWidgets } from "./UIWidgets.js";
 import { RuntimeError } from "../Core/Error.js";
 
 export interface CompileData {
@@ -65,6 +66,9 @@ export abstract class RenderPass {
     getProperties(): Properties {
         return new Properties();
     }
+
+    /** Adds this pass's live controls to a UI panel (mirrors RenderPass::renderUI). */
+    renderUI(_ui: UIWidgets): void {}
 }
 
 export type RenderPassFactory = (device: Device, props: Properties) => RenderPass;

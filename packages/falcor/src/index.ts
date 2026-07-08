@@ -41,6 +41,7 @@ export * from "./Utils/Algorithm/ParallelReduction.js";
 export * from "./Utils/Algorithm/PrefixSum.js";
 export * from "./RenderGraph/RenderPassReflection.js";
 export * from "./RenderGraph/RenderPass.js";
+export * from "./RenderGraph/UIWidgets.js";
 export * from "./RenderGraph/RenderGraph.js";
 export * from "./Utils/Properties.js";
 export * from "./Utils/Image/HDRDecoder.js";

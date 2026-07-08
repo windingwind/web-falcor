@@ -20,6 +20,7 @@ import {
     type CompileData,
     type Device,
     type RenderContext,
+    type UIWidgets,
 } from "@web-falcor/falcor";
 
 const kShaderFile = "RenderPasses/ToneMapper/ToneMapping.ps.slang";
@@ -67,6 +68,19 @@ export class ToneMapper extends RenderPass {
             operator: ToneMapOperator[this.operator]!,
             exposureCompensation: this.exposureCompensation,
             clamp: this.clamp,
+        });
+    }
+
+    override renderUI(ui: UIWidgets): void {
+        ui.slider("Exposure Compensation", this.exposureCompensation, -8, 8, 0.1, (v) => (this.exposureCompensation = v));
+        const ops = Object.keys(ToneMapOperator).filter((k) => isNaN(Number(k)));
+        ui.dropdown("Operator", ops, ToneMapOperator[this.operator]!, (v) => {
+            this.operator = ToneMapOperator[v as keyof typeof ToneMapOperator];
+            this.pass = null; // operator is a shader define — rebuild next execute
+        });
+        ui.checkbox("Clamp Output", this.clamp, (v) => {
+            this.clamp = v;
+            this.pass = null; // clamp is a shader define — rebuild next execute
         });
     }
 

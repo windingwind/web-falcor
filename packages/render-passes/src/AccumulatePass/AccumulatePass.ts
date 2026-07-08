@@ -23,6 +23,7 @@ import {
     type CompileData,
     type Device,
     type RenderContext,
+    type UIWidgets,
 } from "@web-falcor/falcor";
 
 const kShaderFile = "RenderPasses/AccumulatePass/Accumulate.cs.slang";
@@ -70,6 +71,17 @@ export class AccumulatePass extends RenderPass {
 
     reset(): void {
         this.frameCount = 0;
+    }
+
+    override renderUI(ui: UIWidgets): void {
+        ui.checkbox("Enabled", this.enabled, (v) => (this.enabled = v));
+        ui.button("Reset", () => this.reset());
+        ui.checkbox("Auto Reset", this.autoReset, (v) => (this.autoReset = v));
+        ui.dropdown("Precision", ["Single", "SingleCompensated"], AccumulatePrecision[this.precision]!, (v) => {
+            this.precision = AccumulatePrecision[v as keyof typeof AccumulatePrecision];
+            this.pass = null; // precision selects the compute entry point — rebuild
+            this.reset();
+        });
     }
 
     override reflect(compileData: CompileData): RenderPassReflection {

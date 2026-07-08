@@ -65,6 +65,11 @@ export class RenderGraph {
         return this.passes.get(name);
     }
 
+    /** Pass entries (name→pass) in insertion order, for UI/introspection. */
+    getPasses(): { name: string; pass: RenderPass }[] {
+        return [...this.passes].map(([name, pass]) => ({ name, pass }));
+    }
+
     /** Mirrors RenderGraph::addEdge("srcPass.field", "dstPass.field"). */
     addEdge(src: string, dst: string): void {
         const [srcPass, srcField] = splitFieldRef(src);
