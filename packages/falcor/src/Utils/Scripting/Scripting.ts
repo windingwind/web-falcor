@@ -166,7 +166,8 @@ def _guarded(factory, known):
 _matProps = {'baseColor', 'specularParams', 'transmissionColor', 'emissiveColor',
              'emissiveFactor', 'doubleSided', 'roughness', 'metallic',
              'indexOfRefraction', 'specularTransmission', 'diffuseTransmission', 'thinSurface',
-             'nestedPriority', 'volumeAbsorption', 'volumeScattering'}
+             'nestedPriority', 'volumeAbsorption', 'volumeScattering',
+             'displacementScale', 'displacementOffset'}
 _lightProps = {'position', 'intensity', 'direction', 'angle'}
 _camProps = {'position', 'target', 'up', 'focalLength'}
 StandardMaterial = _guarded(StandardMaterial, _matProps)

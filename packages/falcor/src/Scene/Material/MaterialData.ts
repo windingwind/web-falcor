@@ -106,6 +106,8 @@ export interface BasicMaterialDesc {
     specularTransmission?: number;
     volumeAbsorption?: float3;
     volumeScattering?: float3;
+    displacementScale?: number;
+    displacementOffset?: number;
     texBaseColor?: number; // packed TextureHandle
     texSpecular?: number;
     texEmissive?: number;
@@ -156,8 +158,8 @@ export function packBasicMaterialBlob(header: MaterialHeaderDesc, mat: BasicMate
     off += 6;
     dv.setUint16(off, 0, true); off += 2; // volumeAnisotropy
     off += 2; // trailing pad: displacementScale is 4-byte aligned (payload offset 64)
-    dv.setFloat32(off, 0, true); off += 4; // displacementScale
-    dv.setFloat32(off, 0, true); off += 4; // displacementOffset
+    dv.setFloat32(off, mat.displacementScale ?? 0, true); off += 4; // displacementScale
+    dv.setFloat32(off, mat.displacementOffset ?? 0, true); off += 4; // displacementOffset
 
     dv.setUint32(off, mat.texBaseColor ?? 0, true); off += 4;
     dv.setUint32(off, mat.texSpecular ?? 0, true); off += 4;

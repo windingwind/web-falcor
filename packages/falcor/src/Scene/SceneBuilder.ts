@@ -220,6 +220,8 @@ export class MaterialBridge {
     diffuseTransmission = 0;
     thinSurface = false;
     nestedPriority = 0;
+    displacementScale = 0;
+    displacementOffset = 0;
     private _volumeAbsorption = new float3(0, 0, 0);
     private _volumeScattering = new float3(0, 0, 0);
 
@@ -312,6 +314,8 @@ export class MaterialBridge {
                 diffuseTransmission: this.diffuseTransmission,
                 volumeAbsorption: this._volumeAbsorption,
                 volumeScattering: this._volumeScattering,
+                displacementScale: this.displacementScale,
+                displacementOffset: this.displacementOffset,
                 ...this._texHandles,
             },
         };
