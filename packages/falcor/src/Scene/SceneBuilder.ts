@@ -19,7 +19,7 @@ import { TextureManager } from "./Material/TextureManager.js";
 import { EnvMap } from "./Lights/EnvMap.js";
 import { generateTangents } from "./TangentSpace.js";
 import { LightType, type AnalyticLight, type StaticVertex } from "./SceneData.js";
-import { MaterialType } from "./Material/MaterialData.js";
+import { MaterialType, packTextureHandle, TextureHandleMode } from "./Material/MaterialData.js";
 import { float2, float3, float4 } from "../Utils/Math/Vector.js";
 import { float4x4, matrixFromTranslation, matrixFromScaling, mulMat } from "../Utils/Math/Matrix.js";
 import { RuntimeError } from "../Core/Error.js";
@@ -235,6 +235,34 @@ export class MaterialBridge {
         public readonly name: string,
     ) {}
 
+    // Deferred texture loads (material.loadTexture(slot, path)); resolved in resolve().
+    private _textures: { slot: string; path: string }[] = [];
+    private _texHandles: { texBaseColor?: number; texSpecular?: number; texEmissive?: number; texNormalMap?: number } = {};
+
+    loadTexture(slot: string, path: string): void {
+        this._textures.push({ slot: String(slot), path: String(path) });
+    }
+
+    /** Fetches + decodes this material's deferred textures into the TextureManager. */
+    async resolveTextures(baseUrl: string, tm: TextureManager): Promise<void> {
+        for (const t of this._textures) {
+            const url = baseUrl ? `${baseUrl}/${t.path}` : t.path;
+            try {
+                const res = await fetch(url);
+                if (!res.ok) continue;
+                const srgb = t.slot === "BaseColor" || t.slot === "Emissive";
+                const bitmap = await createImageBitmap(await res.blob(), { colorSpaceConversion: "none" });
+                const handle = packTextureHandle(TextureHandleMode.Texture, tm.addTexture({ bitmap, srgb }));
+                if (t.slot === "BaseColor") this._texHandles.texBaseColor = handle;
+                else if (t.slot === "Specular") this._texHandles.texSpecular = handle;
+                else if (t.slot === "Normal") this._texHandles.texNormalMap = handle;
+                else if (t.slot === "Emissive") this._texHandles.texEmissive = handle;
+            } catch {
+                /* undecodable format (e.g. DDS) — material falls back to base color */
+            }
+        }
+    }
+
     set baseColor(v: { x: number; y: number; z: number; w: number }) {
         this._baseColor = toF4(v);
     }
@@ -284,6 +312,7 @@ export class MaterialBridge {
                 diffuseTransmission: this.diffuseTransmission,
                 volumeAbsorption: this._volumeAbsorption,
                 volumeScattering: this._volumeScattering,
+                ...this._texHandles,
             },
         };
     }
@@ -643,6 +672,9 @@ export class SceneBuilderBridge {
             geo.indices = loaded.indices;
             geo._fromFile = undefined;
         }
+
+        // Load deferred material textures (material.loadTexture()).
+        for (const mat of new Set(this.meshMaterials)) await mat.resolveTextures(baseUrl, textureManager);
 
         // Builder-added meshes (instanced via nodes).
         const materialIDs = new Map<MaterialBridge, number>();

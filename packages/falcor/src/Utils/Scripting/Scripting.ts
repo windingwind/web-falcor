@@ -14,7 +14,7 @@ import { Properties } from "../Properties.js";
 import { RuntimeError } from "../../Core/Error.js";
 import { CameraBridge, GridVolumeBridge, LightBridge, MaterialBridge, SceneBuilderBridge, SDFGridBridge, TriangleMesh, makeTransform } from "../../Scene/SceneBuilder.js";
 import type { Scene } from "../../Scene/Scene.js";
-import { LightType } from "../../Scene/SceneData.js";
+import { LightType, type StaticVertex } from "../../Scene/SceneData.js";
 import { MaterialType } from "../../Scene/Material/MaterialData.js";
 import { float2, float3, float4 } from "../Math/Vector.js";
 
@@ -118,6 +118,8 @@ class float4:
         self.x = float(x); self.y = float(y); self.z = float(z); self.w = float(w)
 
 class TriangleMesh:
+    def __new__(cls):
+        return _TriangleMesh.createEmpty()
     @staticmethod
     def createQuad(size=None):
         return _TriangleMesh.createQuad(size)
@@ -194,6 +196,14 @@ class TriangleMeshImportFlags:
     Default = 0
     GenSmoothNormals = 1
     JoinIdenticalVertices = 2
+class MaterialTextureSlot:
+    BaseColor = 'BaseColor'
+    Specular = 'Specular'
+    Emissive = 'Emissive'
+    Normal = 'Normal'
+    Transmission = 'Transmission'
+    Displacement = 'Displacement'
+    Index = 'Index'
 
 # Grid volumes (smoke.pyscene etc.); GridSlot values are bridge slot strings.
 class _GridSlot:
@@ -243,6 +253,29 @@ export async function runSceneScript(device: Device, source: string, baseUrl: st
             createSphere: (radius?: number, segmentsU?: number, segmentsV?: number) => TriangleMesh.createSphere(radius, segmentsU, segmentsV),
             createDisk: (radius?: number, segments?: number) => TriangleMesh.createDisk(radius, segments),
             createFromFile: (path: string, smoothNormals?: boolean) => ({ vertices: [], indices: new Uint32Array(0), _fromFile: { path: String(path), smoothNormals: !!smoothNormals } }),
+            // Mutable builder: TriangleMesh() then addVertex()/addTriangle() (tutorial.pyscene).
+            createEmpty: () => {
+                const vertices: StaticVertex[] = [];
+                const indexList: number[] = [];
+                return {
+                    vertices,
+                    get indices() {
+                        return new Uint32Array(indexList);
+                    },
+                    addVertex(position: VecLike, normal: VecLike, texCrd?: { x: number; y: number } | null) {
+                        vertices.push({
+                            position: new float3(position.x, position.y, position.z),
+                            normal: new float3(normal.x, normal.y, normal.z),
+                            tangent: new float4(0, 0, 0, 0),
+                            texCrd: texCrd ? new float2(texCrd.x, texCrd.y) : new float2(0, 0),
+                        });
+                        return vertices.length - 1;
+                    },
+                    addTriangle(i0: number, i1: number, i2: number) {
+                        indexList.push(Number(i0), Number(i1), Number(i2));
+                    },
+                };
+            },
         },
         Camera: (_name = "") => new CameraBridge(),
         PointLight: (name = "") => new LightBridge(LightType.Point, name),
