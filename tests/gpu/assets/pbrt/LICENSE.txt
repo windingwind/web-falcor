@@ -1,0 +1,7 @@
+pbrt-v4 test scenes vendored for the PBRTImporter GPU test.
+
+- cornell-box.pbrt  — 'Cornell Box' by Benedikt Bitterli (CC0 / public domain)
+- veach-mis.pbrt    — 'Veach, MIS' by Benedikt Bitterli (CC0 / public domain)
+
+Source: https://benedikt-bitterli.me/resources/  (Rendering Resources)
+Both scenes were released under a CC0 license and are in the public domain.

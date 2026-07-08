@@ -12,7 +12,7 @@
  * swapchain-present path and the browser wiring around it.
  */
 
-import { Device, Logger, RenderGraph, createPass, initScripting, runGraphScript, runSceneScript, presentToCanvas, type Scene } from "@web-falcor/falcor";
+import { Device, Logger, RenderGraph, createPass, initScripting, runGraphScript, runSceneScript, runPbrtScene, presentToCanvas, type Scene } from "@web-falcor/falcor";
 
 const canvas = document.getElementById("canvas") as HTMLCanvasElement;
 const status = document.getElementById("status") as HTMLDivElement;
@@ -40,7 +40,9 @@ async function loadGraph(state: ViewerState, url: string): Promise<void> {
 
 async function loadScene(state: ViewerState, url: string, baseUrl: string): Promise<void> {
     const source = await (await fetch(url)).text();
-    const scene = await runSceneScript(state.device, source, baseUrl);
+    const scene = url.toLowerCase().endsWith(".pbrt")
+        ? await runPbrtScene(state.device, source, baseUrl)
+        : await runSceneScript(state.device, source, baseUrl);
     scene.camera.setAspectRatio(canvas.width / canvas.height);
     state.scene = scene;
     if (state.graph) state.graph.setScene(scene);
