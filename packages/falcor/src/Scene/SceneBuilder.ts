@@ -172,6 +172,7 @@ function applyMaterialEdit(mat: SceneMaterialDesc, prop: string, value: unknown)
         case "thinSurface": header.thinSurface = Boolean(value); return true;
         case "nestedPriority": header.nestedPriority = num(); return true;
         case "volumeAbsorption": basic.volumeAbsorption = toF3(value as { x: number; y: number; z: number }); return true;
+        case "volumeScattering": basic.volumeScattering = toF3(value as { x: number; y: number; z: number }); return true;
         case "baseColor": basic.baseColor = toF4(value as { x: number; y: number; z: number; w: number }); return true;
         default: return false;
     }
@@ -220,9 +221,13 @@ export class MaterialBridge {
     thinSurface = false;
     nestedPriority = 0;
     private _volumeAbsorption = new float3(0, 0, 0);
+    private _volumeScattering = new float3(0, 0, 0);
 
     set volumeAbsorption(v: { x: number; y: number; z: number }) {
         this._volumeAbsorption = toF3(v);
+    }
+    set volumeScattering(v: { x: number; y: number; z: number }) {
+        this._volumeScattering = toF3(v);
     }
 
     constructor(
@@ -278,6 +283,7 @@ export class MaterialBridge {
                 specularTransmission: this.specularTransmission,
                 diffuseTransmission: this.diffuseTransmission,
                 volumeAbsorption: this._volumeAbsorption,
+                volumeScattering: this._volumeScattering,
             },
         };
     }
@@ -546,6 +552,10 @@ export class SceneBuilderBridge {
         this.sdfInstances.push({ nodeID: Number(nodeID), sdfGridID: Number(sdfGridID) });
     }
 
+    /** Legacy alias used by some pyscenes (volume_transmittance_test). */
+    addVolume(volume: GridVolumeBridge): void {
+        this.addGridVolume(volume);
+    }
     addGridVolume(volume: GridVolumeBridge): void {
         const v = unwrapGuard(volume);
         // Eager-copy scalar props (albedo may be a python float3 proxy).

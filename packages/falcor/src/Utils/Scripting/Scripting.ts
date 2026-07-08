@@ -164,7 +164,7 @@ def _guarded(factory, known):
 _matProps = {'baseColor', 'specularParams', 'transmissionColor', 'emissiveColor',
              'emissiveFactor', 'doubleSided', 'roughness', 'metallic',
              'indexOfRefraction', 'specularTransmission', 'diffuseTransmission', 'thinSurface',
-             'nestedPriority', 'volumeAbsorption'}
+             'nestedPriority', 'volumeAbsorption', 'volumeScattering'}
 _lightProps = {'position', 'intensity', 'direction', 'angle'}
 _camProps = {'position', 'target', 'up', 'focalLength'}
 StandardMaterial = _guarded(StandardMaterial, _matProps)
@@ -185,6 +185,15 @@ class Animation:
         Linear = 1
         Cycle = 2
         Oscillate = 3
+
+# Enums accepted for parity (values map to the web material/import defaults).
+class ShadingModel:
+    MetalRough = 0
+    SpecGloss = 1
+class TriangleMeshImportFlags:
+    Default = 0
+    GenSmoothNormals = 1
+    JoinIdenticalVertices = 2
 
 # Grid volumes (smoke.pyscene etc.); GridSlot values are bridge slot strings.
 class _GridSlot:

@@ -105,6 +105,7 @@ export interface BasicMaterialDesc {
     emissiveFactor?: number;
     specularTransmission?: number;
     volumeAbsorption?: float3;
+    volumeScattering?: float3;
     texBaseColor?: number; // packed TextureHandle
     texSpecular?: number;
     texEmissive?: number;
@@ -147,7 +148,9 @@ export function packBasicMaterialBlob(header: MaterialHeaderDesc, mat: BasicMate
     dv.setUint16(off, f32tof16(tr.x), true); dv.setUint16(off + 2, f32tof16(tr.y), true); dv.setUint16(off + 4, f32tof16(tr.z), true); off += 6;
     dv.setUint16(off, f32tof16(mat.diffuseTransmission ?? 0), true); off += 2; // diffuseTransmission
     // volumeScattering f16x3 + pad (4 halves)
-    for (let i = 0; i < 4; i++) { dv.setUint16(off, 0, true); off += 2; }
+    const vs = mat.volumeScattering ?? new float3(0, 0, 0);
+    dv.setUint16(off, f32tof16(vs.x), true); dv.setUint16(off + 2, f32tof16(vs.y), true); dv.setUint16(off + 4, f32tof16(vs.z), true); dv.setUint16(off + 6, 0, true);
+    off += 8;
     const va = mat.volumeAbsorption ?? new float3(0, 0, 0);
     dv.setUint16(off, f32tof16(va.x), true); dv.setUint16(off + 2, f32tof16(va.y), true); dv.setUint16(off + 4, f32tof16(va.z), true);
     off += 6;
