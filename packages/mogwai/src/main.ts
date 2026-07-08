@@ -5,6 +5,8 @@
 
 import { Device, Logger, ProgramManager, RenderGraph, createPass, initScripting, initSlang, runGraphScript, runSceneScript, runPbrtScene, presentToCanvas, type Scene } from "@web-falcor/falcor";
 import "@web-falcor/render-passes";
+import { CameraController } from "./CameraController.js";
+import { buildUIPanel } from "./UIPanel.js";
 
 const canvas = document.getElementById("canvas") as HTMLCanvasElement;
 const status = document.getElementById("status") as HTMLDivElement;
@@ -157,9 +159,23 @@ async function main() {
         Logger.warning(`Mogwai: content failed to load (${e})`);
     }
 
-    wireControls(state);
+    const passesEl = document.getElementById("passes") as HTMLDivElement;
+    const resetAccum = () => {
+        (state.graph?.getPass("Accumulate") as { reset?: () => void } | undefined)?.reset?.();
+        state.frame = 0;
+    };
+    const rebuildUI = () => buildUIPanel(passesEl, state.graph, resetAccum);
 
-    function frame() {
+    wireControls(state, rebuildUI);
+    rebuildUI();
+    const camControl = new CameraController(canvas);
+    (window as unknown as { mogwai: ViewerState }).mogwai = state; // debug/test handle
+
+    function frame(now: number) {
+        const cam = state.scene?.camera;
+        if (cam && camControl.update(cam, now) && state.graph) {
+            resetAccum(); // camera moved: restart path-tracer accumulation
+        }
         if (state.playing && state.graph && state.output) {
             state.graph.execute(device.renderContext);
             const tex = state.graph.getOutput(state.output);
@@ -173,7 +189,7 @@ async function main() {
 }
 
 /** Wires the plain-DOM control bar (created in index.html). */
-function wireControls(state: ViewerState): void {
+function wireControls(state: ViewerState, rebuildUI: () => void): void {
     const $ = (id: string) => document.getElementById(id);
     ($("play") as HTMLButtonElement | null)?.addEventListener("click", () => {
         state.playing = !state.playing;
@@ -189,6 +205,7 @@ function wireControls(state: ViewerState): void {
             state.output = graph!.getOutputNames()[0] ?? null;
             state.frame = 0;
             refreshOutputs(state);
+            rebuildUI();
         }
     });
     refreshOutputs(state);

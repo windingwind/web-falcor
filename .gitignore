@@ -17,3 +17,6 @@ packages/falcor/shaders/generated/*
 .vite/
 .DS_Store
 tests/gpu/out/
+
+# Local scratch dir for throwaway tests / browser-verify tooling
+/scratch/

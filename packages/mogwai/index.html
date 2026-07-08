@@ -10,16 +10,28 @@
       #status { position: absolute; top: 8px; left: 8px; white-space: pre; text-shadow: 0 0 4px #000; }
       #controls { position: absolute; top: 8px; right: 8px; display: flex; gap: 6px; align-items: center; background: #2a2a2ac0; padding: 6px 8px; border-radius: 4px; }
       #controls button, #controls select, #controls label { font-family: monospace; font-size: 12px; }
+      #help { position: absolute; bottom: 8px; left: 8px; font-size: 11px; opacity: 0.55; text-shadow: 0 0 4px #000; }
+      #passes { position: absolute; top: 44px; right: 8px; width: 232px; max-height: calc(100% - 56px); overflow-y: auto; background: #2a2a2ad8; padding: 6px 8px; border-radius: 4px; font-size: 12px; }
+      #passes details { margin-bottom: 5px; }
+      #passes summary { cursor: pointer; color: #8cf; user-select: none; }
+      #passes .ui-row { display: flex; align-items: center; gap: 6px; margin: 3px 0 3px 8px; }
+      #passes .ui-row span { flex: 1; }
+      #passes .ui-row input[type=range] { flex: 1; min-width: 54px; }
+      #passes .ui-text { opacity: 0.7; margin: 2px 0 2px 8px; }
+      #passes button, #passes select, #passes input { font-family: monospace; font-size: 11px; }
+      #passes button { margin: 2px 0 2px 8px; }
     </style>
   </head>
   <body>
     <canvas id="canvas" width="1280" height="720"></canvas>
     <div id="status">initializing…</div>
+    <div id="help">drag: look · WASD: move · Q/E: down/up · wheel: dolly · Shift: fast · Ctrl: slow</div>
     <div id="controls">
       <button id="play">Pause</button>
       <label>graph <input id="graphFile" type="file" accept=".py" /></label>
       <label>output <select id="output"></select></label>
     </div>
+    <div id="passes"></div>
     <script type="module" src="./src/main.ts"></script>
   </body>
 </html>
