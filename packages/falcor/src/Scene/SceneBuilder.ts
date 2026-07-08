@@ -404,9 +404,24 @@ export class SceneBuilderBridge {
         return this._envMap;
     }
     cameraSpeed = 1;
+    private _cameras: CameraBridge[] = [];
 
     addCamera(camera: CameraBridge): void {
+        const c = unwrapGuard(camera);
+        this._cameras.push(c);
+        this.camera = c; // default selection = most recent; overridden by selectedCamera
+    }
+    get cameras(): CameraBridge[] {
+        return this._cameras;
+    }
+    set selectedCamera(camera: CameraBridge) {
         this.camera = unwrapGuard(camera);
+    }
+
+    /** Deferred animation handles (imports resolve later; web animation loops the
+     *  whole clip, so pre/post-infinity behavior writes are accepted and ignored). */
+    get animations(): { preInfinityBehavior: unknown; postInfinityBehavior: unknown }[] {
+        return Array.from({ length: 16 }, () => ({ preInfinityBehavior: null, postInfinityBehavior: null }));
     }
 
     importScene(path: string): void {
@@ -547,7 +562,11 @@ export class SceneBuilderBridge {
                     const parsed = await FbxImporter.parseToDescs(bytes, dir, textureManager);
                     materials.push(...parsed.materials);
                     importedMaterialNames.push(...parsed.materialNames);
-                    for (const m of parsed.meshes) meshes.push({ ...m, materialID: m.materialID + materialOffset });
+                    const nodeOffset = nodes.length;
+                    for (const n of parsed.nodes) nodes.push({ ...n, parent: n.parent >= 0 ? n.parent + nodeOffset : -1 });
+                    for (const ch of parsed.animations) animations.push({ ...ch, nodeID: ch.nodeID + nodeOffset });
+                    for (const m of parsed.meshes)
+                        meshes.push({ ...m, materialID: m.materialID + materialOffset, nodeID: m.nodeID !== undefined ? m.nodeID + nodeOffset : undefined });
                 } else {
                     const parsed = await GltfImporter.parseToDescs(bytes, url, textureManager);
                     materials.push(...parsed.materials);

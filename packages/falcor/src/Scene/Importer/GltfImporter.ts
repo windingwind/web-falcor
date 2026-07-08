@@ -14,7 +14,7 @@ import { float4x4, mulMat, matrixFromTranslation, matrixFromScaling } from "../.
 import { matrixFromQuat, quatf } from "../../Utils/Math/Quaternion.js";
 import { RuntimeError } from "../../Core/Error.js";
 import type { AnalyticLight, StaticVertex } from "../SceneData.js";
-import type { SceneNode, AnimationChannel, AnimationPath, SkinDesc } from "../Animation/SceneAnimation.js";
+import { decomposeTRS, type SceneNode, type AnimationChannel, type AnimationPath, type SkinDesc } from "../Animation/SceneAnimation.js";
 import { TextureManager } from "../Material/TextureManager.js";
 import { TextureHandleMode, packTextureHandle } from "../Material/MaterialData.js";
 import { generateTangents } from "../TangentSpace.js";
@@ -65,41 +65,6 @@ interface GltfPrimitive {
 
 const kComponentSize: Record<number, number> = { 5120: 1, 5121: 1, 5122: 2, 5123: 2, 5125: 4, 5126: 4 };
 const kTypeComponents: Record<string, number> = { SCALAR: 1, VEC2: 2, VEC3: 3, VEC4: 4, MAT4: 16 };
-
-/** Decomposes a node's local matrix into TRS (for the retained animation graph).
- *  glTF animates only TRS nodes, so this fallback covers static matrix nodes. */
-function decomposeTRS(m: float4x4): { t: float3; r: quatf; s: float3 } {
-    const t = new float3(m.get(0, 3), m.get(1, 3), m.get(2, 3));
-    const col = (c: number) => [m.get(0, c), m.get(1, c), m.get(2, c)] as [number, number, number];
-    const c0 = col(0);
-    const c1 = col(1);
-    const c2 = col(2);
-    const sx = Math.hypot(...c0) || 1;
-    const sy = Math.hypot(...c1) || 1;
-    const sz = Math.hypot(...c2) || 1;
-    // Rotation matrix = basis columns normalized; quat via Shepperd's method.
-    const R = [
-        [c0[0] / sx, c1[0] / sy, c2[0] / sz],
-        [c0[1] / sx, c1[1] / sy, c2[1] / sz],
-        [c0[2] / sx, c1[2] / sy, c2[2] / sz],
-    ];
-    const tr = R[0]![0]! + R[1]![1]! + R[2]![2]!;
-    let x: number, y: number, z: number, w: number;
-    if (tr > 0) {
-        const s = Math.sqrt(tr + 1) * 2;
-        w = s / 4; x = (R[2]![1]! - R[1]![2]!) / s; y = (R[0]![2]! - R[2]![0]!) / s; z = (R[1]![0]! - R[0]![1]!) / s;
-    } else if (R[0]![0]! > R[1]![1]! && R[0]![0]! > R[2]![2]!) {
-        const s = Math.sqrt(1 + R[0]![0]! - R[1]![1]! - R[2]![2]!) * 2;
-        w = (R[2]![1]! - R[1]![2]!) / s; x = s / 4; y = (R[0]![1]! + R[1]![0]!) / s; z = (R[0]![2]! + R[2]![0]!) / s;
-    } else if (R[1]![1]! > R[2]![2]!) {
-        const s = Math.sqrt(1 + R[1]![1]! - R[0]![0]! - R[2]![2]!) * 2;
-        w = (R[0]![2]! - R[2]![0]!) / s; x = (R[0]![1]! + R[1]![0]!) / s; y = s / 4; z = (R[1]![2]! + R[2]![1]!) / s;
-    } else {
-        const s = Math.sqrt(1 + R[2]![2]! - R[0]![0]! - R[1]![1]!) * 2;
-        w = (R[1]![0]! - R[0]![1]!) / s; x = (R[0]![2]! + R[2]![0]!) / s; y = (R[1]![2]! + R[2]![1]!) / s; z = s / 4;
-    }
-    return { t, r: new quatf(x, y, z, w), s: new float3(sx, sy, sz) };
-}
 
 export class GltfImporter {
     /** Imports a .gltf (JSON, embedded/external buffers) or .glb from a URL. */

@@ -262,9 +262,10 @@ export class Scene {
         // Retain source geometry + node graph for per-frame animation. Only for
         // animated scenes, so static scenes (e.g. Bistro) keep zero overhead.
         if (animations.length > 0 && nodes.length > 0) {
+            const start = animations.reduce((s, ch) => Math.min(s, ch.times[0] ?? 0), Infinity);
             const duration = animations.reduce((d, ch) => Math.max(d, ch.times[ch.times.length - 1] ?? 0), 0);
             this.sourceMeshes = meshes;
-            this.animData = { nodes, channels: animations, duration };
+            this.animData = { nodes, channels: animations, start: Number.isFinite(start) ? start : 0, duration };
             this.animNodeCount = nodeCount;
         }
 
@@ -368,8 +369,9 @@ export class Scene {
     animate(timeSec: number): boolean {
         if (!this.animData || !this.sourceMeshes) return false;
         const meshes = this.sourceMeshes;
-        const dur = this.animData.duration;
-        const globals = evaluateGlobals(this.animData, dur > 0 ? timeSec % dur : 0);
+        // Loop within the clip's actual key span (clips needn't start at t=0, e.g. FBX).
+        const span = this.animData.duration - this.animData.start;
+        const globals = evaluateGlobals(this.animData, span > 0 ? this.animData.start + (timeSec % span) : this.animData.start);
 
         // Per mesh: current world matrix + world-space vertex positions. Skinned
         // meshes deform to world space on the CPU (identity world matrix, skinned

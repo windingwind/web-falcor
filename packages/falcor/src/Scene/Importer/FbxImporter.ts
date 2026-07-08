@@ -21,6 +21,7 @@ import { generateTangents } from "../TangentSpace.js";
 import { packTextureHandle, TextureHandleMode } from "../Material/MaterialData.js";
 import { decodeDDSToRGBA } from "./DDSLoader.js";
 import type { SceneMaterialDesc, SceneMeshDesc } from "../Scene.js";
+import { decomposeTRS, type SceneNode, type AnimationChannel } from "../Animation/SceneAnimation.js";
 import type { StaticVertex } from "../SceneData.js";
 import type { TextureManager } from "../Material/TextureManager.js";
 
@@ -52,10 +53,26 @@ interface AiNode {
     meshes?: number[];
 }
 
+/** assjson keyframe: [timeInTicks, [values...]]. Rotation values are [w,x,y,z]. */
+type AiKey = [number, number[]];
+interface AiNodeAnim {
+    name: string; // animated node's name
+    positionkeys?: AiKey[];
+    rotationkeys?: AiKey[];
+    scalingkeys?: AiKey[];
+}
+interface AiAnimation {
+    name: string;
+    tickspersecond?: number;
+    duration?: number;
+    channels: AiNodeAnim[];
+}
+
 interface AiScene {
     rootnode: AiNode;
     meshes: AiMesh[];
     materials: AiMaterial[];
+    animations?: AiAnimation[];
 }
 
 let assimpModule: unknown | null = null;
@@ -116,7 +133,7 @@ export class FbxImporter {
         bytes: Uint8Array,
         baseUrl: string,
         textureManager: TextureManager,
-    ): Promise<{ meshes: SceneMeshDesc[]; materials: SceneMaterialDesc[]; materialNames: string[] }> {
+    ): Promise<{ meshes: SceneMeshDesc[]; materials: SceneMaterialDesc[]; materialNames: string[]; nodes: SceneNode[]; animations: AnimationChannel[] }> {
         const ajs = await getAssimp();
         const files = new ajs.FileList();
         files.AddFile("scene.fbx", bytes);
@@ -248,22 +265,48 @@ export class FbxImporter {
             return cached;
         };
 
-        const visit = (node: AiNode, parent: float4x4) => {
+        // Retained node graph for animation (assimp channels target nodes by name).
+        const nodes: SceneNode[] = [];
+        const nameToNodeID = new Map<string, number>();
+        const visit = (node: AiNode, parentWorld: float4x4, parentID: number) => {
             const local = new float4x4();
             for (let r = 0; r < 4; r++) for (let c = 0; c < 4; c++) local.set(r, c, node.transformation[r * 4 + c]!);
-            const world = mulMat(parent, local);
+            const world = mulMat(parentWorld, local);
+            const nodeID = nodes.length;
+            nodes.push({ parent: parentID, ...decomposeTRS(local) });
+            if (node.name) nameToNodeID.set(node.name, nodeID);
             for (const mi of node.meshes ?? []) {
                 const { vertices, indices } = getMesh(mi);
-                meshDescs.push({ vertices, indices, materialID: json.meshes[mi]!.materialindex, transform: world });
+                meshDescs.push({ vertices, indices, materialID: json.meshes[mi]!.materialindex, transform: world, nodeID });
             }
-            for (const child of node.children ?? []) visit(child, world);
+            for (const child of node.children ?? []) visit(child, world, nodeID);
         };
-        visit(json.rootnode, float4x4.identity());
+        visit(json.rootnode, float4x4.identity(), -1);
         if (meshDescs.length === 0) throw new RuntimeError("FbxImporter: no triangle meshes found");
+
+        // Animation channels (assimp: per-node position/rotation/scaling key tracks;
+        // times in ticks -> seconds; rotation quaternions are [w,x,y,z]).
+        const animations: AnimationChannel[] = [];
+        for (const anim of json.animations ?? []) {
+            const tps = anim.tickspersecond && anim.tickspersecond > 0 ? anim.tickspersecond : 24;
+            for (const ch of anim.channels ?? []) {
+                const nodeID = nameToNodeID.get(ch.name);
+                if (nodeID === undefined) continue;
+                const track = (keys: AiKey[] | undefined, path: "translation" | "rotation" | "scale", quat: boolean) => {
+                    if (!keys?.length) return;
+                    const times = new Float32Array(keys.map((k) => k[0] / tps));
+                    const values = new Float32Array(quat ? keys.flatMap((k) => [k[1][1]!, k[1][2]!, k[1][3]!, k[1][0]!]) : keys.flatMap((k) => k[1]));
+                    animations.push({ nodeID, path, times, values, interp: "LINEAR" });
+                };
+                track(ch.positionkeys, "translation", false);
+                track(ch.rotationkeys, "rotation", true);
+                track(ch.scalingkeys, "scale", false);
+            }
+        }
 
         if (skippedFormats.size > 0) {
             console.warn(`FbxImporter: skipped textures with undecodable formats [${[...skippedFormats].join(", ")}] (need a DDS/BC or TGA decoder); materials fall back to base color.`);
         }
-        return { meshes: meshDescs, materials, materialNames };
+        return { meshes: meshDescs, materials, materialNames, nodes, animations };
     }
 }

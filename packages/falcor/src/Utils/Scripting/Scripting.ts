@@ -172,6 +172,14 @@ DirectionalLight = _guarded(DirectionalLight, _lightProps)
 DistantLight = _guarded(DistantLight, _lightProps)
 Camera = _guarded(Camera, _camProps)
 
+# Animation behavior enum (accepted for parity; web animation loops the whole clip).
+class Animation:
+    class Behavior:
+        Constant = 0
+        Linear = 1
+        Cycle = 2
+        Oscillate = 3
+
 # Grid volumes (smoke.pyscene etc.); GridSlot values are bridge slot strings.
 class _GridSlot:
     Density = 'density'
