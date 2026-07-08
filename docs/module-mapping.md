@@ -1,6 +1,6 @@
 # web-falcor — Module-by-module mapping
 
-Part of the [web-falcor design docs](../DESIGN.md). Section numbers (§6) are
+Part of the [web-falcor design docs](README.md). Section numbers (§6) are
 kept stable across the split so the `§N` cross-references throughout the docs
 stay valid.
 

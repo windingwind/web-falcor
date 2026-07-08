@@ -1,7 +1,7 @@
 /**
  * WebFalcor override of Utils/Algorithm/PrefixSum.cs.slang.
  *
- * Diffs vs upstream (see DESIGN.md §4.3):
+ * Diffs vs upstream (see docs §4.3):
  * - RW/ByteAddressBuffer -> structured buffers: WGSL atomics require
  *   atomic<u32>-typed elements (Slang Atomic<uint>), and byte-address loads
  *   become element indices (all accesses were 4-byte aligned uints upstream).

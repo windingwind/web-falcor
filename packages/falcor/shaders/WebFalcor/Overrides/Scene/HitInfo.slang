@@ -1,5 +1,5 @@
 /**
- * WebFalcor override of Scene/HitInfo.slang (DESIGN.md §4.3).
+ * WebFalcor override of Scene/HitInfo.slang (docs §4.3).
  * Also: 'this = {};' in __init dead branches (rejected by newer Slang when
  * the struct has a non-default initializer) is replaced by explicit field init.
  * Diff vs upstream: pack/unpack functions colliding with builtins added to

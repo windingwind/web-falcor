@@ -7,7 +7,7 @@
  * Native cannot oracle SBS on this machine: Mogwai core-dumps building the
  * procedural-AABB acceleration structure for the brick set (same local
  * native-artifact class as the NDSDF gradient NaNs / openvdb segfault,
- * DESIGN.md 6.3). SBS is instead cross-validated against the CPU ALGORITHM
+ * docs 6.3). SBS is instead cross-validated against the CPU ALGORITHM
  * footprint oracle (tests/oracle/assets/ndsdf-cpu-footprint.bin): the brick
  * set encodes the identical surface, so its GeometryID body must match the
  * NDSDF footprint that the web renderer already reproduces PIXEL-EXACTLY

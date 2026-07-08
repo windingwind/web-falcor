@@ -1,5 +1,5 @@
 /**
- * WebFalcor override of Scene/Raster.slang (DESIGN.md §4.3).
+ * WebFalcor override of Scene/Raster.slang (docs §4.3).
  * Diff vs upstream: brace-init of GeometryInstanceID replaced with field
  * assignment (newer Slang rejects it for structs with initializers).
  */

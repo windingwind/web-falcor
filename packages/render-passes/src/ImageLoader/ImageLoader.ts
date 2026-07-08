@@ -1,6 +1,6 @@
 /**
  * Image loading pass mirroring Source/RenderPasses/ImageLoader.
- * Asset loading is async on the web (DESIGN.md §9): the texture loads in
+ * Asset loading is async on the web (docs §9): the texture loads in
  * initAsync, resolved against the media base URL (AssetResolver-lite).
  */
 

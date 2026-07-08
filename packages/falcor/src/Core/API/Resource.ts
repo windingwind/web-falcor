@@ -1,7 +1,7 @@
 /**
  * Resource base class mirroring Falcor/Core/API/Resource.h.
  * Barrier/state tracking methods are intentionally absent: WebGPU tracks
- * resource states internally (documented divergence, DESIGN.md §9).
+ * resource states internally (documented divergence, docs §9).
  */
 
 import type { Device } from "./Device.js";

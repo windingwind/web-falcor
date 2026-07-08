@@ -28,7 +28,7 @@ export class Fence {
         return v;
     }
 
-    /** Mirrors Fence::wait on host (async divergence, DESIGN.md §9). */
+    /** Mirrors Fence::wait on host (async divergence, docs §9). */
     async wait(value?: bigint): Promise<void> {
         const target = value ?? this.maxPendingValue();
         while (this.signaledValue < target) {

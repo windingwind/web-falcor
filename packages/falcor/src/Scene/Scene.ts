@@ -204,7 +204,7 @@ export class Scene {
         make("worldMatrices", world, 64);
         this.invTransposeOffset = nodeCount;
 
-        // Software RT BVH over world-space triangles (DESIGN.md §5).
+        // Software RT BVH over world-space triangles (docs §5).
         const bvhTris: BvhTriangle[] = [];
         meshes.forEach((mesh, meshID) => {
             const m = mesh.transform ?? float4x4.identity();
@@ -294,7 +294,7 @@ export class Scene {
         make("curveDummy", new Uint32Array(16), 32); // StaticCurveVertexData-sized dummy
         make("gridVolumeDummy", new Uint32Array(64), 256); // GridVolumeData-sized dummy (2x float4x4 + params)
 
-        // Material textures packed into one array (DESIGN.md §6.2).
+        // Material textures packed into one array (docs §6.2).
         const packed = textureManager.build(this.device);
         this.textureArray = packed.array;
         this.textureArrayLinear = packed.arrayLinear;

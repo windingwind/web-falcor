@@ -1,6 +1,6 @@
 # web-falcor — Feature parity matrix & divergences
 
-Part of the [web-falcor design docs](../DESIGN.md). Section numbers (§8–§9) are
+Part of the [web-falcor design docs](README.md). Section numbers (§8–§9) are
 kept stable across the split so the `§N` cross-references throughout the docs
 stay valid. The ✅ / 🟡 / 🔶 / ❌ / 🟠 status markers are defined in
 [architecture.md §1](architecture.md#1-goals-and-ground-rules).

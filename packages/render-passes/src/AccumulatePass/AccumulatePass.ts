@@ -58,7 +58,7 @@ export class AccumulatePass extends RenderPass {
             this.precision = parsed ?? AccumulatePrecision.Single;
         }
         if (this.precision === AccumulatePrecision.Double) {
-            Logger.warning("AccumulatePass: Double precision unavailable in WGSL; using SingleCompensated (DESIGN.md §8.2)");
+            Logger.warning("AccumulatePass: Double precision unavailable in WGSL; using SingleCompensated (docs §8.2)");
             this.precision = AccumulatePrecision.SingleCompensated;
         }
         this.autoReset = props.get("autoReset", true);

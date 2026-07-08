@@ -1,6 +1,6 @@
 /**
  * Minimal path tracer mirroring Source/RenderPasses/MinimalPathTracer.
- * Shader is the WebFalcor megakernel override (DESIGN.md §5): the upstream
+ * Shader is the WebFalcor megakernel override (docs §5): the upstream
  * path-tracing logic runs as a compute kernel over software ray queries.
  */
 

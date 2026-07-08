@@ -1,7 +1,7 @@
 /**
  * Composite pass mirroring Source/RenderPasses/Utils/Composite: blends inputs
  * A and B (add/multiply with scales) into the output. Uses the WebFalcor
- * override shader (write-only output texture, DESIGN.md §4.3).
+ * override shader (write-only output texture, docs §4.3).
  */
 
 import {

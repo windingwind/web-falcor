@@ -1,6 +1,6 @@
 /**
  * WebFalcor override of RenderPasses/SimplePostFX/SimplePostFX.cs.slang
- * (DESIGN.md §4.3). Diffs vs upstream:
+ * (docs §4.3). Diffs vs upstream:
  *  - gDst is write-only (WTexture2D + Store; WGSL restricts read_write storage
  *    textures to r32*). The in-place read `gDst[pixel]` in upsample reads a new
  *    `gDstPrev` texture instead; the web host ping-pongs a second pyramid

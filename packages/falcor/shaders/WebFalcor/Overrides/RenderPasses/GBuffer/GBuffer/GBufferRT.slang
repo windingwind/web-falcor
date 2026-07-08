@@ -1,6 +1,6 @@
 /**
  * WebFalcor override of RenderPasses/GBuffer/GBuffer/GBufferRT.slang
- * (DESIGN.md §4.3). Diffs vs upstream: output textures are write-only
+ * (docs §4.3). Diffs vs upstream: output textures are write-only
  * (WTexture2D + Store; WGSL restricts read_write storage textures to r32*)
  * with [format] annotations per kGBufferChannels; gNormalWRoughnessMaterialID
  * is rgba16f (WGSL has no rgb10a2unorm storage format — 10-bit quantization

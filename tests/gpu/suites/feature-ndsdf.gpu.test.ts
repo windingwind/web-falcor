@@ -11,7 +11,7 @@
  * adjudication (iter 78). Native is NOT comparable inside the SDF body on
  * this machine: it dilates the footprint by 24568 spurious pixels and NaNs
  * the gradients (SPIR-V offset texel fetches; same local-artifact class as
- * the openvdb segfault, DESIGN.md 6.3) — probe-verified via the real-shader
+ * the openvdb segfault, docs 6.3) — probe-verified via the real-shader
  * single-ray kernel (WebFalcor/Debug/SdfProbe.cs.slang). Background pixels
  * still compare against the native oracle EXR wherever native itself shows
  * background. Instance ordering (mesh 0, SDF 1) was probe-verified against

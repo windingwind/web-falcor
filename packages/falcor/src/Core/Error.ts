@@ -24,7 +24,7 @@ export function assert(condition: unknown, message = "Assertion failed"): assert
     if (!condition) throw new AssertionError(message);
 }
 
-/** Marks Falcor features that cannot be supported on the web platform. See DESIGN.md parity matrix. */
+/** Marks Falcor features that cannot be supported on the web platform. See docs parity matrix. */
 export class UnsupportedFeatureError extends FalcorError {
     constructor(feature: string, reason: string) {
         super(`Unsupported feature '${feature}': ${reason}`);

@@ -1,6 +1,6 @@
 # web-falcor — Shader system & software ray tracing
 
-Part of the [web-falcor design docs](../DESIGN.md). Section numbers (§4–§5) are
+Part of the [web-falcor design docs](README.md). Section numbers (§4–§5) are
 kept stable across the split so the `§N` cross-references throughout the docs
 stay valid.
 

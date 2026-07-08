@@ -1,5 +1,5 @@
 /**
- * WebFalcor override of Rendering/Materials/IMaterial.slang (DESIGN.md §4.3).
+ * WebFalcor override of Rendering/Materials/IMaterial.slang (docs §4.3).
  * Diff vs upstream: anyValueSize 128 -> 256 (WGSL existential packing overflows
  * the upstream budget). No behavioral change after specialization.
  */

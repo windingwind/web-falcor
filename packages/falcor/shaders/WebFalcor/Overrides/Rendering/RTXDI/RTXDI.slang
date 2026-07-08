@@ -1,5 +1,5 @@
 /**
- * WebFalcor override of Rendering/RTXDI/RTXDI.slang (DESIGN.md §4.3).
+ * WebFalcor override of Rendering/RTXDI/RTXDI.slang (docs §4.3).
  * Diffs vs upstream: WGSL has no texel buffers (RWBuffer/Buffer) — the RIS
  * buffer and neighbor-offsets buffer become structured buffers (the SDK
  * accesses them through RTXDI_* defines with [] indexing, so the swap is

@@ -3,7 +3,7 @@
  * Source/RenderPasses/RTXDIPass (PrepareSurfaceData + FinalShading around the
  * Rendering/RTXDI module, which carries the actual RTXDI SDK resampling).
  *
- * Web divergences (documented, DESIGN.md §RenderPasses):
+ * Web divergences (documented, docs §RenderPasses):
  * - GBUFFER_ADJUST_SHADING_NORMALS is fixed to 0: the web RenderData carries
  *   no inter-pass dictionary and the native flag defaults to false (GBufferBase
  *   default; VBufferRT never enables it in the shipped graphs).

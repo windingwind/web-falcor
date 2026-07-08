@@ -1,5 +1,5 @@
 /***************************************************************************
- # WebFalcor override of Scene/Material/BasicMaterialData.slang (DESIGN.md §4.3).
+ # WebFalcor override of Scene/Material/BasicMaterialData.slang (docs §4.3).
  #
  # Diff vs upstream: float16_t fields are stored as scalar uint bit containers
  # with `property` accessors unpacking via f16tof32/f32tof16 (core WGSL

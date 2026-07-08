@@ -118,7 +118,7 @@ export class ProgramManager {
         resolveSource: ShaderSourceResolver,
         filePaths: string[],
     ) {
-        // Substitute WGSL-incompatible upstream files with WebFalcor overrides (DESIGN.md §4.3).
+        // Substitute WGSL-incompatible upstream files with WebFalcor overrides (docs §4.3).
         const resolveWithOverrides: ShaderSourceResolver = (path) => resolveSource(kShaderOverrides[path] ?? path);
         this.compiler = new SlangCompiler(resolveWithOverrides, filePaths);
 

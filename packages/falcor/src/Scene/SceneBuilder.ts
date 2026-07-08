@@ -1,5 +1,5 @@
 /**
- * SceneBuilder bridge for .pyscene execution (user decision DESIGN.md §11.1:
+ * SceneBuilder bridge for .pyscene execution (user decision docs §11.1:
  * the .py path is primary). Mirrors the subset of Falcor's SceneBuilder python
  * API used by scene files: importScene, TriangleMesh factories, BasicMaterial
  * subclasses, addNode/addMeshInstance, analytic lights and env maps.

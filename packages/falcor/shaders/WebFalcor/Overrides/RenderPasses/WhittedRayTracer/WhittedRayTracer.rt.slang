@@ -1,7 +1,7 @@
 /**
  * WebFalcor override of RenderPasses/WhittedRayTracer/WhittedRayTracer.rt.slang
- * (DESIGN.md §4.3). Diffs vs upstream:
- *  - RT pipeline -> compute megakernel over SceneRayQuery (DESIGN.md §5):
+ * (docs §4.3). Diffs vs upstream:
+ *  - RT pipeline -> compute megakernel over SceneRayQuery (docs §5):
  *    raygen becomes main(), TraceRay becomes traceRay/traceVisibilityRay,
  *    the hit/miss shaders become functions taking the TriangleHit.
  *  - gOutputColor is write-only (WGSL r32*-only read_write rule).

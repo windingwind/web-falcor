@@ -1,5 +1,5 @@
 /**
- * WebFalcor override of Scene/Material/TextureSampler.slang (DESIGN.md §4.3).
+ * WebFalcor override of Scene/Material/TextureSampler.slang (docs §4.3).
  * Diff vs upstream: ITextureSampler and all implementations gain a
  * Texture2DArray overload (uv.z = layer) used by the MaterialSystem override's
  * packed texture array (WGSL has no binding arrays).

@@ -1,5 +1,5 @@
 /**
- * WebFalcor override of Scene/SceneTypes.slang (DESIGN.md §4.3).
+ * WebFalcor override of Scene/SceneTypes.slang (docs §4.3).
  * Diff vs upstream: Split*Buffer resource arrays (multi-buffer >4GB storage)
  * become single buffers -- WGSL has no resource arrays and WebGPU buffer limits
  * sit below the split threshold. Host must configure SCENE_*_BUFFER_COUNT=1.

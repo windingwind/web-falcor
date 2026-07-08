@@ -1,6 +1,6 @@
 # web-falcor — Testing strategy & verified results
 
-Part of the [web-falcor design docs](../DESIGN.md). Section numbers (§7) are
+Part of the [web-falcor design docs](README.md). Section numbers (§7) are
 kept stable across the split so the `§N` cross-references throughout the docs
 stay valid.
 

@@ -7,7 +7,7 @@
  *
  * Exact for meshes whose vertex welding matches the index buffer (MikkTSpace
  * re-welds by position+normal+uv and splits groups at mirrored seams; meshes
- * exercising those paths may diverge until the full port lands — DESIGN.md §8).
+ * exercising those paths may diverge until the full port lands — docs §8).
  */
 
 import { float3, float4 } from "../Utils/Math/Vector.js";

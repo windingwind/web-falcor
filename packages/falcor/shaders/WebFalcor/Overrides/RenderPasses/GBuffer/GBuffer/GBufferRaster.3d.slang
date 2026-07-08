@@ -1,6 +1,6 @@
 /**
  * WebFalcor override of RenderPasses/GBuffer/GBuffer/GBufferRaster.3d.slang
- * (DESIGN.md §4.3). Diffs vs upstream: psMain drops SV_PrimitiveID and
+ * (docs §4.3). Diffs vs upstream: psMain drops SV_PrimitiveID and
  * SV_Barycentrics (absent from WGSL; barycentrics was unused) and
  * [earlydepthstencil]; face normal computed from screen-space derivatives.
  */

@@ -1,6 +1,6 @@
 /**
  * WebFalcor override of RenderPasses/GBuffer/VBuffer/VBufferRT.slang
- * (DESIGN.md §4.3). Diff vs upstream: output textures are write-only
+ * (docs §4.3). Diff vs upstream: output textures are write-only
  * (WTexture2D + Store) -- WGSL restricts read_write storage textures to r32*.
  */
 /***************************************************************************

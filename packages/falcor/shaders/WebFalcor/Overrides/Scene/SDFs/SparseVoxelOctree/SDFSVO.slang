@@ -26,7 +26,7 @@
  # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  **************************************************************************/
 /**
- * WebFalcor override of Scene/SDFs/SparseVoxelOctree/SDFSVO.slang (DESIGN.md §4.3).
+ * WebFalcor override of Scene/SDFs/SparseVoxelOctree/SDFSVO.slang (docs §4.3).
  * Diff vs upstream: decodeHit no longer calls SDFVoxelCommon::decodeLocation.
  * decodeLocation -> unshiftCoord uses 64-bit Morton masks > 2^63, which the
  * WGSL backend emits as bare literals Tint rejects (and Slang constant-folds

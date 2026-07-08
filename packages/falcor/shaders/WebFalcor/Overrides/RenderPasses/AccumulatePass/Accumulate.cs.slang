@@ -1,7 +1,7 @@
 /**
  * WebFalcor override of RenderPasses/AccumulatePass/Accumulate.cs.slang.
  *
- * Diff vs upstream (see DESIGN.md §4.3): per-pixel accumulation state moves
+ * Diff vs upstream (see docs §4.3): per-pixel accumulation state moves
  * from RWTexture2D<float4> to RWStructuredBuffer<float4> — WGSL restricts
  * read_write storage textures to r32float/r32uint/r32sint, and the state
  * textures are read-modify-written each frame. Double mode (64-bit) is not

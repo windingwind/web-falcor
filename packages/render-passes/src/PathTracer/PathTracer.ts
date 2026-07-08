@@ -4,7 +4,7 @@
  * as native does). TracePass runs as the WebFalcor compute megakernel over
  * software ray queries (see the TracePass.rt.slang override).
  *
- * Limits (documented in DESIGN.md parity matrix): fixed spp == 1 only (no
+ * Limits (documented in docs parity matrix): fixed spp == 1 only (no
  * adaptive sampleCount input), guide outputs supported via ResolvePass, no
  * NRD outputs, no RTXDI/SER; rayCount/pathLength await the PixelStats port.
  */

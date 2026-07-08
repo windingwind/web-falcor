@@ -4,7 +4,7 @@
  * .pyscene, execute the graph each frame, and present a marked output to the
  * canvas. Plain-DOM controls (graph/scene pickers, play/pause, output picker,
  * frame counter) stand in for the native Dear ImGui panels; the ImGui-wasm
- * RenderGraphEditor node UI is a documented stretch (DESIGN.md §8.3) — it is
+ * RenderGraphEditor node UI is a documented stretch (docs §8.3) — it is
  * dev tooling orthogonal to Falcor's rendering parity.
  *
  * The render loop (runGraphScript/runSceneScript/RenderGraph.execute) is the

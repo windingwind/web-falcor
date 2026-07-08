@@ -1,6 +1,6 @@
 /**
  * WebFalcor override of RenderPasses/RTXDIPass/FinalShading.cs.slang
- * (DESIGN.md §4.3). Diffs vs upstream:
+ * (docs §4.3). Diffs vs upstream:
  * - The six output textures move from global scope INTO the FinalShading
  *   parameter block: as globals they claim their own bind group and the
  *   pipeline needs 5 (globals, gFinalShading, gRTXDI, gScene, materials) —

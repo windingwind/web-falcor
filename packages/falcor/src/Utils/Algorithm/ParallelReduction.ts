@@ -1,7 +1,7 @@
 /**
  * Parallel reduction mirroring Falcor/Utils/Algorithm/ParallelReduction.h.
  * Two-pass tiled reduction over a texture; result read back asynchronously
- * (async divergence, DESIGN.md §9).
+ * (async divergence, docs §9).
  */
 
 import type { Device } from "../../Core/API/Device.js";

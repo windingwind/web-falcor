@@ -1,5 +1,5 @@
 /**
- * Software ray tracing BVH (DESIGN.md §5) — WebGPU has no ray tracing API.
+ * Software ray tracing BVH (docs §5) — WebGPU has no ray tracing API.
  *
  * v1: CPU median-split BVH over world-space triangles (static scenes; GPU LBVH
  * refit arrives with animation support). Layout is consumed by the

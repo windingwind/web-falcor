@@ -1,6 +1,6 @@
 # web-falcor — Roadmap & resolved design questions
 
-Part of the [web-falcor design docs](../DESIGN.md). Section numbers (§10–§11)
+Part of the [web-falcor design docs](README.md). Section numbers (§10–§11)
 are kept stable across the split so the `§N` cross-references throughout the
 docs stay valid.
 

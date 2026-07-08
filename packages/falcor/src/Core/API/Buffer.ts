@@ -83,7 +83,7 @@ export class Buffer extends Resource {
     }
 
     /**
-     * Mirrors Buffer::getBlob (async divergence, DESIGN.md §9): reads back buffer
+     * Mirrors Buffer::getBlob (async divergence, docs §9): reads back buffer
      * contents via the device's readback heap.
      */
     async getBlob(offset = 0, size?: number): Promise<Uint8Array> {

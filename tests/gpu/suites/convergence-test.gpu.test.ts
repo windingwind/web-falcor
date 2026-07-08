@@ -60,7 +60,7 @@ gpuTest("ConvergenceTest.matchesNativeOracle", async ({ device }) => {
     // KNOWN RESIDUAL (~4.8%): divergence concentrates on combined delta-lobe
     // paths (mirror/glass columns; caustic-class multi-bounce chains). All
     // isolated delta features match native (mirror-delta*, iso-glass 179 px);
-    // tightening tracked in DESIGN.md parity notes.
+    // tightening tracked in docs parity notes.
     expectEq(mean < 5e-2, true, `radiance mean abs diff ${mean}`);
     expectEq(badPixels < 8000, true, `bad pixels ${badPixels}`);
 });

@@ -1,5 +1,5 @@
 /**
- * WebFalcor override of Utils/Math/PackedFormats.slang (DESIGN.md §4.3).
+ * WebFalcor override of Utils/Math/PackedFormats.slang (docs §4.3).
  * Diff vs upstream: pack/unpack functions colliding with builtins added to
  * Slang after Falcor pinned its compiler are renamed with a falcor_ prefix
  * (definitions and call sites); behavior unchanged.

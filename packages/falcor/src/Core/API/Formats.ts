@@ -3,7 +3,7 @@
  *
  * ResourceFormat keeps Falcor's enum names; toGpuTextureFormat() maps to WebGPU
  * GPUTextureFormat strings. Formats without a WebGPU equivalent map to `undefined`
- * and are documented in the parity matrix (DESIGN.md §Formats).
+ * and are documented in the parity matrix (docs §Formats).
  */
 
 export enum ResourceFormat {
@@ -94,7 +94,7 @@ const kGpuFormatMap: Partial<Record<ResourceFormat, GPUTextureFormat>> = {
     [ResourceFormat.RGBA16Float]: "rgba16float",
     [ResourceFormat.R32Float]: "r32float",
     [ResourceFormat.RG32Float]: "rg32float",
-    // RGB32Float: no WebGPU texture format (buffer-only); see DESIGN.md
+    // RGB32Float: no WebGPU texture format (buffer-only); see docs
     [ResourceFormat.RGBA32Float]: "rgba32float",
     [ResourceFormat.R11G11B10Float]: "rg11b10ufloat",
     [ResourceFormat.RGB10A2Unorm]: "rgb10a2unorm",

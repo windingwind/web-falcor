@@ -1,6 +1,6 @@
 /**
  * WebFalcor override of RenderPasses/DebugPasses/Comparison.ps.slang
- * (DESIGN.md §4.3). Diff vs upstream: `bool gDrawArrows` is `uint` — WGSL
+ * (docs §4.3). Diff vs upstream: `bool gDrawArrows` is `uint` — WGSL
  * forbids bool in the uniform address space (non-host-shareable).
  */
 cbuffer GlobalCB

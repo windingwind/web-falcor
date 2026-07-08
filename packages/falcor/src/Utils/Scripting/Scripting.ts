@@ -1,6 +1,6 @@
 /**
  * Python scripting mirroring Falcor/Utils/Scripting (pybind11 -> Pyodide,
- * user decision DESIGN.md §11.1: the .py path is primary).
+ * user decision docs §11.1: the .py path is primary).
  *
  * Executes unmodified upstream render-graph .py scripts: a JS `falcor` bridge
  * module provides RenderGraph/createPass, and a Mogwai-like `m` global

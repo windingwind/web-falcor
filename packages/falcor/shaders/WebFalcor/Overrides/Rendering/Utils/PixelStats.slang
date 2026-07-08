@@ -1,5 +1,5 @@
 /**
- * WebFalcor override of Rendering/Utils/PixelStats.slang (DESIGN.md §4.3).
+ * WebFalcor override of Rendering/Utils/PixelStats.slang (docs §4.3).
  * Diffs vs upstream: WGSL has no binding arrays and no storage-texture
  * atomics, and storage buffers are capped per-stage (16 on the dev GPU) —
  * the five per-type RWTexture2D<uint> counters become regions of ONE

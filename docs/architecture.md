@@ -1,6 +1,6 @@
 # web-falcor — Goals, platform & architecture
 
-Part of the [web-falcor design docs](../DESIGN.md). Section numbers (§1–§3) are
+Part of the [web-falcor design docs](README.md). Section numbers (§1–§3) are
 kept stable across the split so the `§N` cross-references throughout the docs
 stay valid.
 
@@ -99,6 +99,5 @@ web-falcor/
 │   ├── mogwai/                # @web-falcor/mogwai — browser app, mirrors Source/Mogwai
 │   └── slang-compiler/        # build-time slangc driver (→ runtime slang-wasm later)
 ├── tests/                     # unit + image-regression harness (native oracle diffing)
-├── DESIGN.md                  # design-docs index
-└── docs/                      # this document + the rest of the design docs
+└── docs/                      # design docs: README.md index + the split §1–§11 sections
 ```

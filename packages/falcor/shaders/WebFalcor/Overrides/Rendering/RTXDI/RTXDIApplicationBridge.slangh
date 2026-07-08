@@ -1,6 +1,6 @@
 /**
  * WebFalcor override of Rendering/RTXDI/RTXDIApplicationBridge.slangh
- * (DESIGN.md §4.3). Diff vs upstream: `return {}` fails in newer Slang for
+ * (docs §4.3). Diff vs upstream: `return {}` fails in newer Slang for
  * structs with explicit __init (documented WGSL-toolchain issue) — the empty
  * constructors use plain declarations instead.
  */

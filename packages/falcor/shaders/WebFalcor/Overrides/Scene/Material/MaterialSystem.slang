@@ -1,5 +1,5 @@
 /**
- * WebFalcor override of Scene/Material/MaterialSystem.slang (DESIGN.md §4.3, §6.2).
+ * WebFalcor override of Scene/Material/MaterialSystem.slang (docs §4.3, §6.2).
  *
  * Diff vs upstream: WGSL has no binding arrays, so
  * - material textures are packed into one Texture2DArray (layer == textureID)
@@ -59,7 +59,7 @@ struct MaterialSystem
 {
     uint materialCount;                                                         ///< Total number of materials.
     StructuredBuffer<MaterialDataBlob> materialData;                            ///< Material parameters. The format of the data blob depends on the material type.
-    // WebFalcor (DESIGN.md §6.2): WGSL has no binding arrays. Material textures are
+    // WebFalcor (docs §6.2): WGSL has no binding arrays. Material textures are
     // packed into one Texture2DArray (layer == textureID); per-texture uv scale
     // (actual size / array size) lives in a buffer. Samplers/buffers/3D textures
     // are single bindings for now (getTextureSampler ignores samplerID -- divergence

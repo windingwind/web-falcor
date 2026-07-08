@@ -4,7 +4,7 @@
  * kernels (assign brick validity, prefix-sum compaction, reset validity, copy
  * indirection, create bricks + AABBs); this ports them to the CPU so the whole
  * chain is deterministic in the browser (mirrors the NanoVDB CPU-build
- * precedent, DESIGN.md §6.3). Uncompressed bricks only (createSBS default;
+ * precedent, docs §6.3). Uncompressed bricks only (createSBS default;
  * BC4Snorm compression needs the GPU BC4 encoder — documented gap).
  *
  * The runtime shader (SDFSBS.slang) is consumed UNMODIFIED: the host produces

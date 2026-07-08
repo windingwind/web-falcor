@@ -10,7 +10,7 @@
  * Include paths default to Falcor/Source/Falcor (upstream shader library) plus the manifest's directory.
  *
  * This is the build-time path. The runtime path (in-browser compilation of user
- * shaders with slang-wasm) shares manifest semantics; see DESIGN.md §Shader system.
+ * shaders with slang-wasm) shares manifest semantics; see docs §Shader system.
  */
 
 import { execFileSync } from "node:child_process";

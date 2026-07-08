@@ -1,5 +1,5 @@
 /**
- * WebFalcor override of RenderPasses/PathTracer/TracePass.rt.slang (DESIGN.md §5
+ * WebFalcor override of RenderPasses/PathTracer/TracePass.rt.slang (docs §5
  * megakernel lowering). Diffs vs upstream:
  * - RT pipeline (raygen/closesthit/anyhit/miss/intersection + TraceRay) ->
  *   compute megakernel over SceneRayQuery; Scheduler.nextHit performs the

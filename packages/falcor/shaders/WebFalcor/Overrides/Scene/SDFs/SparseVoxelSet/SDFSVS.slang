@@ -26,7 +26,7 @@
  # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  **************************************************************************/
 /**
- * WebFalcor override of Scene/SDFs/SparseVoxelSet/SDFSVS.slang (DESIGN.md §4.3).
+ * WebFalcor override of Scene/SDFs/SparseVoxelSet/SDFSVS.slang (docs §4.3).
  * Diff vs upstream: the per-voxel `aabbs` and `voxels` StructuredBuffers are
  * merged into one `WebFalcorSVSVoxel` buffer (SVS otherwise needs two storage
  * buffers, one over the 16-per-stage cap).

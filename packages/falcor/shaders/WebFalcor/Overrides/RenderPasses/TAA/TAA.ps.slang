@@ -1,5 +1,5 @@
 /**
- * WebFalcor override of RenderPasses/TAA/TAA.ps.slang (DESIGN.md §4.3).
+ * WebFalcor override of RenderPasses/TAA/TAA.ps.slang (docs §4.3).
  * Diff vs upstream: bool in a cbuffer is not host-shareable in WGSL ->
  * gAntiFlicker becomes uint. Kernel otherwise unmodified.
  */

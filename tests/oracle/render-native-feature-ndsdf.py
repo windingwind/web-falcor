@@ -15,7 +15,7 @@
 # The default FaceNormal mode is also NOT comparable on this machine: native
 # NDSDF gradients come out NaN (FlatShaded probe shows uniform 0.2 ambient;
 # numeric gradient reads corners through SPIR-V offset texel fetches) -- the
-# web render shows geometrically consistent normals (DESIGN.md 6.3 artifact
+# web render shows geometrically consistent normals (docs 6.3 artifact
 # class).
 from falcor import *
 import os

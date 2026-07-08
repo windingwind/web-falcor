@@ -27,7 +27,7 @@
  **************************************************************************/
 /**
  * WebFalcor override of Scene/SDFs/NormalizedDenseSDFGrid/NDSDFGrid.slang
- * (DESIGN.md §4.3). Diffs vs upstream:
+ * (docs §4.3). Diffs vs upstream:
  * - The per-LOD Texture3D binding array (illegal in WGSL; LOD widths
  *   1+(c<<lod) are not a mip chain) becomes ONE R8Snorm 3D atlas with the
  *   LODs stacked along Z at zBase(lod) = lod + c*(2^lod - 1).

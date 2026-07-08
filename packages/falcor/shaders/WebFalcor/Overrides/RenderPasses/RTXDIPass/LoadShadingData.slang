@@ -1,6 +1,6 @@
 /**
  * WebFalcor override of RenderPasses/RTXDIPass/LoadShadingData.slang
- * (DESIGN.md §4.3). Diff vs upstream: `sd = {};` fails in newer Slang for
+ * (docs §4.3). Diff vs upstream: `sd = {};` fails in newer Slang for
  * WGSL (ShadingData has explicit initialization) — replaced with the
  * prepared-default pattern used across the other pass overrides.
  */

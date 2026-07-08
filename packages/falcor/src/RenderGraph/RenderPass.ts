@@ -49,7 +49,7 @@ export abstract class RenderPass {
     compile(_ctx: RenderContext, _compileData: CompileData): void {}
 
     /**
-     * Async initialization (asset loading etc.) — web divergence (DESIGN.md §9):
+     * Async initialization (asset loading etc.) — web divergence (docs §9):
      * native Falcor blocks on file IO in constructors. Awaited by RenderGraph.init().
      */
     async initAsync(): Promise<void> {}

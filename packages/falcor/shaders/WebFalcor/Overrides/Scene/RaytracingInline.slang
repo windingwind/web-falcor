@@ -1,5 +1,5 @@
 /**
- * WebFalcor override of Scene/RaytracingInline.slang (DESIGN.md §5).
+ * WebFalcor override of Scene/RaytracingInline.slang (docs §5).
  *
  * WebGPU has no ray tracing API: DXR 1.1 RayQuery is replaced by a stack-based
  * traversal over the software BVH built by the host (Scene/SoftwareRT/Bvh.ts,

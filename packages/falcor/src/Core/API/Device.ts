@@ -28,7 +28,7 @@ export interface DeviceDesc {
 
 /** Mirrors Falcor::Device::SupportedFeatures, translated to WebGPU capability queries. */
 export interface SupportedFeatures {
-    /** Hardware ray tracing pipelines: not available in WebGPU; software fallback is used (DESIGN.md §RayTracing). */
+    /** Hardware ray tracing pipelines: not available in WebGPU; software fallback is used (docs §RayTracing). */
     raytracing: boolean;
     /** Inline ray queries: same as above. */
     raytracingQuery: boolean;

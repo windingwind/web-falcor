@@ -1,5 +1,5 @@
 /**
- * WebFalcor override of Rendering/RTXDI/LightUpdater.cs.slang (DESIGN.md
+ * WebFalcor override of Rendering/RTXDI/LightUpdater.cs.slang (docs
  * §4.3). Diff vs upstream: `Type light = {};` fails in newer Slang for
  * structs with explicit __init overloads — replaced with explicit
  * member zero-initialization.

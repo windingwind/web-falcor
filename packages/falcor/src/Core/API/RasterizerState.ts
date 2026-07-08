@@ -45,7 +45,7 @@ export class RasterizerStateDesc {
 export class RasterizerState {
     constructor(public readonly desc: RasterizerStateDesc) {
         if (desc.fillMode === FillMode.Wireframe) {
-            Logger.warning("RasterizerState: FillMode.Wireframe is not supported in WebGPU; using Solid (DESIGN.md §8.1)");
+            Logger.warning("RasterizerState: FillMode.Wireframe is not supported in WebGPU; using Solid (docs §8.1)");
         }
     }
 

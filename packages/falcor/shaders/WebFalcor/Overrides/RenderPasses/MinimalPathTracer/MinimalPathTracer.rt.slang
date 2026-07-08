@@ -1,6 +1,6 @@
 /**
  * WebFalcor override of RenderPasses/MinimalPathTracer/MinimalPathTracer.rt.slang
- * (DESIGN.md §5 megakernel lowering). Diffs vs upstream:
+ * (docs §5 megakernel lowering). Diffs vs upstream:
  * - RT pipeline (TraceRay + raygen/miss/hit shaders) -> compute megakernel over
  *   SceneRayQuery (software BVH); shadow rays via visibility queries; miss
  *   logic inlined from scatterMiss.

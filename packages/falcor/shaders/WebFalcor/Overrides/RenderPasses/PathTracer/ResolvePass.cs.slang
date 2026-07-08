@@ -1,6 +1,6 @@
 /**
  * WebFalcor override of RenderPasses/PathTracer/ResolvePass.cs.slang
- * (DESIGN.md §4.3). Diff vs upstream: output textures are write-only
+ * (docs §4.3). Diff vs upstream: output textures are write-only
  * (WTexture2D + Store; WGSL restricts read_write storage textures to r32*),
  * with [format(...)] annotations matching the kOutputChannels formats (WGSL
  * requires one static texel format per storage binding).

@@ -267,7 +267,7 @@ export class RenderGraph {
 
     /**
      * Awaits async pass initialization (asset loading). Call once before the
-     * first execute (web divergence, DESIGN.md §9).
+     * first execute (web divergence, docs §9).
      */
     async init(): Promise<void> {
         await Promise.all([...this.passes.values()].map((p) => p.initAsync()));

@@ -1,5 +1,5 @@
 /**
- * WebFalcor shader overrides (DESIGN.md §4.3).
+ * WebFalcor shader overrides (docs §4.3).
  *
  * Upstream shader files that use features WGSL cannot express are substituted
  * with web-owned implementations that keep the exact interface (entry points,
@@ -19,7 +19,7 @@ export const kShaderOverrides: Readonly<Record<string, string>> = {
     "Utils/Math/FormatConversion.slang": "WebFalcor/Overrides/Utils/Math/FormatConversion.slang",
     "Utils/Math/PackedFormats.slang": "WebFalcor/Overrides/Utils/Math/PackedFormats.slang",
     "Scene/HitInfo.slang": "WebFalcor/Overrides/Scene/HitInfo.slang",
-    // WGSL has no binding arrays (DESIGN.md §6.2): packed Texture2DArray material
+    // WGSL has no binding arrays (docs §6.2): packed Texture2DArray material
     // textures, single sampler/buffer/3D bindings, single grid/SDF instances,
     // single-buffer Split*Buffers.
     "Scene/Material/BasicMaterialData.slang": "WebFalcor/Overrides/Scene/Material/BasicMaterialData.slang",
@@ -32,7 +32,7 @@ export const kShaderOverrides: Readonly<Record<string, string>> = {
     // Newer-Slang '= {}' / brace-init fixes + WGSL raster-path gaps.
     "Scene/Material/MaterialFactory.slang": "WebFalcor/Overrides/Scene/Material/MaterialFactory.slang",
     "Scene/Raster.slang": "WebFalcor/Overrides/Scene/Raster.slang",
-    // Software BVH traversal replaces DXR 1.1 RayQuery (DESIGN.md §5).
+    // Software BVH traversal replaces DXR 1.1 RayQuery (docs §5).
     "Scene/RaytracingInline.slang": "WebFalcor/Overrides/Scene/RaytracingInline.slang",
     "Rendering/Materials/StandardMaterial.slang": "WebFalcor/Overrides/Rendering/Materials/StandardMaterial.slang",
     "Rendering/Materials/IMaterial.slang": "WebFalcor/Overrides/Rendering/Materials/IMaterial.slang",
@@ -42,7 +42,7 @@ export const kShaderOverrides: Readonly<Record<string, string>> = {
     "RenderPasses/GBuffer/VBuffer/VBufferRT.slang": "WebFalcor/Overrides/RenderPasses/GBuffer/VBuffer/VBufferRT.slang",
     // Same + rgb10a2unorm storage unsupported in WGSL (normWRoughnessMaterialID -> rgba16f).
     "RenderPasses/GBuffer/GBuffer/GBufferRT.slang": "WebFalcor/Overrides/RenderPasses/GBuffer/GBuffer/GBufferRT.slang",
-    // RT pipeline -> compute megakernel over SceneRayQuery (DESIGN.md §5).
+    // RT pipeline -> compute megakernel over SceneRayQuery (docs §5).
     "RenderPasses/MinimalPathTracer/MinimalPathTracer.rt.slang": "WebFalcor/Overrides/RenderPasses/MinimalPathTracer/MinimalPathTracer.rt.slang",
     // Full PathTracer: '= {}' fixes + RT pipeline -> compute megakernel over SceneRayQuery.
     "RenderPasses/PathTracer/GeneratePaths.cs.slang": "WebFalcor/Overrides/RenderPasses/PathTracer/GeneratePaths.cs.slang",

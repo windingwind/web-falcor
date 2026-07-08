@@ -1,6 +1,6 @@
 /**
  * WebFalcor override of RenderPasses/FLIPPass/FLIPPass.cs.slang
- * (DESIGN.md §4.3). Diffs vs upstream: output textures are write-only
+ * (docs §4.3). Diffs vs upstream: output textures are write-only
  * (WTexture2D + Store; WGSL restricts read_write storage textures to r32*);
  * the uniform bools are uint (bool is non-host-shareable in WGSL uniforms).
  */

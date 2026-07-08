@@ -1,5 +1,5 @@
 /**
- * WebFalcor override of Scene/Scene.slang (DESIGN.md §4.3, §6.2).
+ * WebFalcor override of Scene/Scene.slang (docs §4.3, §6.2).
  * Diff vs upstream: grids/sdfGrids resource-struct arrays (unsupported in WGSL)
  * become single instances; index-based access ignores the index. Scenes with
  * more than one grid volume / SDF grid are unsupported until the volume
@@ -65,7 +65,7 @@ import Rendering.Materials.TexLODHelpers;
 struct Scene
 {
     // Raytracing
-    // WebFalcor SoftwareRT (DESIGN.md §5): BVH buffers consumed by the
+    // WebFalcor SoftwareRT (docs §5): BVH buffers consumed by the
     // RaytracingInline override. Nodes: 2x float4 each; tris: 3x float4 each.
     // One merged buffer (storage-buffer budget: 16 per stage on the dev GPU):
     // BVH nodes at [0, webfalcorBvhTrisOffset), triangles after.
@@ -124,7 +124,7 @@ struct Scene
 
     // SDF Grids
     // WebFalcor: WGSL has no arrays of resource-bearing structs; single instance
-    // (multi-grid packing lands with the volume work, DESIGN.md §6.2).
+    // (multi-grid packing lands with the volume work, docs §6.2).
     SDFGrid sdfGrid0;
 
     // Procedural primitives

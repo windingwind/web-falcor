@@ -3,7 +3,7 @@
  *
  * Wraps a lazily-created GPUCommandEncoder. Falcor's resource barriers
  * (resourceBarrier/uavBarrier/textureBarrier) are no-ops kept for API parity —
- * WebGPU synchronizes automatically (DESIGN.md §9).
+ * WebGPU synchronizes automatically (docs §9).
  */
 
 import { ArgumentError } from "../Error.js";
@@ -99,7 +99,7 @@ export class CopyContext {
     }
 
     /**
-     * Mirrors CopyContext::readBuffer (async divergence, DESIGN.md §9).
+     * Mirrors CopyContext::readBuffer (async divergence, docs §9).
      * Flushes pending work, copies into a transient readback buffer, maps it.
      */
     async readBuffer(buffer: Buffer, offset = 0, size?: number): Promise<Uint8Array> {

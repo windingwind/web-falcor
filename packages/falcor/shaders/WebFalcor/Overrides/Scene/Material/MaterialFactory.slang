@@ -1,5 +1,5 @@
 /**
- * WebFalcor override of Scene/Material/MaterialFactory.slang (DESIGN.md §4.3).
+ * WebFalcor override of Scene/Material/MaterialFactory.slang (docs §4.3).
  * Diff vs upstream: 'ShadingData sd = {};' -> plain declaration (newer Slang
  * rejects {} init for structs with non-default initializers; all fields are
  * assigned below).

@@ -26,7 +26,7 @@
  # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  **************************************************************************/
 /**
- * WebFalcor override of Scene/SDFs/SparseBrickSet/SDFSBS.slang (DESIGN.md §4.3).
+ * WebFalcor override of Scene/SDFs/SparseBrickSet/SDFSBS.slang (docs §4.3).
  * Diff vs upstream: `brickID != UINT32_MAX` promotes to i64 in the WGSL
  * backend (UINT32_MAX is the un-suffixed literal 4294967295 = signed-int
  * overflow → i64; Tint has no i64), so compare against the explicit 0xffffffffu.

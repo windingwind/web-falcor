@@ -1,6 +1,6 @@
 /**
  * Runtime Slang->WGSL compiler wrapping slang-wasm (the same compiler front-end
- * native Falcor embeds via slang-gfx). See DESIGN.md §4.1.
+ * native Falcor embeds via slang-gfx). See docs §4.1.
  *
  * Translation-unit semantics: Falcor injects program defines into every
  * translation unit of a compile request. The wasm binding's module API keeps

@@ -3,9 +3,15 @@
 [![CI](https://github.com/windingwind/web-falcor/actions/workflows/ci.yml/badge.svg)](https://github.com/windingwind/web-falcor/actions/workflows/ci.yml)
 
 WebGPU-based reimplementation of [NVIDIA Falcor](https://github.com/NVIDIAGameWorks/Falcor)
-targeting 1:1 feature parity where the web platform allows. **See [DESIGN.md](DESIGN.md)**
+targeting 1:1 feature parity where the web platform allows. **See the [design docs](docs/)**
 for the framework design, the Falcor→web module mapping, and the feature parity matrix
 (including features that are impossible in the browser and why).
+
+![Amazon Lumberyard Bistro path-traced in the browser with web-falcor on WebGPU](docs/assets/teaser-bistro.jpg)
+
+*Amazon Lumberyard Bistro (interior), path-traced with web-falcor on WebGPU — full material system,
+emissive lighting, and software ray tracing, cross-validated against native Falcor's DXR output
+(see the [parity matrix](docs/parity-matrix.md) and [oracle results](docs/testing.md)).*
 
 ## Layout
 
@@ -59,3 +65,12 @@ npm run test:gpu    # GPU image tests vs native oracles — needs hardware WebGP
 CI ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)) runs the quick-start
 setup path plus `typecheck` + `npm test` on every push and PR — so the badge
 above also verifies that the no-clone setup keeps working.
+
+## License
+
+web-falcor's own code is licensed under the [MIT license](LICENSE).
+
+It is a reimplementation derived from [NVIDIA Falcor](https://github.com/NVIDIAGameWorks/Falcor)
+(BSD-3-Clause). That upstream license and copyright notice are retained in
+[THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md), and each shader derived from an
+upstream Falcor source is marked in its `WebFalcor/Overrides` header.

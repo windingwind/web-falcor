@@ -1,5 +1,5 @@
 /**
- * WebFalcor override of Rendering/RTXDI/SurfaceData.slang (DESIGN.md §4.3).
+ * WebFalcor override of Rendering/RTXDI/SurfaceData.slang (docs §4.3).
  * Diff vs upstream: `this = {};` inside __init self-recurses in newer Slang
  * for WGSL — replaced with explicit field initialization.
  */

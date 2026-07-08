@@ -1,5 +1,5 @@
 /**
- * WebFalcor override of Rendering/Materials/StandardMaterial.slang (DESIGN.md §4.3).
+ * WebFalcor override of Rendering/Materials/StandardMaterial.slang (docs §4.3).
  * Diff vs upstream: '= {}' initializers replaced with plain declarations
  * (newer Slang rejects them for structs with synthesized initializers; all
  * fields are assigned below).

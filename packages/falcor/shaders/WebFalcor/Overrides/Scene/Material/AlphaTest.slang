@@ -1,5 +1,5 @@
 /**
- * WebFalcor override of Scene/Material/AlphaTest.slang (DESIGN.md §4.3).
+ * WebFalcor override of Scene/Material/AlphaTest.slang (docs §4.3).
  * Diff vs upstream: hashed-alpha anisotropic derivatives (fragment-only ddx/ddy)
  * replaced with a constant — the helper must compile in compute for software RT.
  */

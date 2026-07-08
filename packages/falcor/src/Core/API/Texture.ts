@@ -51,7 +51,7 @@ export class Texture extends Resource {
         const gpuFormat = toGpuTextureFormat(desc.format);
         if (!gpuFormat) {
             throw new RuntimeError(
-                `ResourceFormat ${ResourceFormat[desc.format]} has no WebGPU texture format (see DESIGN.md §Formats)`,
+                `ResourceFormat ${ResourceFormat[desc.format]} has no WebGPU texture format (see docs §Formats)`,
             );
         }
         this.gpuFormat = gpuFormat;

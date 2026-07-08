@@ -1,6 +1,6 @@
 /**
  * WebFalcor override of RenderPasses/Utils/GaussianBlur/GaussianBlur.ps.slang
- * (DESIGN.md §4.3). Diffs vs upstream:
+ * (docs §4.3). Diffs vs upstream:
  *  - the typed weights buffer (Buffer<float>) is a StructuredBuffer<float>
  *    (WGSL has no texel buffers);
  *  - SampleLevel's integer offset argument is folded into the sample

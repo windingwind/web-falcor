@@ -1,7 +1,7 @@
 /**
  * WebFalcor override of Utils/Algorithm/ParallelReduction.cs.slang.
  *
- * Diffs vs upstream (see DESIGN.md §4.3):
+ * Diffs vs upstream (see docs §4.3):
  * - RWBuffer/Buffer (typed texel buffers) -> RW/StructuredBuffer: WGSL has no
  *   texel buffers.
  * - Wave-intrinsic warp reduction (upstream assumes warp size 32) -> portable

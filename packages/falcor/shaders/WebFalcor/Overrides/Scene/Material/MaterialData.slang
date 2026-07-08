@@ -1,5 +1,5 @@
 /**
- * WebFalcor override of Scene/Material/MaterialData.slang (DESIGN.md §4.3).
+ * WebFalcor override of Scene/Material/MaterialData.slang (docs §4.3).
  * Diff vs upstream: asfloat16/asuint16 bitcasts (unavailable on the WGSL target)
  * replaced with f16tof32/f32tof16 (lower to core pack/unpack2x16float). Bit
  * layouts unchanged.

@@ -31,7 +31,7 @@ import { tmpdir } from "node:os";
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 
-// Pinned upstream versions (keep in sync with README / DESIGN.md).
+// Pinned upstream versions (keep in sync with README / docs).
 const FALCOR_COMMIT = "eb540f6748774680ce0039aaf3ac9279266ec521";
 const SLANG_VERSION = "2026.12.2";
 const SLANG_WASM_URL = `https://github.com/shader-slang/slang/releases/download/v${SLANG_VERSION}/slang-${SLANG_VERSION}-wasm.zip`;
