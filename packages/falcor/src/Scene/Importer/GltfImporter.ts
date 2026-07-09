@@ -260,7 +260,7 @@ export class GltfImporter {
                     path: path as AnimationPath,
                     times: readAccessor(sampler.input) as Float32Array,
                     values: readAccessor(sampler.output) as Float32Array,
-                    interp: sampler.interpolation === "STEP" ? "STEP" : "LINEAR",
+                    interp: sampler.interpolation === "STEP" ? "STEP" : sampler.interpolation === "CUBICSPLINE" ? "CUBICSPLINE" : "LINEAR",
                 });
             }
         }

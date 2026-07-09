@@ -12,8 +12,9 @@ export interface AnimationChannel {
     nodeID: number;
     path: AnimationPath;
     times: Float32Array; // seconds, ascending
-    values: Float32Array; // flattened vec3 (translation/scale) or vec4 xyzw quat (rotation)
-    interp: "LINEAR" | "STEP";
+    values: Float32Array; // flattened vec3 (translation/scale) or vec4 xyzw quat (rotation).
+    // CUBICSPLINE stores 3 blocks per keyframe: [inTangent, value, outTangent].
+    interp: "LINEAR" | "STEP" | "CUBICSPLINE";
 }
 
 /** Retained scene-graph node with its bind-pose local TRS. Parents precede children. */
@@ -112,8 +113,29 @@ function findSpan(times: Float32Array, t: number): { i0: number; i1: number; f: 
     return { i0: lo, i1: lo + 1, f: t1 > t0 ? (t - t0) / (t1 - t0) : 0 };
 }
 
+/**
+ * glTF CUBICSPLINE Hermite eval. Output stores 3 blocks per keyframe
+ * ([inTangent, value, outTangent], each `C` components); tangents are scaled by
+ * the segment duration (glTF spec). Returns the `C`-component interpolated value.
+ */
+function cubicSpline(ch: AnimationChannel, i0: number, i1: number, f: number, C: number): number[] {
+    const val = (k: number, slot: number, c: number) => ch.values[(3 * k + slot) * C + c]!; // slot 0=in,1=value,2=out
+    const dt = ch.times[i1]! - ch.times[i0]!;
+    if (i0 === i1 || dt <= 0) return Array.from({ length: C }, (_v, c) => val(i0, 1, c));
+    const t = f, t2 = t * t, t3 = t2 * t;
+    const h00 = 2 * t3 - 3 * t2 + 1;
+    const h10 = t3 - 2 * t2 + t;
+    const h01 = -2 * t3 + 3 * t2;
+    const h11 = t3 - t2;
+    return Array.from({ length: C }, (_v, c) => h00 * val(i0, 1, c) + h10 * dt * val(i0, 2, c) + h01 * val(i1, 1, c) + h11 * dt * val(i1, 0, c));
+}
+
 function sampleVec3(ch: AnimationChannel, time: number): float3 {
     const { i0, i1, f } = findSpan(ch.times, time);
+    if (ch.interp === "CUBICSPLINE") {
+        const c = cubicSpline(ch, i0, i1, f, 3);
+        return new float3(c[0]!, c[1]!, c[2]!);
+    }
     const a = new float3(ch.values[i0 * 3]!, ch.values[i0 * 3 + 1]!, ch.values[i0 * 3 + 2]!);
     if (ch.interp === "STEP" || i0 === i1) return a;
     const b = new float3(ch.values[i1 * 3]!, ch.values[i1 * 3 + 1]!, ch.values[i1 * 3 + 2]!);
@@ -122,6 +144,11 @@ function sampleVec3(ch: AnimationChannel, time: number): float3 {
 
 function sampleQuat(ch: AnimationChannel, time: number): quatf {
     const { i0, i1, f } = findSpan(ch.times, time);
+    if (ch.interp === "CUBICSPLINE") {
+        const c = cubicSpline(ch, i0, i1, f, 4);
+        const len = Math.hypot(c[0]!, c[1]!, c[2]!, c[3]!) || 1; // Hermite output isn't unit-length
+        return new quatf(c[0]! / len, c[1]! / len, c[2]! / len, c[3]! / len);
+    }
     const a = new quatf(ch.values[i0 * 4]!, ch.values[i0 * 4 + 1]!, ch.values[i0 * 4 + 2]!, ch.values[i0 * 4 + 3]!);
     if (ch.interp === "STEP" || i0 === i1) return a;
     const b = new quatf(ch.values[i1 * 4]!, ch.values[i1 * 4 + 1]!, ch.values[i1 * 4 + 2]!, ch.values[i1 * 4 + 3]!);
