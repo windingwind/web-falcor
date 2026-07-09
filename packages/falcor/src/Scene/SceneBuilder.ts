@@ -465,8 +465,10 @@ export class SceneBuilderBridge {
     private meshInstanced = new Map<number, float4x4[]>();
     private nodes: float4x4[] = [];
     private lights: LightBridge[] = [];
-    /** Node driving an imported camera (glTF), for camera animation; -1 if none. */
+    /** Node driving an imported camera (glTF), for camera animation; undefined if none. */
     private importedCameraNodeID: number | undefined;
+    /** Bind-pose of an imported glTF camera (used when the pyscene sets no camera). */
+    private importedCameraPose: import("./Importer/GltfImporter.js").GltfCameraPose | undefined;
     private gridVolumesList: GridVolumeBridge[] = [];
     private _envMap: EnvMapRef | null = null;
     camera: CameraBridge | null = null;
@@ -687,7 +689,10 @@ export class SceneBuilderBridge {
                     for (const n of parsed.nodes) nodes.push({ ...n, parent: n.parent >= 0 ? n.parent + nodeOffset : -1 });
                     for (const ch of parsed.animations) animations.push({ ...ch, nodeID: ch.nodeID + nodeOffset });
                     for (const l of parsed.lights) importedLights.push({ ...l, nodeID: l.nodeID !== undefined ? l.nodeID + nodeOffset : undefined });
-                    if (parsed.cameraNodeID !== undefined && this.importedCameraNodeID === undefined) this.importedCameraNodeID = parsed.cameraNodeID + nodeOffset;
+                    if (parsed.cameraNodeID !== undefined && this.importedCameraNodeID === undefined) {
+                        this.importedCameraNodeID = parsed.cameraNodeID + nodeOffset;
+                        this.importedCameraPose = parsed.camera;
+                    }
                     for (const m of parsed.meshes)
                         meshes.push({
                             ...m,
@@ -789,12 +794,20 @@ export class SceneBuilderBridge {
             sdfGrids.push({ grid: built.grid, materialID: built.materialID, transform: this.nodes[inst.nodeID]! });
         }
 
-        const scene = new Scene(device, meshes, materials, lights, textureManager, sdfGrids, nodes, animations);
+        // Only bind the camera to an imported node when the pyscene doesn't define
+        // its own camera (an explicit pyscene camera wins and stays static).
+        const cameraNodeID = this.camera ? undefined : this.importedCameraNodeID;
+        const scene = new Scene(device, meshes, materials, lights, textureManager, sdfGrids, nodes, animations, cameraNodeID);
         if (this.camera) {
             scene.camera.setPosition(this.camera.getPosition());
             scene.camera.setTarget(this.camera.getTarget());
             scene.camera.setUpVector(this.camera.getUp());
             scene.camera.setFocalLength(this.camera.focalLength);
+        } else if (this.importedCameraPose) {
+            scene.camera.setPosition(this.importedCameraPose.position);
+            scene.camera.setTarget(this.importedCameraPose.target);
+            scene.camera.setUpVector(this.importedCameraPose.up);
+            scene.camera.setFocalLength(this.importedCameraPose.focalLength);
         }
         if (this.envMap) {
             const url = baseUrl ? `${baseUrl}/${this.envMap.path}` : this.envMap.path;

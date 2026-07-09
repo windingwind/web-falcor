@@ -17,15 +17,15 @@ import type { ShaderVar } from "../Core/Program/ParameterBlock.js";
 import { Camera } from "./Camera/Camera.js";
 import { float4x4, transpose, inverse } from "../Utils/Math/Matrix.js";
 import { buildBvh, buildAabbBvh, type BvhTriangle } from "./SoftwareRT/Bvh.js";
-import { packLights, type AnalyticLight } from "./SceneData.js";
+import { packLights, LightType, type AnalyticLight } from "./SceneData.js";
 import { TextureManager } from "./Material/TextureManager.js";
 import type { EnvMap } from "./Lights/EnvMap.js";
 import { buildLightCollection } from "./Lights/LightCollection.js";
 import { evaluateGlobals, computeSkinMatrices, skinVertices, type SceneAnimations, type SceneNode, type AnimationChannel, type SkinDesc } from "./Animation/SceneAnimation.js";
 import { decodeNormal2x16Host, type Vec3 } from "../Rendering/Lights/LightBVHTypes.js";
 import type { EmissiveTriangleInput } from "../Rendering/Lights/LightBVHBuilder.js";
-import { transformPoint } from "../Utils/Math/Matrix.js";
-import type { float3 } from "../Utils/Math/Vector.js";
+import { transformPoint, transformVector } from "../Utils/Math/Matrix.js";
+import { float3, normalize3 } from "../Utils/Math/Vector.js";
 import {
     GeometryType,
     packGeometryInstances,
@@ -102,6 +102,10 @@ export class Scene {
     private sourceMeshes: SceneMeshDesc[] | null = null;
     private animData: SceneAnimations | null = null;
     private animNodeCount = 0;
+    /** Node whose animated global drives the camera (glTF camera); undefined if none. */
+    private cameraNodeID?: number;
+    /** True once any analytic light or the camera is bound to an animated node. */
+    private hasAnimatedCameraOrLights = false;
     private bvhCapacityBytes = 0;
     readonly sdfGrids: SceneSDFGridDesc[];
     private sdfInstanceFirst = 0;
@@ -128,7 +132,9 @@ export class Scene {
         sdfGrids: SceneSDFGridDesc[] = [],
         nodes: SceneNode[] = [],
         animations: AnimationChannel[] = [],
+        cameraNodeID?: number,
     ) {
+        this.cameraNodeID = cameraNodeID;
         this.sdfGrids = sdfGrids;
         // Geometry-less scenes are legal (pure-volume scenes like smoke.pyscene):
         // buffers pad to one zeroed struct and ray queries simply miss.
@@ -273,6 +279,8 @@ export class Scene {
         this.lightCount = lights.length;
         this.analyticLights = lights;
         make("lights", packLights(lights), 224);
+        // Camera/light Animatable: recompute their pose from node globals each frame.
+        this.hasAnimatedCameraOrLights = cameraNodeID !== undefined || lights.some((l) => l.nodeID !== undefined);
 
         // Emissive geometry (LightCollection).
         const lc = buildLightCollection(
@@ -373,6 +381,10 @@ export class Scene {
         const span = this.animData.duration - this.animData.start;
         const globals = evaluateGlobals(this.animData, span > 0 ? this.animData.start + (timeSec % span) : this.animData.start);
 
+        // Animatable camera/lights: rederive their pose from the node globals
+        // (glTF cameras/lights aim down local -Z; up is local +Y).
+        if (this.hasAnimatedCameraOrLights) this.updateAnimatedCameraAndLights(globals);
+
         // Per mesh: current world matrix + world-space vertex positions. Skinned
         // meshes deform to world space on the CPU (identity world matrix, skinned
         // verts written into the shared vertex buffer); rigid meshes ride their
@@ -430,6 +442,40 @@ export class Scene {
         // Setblob in place into the worst-case-sized buffer (allocated in the ctor).
         this.buffers["bvhNodes"]!.setBlob(bvhMerged.subarray(0, Math.min(bvhMerged.length, this.bvhCapacityBytes / 4)));
         return true;
+    }
+
+    /**
+     * Mirrors Animatable::updateFromAnimation for the camera and analytic lights:
+     * re-poses each from its bound node's current global matrix. glTF cameras and
+     * lights look down local -Z with local +Y up; point-light position is the node
+     * origin. Area lights (Rect/Disc/Sphere) ride the full node transform.
+     */
+    private updateAnimatedCameraAndLights(globals: float4x4[]): void {
+        const ZERO = new float3(0, 0, 0);
+        const FWD = new float3(0, 0, -1);
+        const UP = new float3(0, 1, 0);
+        if (this.cameraNodeID !== undefined && globals[this.cameraNodeID]) {
+            const g = globals[this.cameraNodeID]!;
+            const pos = transformPoint(g, ZERO);
+            const fwd = normalize3(transformVector(g, FWD));
+            this.camera.setPosition(pos);
+            this.camera.setTarget(new float3(pos.x + fwd.x, pos.y + fwd.y, pos.z + fwd.z));
+            this.camera.setUpVector(normalize3(transformVector(g, UP)));
+        }
+        let lightsDirty = false;
+        for (const light of this.analyticLights) {
+            if (light.nodeID === undefined || !globals[light.nodeID]) continue;
+            const g = globals[light.nodeID]!;
+            const isArea = light.type === LightType.Rect || light.type === LightType.Disc || light.type === LightType.Sphere;
+            if (isArea) {
+                light.transMat = g;
+            } else {
+                light.posW = transformPoint(g, ZERO);
+                light.dirW = normalize3(transformVector(g, FWD));
+            }
+            lightsDirty = true;
+        }
+        if (lightsDirty) this.buffers["lights"]!.setBlob(packLights(this.analyticLights));
     }
 
     /** Per-emissive-triangle flux in LightCollection order (for power sampling). */

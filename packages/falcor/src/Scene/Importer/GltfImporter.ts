@@ -18,6 +18,7 @@ import { decomposeTRS, type SceneNode, type AnimationChannel, type AnimationPath
 import { TextureManager } from "../Material/TextureManager.js";
 import { TextureHandleMode, packTextureHandle } from "../Material/MaterialData.js";
 import { generateTangents } from "../TangentSpace.js";
+import { fovYToFocalLength } from "../Camera/Camera.js";
 
 interface GltfLight {
     type: "point" | "directional" | "spot";
@@ -65,6 +66,15 @@ interface GltfJson {
     }[];
     textures?: { source?: number; sampler?: number }[];
     images?: { uri?: string; bufferView?: number; mimeType?: string }[];
+    cameras?: { type?: string; perspective?: { yfov?: number; aspectRatio?: number; znear?: number } }[];
+}
+
+/** Camera pose extracted from a glTF camera node (bind pose). */
+export interface GltfCameraPose {
+    position: float3;
+    target: float3;
+    up: float3;
+    focalLength: number;
 }
 
 interface GltfPrimitive {
@@ -89,7 +99,14 @@ export class GltfImporter {
     static async importFromBytes(device: Device, bytes: Uint8Array, baseUrl = "", lights: AnalyticLight[] = []): Promise<Scene> {
         const textureManager = new TextureManager();
         const parsed = await GltfImporter.parseToDescs(bytes, baseUrl, textureManager);
-        return new Scene(device, parsed.meshes, parsed.materials, [...lights, ...parsed.lights], textureManager, [], parsed.nodes, parsed.animations);
+        const scene = new Scene(device, parsed.meshes, parsed.materials, [...lights, ...parsed.lights], textureManager, [], parsed.nodes, parsed.animations, parsed.cameraNodeID);
+        if (parsed.camera) {
+            scene.camera.setPosition(parsed.camera.position);
+            scene.camera.setTarget(parsed.camera.target);
+            scene.camera.setUpVector(parsed.camera.up);
+            scene.camera.setFocalLength(parsed.camera.focalLength);
+        }
+        return scene;
     }
 
     /** Parses glTF into scene descriptors without constructing GPU resources
@@ -98,7 +115,7 @@ export class GltfImporter {
         bytes: Uint8Array,
         baseUrl = "",
         textureManager = new TextureManager(),
-    ): Promise<{ meshes: SceneMeshDesc[]; materials: SceneMaterialDesc[]; nodes: SceneNode[]; animations: AnimationChannel[]; lights: AnalyticLight[]; cameraNodeID?: number }> {
+    ): Promise<{ meshes: SceneMeshDesc[]; materials: SceneMaterialDesc[]; nodes: SceneNode[]; animations: AnimationChannel[]; lights: AnalyticLight[]; cameraNodeID?: number; camera?: GltfCameraPose }> {
         let json: GltfJson;
         let binChunk: Uint8Array | null = null;
 
@@ -271,6 +288,7 @@ export class GltfImporter {
         const lightDefs = json.extensions?.KHR_lights_punctual?.lights ?? [];
         const lights: AnalyticLight[] = [];
         let cameraNodeID: number | undefined;
+        let cameraPose: GltfCameraPose | undefined;
 
         const visit = (nodeIndex: number, parent: float4x4) => {
             const node = json.nodes![nodeIndex]!;
@@ -293,7 +311,18 @@ export class GltfImporter {
                     lights.push(light);
                 }
             }
-            if (node.camera !== undefined && cameraNodeID === undefined) cameraNodeID = nodeIndex;
+            if (node.camera !== undefined && cameraNodeID === undefined) {
+                cameraNodeID = nodeIndex;
+                const pos = transformPoint(world, new float3(0, 0, 0));
+                const fwd = normalize3(transformVector(world, new float3(0, 0, -1)));
+                const yfov = json.cameras?.[node.camera]?.perspective?.yfov ?? Math.PI / 4;
+                cameraPose = {
+                    position: pos,
+                    target: new float3(pos.x + fwd.x, pos.y + fwd.y, pos.z + fwd.z),
+                    up: normalize3(transformVector(world, new float3(0, 1, 0))),
+                    focalLength: fovYToFocalLength(yfov, 24),
+                };
+            }
             if (node.mesh !== undefined) {
                 for (const prim of json.meshes![node.mesh]!.primitives) {
                     if ((prim.mode ?? 4) !== 4) continue; // triangles only
@@ -350,6 +379,6 @@ export class GltfImporter {
         for (const rootNode of sceneDef?.nodes ?? []) visit(rootNode, float4x4.identity());
         if (meshDescs.length === 0) throw new RuntimeError("GltfImporter: no triangle meshes found");
 
-        return { meshes: meshDescs, materials, nodes: sceneNodes, animations, lights, cameraNodeID };
+        return { meshes: meshDescs, materials, nodes: sceneNodes, animations, lights, cameraNodeID, camera: cameraPose };
     }
 }
