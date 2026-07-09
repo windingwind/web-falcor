@@ -329,6 +329,12 @@ export class LightBridge {
     private _direction = new float3(0, -1, 0);
     /** DistantLight: half-angle (radians); default = sun (DistantLight ctor). */
     angle = 0.5 * 0.53 * (Math.PI / 180);
+    /** PointLight spot cone: cutoff half-angle (PI = omnidirectional) + penumbra. */
+    openingAngle = Math.PI;
+    penumbraAngle = 0;
+    /** Area lights (Rect/Disc/Sphere): local->world placement (scale/rotate/translate). */
+    private _scaling: float3 | number = 1;
+    private _rotationEuler: { x: number; y: number; z: number } | null = null;
     constructor(
         public readonly lightType: LightType,
         public readonly name: string,
@@ -343,6 +349,12 @@ export class LightBridge {
     set direction(v: { x: number; y: number; z: number }) {
         this._direction = toF3(v);
     }
+    set scaling(v: { x: number; y: number; z: number } | number) {
+        this._scaling = typeof v === "number" ? v : toF3(v);
+    }
+    set rotation(v: { x: number; y: number; z: number }) {
+        this._rotationEuler = toF3(v);
+    }
     getPosition(): float3 {
         return this._position;
     }
@@ -351,6 +363,10 @@ export class LightBridge {
     }
     getDirection(): float3 {
         return this._direction;
+    }
+    /** Area-light transform matrix (transMat = T * R * S; native folds scaling in). */
+    getTransMat(): float4x4 {
+        return makeTransform(this._position, this._rotationEuler, null, this._scaling);
     }
 }
 
@@ -449,6 +465,8 @@ export class SceneBuilderBridge {
     private meshInstanced = new Map<number, float4x4[]>();
     private nodes: float4x4[] = [];
     private lights: LightBridge[] = [];
+    /** Node driving an imported camera (glTF), for camera animation; -1 if none. */
+    private importedCameraNodeID: number | undefined;
     private gridVolumesList: GridVolumeBridge[] = [];
     private _envMap: EnvMapRef | null = null;
     camera: CameraBridge | null = null;
@@ -668,6 +686,8 @@ export class SceneBuilderBridge {
                     const nodeOffset = nodes.length;
                     for (const n of parsed.nodes) nodes.push({ ...n, parent: n.parent >= 0 ? n.parent + nodeOffset : -1 });
                     for (const ch of parsed.animations) animations.push({ ...ch, nodeID: ch.nodeID + nodeOffset });
+                    for (const l of parsed.lights) importedLights.push({ ...l, nodeID: l.nodeID !== undefined ? l.nodeID + nodeOffset : undefined });
+                    if (parsed.cameraNodeID !== undefined && this.importedCameraNodeID === undefined) this.importedCameraNodeID = parsed.cameraNodeID + nodeOffset;
                     for (const m of parsed.meshes)
                         meshes.push({
                             ...m,
@@ -730,13 +750,19 @@ export class SceneBuilderBridge {
             }
         });
 
-        const lights: AnalyticLight[] = this.lights.map((l) => ({
-            type: l.lightType,
-            posW: l.getPosition(),
-            dirW: l.getDirection(),
-            intensity: l.getIntensity(),
-            angle: l.angle,
-        }));
+        const lights: AnalyticLight[] = this.lights.map((l) => {
+            const isArea = l.lightType === LightType.Rect || l.lightType === LightType.Disc || l.lightType === LightType.Sphere;
+            return {
+                type: l.lightType,
+                posW: l.getPosition(),
+                dirW: l.getDirection(),
+                intensity: l.getIntensity(),
+                angle: l.angle,
+                openingAngle: l.lightType === LightType.Point ? l.openingAngle : undefined,
+                penumbraAngle: l.penumbraAngle,
+                transMat: isArea ? l.getTransMat() : undefined,
+            };
+        });
         lights.push(...importedLights); // lights imported from FBX/assets
 
         // SDF grids (ND + SBS implementations; instances reference builder nodes).

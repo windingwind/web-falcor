@@ -91,7 +91,8 @@ const kScenePrelude = `
 import sys
 sys.modules.pop('webfalcor_scene', None)  # registerJsModule per call; defeat import caching
 from webfalcor_scene import (sceneBuilder, _TriangleMesh,
-    PointLight, DirectionalLight, DistantLight, StandardMaterial, ClothMaterial, HairMaterial,
+    PointLight, DirectionalLight, DistantLight, RectLight, DiscLight, SphereLight,
+    StandardMaterial, ClothMaterial, HairMaterial,
     PBRTDiffuseMaterial, PBRTConductorMaterial, Camera, _makeTransform, _makeAABB, _makeEnvMap, _GridVolume, _Grid, _SDFGridCreate)
 
 # Python-side vector types with arithmetic (upstream pyscenes do e.g. size / 2);
@@ -172,7 +173,8 @@ _matProps = {'baseColor', 'specularParams', 'transmissionColor', 'emissiveColor'
              'indexOfRefraction', 'specularTransmission', 'diffuseTransmission', 'thinSurface',
              'nestedPriority', 'volumeAbsorption', 'volumeScattering',
              'displacementScale', 'displacementOffset'}
-_lightProps = {'position', 'intensity', 'direction', 'angle'}
+_lightProps = {'position', 'intensity', 'direction', 'angle',
+               'openingAngle', 'penumbraAngle', 'scaling', 'rotation'}
 _camProps = {'position', 'target', 'up', 'focalLength'}
 StandardMaterial = _guarded(StandardMaterial, _matProps)
 Material = StandardMaterial  # PYTHONDEPRECATED alias (upstream SDF/legacy pyscenes)
@@ -183,6 +185,9 @@ PBRTConductorMaterial = _guarded(PBRTConductorMaterial, _matProps)
 PointLight = _guarded(PointLight, _lightProps)
 DirectionalLight = _guarded(DirectionalLight, _lightProps)
 DistantLight = _guarded(DistantLight, _lightProps)
+RectLight = _guarded(RectLight, _lightProps)
+DiscLight = _guarded(DiscLight, _lightProps)
+SphereLight = _guarded(SphereLight, _lightProps)
 Camera = _guarded(Camera, _camProps)
 
 # Animation behavior enum (accepted for parity; web animation loops the whole clip).
@@ -295,6 +300,9 @@ export async function runSceneScript(device: Device, source: string, baseUrl: st
         PointLight: (name = "") => new LightBridge(LightType.Point, name),
         DirectionalLight: (name = "") => new LightBridge(LightType.Directional, name),
         DistantLight: (name = "") => new LightBridge(LightType.Distant, name),
+        RectLight: (name = "") => new LightBridge(LightType.Rect, name),
+        DiscLight: (name = "") => new LightBridge(LightType.Disc, name),
+        SphereLight: (name = "") => new LightBridge(LightType.Sphere, name),
         StandardMaterial: (name = "") => new MaterialBridge(MaterialType.Standard, name),
         ClothMaterial: (name = "") => new MaterialBridge(MaterialType.Cloth, name),
         HairMaterial: (name = "") => new MaterialBridge(MaterialType.Hair, name),

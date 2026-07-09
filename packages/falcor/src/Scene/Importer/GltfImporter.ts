@@ -9,15 +9,23 @@
 
 import type { Device } from "../../Core/API/Device.js";
 import { Scene, type SceneMaterialDesc, type SceneMeshDesc } from "../Scene.js";
-import { float2, float3, float4 } from "../../Utils/Math/Vector.js";
-import { float4x4, mulMat, matrixFromTranslation, matrixFromScaling } from "../../Utils/Math/Matrix.js";
+import { float2, float3, float4, normalize3 } from "../../Utils/Math/Vector.js";
+import { float4x4, mulMat, matrixFromTranslation, matrixFromScaling, transformPoint, transformVector } from "../../Utils/Math/Matrix.js";
 import { matrixFromQuat, quatf } from "../../Utils/Math/Quaternion.js";
 import { RuntimeError } from "../../Core/Error.js";
-import type { AnalyticLight, StaticVertex } from "../SceneData.js";
+import { LightType, type AnalyticLight, type StaticVertex } from "../SceneData.js";
 import { decomposeTRS, type SceneNode, type AnimationChannel, type AnimationPath, type SkinDesc } from "../Animation/SceneAnimation.js";
 import { TextureManager } from "../Material/TextureManager.js";
 import { TextureHandleMode, packTextureHandle } from "../Material/MaterialData.js";
 import { generateTangents } from "../TangentSpace.js";
+
+interface GltfLight {
+    type: "point" | "directional" | "spot";
+    color?: number[];
+    intensity?: number;
+    range?: number;
+    spot?: { innerConeAngle?: number; outerConeAngle?: number };
+}
 
 interface GltfJson {
     asset: { version: string };
@@ -26,12 +34,15 @@ interface GltfJson {
     nodes?: {
         mesh?: number;
         skin?: number;
+        camera?: number;
         children?: number[];
         matrix?: number[];
         translation?: number[];
         rotation?: number[];
         scale?: number[];
+        extensions?: { KHR_lights_punctual?: { light: number } };
     }[];
+    extensions?: { KHR_lights_punctual?: { lights: GltfLight[] } };
     skins?: { joints: number[]; inverseBindMatrices?: number }[];
     animations?: {
         channels: { target: { node?: number; path: string }; sampler: number }[];
@@ -77,8 +88,8 @@ export class GltfImporter {
 
     static async importFromBytes(device: Device, bytes: Uint8Array, baseUrl = "", lights: AnalyticLight[] = []): Promise<Scene> {
         const textureManager = new TextureManager();
-        const { meshes, materials, nodes, animations } = await GltfImporter.parseToDescs(bytes, baseUrl, textureManager);
-        return new Scene(device, meshes, materials, lights, textureManager, [], nodes, animations);
+        const parsed = await GltfImporter.parseToDescs(bytes, baseUrl, textureManager);
+        return new Scene(device, parsed.meshes, parsed.materials, [...lights, ...parsed.lights], textureManager, [], parsed.nodes, parsed.animations);
     }
 
     /** Parses glTF into scene descriptors without constructing GPU resources
@@ -87,7 +98,7 @@ export class GltfImporter {
         bytes: Uint8Array,
         baseUrl = "",
         textureManager = new TextureManager(),
-    ): Promise<{ meshes: SceneMeshDesc[]; materials: SceneMaterialDesc[]; nodes: SceneNode[]; animations: AnimationChannel[] }> {
+    ): Promise<{ meshes: SceneMeshDesc[]; materials: SceneMaterialDesc[]; nodes: SceneNode[]; animations: AnimationChannel[]; lights: AnalyticLight[]; cameraNodeID?: number }> {
         let json: GltfJson;
         let binChunk: Uint8Array | null = null;
 
@@ -255,9 +266,34 @@ export class GltfImporter {
             );
         };
 
+        // KHR_lights_punctual: light shapes defined at document scope, referenced
+        // per-node; placed by the node's world transform (glTF lights aim down -Z).
+        const lightDefs = json.extensions?.KHR_lights_punctual?.lights ?? [];
+        const lights: AnalyticLight[] = [];
+        let cameraNodeID: number | undefined;
+
         const visit = (nodeIndex: number, parent: float4x4) => {
             const node = json.nodes![nodeIndex]!;
             const world = mulMat(parent, nodeTransform(node));
+            const lightRef = node.extensions?.KHR_lights_punctual?.light;
+            if (lightRef !== undefined && lightDefs[lightRef]) {
+                const L = lightDefs[lightRef]!;
+                const color = L.color ?? [1, 1, 1];
+                const intensity = new float3(color[0]! * (L.intensity ?? 1), color[1]! * (L.intensity ?? 1), color[2]! * (L.intensity ?? 1));
+                const dirW = normalize3(transformVector(world, new float3(0, 0, -1)));
+                if (L.type === "directional") {
+                    lights.push({ type: LightType.Directional, dirW, intensity, nodeID: nodeIndex });
+                } else {
+                    // point and spot are both Falcor PointLight (spot = cone cutoff).
+                    const light: AnalyticLight = { type: LightType.Point, posW: transformPoint(world, new float3(0, 0, 0)), dirW, intensity, nodeID: nodeIndex };
+                    if (L.type === "spot") {
+                        light.openingAngle = L.spot?.outerConeAngle ?? Math.PI / 4;
+                        light.penumbraAngle = Math.max(0, (L.spot?.outerConeAngle ?? Math.PI / 4) - (L.spot?.innerConeAngle ?? 0));
+                    }
+                    lights.push(light);
+                }
+            }
+            if (node.camera !== undefined && cameraNodeID === undefined) cameraNodeID = nodeIndex;
             if (node.mesh !== undefined) {
                 for (const prim of json.meshes![node.mesh]!.primitives) {
                     if ((prim.mode ?? 4) !== 4) continue; // triangles only
@@ -314,6 +350,6 @@ export class GltfImporter {
         for (const rootNode of sceneDef?.nodes ?? []) visit(rootNode, float4x4.identity());
         if (meshDescs.length === 0) throw new RuntimeError("GltfImporter: no triangle meshes found");
 
-        return { meshes: meshDescs, materials, nodes: sceneNodes, animations };
+        return { meshes: meshDescs, materials, nodes: sceneNodes, animations, lights, cameraNodeID };
     }
 }

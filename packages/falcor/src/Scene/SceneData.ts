@@ -3,8 +3,8 @@
  * transcribed from upstream).
  */
 
-import { float2, float3, float4 } from "../Utils/Math/Vector.js";
-import { float4x4, inverse, matrixFromRotationAxisAngle, transpose } from "../Utils/Math/Matrix.js";
+import { float2, float3, float4, length3 } from "../Utils/Math/Vector.js";
+import { float4x4, inverse, matrixFromRotationAxisAngle, transformPoint, transformVector, transpose } from "../Utils/Math/Matrix.js";
 import { f32tof16 } from "./Material/MaterialData.js";
 
 export interface StaticVertex {
@@ -153,6 +153,16 @@ export interface AnalyticLight {
     intensity: float3;
     /** Distant light: half-angle subtended by the light (radians). */
     angle?: number;
+    /** Point/spot light: cutoff half-angle (radians); PI = omnidirectional point. */
+    openingAngle?: number;
+    /** Point/spot light: penumbra half-angle (radians) for soft cutoff. */
+    penumbraAngle?: number;
+    /** Area lights (Rect/Disc/Sphere): local->world transform incl. scaling.
+     *  Local shapes live in the z=0 xy-plane ([-1,1]^2), unit disc, or unit sphere. */
+    transMat?: float4x4;
+    /** Animated scenes: node whose global matrix drives this light each frame
+     *  (Animatable::updateFromAnimation). Position/direction/transform follow it. */
+    nodeID?: number;
 }
 
 export const kLightDataSize = 224; // 6x16B rows + 2x 64B float4x4 (rows at 96/160)
@@ -170,26 +180,53 @@ export function packLights(lights: AnalyticLight[]): ArrayBuffer {
             const len = Math.hypot(dirW.x, dirW.y, dirW.z) || 1;
             dirW = new float3(dirW.x / len, dirW.y / len, dirW.z / len);
         }
-        dv.setFloat32(base + 0, posW.x, true);
-        dv.setFloat32(base + 4, posW.y, true);
-        dv.setFloat32(base + 8, posW.z, true);
+        const isArea = light.type === LightType.Rect || light.type === LightType.Disc || light.type === LightType.Sphere;
+        // Area lights derive posW from the transform's translation (shader samples
+        // the shape via transMat; posW is only used for culling/UI).
+        const areaMat = light.transMat ?? float4x4.identity();
+        const areaPos = isArea ? transformPoint(areaMat, new float3(0, 0, 0)) : posW;
+        dv.setFloat32(base + 0, areaPos.x, true);
+        dv.setFloat32(base + 4, areaPos.y, true);
+        dv.setFloat32(base + 8, areaPos.z, true);
         dv.setUint32(base + 12, light.type, true);
         dv.setFloat32(base + 16, dirW.x, true);
         dv.setFloat32(base + 20, dirW.y, true);
         dv.setFloat32(base + 24, dirW.z, true);
-        dv.setFloat32(base + 28, Math.PI, true); // openingAngle (full sphere)
+        // openingAngle: PI (full sphere) unless a spot cutoff is given.
+        const openingAngle = light.type === LightType.Point && light.openingAngle !== undefined ? light.openingAngle : Math.PI;
+        dv.setFloat32(base + 28, openingAngle, true);
         dv.setFloat32(base + 32, light.intensity.x, true);
         dv.setFloat32(base + 36, light.intensity.y, true);
         dv.setFloat32(base + 40, light.intensity.z, true);
-        dv.setFloat32(base + 44, -1, true); // cosOpeningAngle
+        dv.setFloat32(base + 44, Math.cos(openingAngle), true); // cosOpeningAngle
         // cosSubtendedAngle: distant lights use cos(half-angle); default = sun.
         const cosSubtended = light.type === LightType.Distant && light.angle !== undefined ? Math.cos(light.angle) : 0.9999893;
         dv.setFloat32(base + 48, cosSubtended, true);
-        dv.setFloat32(base + 52, 0, true); // penumbraAngle
+        dv.setFloat32(base + 52, light.penumbraAngle ?? 0, true); // penumbraAngle
 
-        // transMat/transMatIT at 96/160. Distant lights orient the sampling disk
-        // (DistantLight::update): rotation aligning up=(0,0,1) with -dirW.
-        let transMat = float4x4.identity();
+        // Area-light shape params (tangent/bitangent are the local axes; surfaceArea
+        // per Light.cpp {Rect,Disc,Sphere}Light::update using the transformed axes).
+        if (isArea) {
+            const rx = length3(transformVector(areaMat, new float3(1, 0, 0)));
+            const ry = length3(transformVector(areaMat, new float3(0, 1, 0)));
+            const rz = length3(transformVector(areaMat, new float3(0, 0, 1)));
+            let surfaceArea = 4 * rx * ry;
+            if (light.type === LightType.Disc) surfaceArea = Math.PI * rx * ry;
+            else if (light.type === LightType.Sphere)
+                surfaceArea = 4 * Math.PI * Math.pow(Math.pow(rx * ry, 1.6) + Math.pow(ry * rz, 1.6) + Math.pow(rx * rz, 1.6) / 3, 1 / 1.6);
+            dv.setFloat32(base + 64, 1, true); // tangent = (1,0,0)
+            dv.setFloat32(base + 68, 0, true);
+            dv.setFloat32(base + 72, 0, true);
+            dv.setFloat32(base + 76, surfaceArea, true);
+            dv.setFloat32(base + 80, 0, true); // bitangent = (0,1,0)
+            dv.setFloat32(base + 84, 1, true);
+            dv.setFloat32(base + 88, 0, true);
+        }
+
+        // transMat/transMatIT at 96/160. Area lights use the shape's local->world
+        // matrix; distant lights orient the sampling disk (DistantLight::update):
+        // rotation aligning up=(0,0,1) with -dirW.
+        let transMat = isArea ? areaMat : float4x4.identity();
         if (light.type === LightType.Distant) {
             const nd = [-dirW.x, -dirW.y, -dirW.z];
             const len = Math.hypot(nd[0]!, nd[1]!, nd[2]!) || 1;
