@@ -21,7 +21,7 @@ import { generateTangents } from "../TangentSpace.js";
 import { packTextureHandle, TextureHandleMode } from "../Material/MaterialData.js";
 import { decodeDDSToRGBA } from "./DDSLoader.js";
 import type { SceneMaterialDesc, SceneMeshDesc } from "../Scene.js";
-import { decomposeTRS, type SceneNode, type AnimationChannel } from "../Animation/SceneAnimation.js";
+import { decomposeTRS, type SceneNode, type AnimationChannel, type SkinDesc } from "../Animation/SceneAnimation.js";
 import { LightType, type AnalyticLight, type StaticVertex } from "../SceneData.js";
 import type { TextureManager } from "../Material/TextureManager.js";
 
@@ -37,6 +37,14 @@ interface AiMaterial {
     properties: AiProperty[];
 }
 
+/** assjson bone: name matches a node; offsetmatrix is row-major (aiMatrix4x4);
+ *  weights are [vertexId, weight] pairs into the (post-process) vertex array. */
+interface AiBone {
+    name: string;
+    offsetmatrix: number[];
+    weights: [number, number][];
+}
+
 interface AiMesh {
     name: string;
     materialindex: number;
@@ -44,6 +52,7 @@ interface AiMesh {
     normals?: number[];
     texturecoords?: number[][];
     faces: number[][];
+    bones?: AiBone[];
 }
 
 interface AiNode {
@@ -290,11 +299,58 @@ export class FbxImporter {
             for (const mi of node.meshes ?? []) {
                 const { vertices, indices } = getMesh(mi);
                 meshDescs.push({ vertices, indices, materialID: json.meshes[mi]!.materialindex, transform: world, nodeID });
+                skinnedDescs.push({ desc: meshDescs[meshDescs.length - 1]!, mi });
             }
             for (const child of node.children ?? []) visit(child, world, nodeID);
         };
+        // Deferred skin attach: bone->node lookup needs the full node graph first.
+        const skinnedDescs: { desc: SceneMeshDesc; mi: number }[] = [];
         visit(json.rootnode, float4x4.identity(), -1);
         if (meshDescs.length === 0) throw new RuntimeError("FbxImporter: no triangle meshes found");
+
+        // Skinning: assjson bones carry a node name, mesh-space inverse-bind
+        // (offsetmatrix, row-major) and [vertexId, weight] lists. Build one
+        // SkinDesc per skinned mesh (top-4 influences per vertex, renormalized)
+        // — the same CPU linear-blend path glTF skins use in Scene.animate().
+        const skinCache = new Map<number, SkinDesc | undefined>();
+        const buildSkin = (mi: number): SkinDesc | undefined => {
+            if (skinCache.has(mi)) return skinCache.get(mi);
+            const bones = json.meshes[mi]!.bones;
+            const vertCount = json.meshes[mi]!.vertices.length / 3;
+            let skin: SkinDesc | undefined;
+            if (bones && bones.length > 0) {
+                const influences: { bone: number; weight: number }[][] = Array.from({ length: vertCount }, () => []);
+                bones.forEach((bone, bi) => {
+                    for (const [vid, w] of bone.weights) if (w > 0 && influences[vid]) influences[vid]!.push({ bone: bi, weight: w });
+                });
+                const boneIDs = new Uint32Array(vertCount * 4);
+                const weights = new Float32Array(vertCount * 4);
+                for (let v = 0; v < vertCount; v++) {
+                    const inf = influences[v]!.sort((a, b) => b.weight - a.weight).slice(0, 4);
+                    const sum = inf.reduce((s, x) => s + x.weight, 0) || 1;
+                    for (let k = 0; k < inf.length; k++) {
+                        boneIDs[v * 4 + k] = inf[k]!.bone;
+                        weights[v * 4 + k] = inf[k]!.weight / sum;
+                    }
+                }
+                skin = {
+                    boneNodeIDs: bones.map((b) => nameToNodeID.get(b.name) ?? 0),
+                    inverseBind: bones.map((b) => {
+                        const m = new float4x4();
+                        for (let r = 0; r < 4; r++) for (let c = 0; c < 4; c++) m.set(r, c, b.offsetmatrix[r * 4 + c]!);
+                        return m;
+                    }),
+                    boneIDs,
+                    weights,
+                };
+            }
+            skinCache.set(mi, skin);
+            return skin;
+        };
+        for (const { desc, mi } of skinnedDescs) {
+            const skin = buildSkin(mi);
+            if (skin) desc.skin = skin;
+        }
 
         // Animation channels (assimp: per-node position/rotation/scaling key tracks;
         // times in ticks -> seconds; rotation quaternions are [w,x,y,z]).

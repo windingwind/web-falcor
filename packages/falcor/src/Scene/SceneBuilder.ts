@@ -679,7 +679,12 @@ export class SceneBuilderBridge {
                     for (const ch of parsed.animations) animations.push({ ...ch, nodeID: ch.nodeID + nodeOffset });
                     importedLights.push(...parsed.lights);
                     for (const m of parsed.meshes)
-                        meshes.push({ ...m, materialID: m.materialID + materialOffset, nodeID: m.nodeID !== undefined ? m.nodeID + nodeOffset : undefined });
+                        meshes.push({
+                            ...m,
+                            materialID: m.materialID + materialOffset,
+                            nodeID: m.nodeID !== undefined ? m.nodeID + nodeOffset : undefined,
+                            skin: m.skin ? { ...m.skin, boneNodeIDs: m.skin.boneNodeIDs.map((n) => n + nodeOffset) } : undefined,
+                        });
                 } else {
                     const parsed = await GltfImporter.parseToDescs(bytes, url, textureManager);
                     materials.push(...parsed.materials);
