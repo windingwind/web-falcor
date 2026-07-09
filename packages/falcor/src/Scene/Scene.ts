@@ -21,7 +21,7 @@ import { packLights, LightType, type AnalyticLight } from "./SceneData.js";
 import { TextureManager } from "./Material/TextureManager.js";
 import type { EnvMap } from "./Lights/EnvMap.js";
 import { buildLightCollection } from "./Lights/LightCollection.js";
-import { evaluateGlobals, computeSkinMatrices, skinVertices, type SceneAnimations, type SceneNode, type AnimationChannel, type SkinDesc } from "./Animation/SceneAnimation.js";
+import { evaluateGlobals, computeSkinMatrices, skinVertices, sampleMorphWeights, applyMorph, type SceneAnimations, type SceneNode, type AnimationChannel, type SkinDesc, type MorphDesc, type WeightTrack } from "./Animation/SceneAnimation.js";
 import { decodeNormal2x16Host, type Vec3 } from "../Rendering/Lights/LightBVHTypes.js";
 import type { EmissiveTriangleInput } from "../Rendering/Lights/LightBVHBuilder.js";
 import { transformPoint, transformVector } from "../Utils/Math/Matrix.js";
@@ -60,6 +60,8 @@ export interface SceneMeshDesc {
     nodeID?: number;
     /** Skinned meshes: per-vertex joint binding; skinned to world in animate(). */
     skin?: SkinDesc;
+    /** Morph-target meshes: blend-shape deltas applied before skinning in animate(). */
+    morph?: MorphDesc;
 }
 
 export interface SceneMaterialDesc {
@@ -133,6 +135,7 @@ export class Scene {
         nodes: SceneNode[] = [],
         animations: AnimationChannel[] = [],
         cameraNodeID?: number,
+        weightTracks: WeightTrack[] = [],
     ) {
         this.cameraNodeID = cameraNodeID;
         this.sdfGrids = sdfGrids;
@@ -251,7 +254,10 @@ export class Scene {
         bvhMerged.set(bvh.nodes, 0);
         bvhMerged.set(bvh.tris, bvh.nodes.length);
         this.bvhTrisOffset = bvh.nodes.length / 4;
-        if (animations.length > 0 && nodes.length > 0) {
+        // A scene animates if it has keyframe channels, morph-weight tracks, or
+        // morph meshes (weights may be static-but-nonzero) — all rebuild per frame.
+        const hasAnimation = (animations.length > 0 || weightTracks.length > 0 || meshes.some((m) => m.morph)) && nodes.length > 0;
+        if (hasAnimation) {
             // Animated scenes rebuild the BVH every frame; over-allocate to the
             // worst-case size (≤2N nodes + N tris) so animate() setBlobs in place —
             // destroying/recreating a buffer still referenced by an in-flight submit
@@ -267,11 +273,12 @@ export class Scene {
 
         // Retain source geometry + node graph for per-frame animation. Only for
         // animated scenes, so static scenes (e.g. Bistro) keep zero overhead.
-        if (animations.length > 0 && nodes.length > 0) {
-            const start = animations.reduce((s, ch) => Math.min(s, ch.times[0] ?? 0), Infinity);
-            const duration = animations.reduce((d, ch) => Math.max(d, ch.times[ch.times.length - 1] ?? 0), 0);
+        if (hasAnimation) {
+            const allTimes = [...animations, ...weightTracks];
+            const start = allTimes.reduce((s, ch) => Math.min(s, ch.times[0] ?? 0), Infinity);
+            const duration = allTimes.reduce((d, ch) => Math.max(d, ch.times[ch.times.length - 1] ?? 0), 0);
             this.sourceMeshes = meshes;
-            this.animData = { nodes, channels: animations, start: Number.isFinite(start) ? start : 0, duration };
+            this.animData = { nodes, channels: animations, start: Number.isFinite(start) ? start : 0, duration, weightTracks };
             this.animNodeCount = nodeCount;
         }
 
@@ -379,7 +386,8 @@ export class Scene {
         const meshes = this.sourceMeshes;
         // Loop within the clip's actual key span (clips needn't start at t=0, e.g. FBX).
         const span = this.animData.duration - this.animData.start;
-        const globals = evaluateGlobals(this.animData, span > 0 ? this.animData.start + (timeSec % span) : this.animData.start);
+        const sampleTime = span > 0 ? this.animData.start + (timeSec % span) : this.animData.start;
+        const globals = evaluateGlobals(this.animData, sampleTime);
 
         // Animatable camera/lights: rederive their pose from the node globals
         // (glTF cameras/lights aim down local -Z; up is local +Y).
@@ -393,15 +401,20 @@ export class Scene {
         const worldPos: float3[][] = [];
         let vbOffset = 0;
         for (const mesh of meshes) {
+            // Morph (blend shapes) deform the bind pose first (glTF applies morph
+            // before skinning); the morphed object-space verts feed skin or matrix.
+            const base = mesh.morph ? applyMorph(mesh.vertices, mesh.morph, sampleMorphWeights(mesh.morph, this.animData.weightTracks, sampleTime)) : mesh.vertices;
             if (mesh.skin) {
-                const skinned = skinVertices(mesh.vertices, mesh.skin, computeSkinMatrices(mesh.skin, globals));
+                const skinned = skinVertices(base, mesh.skin, computeSkinMatrices(mesh.skin, globals));
                 this.buffers["vertices"]!.setBlob(packStaticVertices(skinned), vbOffset * 48);
                 worldMats.push(float4x4.identity());
                 worldPos.push(skinned.map((v) => v.position));
             } else {
                 const m = mesh.nodeID !== undefined && globals[mesh.nodeID] ? globals[mesh.nodeID]! : (mesh.transform ?? float4x4.identity());
+                // Morphed non-skinned meshes: re-upload deformed object-space verts.
+                if (mesh.morph) this.buffers["vertices"]!.setBlob(packStaticVertices(base), vbOffset * 48);
                 worldMats.push(m);
-                worldPos.push(mesh.vertices.map((v) => transformPoint(m, v.position)));
+                worldPos.push(base.map((v) => transformPoint(m, v.position)));
             }
             vbOffset += mesh.vertices.length;
         }

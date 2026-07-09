@@ -59,11 +59,59 @@ export function decomposeTRS(m: float4x4): { t: float3; r: quatf; s: float3 } {
     return { t, r: new quatf(x, y, z, w), s: new float3(sx, sy, sz) };
 }
 
+/** Morph (blend-shape) animation of a node's weights (glTF path === "weights"). */
+export interface WeightTrack {
+    nodeID: number;
+    times: Float32Array;
+    values: Float32Array; // numTargets weights per keyframe (CUBICSPLINE: 3 blocks/keyframe)
+    numTargets: number;
+    interp: "LINEAR" | "STEP" | "CUBICSPLINE";
+}
+
 export interface SceneAnimations {
     nodes: SceneNode[];
     channels: AnimationChannel[];
     start: number; // seconds (min first-keyframe time; clips needn't start at 0, e.g. FBX)
     duration: number; // seconds (max last-keyframe time across channels)
+    weightTracks?: WeightTrack[];
+}
+
+/** Morph-target binding for one mesh: per-target position/normal deltas, blended
+ *  by the node's weights (from a WeightTrack, or baseWeights when unanimated). */
+export interface MorphDesc {
+    targets: { position: Float32Array; normal?: Float32Array }[];
+    nodeID: number;
+    baseWeights: number[];
+}
+
+/** Samples the morph weight vector for `nodeID` at `time` (default when no track). */
+export function sampleMorphWeights(morph: MorphDesc, tracks: WeightTrack[] | undefined, time: number): number[] {
+    const track = tracks?.find((t) => t.nodeID === morph.nodeID);
+    if (!track) return morph.baseWeights;
+    const { i0, i1, f } = findSpan(track.times, time);
+    const N = track.numTargets;
+    if (track.interp === "CUBICSPLINE") return cubicSplineN(track.values, track.times, i0, i1, f, N);
+    const at = (k: number) => Array.from({ length: N }, (_v, c) => track.values[k * N + c]!);
+    const a = at(i0);
+    if (track.interp === "STEP" || i0 === i1) return a;
+    const b = at(i1);
+    return a.map((v, c) => v + (b[c]! - v) * f);
+}
+
+/** Applies morph deltas to bind-pose vertices: v' = v + Σ wᵢ·deltaᵢ (pos + normal). */
+export function applyMorph(bind: StaticVertex[], morph: MorphDesc, weights: number[]): StaticVertex[] {
+    return bind.map((v, vi) => {
+        let px = v.position.x, py = v.position.y, pz = v.position.z;
+        let nx = v.normal.x, ny = v.normal.y, nz = v.normal.z;
+        for (let ti = 0; ti < morph.targets.length; ti++) {
+            const w = weights[ti] ?? 0;
+            if (w === 0) continue;
+            const t = morph.targets[ti]!;
+            px += w * t.position[vi * 3]!; py += w * t.position[vi * 3 + 1]!; pz += w * t.position[vi * 3 + 2]!;
+            if (t.normal) { nx += w * t.normal[vi * 3]!; ny += w * t.normal[vi * 3 + 1]!; nz += w * t.normal[vi * 3 + 2]!; }
+        }
+        return { position: new float3(px, py, pz), normal: normalize3(new float3(nx, ny, nz)), tangent: v.tangent, texCrd: v.texCrd };
+    });
 }
 
 /** Skinning binding for one mesh (joints reference scene-graph nodes). */
@@ -118,9 +166,9 @@ function findSpan(times: Float32Array, t: number): { i0: number; i1: number; f: 
  * ([inTangent, value, outTangent], each `C` components); tangents are scaled by
  * the segment duration (glTF spec). Returns the `C`-component interpolated value.
  */
-function cubicSpline(ch: AnimationChannel, i0: number, i1: number, f: number, C: number): number[] {
-    const val = (k: number, slot: number, c: number) => ch.values[(3 * k + slot) * C + c]!; // slot 0=in,1=value,2=out
-    const dt = ch.times[i1]! - ch.times[i0]!;
+function cubicSplineN(values: Float32Array, times: Float32Array, i0: number, i1: number, f: number, C: number): number[] {
+    const val = (k: number, slot: number, c: number) => values[(3 * k + slot) * C + c]!; // slot 0=in,1=value,2=out
+    const dt = times[i1]! - times[i0]!;
     if (i0 === i1 || dt <= 0) return Array.from({ length: C }, (_v, c) => val(i0, 1, c));
     const t = f, t2 = t * t, t3 = t2 * t;
     const h00 = 2 * t3 - 3 * t2 + 1;
@@ -128,6 +176,10 @@ function cubicSpline(ch: AnimationChannel, i0: number, i1: number, f: number, C:
     const h01 = -2 * t3 + 3 * t2;
     const h11 = t3 - t2;
     return Array.from({ length: C }, (_v, c) => h00 * val(i0, 1, c) + h10 * dt * val(i0, 2, c) + h01 * val(i1, 1, c) + h11 * dt * val(i1, 0, c));
+}
+
+function cubicSpline(ch: AnimationChannel, i0: number, i1: number, f: number, C: number): number[] {
+    return cubicSplineN(ch.values, ch.times, i0, i1, f, C);
 }
 
 function sampleVec3(ch: AnimationChannel, time: number): float3 {

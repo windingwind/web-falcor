@@ -13,7 +13,7 @@ import { SDFSVS } from "./SDFs/SDFSVS.js";
 import { SDFSVO } from "./SDFs/SDFSVO.js";
 import type { SceneSDFGridDesc } from "./Scene.js";
 import { Scene, type SceneMaterialDesc, type SceneMeshDesc } from "./Scene.js";
-import type { SceneNode, AnimationChannel } from "./Animation/SceneAnimation.js";
+import type { SceneNode, AnimationChannel, WeightTrack } from "./Animation/SceneAnimation.js";
 import { GltfImporter } from "./Importer/GltfImporter.js";
 import { FbxImporter } from "./Importer/FbxImporter.js";
 import { TextureManager } from "./Material/TextureManager.js";
@@ -659,6 +659,7 @@ export class SceneBuilderBridge {
         const materials: SceneMaterialDesc[] = [];
         const nodes: SceneNode[] = []; // retained scene-graph nodes (for animation)
         const animations: AnimationChannel[] = [];
+        const weightTracks: WeightTrack[] = []; // morph-weight tracks from glTF imports
         const importedLights: AnalyticLight[] = []; // lights from imported assets (FBX)
 
         const importedMaterialNames: string[] = [];
@@ -694,6 +695,7 @@ export class SceneBuilderBridge {
                     for (const n of parsed.nodes) nodes.push({ ...n, parent: n.parent >= 0 ? n.parent + nodeOffset : -1 });
                     for (const ch of parsed.animations) animations.push({ ...ch, nodeID: ch.nodeID + nodeOffset });
                     for (const l of parsed.lights) importedLights.push({ ...l, nodeID: l.nodeID !== undefined ? l.nodeID + nodeOffset : undefined });
+                    for (const wt of parsed.weightTracks) weightTracks.push({ ...wt, nodeID: wt.nodeID + nodeOffset });
                     if (parsed.cameraNodeID !== undefined && this.importedCameraNodeID === undefined) {
                         this.importedCameraNodeID = parsed.cameraNodeID + nodeOffset;
                         this.importedCameraPose = parsed.camera;
@@ -704,6 +706,7 @@ export class SceneBuilderBridge {
                             materialID: m.materialID + materialOffset,
                             nodeID: m.nodeID !== undefined ? m.nodeID + nodeOffset : undefined,
                             skin: m.skin ? { ...m.skin, boneNodeIDs: m.skin.boneNodeIDs.map((n) => n + nodeOffset) } : undefined,
+                            morph: m.morph ? { ...m.morph, nodeID: m.morph.nodeID + nodeOffset } : undefined,
                         });
                 }
             }
@@ -802,7 +805,7 @@ export class SceneBuilderBridge {
         // Only bind the camera to an imported node when the pyscene doesn't define
         // its own camera (an explicit pyscene camera wins and stays static).
         const cameraNodeID = this.camera ? undefined : this.importedCameraNodeID;
-        const scene = new Scene(device, meshes, materials, lights, textureManager, sdfGrids, nodes, animations, cameraNodeID);
+        const scene = new Scene(device, meshes, materials, lights, textureManager, sdfGrids, nodes, animations, cameraNodeID, weightTracks);
         if (this.camera) {
             scene.camera.setPosition(this.camera.getPosition());
             scene.camera.setTarget(this.camera.getTarget());

@@ -14,7 +14,7 @@ import { float4x4, mulMat, matrixFromTranslation, matrixFromScaling, transformPo
 import { matrixFromQuat, quatf } from "../../Utils/Math/Quaternion.js";
 import { RuntimeError } from "../../Core/Error.js";
 import { LightType, type AnalyticLight, type StaticVertex } from "../SceneData.js";
-import { decomposeTRS, type SceneNode, type AnimationChannel, type AnimationPath, type SkinDesc } from "../Animation/SceneAnimation.js";
+import { decomposeTRS, type SceneNode, type AnimationChannel, type AnimationPath, type SkinDesc, type MorphDesc, type WeightTrack } from "../Animation/SceneAnimation.js";
 import { TextureManager } from "../Material/TextureManager.js";
 import { TextureHandleMode, packTextureHandle } from "../Material/MaterialData.js";
 import { generateTangents } from "../TangentSpace.js";
@@ -41,6 +41,7 @@ interface GltfJson {
         translation?: number[];
         rotation?: number[];
         scale?: number[];
+        weights?: number[];
         extensions?: { KHR_lights_punctual?: { light: number } };
     }[];
     extensions?: { KHR_lights_punctual?: { lights: GltfLight[] } };
@@ -49,7 +50,7 @@ interface GltfJson {
         channels: { target: { node?: number; path: string }; sampler: number }[];
         samplers: { input: number; output: number; interpolation?: string }[];
     }[];
-    meshes?: { primitives: GltfPrimitive[] }[];
+    meshes?: { primitives: GltfPrimitive[]; weights?: number[] }[];
     accessors?: { bufferView?: number; byteOffset?: number; componentType: number; count: number; type: string }[];
     bufferViews?: { buffer: number; byteOffset?: number; byteLength: number; byteStride?: number }[];
     buffers?: { uri?: string; byteLength: number }[];
@@ -82,6 +83,7 @@ interface GltfPrimitive {
     indices?: number;
     material?: number;
     mode?: number;
+    targets?: Record<string, number>[]; // morph targets (POSITION/NORMAL deltas)
 }
 
 const kComponentSize: Record<number, number> = { 5120: 1, 5121: 1, 5122: 2, 5123: 2, 5125: 4, 5126: 4 };
@@ -99,7 +101,7 @@ export class GltfImporter {
     static async importFromBytes(device: Device, bytes: Uint8Array, baseUrl = "", lights: AnalyticLight[] = []): Promise<Scene> {
         const textureManager = new TextureManager();
         const parsed = await GltfImporter.parseToDescs(bytes, baseUrl, textureManager);
-        const scene = new Scene(device, parsed.meshes, parsed.materials, [...lights, ...parsed.lights], textureManager, [], parsed.nodes, parsed.animations, parsed.cameraNodeID);
+        const scene = new Scene(device, parsed.meshes, parsed.materials, [...lights, ...parsed.lights], textureManager, [], parsed.nodes, parsed.animations, parsed.cameraNodeID, parsed.weightTracks);
         if (parsed.camera) {
             scene.camera.setPosition(parsed.camera.position);
             scene.camera.setTarget(parsed.camera.target);
@@ -115,7 +117,7 @@ export class GltfImporter {
         bytes: Uint8Array,
         baseUrl = "",
         textureManager = new TextureManager(),
-    ): Promise<{ meshes: SceneMeshDesc[]; materials: SceneMaterialDesc[]; nodes: SceneNode[]; animations: AnimationChannel[]; lights: AnalyticLight[]; cameraNodeID?: number; camera?: GltfCameraPose }> {
+    ): Promise<{ meshes: SceneMeshDesc[]; materials: SceneMaterialDesc[]; nodes: SceneNode[]; animations: AnimationChannel[]; lights: AnalyticLight[]; cameraNodeID?: number; camera?: GltfCameraPose; weightTracks: WeightTrack[] }> {
         let json: GltfJson;
         let binChunk: Uint8Array | null = null;
 
@@ -248,20 +250,25 @@ export class GltfImporter {
             return { parent: parentOf[i]!, t: new float3(t[0]!, t[1]!, t[2]!), r: new quatf(r[0]!, r[1]!, r[2]!, r[3]!), s: new float3(s[0]!, s[1]!, s[2]!) };
         });
 
-        // Animation channels (translation/rotation/scale keyframe tracks per node).
+        // Animation channels (translation/rotation/scale keyframe tracks per node)
+        // plus morph "weights" tracks (numTargets weights per keyframe).
         const animations: AnimationChannel[] = [];
+        const weightTracks: WeightTrack[] = [];
         for (const anim of json.animations ?? []) {
             for (const ch of anim.channels) {
                 const path = ch.target.path;
-                if (ch.target.node === undefined || (path !== "translation" && path !== "rotation" && path !== "scale")) continue;
+                if (ch.target.node === undefined) continue;
                 const sampler = anim.samplers[ch.sampler]!;
-                animations.push({
-                    nodeID: ch.target.node,
-                    path: path as AnimationPath,
-                    times: readAccessor(sampler.input) as Float32Array,
-                    values: readAccessor(sampler.output) as Float32Array,
-                    interp: sampler.interpolation === "STEP" ? "STEP" : sampler.interpolation === "CUBICSPLINE" ? "CUBICSPLINE" : "LINEAR",
-                });
+                const interp = sampler.interpolation === "STEP" ? "STEP" : sampler.interpolation === "CUBICSPLINE" ? "CUBICSPLINE" : "LINEAR";
+                if (path === "translation" || path === "rotation" || path === "scale") {
+                    animations.push({ nodeID: ch.target.node, path: path as AnimationPath, times: readAccessor(sampler.input) as Float32Array, values: readAccessor(sampler.output) as Float32Array, interp });
+                } else if (path === "weights") {
+                    const meshIdx = gltfNodes[ch.target.node]?.mesh;
+                    const numTargets = meshIdx !== undefined ? (json.meshes![meshIdx]!.primitives[0]?.targets?.length ?? 0) : 0;
+                    if (numTargets > 0) {
+                        weightTracks.push({ nodeID: ch.target.node, times: readAccessor(sampler.input) as Float32Array, values: readAccessor(sampler.output) as Float32Array, numTargets, interp });
+                    }
+                }
             }
         }
 
@@ -369,7 +376,18 @@ export class GltfImporter {
                             weights: readAccessor(prim.attributes["WEIGHTS_0"]) as Float32Array,
                         };
                     }
-                    meshDescs.push({ vertices, indices, materialID: prim.material ?? 0, transform: world, nodeID: nodeIndex, skin });
+                    // Morph targets: per-target POSITION (and optional NORMAL)
+                    // deltas, blended by the node/mesh weights each animated frame.
+                    let morph: MorphDesc | undefined;
+                    if (prim.targets && prim.targets.length > 0) {
+                        const targets = prim.targets.map((t) => ({
+                            position: readAccessor(t["POSITION"]!) as Float32Array,
+                            normal: t["NORMAL"] !== undefined ? (readAccessor(t["NORMAL"]) as Float32Array) : undefined,
+                        }));
+                        const baseWeights = node.weights ?? json.meshes![node.mesh]!.weights ?? new Array(targets.length).fill(0);
+                        morph = { targets, nodeID: nodeIndex, baseWeights };
+                    }
+                    meshDescs.push({ vertices, indices, materialID: prim.material ?? 0, transform: world, nodeID: nodeIndex, skin, morph });
                 }
             }
             for (const child of node.children ?? []) visit(child, world);
@@ -379,6 +397,6 @@ export class GltfImporter {
         for (const rootNode of sceneDef?.nodes ?? []) visit(rootNode, float4x4.identity());
         if (meshDescs.length === 0) throw new RuntimeError("GltfImporter: no triangle meshes found");
 
-        return { meshes: meshDescs, materials, nodes: sceneNodes, animations, lights, cameraNodeID, camera: cameraPose };
+        return { meshes: meshDescs, materials, nodes: sceneNodes, animations, lights, cameraNodeID, camera: cameraPose, weightTracks };
     }
 }

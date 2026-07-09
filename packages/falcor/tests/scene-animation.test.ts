@@ -4,7 +4,8 @@
  */
 
 import { describe, it, expect } from "vitest";
-import { evaluateGlobals, type AnimationChannel, type SceneNode, type SceneAnimations } from "../src/Scene/Animation/SceneAnimation.js";
+import { evaluateGlobals, applyMorph, sampleMorphWeights, type AnimationChannel, type SceneNode, type SceneAnimations, type MorphDesc, type WeightTrack } from "../src/Scene/Animation/SceneAnimation.js";
+import { float4 } from "../src/Utils/Math/Vector.js";
 import { float3 } from "../src/Utils/Math/Vector.js";
 import { quatf } from "../src/Utils/Math/Quaternion.js";
 
@@ -72,5 +73,35 @@ describe("SceneAnimation interpolation", () => {
         closeTo(evalTranslation(hump, 0.5)[0], 0);
         // f=0.25: h10 = 0.140625, h11 = -0.046875; x = 6*(0.140625) + 6*(-0.046875) = 0.5625.
         closeTo(evalTranslation(hump, 0.25)[0], 0.5625);
+    });
+});
+
+describe("SceneAnimation morph targets", () => {
+    const vert = (x: number, y: number, z: number) => ({ position: new float3(x, y, z), normal: new float3(0, 0, 1), tangent: new float4(1, 0, 0, 1), texCrd: { x: 0, y: 0 } as never });
+    const morph: MorphDesc = {
+        nodeID: 0,
+        baseWeights: [0],
+        // one target pushes only the top vertex up by +2 in Y.
+        targets: [{ position: new Float32Array([0, 0, 0, 0, 2, 0]) }],
+    };
+
+    it("blends target deltas by weight (top moves, base fixed)", () => {
+        const bind = [vert(0, 0, 0), vert(0, 1, 0)];
+        const w0 = applyMorph(bind, morph, [0]);
+        closeTo(w0[1]!.position.y, 1); // weight 0 -> unchanged
+        const w1 = applyMorph(bind, morph, [1]);
+        closeTo(w1[1]!.position.y, 3); // weight 1 -> 1 + 2
+        closeTo(w1[0]!.position.y, 0); // base vertex has zero delta
+        const wh = applyMorph(bind, morph, [0.5]);
+        closeTo(wh[1]!.position.y, 2); // half weight
+    });
+
+    it("samples an animated weight track (LINEAR)", () => {
+        const track: WeightTrack = { nodeID: 0, numTargets: 1, interp: "LINEAR", times: new Float32Array([0, 1]), values: new Float32Array([0, 1]) };
+        closeTo(sampleMorphWeights(morph, [track], 0)[0]!, 0);
+        closeTo(sampleMorphWeights(morph, [track], 0.5)[0]!, 0.5);
+        closeTo(sampleMorphWeights(morph, [track], 1)[0]!, 1);
+        // no track for this node -> falls back to base weights.
+        expect(sampleMorphWeights(morph, [], 0.5)).toEqual([0]);
     });
 });
