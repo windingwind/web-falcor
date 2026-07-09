@@ -513,6 +513,28 @@ export class SceneBuilderBridge {
         else this.meshInstanced.set(meshID, [transform]);
     }
 
+    /** Renders a custom primitive as its AABB box (web approximation: Falcor's
+     *  procedural custom primitives need an app-supplied intersection shader, which
+     *  the software ray tracer has no equivalent for). */
+    addCustomPrimitive(userID: number, aabb: { min: { x: number; y: number; z: number }; max: { x: number; y: number; z: number } }): void {
+        const { min, max } = aabb;
+        const size = new float3(max.x - min.x, max.y - min.y, max.z - min.z);
+        const center = new float3((max.x + min.x) / 2, (max.y + min.y) / 2, (max.z + min.z) / 2);
+        const id = Number(userID);
+        const palette = [
+            [0.9, 0.3, 0.3],
+            [0.3, 0.9, 0.4],
+            [0.3, 0.5, 0.9],
+            [0.9, 0.8, 0.2],
+        ];
+        const c = palette[id % palette.length]!;
+        const mat = new MaterialBridge(MaterialType.Standard, `CustomPrimitive_${id}`);
+        mat.baseColor = { x: c[0]!, y: c[1]!, z: c[2]!, w: 1 };
+        mat.roughness = 0.5;
+        const meshID = this.addTriangleMesh(TriangleMesh.createCube(size), mat);
+        this.addMeshInstance(this.addNode("", matrixFromTranslation(center)), meshID);
+    }
+
     addLight(light: LightBridge): void {
         this.lights.push(unwrapGuard(light));
     }

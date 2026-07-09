@@ -92,7 +92,7 @@ import sys
 sys.modules.pop('webfalcor_scene', None)  # registerJsModule per call; defeat import caching
 from webfalcor_scene import (sceneBuilder, _TriangleMesh,
     PointLight, DirectionalLight, DistantLight, StandardMaterial, ClothMaterial, HairMaterial,
-    PBRTDiffuseMaterial, PBRTConductorMaterial, Camera, _makeTransform, _makeEnvMap, _GridVolume, _Grid, _SDFGridCreate)
+    PBRTDiffuseMaterial, PBRTConductorMaterial, Camera, _makeTransform, _makeAABB, _makeEnvMap, _GridVolume, _Grid, _SDFGridCreate)
 
 # Python-side vector types with arithmetic (upstream pyscenes do e.g. size / 2);
 # the JS bridge reads .x/.y/.z/.w off any object.
@@ -139,6 +139,9 @@ class TriangleMesh:
 
 def Transform(translation=None, rotationEuler=None, rotationEulerDeg=None, scaling=None):
     return _makeTransform(translation, rotationEuler, rotationEulerDeg, scaling)
+
+def AABB(min, max):
+    return _makeAABB(min, max)
 
 class EnvMap:
     @staticmethod
@@ -298,6 +301,7 @@ export async function runSceneScript(device: Device, source: string, baseUrl: st
         PBRTDiffuseMaterial: (name = "") => new MaterialBridge(MaterialType.PBRTDiffuse, name),
         PBRTConductorMaterial: (name = "") => new MaterialBridge(MaterialType.PBRTConductor, name),
         _makeTransform: makeTransform,
+        _makeAABB: (min: VecLike, max: VecLike) => ({ min: { x: min.x, y: min.y, z: min.z }, max: { x: max.x, y: max.y, z: max.z } }),
         _makeEnvMap: (path: string) => ({ path, intensity: 1 }),
         _GridVolume: (name = "") => new GridVolumeBridge(name),
         _Grid: {
