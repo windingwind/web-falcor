@@ -16,6 +16,7 @@ import { ResourceFormat } from "../../Core/API/Formats.js";
 import type { ShaderVar } from "../../Core/Program/ParameterBlock.js";
 import { RuntimeError } from "../../Core/Error.js";
 import { decodeHdr, type HdrImage } from "../../Utils/Image/HDRDecoder.js";
+import { decodeExr } from "../../Utils/Image/EXRDecoder.js";
 import { float4x4, inverse, matrixFromRotationXYZ } from "../../Utils/Math/Matrix.js";
 
 /** Row-major 3x4 rows of a float4x4 (EnvMapData transform layout). */
@@ -70,7 +71,8 @@ export class EnvMap {
     static async createFromUrl(device: Device, url: string): Promise<EnvMap> {
         const res = await fetch(url);
         if (!res.ok) throw new RuntimeError(`Failed to fetch env map '${url}' (${res.status})`);
-        return new EnvMap(device, decodeHdr(new Uint8Array(await res.arrayBuffer())));
+        const buffer = await res.arrayBuffer();
+        return new EnvMap(device, url.toLowerCase().endsWith(".exr") ? decodeExr(buffer) : decodeHdr(new Uint8Array(buffer)));
     }
 
     /** Binds to gScene.envMap. */

@@ -13,6 +13,7 @@ import {
     ResourceFormat,
     Texture,
     decodeHdr,
+    decodeExr,
     registerRenderPass,
     RuntimeError,
     type CompileData,
@@ -52,6 +53,9 @@ export class ImageLoader extends RenderPass {
         if (this.filename.toLowerCase().endsWith(".hdr")) {
             const hdr = decodeHdr(new Uint8Array(await response.arrayBuffer()));
             this.texture = this.device.createTexture2D(hdr.width, hdr.height, ResourceFormat.RGBA32Float, 1, 1, hdr.data);
+        } else if (this.filename.toLowerCase().endsWith(".exr")) {
+            const exr = decodeExr(await response.arrayBuffer());
+            this.texture = this.device.createTexture2D(exr.width, exr.height, ResourceFormat.RGBA32Float, 1, 1, exr.data);
         } else {
             // PNG/JPG via the browser decoder. premultiplyAlpha must be off:
             // native FreeImage loads straight (non-premultiplied) RGBA.

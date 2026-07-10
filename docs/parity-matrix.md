@@ -60,13 +60,13 @@ Tallies today: 20 pass classes fully implemented, 4 partial, 14 not implemented
 | DebugPasses: ColorMapPass / SideBySidePass / SplitScreenPass | ✅ | verified; TextRenderer overlay labels + interactive divider ⏳ |
 | DebugPasses: InvalidPixelDetectionPass | ⏳ | NaN/Inf highlighter; portable, not built |
 | DLSSPass | ❌ | NVIDIA NGX driver + hardware black box; nearest substitutes: TAA-upscale ✅ or FSR2-WGSL port 🔶 (separate pass, not DLSS parity) |
-| ErrorMeasurePass | ⏳ | portable; wants EXR reference loading (no EXR IO yet) + csv output |
+| ErrorMeasurePass | ⏳ | portable; EXR reference loading now available (decodeExr) — pass port + csv output pending |
 | FLIPPass | ✅ core | LDR path verified (byte MSE 6.7e-5); HDR auto-exposure path + pooled UI values ⏳ |
 | GBufferRaster | ✅ | native oracle impossible on this host (ROV), RT-cross-verified |
 | GBufferRT | 🟡 | SoftwareRT; verified incl. texGrads (byte-exact) |
 | VBufferRT | 🟡 | SoftwareRT; verified |
 | VBufferRaster | ⏳ | rasterized V-buffer; portable, not built |
-| ImageLoader | ✅ | browser-decodable formats + `.hdr` + `.dds`/BC; EXR ⏳ |
+| ImageLoader | ✅ | browser-decodable formats + `.hdr` + `.dds`/BC + `.exr` (parse-exr; GPU-verified exact vs CPU decode) |
 | MinimalPathTracer | ✅ | SoftwareRT megakernel; oracle-verified (9.5e-7, §7.1) |
 | ModulateIllumination | ✅ | lives under `Utils/` in the web tree |
 | NRDPass | 🟠 SDK absent | NRD SDK not bundled in this Falcor drop (no `external/packman/nrd/`) → denoiser shaders uncompilable here. Host portable; NRD's HLSL source is public, genuine port stays the plan (§11.4). SVGF ✅ meanwhile |
@@ -101,7 +101,7 @@ Tallies today: 20 pass classes fully implemented, 4 partial, 14 not implemented
 | ImageCompare | 🔶 | native tool used on CI host for oracle diffing; its MSE/FLIP gate policy reimplemented inline in the GPU suites + FLIPPass. No standalone in-browser tool ⏳ |
 | Importers | see §8.4 | glTF ✅ (TS), FBX 🔶 (assimpjs, `.fbx` full scenes only), PBRT ✅ subset, `.pyscene` ✅; USD ⏳, Mitsuba ⏳, other assimp formats mesh-only |
 | SceneCache | ⏳ | binary scene cache not built (OPFS/IndexedDB route available) |
-| Image IO (Bitmap/EXR read+write, image save) | ⏳ | `.hdr` decode + DDS/BC decode exist; no EXR in/out, no unified Bitmap, no save-to-file (affects ErrorMeasurePass, EXR env maps, captures) |
+| Image IO (Bitmap/EXR read+write, image save) | 🟡 read | `.hdr`/DDS-BC/`.exr` decode (EXR via parse-exr, wired into ImageLoader + EnvMap); EXR write, unified Bitmap, save-to-file ⏳ (captures) |
 | NVTT texture compression | ❌ native / ⏳ substitute | decode side covered (DDS/BC parse + `texture-compression-bc` upload + CPU BC1/3/5 decode); a WASM BC *encoder* would be a substitute, not NVTT parity |
 
 ### 8.4 Scene, materials, lights, animation (audit 2026-07-09)
