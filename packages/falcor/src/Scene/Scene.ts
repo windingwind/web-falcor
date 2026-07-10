@@ -1024,6 +1024,12 @@ export class Scene {
         } catch {
             /* SDF-less kernel variant */
         }
+        try {
+            scene["webfalcorCurveInstanceFirst"] = this.curveInstanceFirst;
+            scene["webfalcorCurveInstanceCount"] = this.curveDescs.length;
+        } catch {
+            /* curve-less kernel variant */
+        }
         if (sdfAabbs) {
             if (!this.sdfBvhBuffers) {
                 const bvh = buildAabbBvh(sdfAabbs);

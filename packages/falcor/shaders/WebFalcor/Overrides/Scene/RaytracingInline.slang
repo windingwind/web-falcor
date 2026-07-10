@@ -17,7 +17,7 @@
 
 __exported import Scene.Shading;
 __exported import Scene.SceneRayQueryInterface;
-#if SCENE_SDF_GRID_COUNT > 0
+#if SCENE_SDF_GRID_COUNT > 0 || SCENE_HAS_GEOMETRY_TYPE(GEOMETRY_TYPE_CURVE)
 import Scene.Intersection;
 #endif
 
@@ -292,6 +292,60 @@ bool intersectSdfGridsAny(const Ray ray)
 }
 #endif
 
+#if SCENE_HAS_GEOMETRY_TYPE(GEOMETRY_TYPE_CURVE)
+// Curve segments (linear swept spheres) are procedural primitives in the
+// native BLAS; the software path loops the segments of each curve instance
+// (flat loop — fine for test scenes; a segment-AABB BVH is the perf
+// follow-up, as done for SDF bricks).
+bool intersectCurves(const Ray ray, const float tMaxIn, out uint outInstance, out uint outSegment, out float2 outUV, out float outT)
+{
+    outInstance = 0;
+    outSegment = 0;
+    outUV = float2(0.f);
+    outT = tMaxIn;
+    bool found = false;
+    for (uint i = 0; i < gScene.webfalcorCurveInstanceCount; i++)
+    {
+        GeometryInstanceID instanceID;
+        instanceID.index = gScene.webfalcorCurveInstanceFirst + i;
+        const uint segmentCount = gScene.getCurveDesc(instanceID).indexCount;
+        for (uint s = 0; s < segmentCount; s++)
+        {
+            Ray clipped = ray;
+            clipped.tMax = outT;
+            CurveIntersector::Attribs attribs;
+            float t;
+            if (CurveIntersector::intersect(clipped, instanceID, s, attribs, t))
+            {
+                outT = t;
+                outInstance = instanceID.index;
+                outSegment = s;
+                outUV = attribs.barycentrics;
+                found = true;
+            }
+        }
+    }
+    return found;
+}
+
+bool intersectCurvesAny(const Ray ray)
+{
+    for (uint i = 0; i < gScene.webfalcorCurveInstanceCount; i++)
+    {
+        GeometryInstanceID instanceID;
+        instanceID.index = gScene.webfalcorCurveInstanceFirst + i;
+        const uint segmentCount = gScene.getCurveDesc(instanceID).indexCount;
+        for (uint s = 0; s < segmentCount; s++)
+        {
+            CurveIntersector::Attribs attribs;
+            float t;
+            if (CurveIntersector::intersect(ray, instanceID, s, attribs, t)) return true;
+        }
+    }
+    return false;
+}
+#endif
+
 /** Scene ray query (mirrors upstream SceneRayQuery<UseAlphaTest>). */
 struct SceneRayQuery<let UseAlphaTest : int> : ISceneRayQuery
 {
@@ -328,6 +382,25 @@ struct SceneRayQuery<let UseAlphaTest : int> : ISceneRayQuery
             }
         }
 #endif
+#if SCENE_HAS_GEOMETRY_TYPE(GEOMETRY_TYPE_CURVE)
+        {
+            // Curve segments compete with the closest hit so far.
+            const float curveTMax = hit.isValid() ? hitT : ray.tMax;
+            uint curveInstance;
+            uint curveSegment;
+            float2 curveUV;
+            float curveT;
+            if (intersectCurves(ray, curveTMax, curveInstance, curveSegment, curveUV, curveT))
+            {
+                CurveHit curveHit;
+                curveHit.instanceID.index = curveInstance;
+                curveHit.primitiveIndex = curveSegment;
+                curveHit.barycentrics = curveUV;
+                hit = HitInfo(curveHit);
+                hitT = curveT;
+            }
+        }
+#endif
         return hit;
     }
 
@@ -339,6 +412,9 @@ struct SceneRayQuery<let UseAlphaTest : int> : ISceneRayQuery
         if (traverseBvh(ray, true, UseAlphaTest != 0, instance, primitive, barycentrics, t)) return false;
 #if SCENE_SDF_GRID_COUNT > 0
         if (intersectSdfGridsAny(ray)) return false;
+#endif
+#if SCENE_HAS_GEOMETRY_TYPE(GEOMETRY_TYPE_CURVE)
+        if (intersectCurvesAny(ray)) return false;
 #endif
         return true;
     }
