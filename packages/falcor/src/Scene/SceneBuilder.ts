@@ -16,6 +16,7 @@ import { Scene, type SceneMaterialDesc, type SceneMeshDesc } from "./Scene.js";
 import type { SceneNode, AnimationChannel, WeightTrack } from "./Animation/SceneAnimation.js";
 import { GltfImporter } from "./Importer/GltfImporter.js";
 import { FbxImporter } from "./Importer/FbxImporter.js";
+import { UsdImporter } from "./Importer/UsdImporter.js";
 import { TextureManager } from "./Material/TextureManager.js";
 import { EnvMap } from "./Lights/EnvMap.js";
 import { generateTangents } from "./TangentSpace.js";
@@ -673,7 +674,12 @@ export class SceneBuilderBridge {
                 if (!res.ok) throw new RuntimeError(`SceneBuilder: failed to fetch '${url}' (${res.status})`);
                 const bytes = new Uint8Array(await res.arrayBuffer());
                 const materialOffset = materials.length;
-                if (cmd.path.toLowerCase().endsWith(".fbx")) {
+                if (/\.usd[acz]?$/.test(cmd.path.toLowerCase())) {
+                    const parsed = await UsdImporter.parseToDescs(bytes, textureManager);
+                    materials.push(...parsed.materials);
+                    importedMaterialNames.push(...parsed.materialNames);
+                    for (const m of parsed.meshes) meshes.push({ ...m, materialID: m.materialID + materialOffset });
+                } else if (cmd.path.toLowerCase().endsWith(".fbx")) {
                     const dir = url.slice(0, url.lastIndexOf("/"));
                     const parsed = await FbxImporter.parseToDescs(bytes, dir, textureManager);
                     parsed.materials.forEach((m, i) => (m.name ??= parsed.materialNames[i]));
