@@ -17,6 +17,7 @@ import type { SceneNode, AnimationChannel, WeightTrack } from "./Animation/Scene
 import { GltfImporter } from "./Importer/GltfImporter.js";
 import { FbxImporter } from "./Importer/FbxImporter.js";
 import { UsdImporter } from "./Importer/UsdImporter.js";
+import { convertToLinearSweptSphere, extractBasisCurvesFromUsda } from "./Curves/CurveTessellation.js";
 import { TextureManager } from "./Material/TextureManager.js";
 import { EnvMap } from "./Lights/EnvMap.js";
 import { generateTangents } from "./TangentSpace.js";
@@ -667,6 +668,7 @@ export class SceneBuilderBridge {
         const importedLights: AnalyticLight[] = []; // lights from imported assets (FBX)
 
         const importedMaterialNames: string[] = [];
+        const curves: import("./Scene.js").SceneCurveDesc[] = [];
         for (const cmd of this.commands) {
             if (cmd.kind === "import") {
                 const url = baseUrl ? `${baseUrl}/${cmd.path}` : cmd.path;
@@ -676,10 +678,30 @@ export class SceneBuilderBridge {
                 const materialOffset = materials.length;
                 if (/\.usd[acz]?$/.test(cmd.path.toLowerCase())) {
                     const dir = url.slice(0, url.lastIndexOf("/"));
-                    const parsed = await UsdImporter.parseToDescs(bytes, textureManager, dir);
+                    // Curve prims import as real curves below; tinyusdz also
+                    // tessellates them into meshes — exclude those duplicates.
+                    const curvePrims = cmd.path.toLowerCase().endsWith(".usda")
+                        ? extractBasisCurvesFromUsda(new TextDecoder().decode(bytes))
+                        : [];
+                    const parsed = await UsdImporter.parseToDescs(bytes, textureManager, dir, new Set(curvePrims.map((c) => c.name)));
                     materials.push(...parsed.materials);
                     importedMaterialNames.push(...parsed.materialNames);
                     for (const m of parsed.meshes) meshes.push({ ...m, materialID: m.materialID + materialOffset });
+                    // BasisCurves from USDA text (tinyusdz's RenderScene has no curve API).
+                    {
+                        const strands = curvePrims;
+                        if (strands.length > 0) {
+                            const materialID = materials.length;
+                            materials.push({ name: "curveDefault", header: { materialType: MaterialType.Standard }, basic: { baseColor: new float4(0.5, 0.5, 0.5, 1), specular: new float4(0, 0.5, 0, 0) } });
+                            importedMaterialNames.push("curveDefault");
+                            for (const strand of strands) {
+                                const r = convertToLinearSweptSphere(strand.curveVertexCounts.length, strand.curveVertexCounts, strand.points, strand.widths, null, 1, 1, 1, 1, 1, float4x4.identity());
+                                const positionsRadii = new Float32Array(r.points.length * 4);
+                                r.points.forEach((pnt, vi) => positionsRadii.set([pnt.x, pnt.y, pnt.z, r.radius[vi]!], vi * 4));
+                                curves.push({ positionsRadii, texCrds: null, indices: r.indices, materialID });
+                            }
+                        }
+                    }
                 } else if (cmd.path.toLowerCase().endsWith(".fbx")) {
                     const dir = url.slice(0, url.lastIndexOf("/"));
                     const parsed = await FbxImporter.parseToDescs(bytes, dir, textureManager);
@@ -817,7 +839,7 @@ export class SceneBuilderBridge {
         // Only bind the camera to an imported node when the pyscene doesn't define
         // its own camera (an explicit pyscene camera wins and stays static).
         const cameraNodeID = this.camera ? undefined : this.importedCameraNodeID;
-        const scene = new Scene(device, meshes, materials, lights, textureManager, sdfGrids, nodes, animations, cameraNodeID, weightTracks);
+        const scene = new Scene(device, meshes, materials, lights, textureManager, sdfGrids, nodes, animations, cameraNodeID, weightTracks, curves);
         if (this.camera) {
             scene.camera.setPosition(this.camera.getPosition());
             scene.camera.setTarget(this.camera.getTarget());

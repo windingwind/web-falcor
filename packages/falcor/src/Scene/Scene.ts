@@ -65,6 +65,19 @@ export interface SceneMeshDesc {
     morph?: MorphDesc;
 }
 
+/** Tessellated curve geometry (linear swept spheres; CurveTessellation). */
+export interface SceneCurveDesc {
+    /** xyz position + radius per vertex, concatenated (4 floats/vertex). */
+    positionsRadii: Float32Array;
+    /** uv per vertex (2 floats/vertex); zeros if absent. */
+    texCrds: Float32Array | null;
+    /** Segment-start indices (local to this curve's vertices). */
+    indices: Uint32Array;
+    materialID: number;
+    /** World transform; identity if omitted. */
+    transform?: float4x4;
+}
+
 export interface SceneMaterialDesc {
     /** Material name; used by Scene.getMaterial(name). */
     name?: string;
@@ -123,6 +136,8 @@ export class Scene {
     private svsResources: { voxels: Buffer } | null = null;
     private svoResources: { svo: Buffer } | null = null;
     private sdfBvhBuffers: { buf: Buffer; primOffset: number } | null = null;
+    private curveInstanceFirst = 0;
+    private curveDescs: SceneCurveDesc[] = [];
     private envMap: EnvMap | null = null;
     private hasEmissiveMaterials = false;
     private materialTypes = new Set<MaterialType>();
@@ -143,6 +158,7 @@ export class Scene {
         animations: AnimationChannel[] = [],
         cameraNodeID?: number,
         weightTracks: WeightTrack[] = [],
+        curves: SceneCurveDesc[] = [],
     ) {
         this.cameraNodeID = cameraNodeID;
         this.sdfGrids = sdfGrids;
@@ -197,6 +213,26 @@ export class Scene {
                 geometryIndex: 0,
             });
         });
+        // Curve instances append after SDF instances (not in the triangle BVH;
+        // intersected via the curve segment-AABB path).
+        this.curveInstanceFirst = instances.length;
+        this.curveDescs = curves;
+        let curveVbOffset = 0;
+        let curveIbOffset = 0;
+        curves.forEach((curve, i) => {
+            instances.push({
+                type: GeometryType.Curve,
+                globalMatrixID: meshes.length + sdfGrids.length + i,
+                materialID: curve.materialID,
+                geometryID: i,
+                vbOffset: curveVbOffset,
+                ibOffset: curveIbOffset,
+                instanceIndex: meshes.length + sdfGrids.length + i,
+                geometryIndex: 0,
+            });
+            curveVbOffset += curve.positionsRadii.length / 4;
+            curveIbOffset += curve.indices.length;
+        });
         this.instanceCount = instances.length;
         this.drawList = meshDescs.map((m, i) => ({
             indexCount: m.indexCount,
@@ -227,7 +263,7 @@ export class Scene {
         // (globalMatrixID indexes this order). One merged buffer
         // (16-storage-buffer budget, same pattern as the BVH merge): world
         // matrices then inverse-transpose matrices.
-        const nodeCount = meshes.length + sdfGrids.length;
+        const nodeCount = meshes.length + sdfGrids.length + curves.length;
         const world = new Float32Array(nodeCount * 2 * 16);
         const putNode = (i: number, m: float4x4) => {
             world.set(m.toArray(), i * 16);
@@ -235,6 +271,7 @@ export class Scene {
         };
         meshes.forEach((mesh, i) => putNode(i, mesh.transform ?? float4x4.identity()));
         sdfGrids.forEach((desc, i) => putNode(meshes.length + i, desc.transform ?? float4x4.identity()));
+        curves.forEach((desc, i) => putNode(meshes.length + sdfGrids.length + i, desc.transform ?? float4x4.identity()));
         make("worldMatrices", world, 64);
         this.invTransposeOffset = nodeCount;
 
@@ -366,6 +403,30 @@ export class Scene {
         make("materialData", blobBytes, 128);
         make("materialBuffer0", new Uint32Array(4), 4);
         make("curveDummy", new Uint32Array(16), 32); // StaticCurveVertexData-sized dummy
+        if (curves.length > 0) {
+            // StaticCurveVertexData WGSL layout: position@0, radius@12, texCrd@16, stride 32.
+            const totalVerts = curves.reduce((acc, c) => acc + c.positionsRadii.length / 4, 0);
+            const cv = new Float32Array(totalVerts * 8);
+            const totalSegs = curves.reduce((acc, c) => acc + c.indices.length, 0);
+            const ci = new Uint32Array(totalSegs);
+            const cd = new Uint32Array(curves.length * 6);
+            let vtx = 0;
+            let seg = 0;
+            curves.forEach((curve, i) => {
+                const count = curve.positionsRadii.length / 4;
+                for (let v = 0; v < count; v++) {
+                    cv.set(curve.positionsRadii.subarray(v * 4, v * 4 + 4), (vtx + v) * 8);
+                    if (curve.texCrds) cv.set(curve.texCrds.subarray(v * 2, v * 2 + 2), (vtx + v) * 8 + 4);
+                }
+                ci.set(curve.indices, seg);
+                cd.set([vtx, seg, count, curve.indices.length, 1, curve.materialID], i * 6);
+                vtx += count;
+                seg += curve.indices.length;
+            });
+            make("curveVertices", cv, 32);
+            make("curveIndices", ci, 4);
+            make("curves", cd, 24);
+        }
         make("gridVolumeDummy", new Uint32Array(64), 256); // GridVolumeData-sized dummy (2x float4x4 + params)
 
         // Material textures packed into one array (docs §6.2).
@@ -770,7 +831,10 @@ export class Scene {
 
     getSceneDefines(): DefineList {
         return new DefineList().addAll({
-            SCENE_GEOMETRY_TYPES: (1 << GeometryType.TriangleMesh) | (this.sdfGrids.length > 0 ? 1 << GeometryType.SDFGrid : 0),
+            SCENE_GEOMETRY_TYPES:
+                (1 << GeometryType.TriangleMesh) |
+                (this.sdfGrids.length > 0 ? 1 << GeometryType.SDFGrid : 0) |
+                (this.curveDescs.length > 0 ? 1 << GeometryType.Curve : 0),
             SCENE_GRID_COUNT: this.gridCount,
             // Mirrors Scene::getSceneSDFGridDefines (defaults for all types:
             // VoxelSphereTracing, NumericDiscontinuous, 256 iterations).
@@ -931,10 +995,11 @@ export class Scene {
         scene["lights"] = this.buffers["lights"]!;
         scene["lightCount"] = this.lightCount;
         scene["prevVertices"] = this.buffers["prevVertices"] ?? this.buffers["vertices"]!;
-        // Curve buffers (no curve geometry yet; dummies for DCE survivors).
-        scene["curveVertices"] = this.buffers["curveDummy"]!;
-        scene["prevCurveVertices"] = this.buffers["curveDummy"]!;
-        scene["curveIndices"] = this.buffers["curveDummy"]!;
+        // Curve buffers (dummies keep DCE survivors bound in curve-less scenes).
+        scene["curveVertices"] = this.buffers["curveVertices"] ?? this.buffers["curveDummy"]!;
+        scene["prevCurveVertices"] = this.buffers["curveVertices"] ?? this.buffers["curveDummy"]!;
+        scene["curveIndices"] = this.buffers["curveIndices"] ?? this.buffers["curveDummy"]!;
+        if (this.buffers["curves"]) scene["curves"] = this.buffers["curves"]!;
         try {
             // Only referenced by volume-aware passes (binding absent otherwise).
             scene["gridVolumeCount"] = this.gridVolumes.length;

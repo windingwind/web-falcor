@@ -124,6 +124,7 @@ export class UsdImporter {
         bytes: Uint8Array,
         textureManager?: TextureManager,
         baseUrl = "",
+        excludePrims?: Set<string>,
     ): Promise<{ meshes: SceneMeshDesc[]; materials: SceneMaterialDesc[]; materialNames: string[] }> {
         const native = await loadTinyUsdz();
         const usd = new native.TinyUSDZLoaderNative();
@@ -180,7 +181,7 @@ export class UsdImporter {
             if (node.localMatrix && node.localMatrix.length === 16) {
                 world = mulMat(parentWorld, usdToWebMatrix(node.localMatrix));
             }
-            if (node.nodeType === "mesh") {
+            if (node.nodeType === "mesh" && !excludePrims?.has(node.primName)) {
                 const mesh = usd.getMesh(node.contentId);
                 const positions = mesh.points;
                 const indices = new Uint32Array(mesh.faceVertexIndices);
