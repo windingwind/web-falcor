@@ -149,6 +149,8 @@ export class Scene {
     private hasEmissiveMaterials = false;
     private materialTypes = new Set<MaterialType>();
     private materialDescs: SceneMaterialDesc[] = [];
+    private lcMeshes: SceneMeshDesc[] = [];
+    private lcTextureManager: TextureManager = new TextureManager();
     private emissiveTriangleCount = 0;
     private emissiveMeshCount = 0;
     private emissiveFluxes = new Float32Array(0);
@@ -438,49 +440,11 @@ export class Scene {
         // Camera/light Animatable: recompute their pose from node globals each frame.
         this.hasAnimatedCameraOrLights = cameraNodeID !== undefined || lights.some((l) => l.nodeID !== undefined);
 
-        // Emissive geometry (LightCollection).
-        const lc = buildLightCollection(
-            meshes,
-            materials.map((m) => {
-                const em = m.basic.emissive;
-                const factor = m.basic.emissiveFactor ?? 1;
-                // Textured emissives integrate per triangle (EmissiveIntegrator
-                // semantics); texture handle low bits = textureID (mode bits high).
-                const texEmissive = m.basic.texEmissive;
-                const emissiveTexture =
-                    texEmissive !== undefined ? (textureManager.readLinearPixels(texEmissive & 0x1fffffff) ?? undefined) : undefined;
-                return {
-                    emissive: m.header?.emissive ?? false,
-                    radiance: [(em?.x ?? 0) * factor, (em?.y ?? 0) * factor, (em?.z ?? 0) * factor] as [number, number, number],
-                    emissiveTexture,
-                    emissiveFactor: factor,
-                };
-            }),
-        );
-        this.emissiveTriangleCount = lc.triangleCount;
-        this.emissiveActiveTriangleCount = lc.activeTriangles.length;
-        this.emissiveMeshCount = lc.meshCount;
-        this.emissiveFluxes = new Float32Array(lc.triangleCount);
-        const fluxView = new DataView(lc.fluxData);
-        for (let i = 0; i < lc.triangleCount; i++) this.emissiveFluxes[i] = fluxView.getFloat32(i * 32, true);
-        // Retain builder inputs for the LightBVH sampler (native builds from the
-        // UNPACKED emissive triangles: octahedral-decoded normals).
-        const triView = new DataView(lc.triangleData);
-        this.emissiveTriangles = Array.from({ length: lc.triangleCount }, (_v, i) => ({
-            posW: [0, 1, 2].map((k) => [
-                triView.getFloat32(i * 64 + k * 16, true),
-                triView.getFloat32(i * 64 + k * 16 + 4, true),
-                triView.getFloat32(i * 64 + k * 16 + 8, true),
-            ]) as [Vec3, Vec3, Vec3],
-            normal: decodeNormal2x16Host(triView.getUint32(i * 64 + 48, true)),
-            flux: this.emissiveFluxes[i]!,
-        }));
-        make("emissiveTriangles", lc.triangleData, 64);
-        make("emissiveFlux", lc.fluxData, 32);
-        make("emissiveActiveTriangles", lc.activeTriangles, 4);
-        make("emissiveTriToActive", lc.triToActiveMapping, 4);
-        make("emissiveMeshData", lc.meshData, 16);
-        make("emissivePerMeshInstanceOffset", lc.perMeshInstanceOffset, 4);
+        // Emissive geometry (LightCollection); inputs retained so runtime
+        // emissive edits can rebuild the flux tables.
+        this.lcMeshes = meshes;
+        this.lcTextureManager = textureManager;
+        this.rebuildLightCollection();
 
         // Materials.
         this.materialCount = materials.length;
@@ -579,14 +543,73 @@ export class Scene {
     }
 
     /** Re-packs one material blob after runtime property edits (mirrors
-     *  MaterialSystem::update). Emissive-affecting edits do NOT rebuild the
-     *  LightCollection (NEE flux tables) — hit shading picks them up, light
-     *  sampling keeps the load-time distribution. */
+     *  MaterialSystem::update); emissive edits also rebuild the
+     *  LightCollection flux tables. */
     updateMaterial(ref: number | string | SceneMaterialDesc): void {
         const index = typeof ref === "object" ? this.materialDescs.indexOf(ref) : typeof ref === "number" ? ref : this.materialDescs.findIndex((m) => m.name === ref);
         const m = this.materialDescs[index];
         if (!m) throw new RuntimeError(`Scene.updateMaterial: no material '${String(ref)}'`);
         this.buffers["materialData"]!.setBlob(packBasicMaterialBlob({ materialType: MaterialType.Standard, ...m.header }, m.basic), index * 128);
+        // Emissive edits change the NEE flux distribution (mirrors native
+        // MaterialsChanged handling). Presence toggles that flip scene defines
+        // still require pass recreation by the caller.
+        if (m.header?.emissive) this.rebuildLightCollection();
+    }
+
+    /** (Re)builds the LightCollection buffers (mirrors Scene::updateLights on
+     *  MaterialsChanged: emissive flux tables follow runtime material edits).
+     *  Old buffers are replaced, not destroyed — in-flight submits stay valid. */
+    private rebuildLightCollection(): void {
+        const lc = buildLightCollection(
+            this.lcMeshes,
+            this.materialDescs.map((m) => {
+                const em = m.basic.emissive;
+                const factor = m.basic.emissiveFactor ?? 1;
+                // Textured emissives integrate per triangle (EmissiveIntegrator
+                // semantics); texture handle low bits = textureID (mode bits high).
+                const texEmissive = m.basic.texEmissive;
+                const emissiveTexture =
+                    texEmissive !== undefined ? (this.lcTextureManager.readLinearPixels(texEmissive & 0x1fffffff) ?? undefined) : undefined;
+                return {
+                    emissive: m.header?.emissive ?? false,
+                    radiance: [(em?.x ?? 0) * factor, (em?.y ?? 0) * factor, (em?.z ?? 0) * factor] as [number, number, number],
+                    emissiveTexture,
+                    emissiveFactor: factor,
+                };
+            }),
+        );
+        this.emissiveTriangleCount = lc.triangleCount;
+        this.emissiveActiveTriangleCount = lc.activeTriangles.length;
+        this.emissiveMeshCount = lc.meshCount;
+        this.emissiveFluxes = new Float32Array(lc.triangleCount);
+        const fluxView = new DataView(lc.fluxData);
+        for (let i = 0; i < lc.triangleCount; i++) this.emissiveFluxes[i] = fluxView.getFloat32(i * 32, true);
+        // Retain builder inputs for the LightBVH sampler (native builds from the
+        // UNPACKED emissive triangles: octahedral-decoded normals).
+        const triView = new DataView(lc.triangleData);
+        this.emissiveTriangles = Array.from({ length: lc.triangleCount }, (_v, i) => ({
+            posW: [0, 1, 2].map((k) => [
+                triView.getFloat32(i * 64 + k * 16, true),
+                triView.getFloat32(i * 64 + k * 16 + 4, true),
+                triView.getFloat32(i * 64 + k * 16 + 8, true),
+            ]) as [Vec3, Vec3, Vec3],
+            normal: decodeNormal2x16Host(triView.getUint32(i * 64 + 48, true)),
+            flux: this.emissiveFluxes[i]!,
+        }));
+        const storage = ResourceBindFlags.ShaderResource | ResourceBindFlags.UnorderedAccess;
+        const remake = (name: string, data: ArrayBufferView | ArrayBuffer, structSize: number) => {
+            let bytes = data instanceof ArrayBuffer ? new Uint8Array(data) : new Uint8Array(data.buffer, data.byteOffset, data.byteLength);
+            if (bytes.byteLength === 0) bytes = new Uint8Array(Math.max(structSize, 4));
+            const buf = new Buffer(this.device, { size: bytes.byteLength, structSize, bindFlags: storage, memoryType: MemoryType.DeviceLocal, name: `Scene::${name}` });
+            buf.setBlob(bytes);
+            this.buffers[name] = buf;
+        };
+        remake("emissiveTriangles", lc.triangleData, 64);
+        remake("emissiveFlux", lc.fluxData, 32);
+        remake("emissiveActiveTriangles", lc.activeTriangles, 4);
+        remake("emissiveTriToActive", lc.triToActiveMapping, 4);
+        remake("emissiveMeshData", lc.meshData, 16);
+        remake("emissivePerMeshInstanceOffset", lc.perMeshInstanceOffset, 4);
     }
 
     /** True if the scene has keyframe animations (and thus responds to animate()). */

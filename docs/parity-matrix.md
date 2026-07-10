@@ -132,7 +132,7 @@ Tallies today: 20 pass classes fully implemented, 4 partial, 14 not implemented
 | Motion vectors for animated geometry | ✅ | rigid (prev world matrices) native-exact (mean 1.2e-7); skinned/morphed (prev-position double buffer + IsDynamic) verified by reprojection — native itself writes zero skinned mvecs on this content (probed) |
 | Animated-scene BVH | 🟡 | full CPU rebuild per frame (correct, no refit path) |
 | GridVolumes (NanoVDB) | ✅ | `.vdb` parsed in-browser → NanoVDB, verified vs native; uncompressed codecs only ⏳ (zip/blosc), `.vdb` frame sequences ⏳, blackbody emission conversion ⏳ |
-| Runtime material/light property edits | ✅ core | `Scene.getLight/getMaterial` + `updateLights/updateMaterial` re-pack GPU data post-build; verified vs native applying identical python edits (mean 7.1e-4). Emissive edits don't rebuild the NEE flux tables ⏳ |
+| Runtime material/light property edits | ✅ | `Scene.getLight/getMaterial` + `updateLights/updateMaterial` re-pack GPU data post-build; verified vs native applying identical python edits (mean 7.1e-4). Emissive edits rebuild the NEE flux tables (dimmed-cornell PT vs native: bias 2.5e-4, 0/1024 blocks). Emissive-presence toggles that flip scene defines still need pass recreation |
 | Importer: glTF | ✅ | TS importer: meshes, skinning, morph targets, animations, cameras, lights; KTX2/Draco ⏳ |
 | Importer: Assimp | 🔶 partial | assimpjs: full scenes `.fbx` only (other formats mesh-only via `TriangleMesh.createFromFile`); >2 GB-heap FBX aborts (wasm32) — BistroExterior; DDS ✅ / TGA ⏳ textures |
 | Importer: PBRT (pbrt-v4) | ✅ subset | camera/lights/shapes/area lights verified; all materials → Standard (`usePBRTMaterials=true` path ⏳), textures/spectra/media/curves ⏳ |
