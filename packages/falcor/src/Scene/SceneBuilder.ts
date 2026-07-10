@@ -692,8 +692,15 @@ export class SceneBuilderBridge {
                         const strands = curvePrims;
                         if (strands.length > 0) {
                             const materialID = materials.length;
-                            materials.push({ name: "curveDefault", header: { materialType: MaterialType.Standard }, basic: { baseColor: new float4(0.5, 0.5, 0.5, 1), specular: new float4(0, 0.5, 0, 0) } });
-                            importedMaterialNames.push("curveDefault");
+                            // Native default curve material (ImporterContext): Hair,
+                            // baseColor (0.8,0.4,0.05), specular (longRough, azimRough,
+                            // scaleAngleDeg, 0), IOR 1.55.
+                            materials.push({
+                                name: "default-curve-0",
+                                header: { materialType: MaterialType.Hair, ior: 1.55 },
+                                basic: { baseColor: new float4(0.8, 0.4, 0.05, 1), specular: new float4(0.125, 0.3, 1, 0) },
+                            });
+                            importedMaterialNames.push("default-curve-0");
                             for (const strand of strands) {
                                 const r = convertToLinearSweptSphere(strand.curveVertexCounts.length, strand.curveVertexCounts, strand.points, strand.widths, null, 1, 1, 1, 1, 1, float4x4.identity());
                                 const positionsRadii = new Float32Array(r.points.length * 4);
