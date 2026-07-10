@@ -17,7 +17,7 @@
 
 __exported import Scene.Shading;
 __exported import Scene.SceneRayQueryInterface;
-#if SCENE_SDF_GRID_COUNT > 0 || SCENE_HAS_GEOMETRY_TYPE(GEOMETRY_TYPE_CURVE)
+#if SCENE_SDF_GRID_COUNT > 0 || SCENE_HAS_GEOMETRY_TYPE(GEOMETRY_TYPE_CURVE) || SCENE_HAS_GEOMETRY_TYPE(GEOMETRY_TYPE_DISPLACED_TRIANGLE_MESH)
 import Scene.Intersection;
 #endif
 
@@ -371,6 +371,73 @@ bool intersectCurvesAny(const Ray ray)
 }
 #endif
 
+#if SCENE_HAS_GEOMETRY_TYPE(GEOMETRY_TYPE_DISPLACED_TRIANGLE_MESH)
+/** Displaced prim entry i ((meshInstance << 24) | triangle). */
+uint webfalcorDisplacedPrimEntry(uint i)
+{
+    const float4 packed = gScene.webfalcorBvhNodes[gScene.webfalcorDisplacedPrimOffset + (i >> 2)];
+    return asuint(packed[i & 3]);
+}
+
+/** Closest displaced-triangle hit over the displaced AABB region. */
+bool intersectDisplaced(const Ray ray, const float tMaxIn, out uint outInstance, out uint outTriangle, out DisplacedTriangleMeshIntersector::Attribs outAttribs, out float outT)
+{
+    outInstance = 0;
+    outTriangle = 0;
+    outAttribs = {};
+    outT = tMaxIn;
+    bool found = false;
+
+    const float3 invDir = float3(1.f) / ray.dir;
+    const uint base = gScene.webfalcorDisplacedBvhOffset;
+    uint stack[32];
+    uint stackSize = 0;
+    uint node = 0;
+    for (;;)
+    {
+        const float4 n0 = gScene.webfalcorBvhNodes[base + node * 2];
+        const float4 n1 = gScene.webfalcorBvhNodes[base + node * 2 + 1];
+        if (intersectAabb(ray.origin, invDir, ray.tMin, outT, n0.xyz, n1.xyz))
+        {
+            const uint leftFirst = asuint(n0.w);
+            const uint count = asuint(n1.w);
+            if (count > 0)
+            {
+                for (uint i = 0; i < count; i++)
+                {
+                    const uint entry = webfalcorDisplacedPrimEntry(leftFirst + i);
+                    GeometryInstanceID instanceID;
+                    instanceID.index = entry >> 24;
+                    const uint tri = entry & 0xffffff;
+                    Ray clipped = ray;
+                    clipped.tMax = outT;
+                    DisplacedTriangleMeshIntersector::Attribs attribs;
+                    float t;
+                    if (DisplacedTriangleMeshIntersector::intersect(clipped, instanceID, tri, attribs, t))
+                    {
+                        outT = t;
+                        outInstance = instanceID.index;
+                        outTriangle = tri;
+                        outAttribs = attribs;
+                        found = true;
+                    }
+                }
+            }
+            else
+            {
+                if (stackSize < 32) { stack[stackSize] = leftFirst; stackSize++; }
+                node = node + 1;
+                continue;
+            }
+        }
+        if (stackSize == 0) break;
+        stackSize--;
+        node = stack[stackSize];
+    }
+    return found;
+}
+#endif
+
 /** Scene ray query (mirrors upstream SceneRayQuery<UseAlphaTest>). */
 struct SceneRayQuery<let UseAlphaTest : int> : ISceneRayQuery
 {
@@ -426,6 +493,26 @@ struct SceneRayQuery<let UseAlphaTest : int> : ISceneRayQuery
             }
         }
 #endif
+#if SCENE_HAS_GEOMETRY_TYPE(GEOMETRY_TYPE_DISPLACED_TRIANGLE_MESH)
+        {
+            // Displaced triangles compete with the closest hit so far.
+            const float dispTMax = hit.isValid() ? hitT : ray.tMax;
+            uint dispInstance;
+            uint dispTriangle;
+            DisplacedTriangleMeshIntersector::Attribs dispAttribs;
+            float dispT;
+            if (intersectDisplaced(ray, dispTMax, dispInstance, dispTriangle, dispAttribs, dispT))
+            {
+                DisplacedTriangleHit displacedHit;
+                displacedHit.instanceID.index = dispInstance;
+                displacedHit.primitiveIndex = dispTriangle;
+                displacedHit.barycentrics = dispAttribs.barycentrics;
+                displacedHit.displacement = dispAttribs.displacement;
+                hit = HitInfo(displacedHit);
+                hitT = dispT;
+            }
+        }
+#endif
         return hit;
     }
 
@@ -440,6 +527,15 @@ struct SceneRayQuery<let UseAlphaTest : int> : ISceneRayQuery
 #endif
 #if SCENE_HAS_GEOMETRY_TYPE(GEOMETRY_TYPE_CURVE)
         if (intersectCurvesAny(ray)) return false;
+#endif
+#if SCENE_HAS_GEOMETRY_TYPE(GEOMETRY_TYPE_DISPLACED_TRIANGLE_MESH)
+        {
+            uint instance;
+            uint tri;
+            DisplacedTriangleMeshIntersector::Attribs attribs;
+            float t;
+            if (intersectDisplaced(ray, ray.tMax, instance, tri, attribs, t)) return false;
+        }
 #endif
         return true;
     }

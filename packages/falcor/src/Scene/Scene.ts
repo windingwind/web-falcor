@@ -142,6 +142,9 @@ export class Scene {
     private curveBvhOffset = 0;
     private curvePrimOffset = 0;
     private curveBvhBytes: Float32Array | null = null;
+    private displacedBvhOffset = 0;
+    private displacedPrimOffset = 0;
+    private hasDisplaced = false;
     private envMap: EnvMap | null = null;
     private hasEmissiveMaterials = false;
     private materialTypes = new Set<MaterialType>();
@@ -189,8 +192,12 @@ export class Scene {
                 prevVbOffset: vbOffset,
                 materialID: mesh.materialID,
             });
+            // Materials with a displacement map turn the mesh into displaced
+            // geometry (procedural AABBs; excluded from the triangle BVH).
+            const displaced = materials[mesh.materialID]?.basic.texDisplacement !== undefined;
+            if (displaced) this.hasDisplaced = true;
             instances.push({
-                type: GeometryType.TriangleMesh,
+                type: displaced ? GeometryType.DisplacedTriangleMesh : GeometryType.TriangleMesh,
                 globalMatrixID: meshID,
                 materialID: mesh.materialID,
                 geometryID: meshID,
@@ -279,18 +286,32 @@ export class Scene {
         make("worldMatrices", world, 64);
         this.invTransposeOffset = nodeCount;
 
-        // Software RT BVH over world-space triangles (docs §5).
+        // Software RT BVH over world-space triangles (docs §5). Displaced
+        // meshes are excluded — they intersect via their own AABB region.
         const bvhTris: BvhTriangle[] = [];
+        const displacedAabbs: { min: [number, number, number]; max: [number, number, number] }[] = [];
+        const displacedEntries: number[] = [];
         meshes.forEach((mesh, meshID) => {
             const m = mesh.transform ?? float4x4.identity();
+            const mat = materials[mesh.materialID];
+            const displaced = mat?.basic.texDisplacement !== undefined;
+            // Conservative displacement range along the normal: mapValue([0,1]).
+            const scaleD = mat?.basic.displacementScale ?? 0;
+            const biasD = mat?.basic.displacementOffset ?? 0;
+            const margin = Math.max(Math.abs(biasD), Math.abs(scaleD + biasD)) + 1e-3;
             for (let p = 0; p < mesh.indices.length / 3; p++) {
-                bvhTris.push({
-                    v0: transformPoint(m, mesh.vertices[mesh.indices[p * 3]!]!.position),
-                    v1: transformPoint(m, mesh.vertices[mesh.indices[p * 3 + 1]!]!.position),
-                    v2: transformPoint(m, mesh.vertices[mesh.indices[p * 3 + 2]!]!.position),
-                    instanceIndex: meshID,
-                    primitiveIndex: p,
-                });
+                const v0 = transformPoint(m, mesh.vertices[mesh.indices[p * 3]!]!.position);
+                const v1 = transformPoint(m, mesh.vertices[mesh.indices[p * 3 + 1]!]!.position);
+                const v2 = transformPoint(m, mesh.vertices[mesh.indices[p * 3 + 2]!]!.position);
+                if (displaced) {
+                    displacedAabbs.push({
+                        min: [Math.min(v0.x, v1.x, v2.x) - margin, Math.min(v0.y, v1.y, v2.y) - margin, Math.min(v0.z, v1.z, v2.z) - margin],
+                        max: [Math.max(v0.x, v1.x, v2.x) + margin, Math.max(v0.y, v1.y, v2.y) + margin, Math.max(v0.z, v1.z, v2.z) + margin],
+                    });
+                    displacedEntries.push(((meshID & 0xff) << 24) | p);
+                } else {
+                    bvhTris.push({ v0, v1, v2, instanceIndex: meshID, primitiveIndex: p });
+                }
             }
         });
         const bvh = buildBvh(bvhTris);
@@ -340,8 +361,22 @@ export class Scene {
             this.curvePrimOffset = curveBvh.nodes.length / 4;
         }
 
+        // Displaced-triangle AABB BVH rides in the same merged buffer.
+        let displacedBvhData = new Float32Array(0);
+        let displacedNodeWords = 0;
+        if (displacedAabbs.length > 0) {
+            const dbvh = buildAabbBvh(displacedAabbs);
+            const encoded = new Uint32Array(dbvh.primIndices.length);
+            for (let i = 0; i < dbvh.primIndices.length; i++) encoded[i] = displacedEntries[dbvh.primIndices[i]!]!;
+            const primWords = Math.ceil(encoded.length / 4) * 4;
+            displacedBvhData = new Float32Array(dbvh.nodes.length + primWords);
+            displacedBvhData.set(dbvh.nodes, 0);
+            new Uint32Array(displacedBvhData.buffer, dbvh.nodes.length * 4).set(encoded);
+            displacedNodeWords = dbvh.nodes.length / 4;
+        }
+
         // One merged buffer (16-storage-buffer budget): nodes then triangles.
-        const bvhMerged = new Float32Array(bvh.nodes.length + bvh.tris.length + curveBvhData.length);
+        const bvhMerged = new Float32Array(bvh.nodes.length + bvh.tris.length + curveBvhData.length + displacedBvhData.length);
         bvhMerged.set(bvh.nodes, 0);
         bvhMerged.set(bvh.tris, bvh.nodes.length);
         this.bvhTrisOffset = bvh.nodes.length / 4;
@@ -350,6 +385,12 @@ export class Scene {
             this.curveBvhOffset = (bvh.nodes.length + bvh.tris.length) / 4;
             this.curvePrimOffset += this.curveBvhOffset;
             this.curveBvhBytes = curveBvhData;
+        }
+        if (displacedBvhData.length > 0) {
+            const base = bvh.nodes.length + bvh.tris.length + curveBvhData.length;
+            bvhMerged.set(displacedBvhData, base);
+            this.displacedBvhOffset = base / 4;
+            this.displacedPrimOffset = this.displacedBvhOffset + displacedNodeWords;
         }
         // A scene animates if it has keyframe channels, morph-weight tracks, or
         // morph meshes (weights may be static-but-nonzero) — all rebuild per frame.
@@ -914,7 +955,8 @@ export class Scene {
             SCENE_GEOMETRY_TYPES:
                 (1 << GeometryType.TriangleMesh) |
                 (this.sdfGrids.length > 0 ? 1 << GeometryType.SDFGrid : 0) |
-                (this.curveDescs.length > 0 ? 1 << GeometryType.Curve : 0),
+                (this.curveDescs.length > 0 ? 1 << GeometryType.Curve : 0) |
+                (this.hasDisplaced ? 1 << GeometryType.DisplacedTriangleMesh : 0),
             SCENE_GRID_COUNT: this.gridCount,
             // Mirrors Scene::getSceneSDFGridDefines (defaults for all types:
             // VoxelSphereTracing, NumericDiscontinuous, 256 iterations).
@@ -1109,6 +1151,12 @@ export class Scene {
             scene["webfalcorCurveInstanceCount"] = this.curveDescs.length;
             scene["webfalcorCurveBvhOffset"] = this.curveBvhOffset;
             scene["webfalcorCurvePrimOffset"] = this.curvePrimOffset;
+        } catch {
+            /* curve-less kernel variant */
+        }
+        try {
+            scene["webfalcorDisplacedBvhOffset"] = this.displacedBvhOffset;
+            scene["webfalcorDisplacedPrimOffset"] = this.displacedPrimOffset;
         } catch {
             /* curve-less kernel variant */
         }

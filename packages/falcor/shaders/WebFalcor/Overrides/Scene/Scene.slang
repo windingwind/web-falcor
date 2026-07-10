@@ -88,6 +88,10 @@ struct Scene
     // ((instance << 24) | segment) packed 4-per-float4 after.
     uint webfalcorCurveBvhOffset;
     uint webfalcorCurvePrimOffset;
+    // Displaced-triangle AABB BVH region (same merged buffer; prim entries
+    // (meshInstance << 24) | triangleIndex).
+    uint webfalcorDisplacedBvhOffset;
+    uint webfalcorDisplacedPrimOffset;
     // SparseBrickSet/SparseVoxelSet: procedural-primitive count + a BVH over
     // the primitive AABBs (no procedural BLAS on the software RT path). The
     // RaytracingInline override traverses this to prune tens of thousands of

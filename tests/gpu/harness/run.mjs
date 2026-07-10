@@ -49,7 +49,7 @@ const browser = await chromium.launch({
 
 const page = await browser.newPage();
 page.on("console", (msg) => {
-    if (msg.type() === "error") console.error("[browser]", msg.text());
+    if (msg.type() === "error" || process.env.FORWARD_ALL) console.error("[browser]", msg.text());
 });
 page.on("pageerror", (err) => console.error("[pageerror]", err.message));
 

@@ -264,6 +264,13 @@ export class SlangCompiler {
         const composite = session.createCompositeComponentType([...modules, ...eps]);
         const linked = composite.link();
         const entryPointCode = entryPoints.map((_ep, i) => linked.getEntryPointCode(i, 0));
+        // slang-wasm can abort WGSL emission silently (e.g. fp64 internal
+        // errors return an empty string with no diagnostics) — fail loudly.
+        for (const code of entryPointCode) {
+            if (!code || (!code.includes("@compute") && !code.includes("@fragment") && !code.includes("@vertex"))) {
+                throw new RuntimeError("Slang emitted no entry point (silent WGSL backend failure — check for fp64/unsupported constructs)");
+            }
+        }
         const layout = linked.getLayout(0);
         if (!layout) throw new RuntimeError("Slang reflection unavailable");
         return { entryPointCode, reflection: layout.toJsonObject() };

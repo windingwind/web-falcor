@@ -18,6 +18,7 @@ export const kShaderOverrides: Readonly<Record<string, string>> = {
     // pack*/unpack* renamed (collide with builtins added to Slang post-2024); 'this = {};' replaced.
     "Utils/Math/FormatConversion.slang": "WebFalcor/Overrides/Utils/Math/FormatConversion.slang",
     "Utils/Math/PackedFormats.slang": "WebFalcor/Overrides/Utils/Math/PackedFormats.slang",
+    "Utils/Geometry/IntersectionHelpers.slang": "WebFalcor/Overrides/Utils/Geometry/IntersectionHelpers.slang",
     "Scene/HitInfo.slang": "WebFalcor/Overrides/Scene/HitInfo.slang",
     // WGSL has no binding arrays (docs §6.2): packed Texture2DArray material
     // textures, single sampler/buffer/3D bindings, single grid/SDF instances,
