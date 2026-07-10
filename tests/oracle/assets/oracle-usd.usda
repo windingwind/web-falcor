@@ -36,6 +36,9 @@ def Xform "World"
             normal3f[] normals = [(-0.577, -0.577, 0.577), (0.577, -0.577, 0.577), (0.577, 0.577, 0.577), (-0.577, 0.577, 0.577), (-0.577, -0.577, -0.577), (0.577, -0.577, -0.577), (0.577, 0.577, -0.577), (-0.577, 0.577, -0.577)] (
                 interpolation = "vertex"
             )
+            texCoord2f[] primvars:st = [(0, 0), (1, 0), (1, 1), (0, 1), (0, 1), (1, 1), (1, 0), (0, 0)] (
+                interpolation = "vertex"
+            )
             rel material:binding = </World/Materials/RedMat>
         }
     }
@@ -81,9 +84,24 @@ def Xform "World"
             {
                 uniform token info:id = "UsdPreviewSurface"
                 color3f inputs:diffuseColor = (0.8, 0.15, 0.1)
-                float inputs:roughness = 0.4
-                float inputs:metallic = 0
+                float inputs:roughness.connect = </World/Materials/RedMat/RoughTex.outputs:r>
+                float inputs:metallic = 0.6
                 token outputs:surface
+            }
+
+            def Shader "Reader"
+            {
+                uniform token info:id = "UsdPrimvarReader_float2"
+                token inputs:varname = "st"
+                float2 outputs:result
+            }
+
+            def Shader "RoughTex"
+            {
+                uniform token info:id = "UsdUVTexture"
+                asset inputs:file = @oracle-usd-checker.png@
+                float2 inputs:st.connect = </World/Materials/RedMat/Reader.outputs:result>
+                float outputs:r
             }
         }
     }

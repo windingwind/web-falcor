@@ -35,6 +35,10 @@ interface UsdMesh {
 interface UsdMaterial {
     name?: string;
     diffuseColorTextureId?: number;
+    roughnessTextureId?: number;
+    metallicTextureId?: number;
+    normalTextureId?: number;
+    emissiveColorTextureId?: number;
     diffuseColor?: ArrayLike<number>;
     roughness?: number;
     metallic?: number;
@@ -131,7 +135,7 @@ export class UsdImporter {
         const materials: SceneMaterialDesc[] = [];
         const materialNames: string[] = [];
         const materialIndex = new Map<number, number>();
-        const textureJobs: { desc: SceneMaterialDesc; textureId: number }[] = [];
+        const textureJobs: { desc: SceneMaterialDesc; material: UsdMaterial }[] = [];
 
         const getOrAddMaterial = (materialId: number | undefined): number => {
             const id = materialId ?? -1;
@@ -155,9 +159,8 @@ export class UsdImporter {
                         emissiveFactor: 1,
                     },
                 };
-                if (m.diffuseColorTextureId !== undefined && m.diffuseColorTextureId >= 0) {
-                    textureJobs.push({ desc, textureId: m.diffuseColorTextureId });
-                }
+                const hasTexture = [m.diffuseColorTextureId, m.roughnessTextureId, m.metallicTextureId, m.normalTextureId, m.emissiveColorTextureId].some((t) => t !== undefined && t >= 0);
+                if (hasTexture) textureJobs.push({ desc, material: m });
             } else {
                 // UsdPreviewSurface fallback (18% gray).
                 desc = {
@@ -207,18 +210,86 @@ export class UsdImporter {
 
         // Resolve UsdUVTexture images (URI, embedded-encoded, or pre-decoded).
         if (textureManager) {
-            for (const job of textureJobs) {
-                try {
-                    const bitmap = await resolveImageBitmap(usd, job.textureId, baseUrl);
-                    const id = textureManager.addTexture({ bitmap, srgb: true });
-                    job.desc.basic.texBaseColor = packTextureHandle(TextureHandleMode.Texture, id);
-                } catch (err) {
-                    Logger.warning(`UsdImporter: failed to load texture ${job.textureId} (${String(err)})`);
-                }
+            for (const { desc, material: m } of textureJobs) {
+                await resolveMaterialTextures(usd, m, desc, textureManager, baseUrl);
             }
         }
         return { meshes, materials, materialNames };
     }
+}
+
+/** Resolves the material's texture slots (mirrors PreviewSurfaceConverter):
+ *  baseColor sRGB; roughness+metallic packed into one ORM texture like the
+ *  native CreateSpecularTexture kernel (channel r — tinyusdz exposes no
+ *  channel selectors); normal + emissive direct. */
+async function resolveMaterialTextures(
+    usd: TinyUsdzScene,
+    m: UsdMaterial,
+    desc: SceneMaterialDesc,
+    textureManager: TextureManager,
+    baseUrl: string,
+): Promise<void> {
+    const valid = (id: number | undefined): id is number => id !== undefined && id >= 0;
+    const load = async (id: number, srgb: boolean): Promise<number | undefined> => {
+        try {
+            return textureManager.addTexture({ bitmap: await resolveImageBitmap(usd, id, baseUrl), srgb });
+        } catch (err) {
+            Logger.warning(`UsdImporter: failed to load texture ${id} (${String(err)})`);
+            return undefined;
+        }
+    };
+    if (valid(m.diffuseColorTextureId)) {
+        const id = await load(m.diffuseColorTextureId, true);
+        if (id !== undefined) desc.basic.texBaseColor = packTextureHandle(TextureHandleMode.Texture, id);
+    }
+    if (valid(m.roughnessTextureId) || valid(m.metallicTextureId)) {
+        try {
+            const rough = valid(m.roughnessTextureId) ? readPixels(await resolveImageBitmap(usd, m.roughnessTextureId, baseUrl)) : null;
+            const metal = valid(m.metallicTextureId) ? readPixels(await resolveImageBitmap(usd, m.metallicTextureId, baseUrl)) : null;
+            const w = Math.max(rough?.width ?? 0, metal?.width ?? 0);
+            const h = Math.max(rough?.height ?? 0, metal?.height ?? 0);
+            const orm = new Uint8ClampedArray(w * h * 4);
+            const roughConst = Math.round((desc.basic.specular?.y ?? 0.5) * 255);
+            const metalConst = Math.round((desc.basic.specular?.z ?? 0) * 255);
+            const sample = (img: { data: Uint8ClampedArray; width: number; height: number } | null, x: number, y: number, fallback: number): number => {
+                if (!img) return fallback;
+                const sx = Math.min(Math.floor((x * img.width) / w), img.width - 1);
+                const sy = Math.min(Math.floor((y * img.height) / h), img.height - 1);
+                return img.data[(sy * img.width + sx) * 4]!;
+            };
+            for (let y = 0; y < h; y++) {
+                for (let x = 0; x < w; x++) {
+                    const i = (y * w + x) * 4;
+                    orm[i + 1] = sample(rough, x, y, roughConst);
+                    orm[i + 2] = sample(metal, x, y, metalConst);
+                    orm[i + 3] = 255;
+                }
+            }
+            const bitmap = await createImageBitmap(new ImageData(orm, w, h));
+            desc.basic.texSpecular = packTextureHandle(TextureHandleMode.Texture, textureManager.addTexture({ bitmap, srgb: false }));
+        } catch (err) {
+            Logger.warning(`UsdImporter: failed to pack spec texture (${String(err)})`);
+        }
+    }
+    if (valid(m.normalTextureId)) {
+        const id = await load(m.normalTextureId, false);
+        if (id !== undefined) desc.basic.texNormalMap = packTextureHandle(TextureHandleMode.Texture, id);
+    }
+    if (valid(m.emissiveColorTextureId)) {
+        const id = await load(m.emissiveColorTextureId, true);
+        if (id !== undefined) {
+            desc.basic.texEmissive = packTextureHandle(TextureHandleMode.Texture, id);
+            if (desc.header) desc.header.emissive = true;
+        }
+    }
+}
+
+/** Reads an ImageBitmap back to pixels (packing input for the ORM texture). */
+function readPixels(bitmap: ImageBitmap): { data: Uint8ClampedArray; width: number; height: number } {
+    const canvas = new OffscreenCanvas(bitmap.width, bitmap.height);
+    const ctx = canvas.getContext("2d", { willReadFrequently: true })!;
+    ctx.drawImage(bitmap, 0, 0);
+    return { data: ctx.getImageData(0, 0, bitmap.width, bitmap.height).data, width: bitmap.width, height: bitmap.height };
 }
 
 /** Resolves a UsdUVTexture to an ImageBitmap (mirrors the three tinyusdz

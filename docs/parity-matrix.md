@@ -137,7 +137,7 @@ Tallies today: 20 pass classes fully implemented, 4 partial, 14 not implemented
 | Importer: Assimp | 🔶 partial | assimpjs: full scenes `.fbx` only (other formats mesh-only via `TriangleMesh.createFromFile`); >2 GB-heap FBX aborts (wasm32) — BistroExterior; DDS ✅ / TGA ⏳ textures |
 | Importer: PBRT (pbrt-v4) | ✅ subset | camera/lights/shapes/area lights verified; all materials → Standard (`usePBRTMaterials=true` path ⏳), textures/spectra/media/curves ⏳ |
 | Importer: `.pyscene` | ✅ | unmodified upstream scenes via Pyodide bridge |
-| Importer: USD | 🔶 subset | tinyusdz-wasm (1.9MB, reads usda/usdc/usdz): meshes + xform hierarchy + UsdPreviewSurface → Standard incl. UsdUVTexture baseColor (sRGB, V-flip), verified vs native USDImporter (mask/viewW exact; textured 64spp radiance bias 1.2e-4, per-region 0.1%). ⏳: lights/cameras (not exposed by tinyusdz RenderScene), non-baseColor textures, UsdSkel, subdivision refinement, instancing |
+| Importer: USD | 🔶 subset | tinyusdz-wasm (1.9MB, reads usda/usdc/usdz): meshes + xform hierarchy + UsdPreviewSurface → Standard incl. UsdUVTexture baseColor (sRGB, V-flip) and roughness/metallic packed ORM like native's CreateSpecularTexture — verified vs native (mask/viewW exact; textured 64spp radiance bias ~1e-5, per-region ≤0.3%). Normal/emissive texture slots plumbed (same path, not separately oracled). ⏳: lights/cameras (not exposed by tinyusdz RenderScene), texture channel selectors (r assumed), UsdSkel, subdivision refinement, instancing |
 | Importer: Mitsuba | ⏳ | not started |
 | SceneBuilder flags (optimize/merge/dedup) | ⏳ | tangent generation ✅; optimization flags not built |
 
