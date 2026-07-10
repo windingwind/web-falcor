@@ -28,12 +28,17 @@ export class RenderData {
     constructor(
         private readonly resources: Map<string, Texture>,
         public readonly defaultTexDims: [number, number],
+        /** Graph-wide key/value store (mirrors InternalDictionary; e.g. PRNG dimension). */
+        public readonly dictionary: Map<string, unknown> = new Map(),
     ) {}
 
     getTexture(name: string): Texture | undefined {
         return this.resources.get(name);
     }
 }
+
+/** Dictionary key: PRNG dimensions consumed upstream of a tracer (mirrors kRenderPassPRNGDimension). */
+export const kRenderPassPRNGDimension = "prngDimension";
 
 export abstract class RenderPass {
     name = "";

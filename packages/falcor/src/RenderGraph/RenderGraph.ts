@@ -279,6 +279,9 @@ export class RenderGraph {
         this.compiled = null; // reflection may depend on loaded assets (e.g. ImageLoader size)
     }
 
+    /** Graph-wide pass dictionary (mirrors InternalDictionary; persists across frames). */
+    private readonly passDictionary = new Map<string, unknown>();
+
     /** Mirrors RenderGraphExe::execute (plus Mogwai's per-frame scene tick). */
     execute(ctx: RenderContext): void {
         if (!this.compiled) this.compile(ctx);
@@ -286,7 +289,7 @@ export class RenderGraph {
         // advance) before executing the graph each frame; web folds it in here.
         this.scene?.camera.beginFrame();
         for (const { pass, resources } of this.compiled!) {
-            pass.execute(ctx, new RenderData(resources, this.defaultDims));
+            pass.execute(ctx, new RenderData(resources, this.defaultDims, this.passDictionary));
         }
     }
 }

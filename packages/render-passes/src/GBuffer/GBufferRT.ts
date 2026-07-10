@@ -20,6 +20,7 @@ import {
     IOSize,
     Properties,
     RenderData,
+    kRenderPassPRNGDimension,
     RenderPass,
     RenderPassReflection,
     ResourceBindFlags,
@@ -73,6 +74,8 @@ export class GBufferRT extends RenderPass {
     private frameCount = 0;
     private useAlphaTest = true;
     private adjustShadingNormals = true;
+    private useDOF = true;
+    private computeDOF = false;
     private lodMode = 0;
     private outputSize = IOSize.Default;
     private sampleGenerator: SampleGenerator;
@@ -86,7 +89,7 @@ export class GBufferRT extends RenderPass {
         if (lod !== undefined) this.lodMode = (typeof lod === "string" ? kLODModes[lod] : lod) ?? 0;
         this.outputSize = parseIOSize(props.getOpt("outputSize"));
         // 'useTraceRayInline' accepted: inline queries are the only web path.
-        // 'useDOF' accepted: COMPUTE_DEPTH_OF_FIELD needs aperture > 0 (default cameras: 0).
+        this.useDOF = props.get("useDOF", true);
         this.sampleGenerator = SampleGenerator.create(device, SAMPLE_GENERATOR_DEFAULT);
         const pattern = props.get<string>("samplePattern", "Center");
         const count = props.get("sampleCount", 16);
@@ -123,6 +126,14 @@ export class GBufferRT extends RenderPass {
         // Mirrors GBufferBase::updateFrameDim (first jitter sample lands next frame).
         this.scene.camera.setPatternGenerator(this.cameraJitterGenerator, new float2(Math.fround(1 / w), Math.fround(1 / h)));
 
+        // Mirrors GBufferRT::execute DoF config (two PRNG dims consumed; told downstream).
+        const computeDOF = this.useDOF && this.scene.camera.getApertureRadius() > 0;
+        if (computeDOF !== this.computeDOF) {
+            this.computeDOF = computeDOF;
+            this.passes.clear();
+        }
+        if (this.useDOF) renderData.dictionary.set(kRenderPassPRNGDimension, computeDOF ? 2 : 0);
+
         // Partition connected channels into groups within the storage-texture
         // limit; each group is one kernel variant tracing the same primary rays.
         const present = kChannels.filter(([name]) => renderData.getTexture(name) !== undefined);
@@ -140,7 +151,7 @@ export class GBufferRT extends RenderPass {
                     ADJUST_SHADING_NORMALS: this.adjustShadingNormals ? 1 : 0,
                     LOD_MODE: this.lodMode,
                     RAY_FLAGS: 0,
-                    COMPUTE_DEPTH_OF_FIELD: 0,
+                    COMPUTE_DEPTH_OF_FIELD: this.computeDOF ? 1 : 0,
                     ...valid,
                 });
                 defines.addAll(this.sampleGenerator.getDefines());

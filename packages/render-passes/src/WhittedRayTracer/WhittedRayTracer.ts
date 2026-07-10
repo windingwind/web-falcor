@@ -11,6 +11,7 @@ import {
     FieldFlags,
     Properties,
     RenderData,
+    kRenderPassPRNGDimension,
     RenderPass,
     RenderPassReflection,
     ResourceBindFlags,
@@ -119,7 +120,7 @@ export class WhittedRayTracer extends RenderPass {
         const root = this.pass.getRootVar();
         this.scene.bindShaderData(root);
         root["CB"]["gFrameCount"] = this.frameCount;
-        root["CB"]["gPRNGDimension"] = 0;
+        root["CB"]["gPRNGDimension"] = (renderData.dictionary.get(kRenderPassPRNGDimension) as number | undefined) ?? 0;
         // Mirrors Camera::computeScreenSpacePixelSpreadAngle (kDefaultFrameHeight = 24).
         const fovY = 2 * Math.atan(0.5 * 24 / this.scene.camera.getFocalLength());
         root["CB"]["gScreenSpacePixelSpreadAngle"] = Math.fround(Math.atan((2 * Math.tan(fovY * 0.5)) / h));

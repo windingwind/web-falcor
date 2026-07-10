@@ -45,6 +45,8 @@ export interface CameraData {
     jitterY: number;
     frameHeight: number;
     frameWidth: number;
+    focalDistance: number;
+    apertureRadius: number;
 }
 
 export class Camera {
@@ -53,6 +55,8 @@ export class Camera {
     private target = new float3(0, 0, 0);
     private up = new float3(0, 1, 0);
     private focalLength = 21.0; // Falcor default
+    private focalDistance = 10000.0;
+    private apertureRadius = 0.0;
     private frameHeight = 24.0;
     private aspectRatio = 1.7777;
     private nearZ = 0.1;
@@ -98,6 +102,10 @@ export class Camera {
     setUpVector(u: float3): void { this.up = u.clone(); this.dirty = true; }
     setFocalLength(mm: number): void { this.focalLength = mm; this.dirty = true; }
     getFocalLength(): number { return this.focalLength; }
+    setFocalDistance(d: number): void { this.focalDistance = d; this.dirty = true; }
+    getFocalDistance(): number { return this.focalDistance; }
+    setApertureRadius(r: number): void { this.apertureRadius = r; this.dirty = true; }
+    getApertureRadius(): number { return this.apertureRadius; }
     setAspectRatio(ratio: number): void { this.aspectRatio = ratio; this.dirty = true; }
     getAspectRatio(): number { return this.aspectRatio; }
     setDepthRange(nearZ: number, farZ: number): void { this.nearZ = nearZ; this.farZ = farZ; this.dirty = true; }
@@ -127,7 +135,11 @@ export class Camera {
             const right = new float3(invView.get(0, 0), invView.get(1, 0), invView.get(2, 0));
             const upV = new float3(invView.get(0, 1), invView.get(1, 1), invView.get(2, 1));
             const fwd = new float3(-invView.get(0, 2), -invView.get(1, 2), -invView.get(2, 2));
+            // U/V/W lengths carry the focal distance (upstream convention: the
+            // thin-lens focal plane sits at |cameraW|).
             const tanHalfFovY = Math.tan(0.5 * this.getFovY());
+            const ulen = this.focalDistance * tanHalfFovY * this.aspectRatio;
+            const vlen = this.focalDistance * tanHalfFovY;
 
             this.data = {
                 viewMat,
@@ -142,14 +154,16 @@ export class Camera {
                 aspectRatio: this.aspectRatio,
                 target: this.target.clone(),
                 nearZ: this.nearZ,
-                cameraU: new float3(right.x * tanHalfFovY * this.aspectRatio, right.y * tanHalfFovY * this.aspectRatio, right.z * tanHalfFovY * this.aspectRatio),
+                cameraU: new float3(right.x * ulen, right.y * ulen, right.z * ulen),
                 farZ: this.farZ,
-                cameraV: new float3(upV.x * tanHalfFovY, upV.y * tanHalfFovY, upV.z * tanHalfFovY),
+                cameraV: new float3(upV.x * vlen, upV.y * vlen, upV.z * vlen),
                 jitterX: this.jitter.x,
-                cameraW: fwd,
+                cameraW: new float3(fwd.x * this.focalDistance, fwd.y * this.focalDistance, fwd.z * this.focalDistance),
                 jitterY: this.jitter.y,
                 frameHeight: this.frameHeight,
                 frameWidth: this.frameHeight * this.aspectRatio,
+                focalDistance: this.focalDistance,
+                apertureRadius: this.apertureRadius,
             };
             this.dirty = false;
         }

@@ -9,6 +9,7 @@ import {
     FieldFlags,
     Properties,
     RenderData,
+    kRenderPassPRNGDimension,
     RenderPass,
     RenderPassReflection,
     ResourceBindFlags,
@@ -78,7 +79,7 @@ export class MinimalPathTracer extends RenderPass {
         this.scene.bindShaderData(root);
         root["CB"]["gFrameDim"] = [color.width, color.height];
         root["CB"]["gFrameCount"] = this.frameCount;
-        root["CB"]["gPRNGDimension"] = 0;
+        root["CB"]["gPRNGDimension"] = (renderData.dictionary.get(kRenderPassPRNGDimension) as number | undefined) ?? 0;
         root["gVBuffer"] = renderData.getTexture("vbuffer")!;
         root["gOutputColor"] = color;
         this.pass.execute(ctx, color.width, color.height);

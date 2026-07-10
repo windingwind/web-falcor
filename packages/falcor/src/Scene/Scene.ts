@@ -843,6 +843,8 @@ export class Scene {
         c["jitterX"] = cam.jitterX;
         c["cameraW"] = cam.cameraW.toArray();
         c["jitterY"] = cam.jitterY;
+        c["focalDistance"] = cam.focalDistance;
+        c["apertureRadius"] = cam.apertureRadius;
 
         // Geometry.
         scene["worldMatrices"] = this.buffers["worldMatrices"]!;

@@ -185,6 +185,8 @@ export class CameraBridge {
     private _target = new float3(0, 0, 0);
     private _up = new float3(0, 1, 0);
     focalLength = 21;
+    focalDistance = 10000;
+    apertureRadius = 0;
 
     set position(v: { x: number; y: number; z: number }) {
         this._position = toF3(v);
@@ -811,6 +813,8 @@ export class SceneBuilderBridge {
             scene.camera.setTarget(this.camera.getTarget());
             scene.camera.setUpVector(this.camera.getUp());
             scene.camera.setFocalLength(this.camera.focalLength);
+            scene.camera.setFocalDistance(this.camera.focalDistance);
+            scene.camera.setApertureRadius(this.camera.apertureRadius);
         } else if (this.importedCameraPose) {
             scene.camera.setPosition(this.importedCameraPose.position);
             scene.camera.setTarget(this.importedCameraPose.target);

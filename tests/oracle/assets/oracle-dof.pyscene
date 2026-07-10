@@ -1,0 +1,47 @@
+# Thin-lens (depth-of-field) oracle: spheres at three depths, camera focused
+# on the middle one with a wide aperture.
+matNear = StandardMaterial('Near')
+matNear.baseColor = float4(0.8, 0.2, 0.2, 1.0)
+matNear.roughness = 0.5
+matMid = StandardMaterial('Mid')
+matMid.baseColor = float4(0.2, 0.8, 0.2, 1.0)
+matMid.roughness = 0.5
+matFar = StandardMaterial('Far')
+matFar.baseColor = float4(0.2, 0.3, 0.9, 1.0)
+matFar.roughness = 0.5
+matFloor = StandardMaterial('Floor')
+matFloor.baseColor = float4(0.7, 0.7, 0.7, 1.0)
+matFloor.roughness = 0.8
+
+sphere = TriangleMesh.createSphere(0.3)
+sceneBuilder.addMeshInstance(
+    sceneBuilder.addNode('Near', Transform(translation=float3(-0.8, 0.3, 1.2))),
+    sceneBuilder.addTriangleMesh(sphere, matNear)
+)
+sceneBuilder.addMeshInstance(
+    sceneBuilder.addNode('Mid', Transform(translation=float3(0.0, 0.3, 0.0))),
+    sceneBuilder.addTriangleMesh(sphere, matMid)
+)
+sceneBuilder.addMeshInstance(
+    sceneBuilder.addNode('Far', Transform(translation=float3(0.9, 0.3, -1.5))),
+    sceneBuilder.addTriangleMesh(sphere, matFar)
+)
+floorQuad = TriangleMesh.createQuad(float2(8.0, 8.0))
+sceneBuilder.addMeshInstance(
+    sceneBuilder.addNode('Floor', Transform(translation=float3(0.0, 0.0, 0.0))),
+    sceneBuilder.addTriangleMesh(floorQuad, matFloor)
+)
+
+light = PointLight('L')
+light.position = float3(1.0, 2.5, 2.5)
+light.intensity = float3(12.0, 12.0, 12.0)
+sceneBuilder.addLight(light)
+
+camera = Camera()
+camera.position = float3(0.0, 0.8, 3.0)
+camera.target = float3(0.0, 0.3, 0.0)
+camera.up = float3(0.0, 1.0, 0.0)
+camera.focalLength = 35.0
+camera.focalDistance = 3.05
+camera.apertureRadius = 0.05
+sceneBuilder.addCamera(camera)

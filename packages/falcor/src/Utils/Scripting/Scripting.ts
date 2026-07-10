@@ -175,7 +175,7 @@ _matProps = {'baseColor', 'specularParams', 'transmissionColor', 'emissiveColor'
              'displacementScale', 'displacementOffset'}
 _lightProps = {'position', 'intensity', 'direction', 'angle',
                'openingAngle', 'penumbraAngle', 'scaling', 'rotation'}
-_camProps = {'position', 'target', 'up', 'focalLength'}
+_camProps = {'position', 'target', 'up', 'focalLength', 'focalDistance', 'apertureRadius'}
 StandardMaterial = _guarded(StandardMaterial, _matProps)
 Material = StandardMaterial  # PYTHONDEPRECATED alias (upstream SDF/legacy pyscenes)
 ClothMaterial = _guarded(ClothMaterial, _matProps)

@@ -14,6 +14,7 @@ import {
     FieldFlags,
     Properties,
     RenderData,
+    kRenderPassPRNGDimension,
     RenderPass,
     RenderPassReflection,
     ResourceBindFlags,
@@ -32,12 +33,15 @@ export class VBufferRT extends RenderPass {
     private pass: ComputePass | null = null;
     private frameCount = 0;
     private useAlphaTest = false;
+    private useDOF = true;
+    private computeDOF = false;
     private sampleGenerator: SampleGenerator;
     private cameraJitterGenerator: CPUSampleGenerator | null = null;
 
     constructor(device: Device, props: Properties) {
         super(device);
         this.useAlphaTest = props.get("useAlphaTest", false);
+        this.useDOF = props.get("useDOF", true);
         this.sampleGenerator = SampleGenerator.create(device, SAMPLE_GENERATOR_DEFAULT);
         // Mirrors GBufferBase::updateSamplePattern (Center -> no generator).
         const pattern = props.get<string>("samplePattern", "Center");
@@ -90,11 +94,18 @@ export class VBufferRT extends RenderPass {
             this.cameraJitterGenerator,
             new float2(Math.fround(1 / vbuffer.width), Math.fround(1 / vbuffer.height)),
         );
+        // Mirrors VBufferRT::execute DoF config (two PRNG dims consumed; told downstream).
+        const computeDOF = this.useDOF && this.scene.camera.getApertureRadius() > 0;
+        if (computeDOF !== this.computeDOF) {
+            this.computeDOF = computeDOF;
+            this.pass = null;
+        }
+        if (this.useDOF) renderData.dictionary.set(kRenderPassPRNGDimension, computeDOF ? 2 : 0);
         if (!this.pass) {
             const defines = this.scene.getSceneDefines().addAll({
                 USE_ALPHA_TEST: this.useAlphaTest ? 1 : 0,
                 RAY_FLAGS: 0,
-                COMPUTE_DEPTH_OF_FIELD: 0,
+                COMPUTE_DEPTH_OF_FIELD: this.computeDOF ? 1 : 0,
                 is_valid_gDepth: renderData.getTexture("depth") ? 1 : 0,
                 is_valid_gMotionVector: renderData.getTexture("mvec") ? 1 : 0,
                 is_valid_gViewW: 1,

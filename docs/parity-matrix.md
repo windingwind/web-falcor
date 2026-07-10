@@ -124,7 +124,7 @@ Tallies today: 20 pass classes fully implemented, 4 partial, 14 not implemented
 | EnvMap | ✅ core | rotation/intensity/tint; loads Radiance `.hdr` only — EXR env maps ⏳ |
 | LightProfile (IES) | ⏳ | dummy binding only; no IES loader/bake |
 | Camera (pinhole, jitter, motion vectors) | ✅ | verified (incl. prev-matrix roll) |
-| Camera DoF / physical camera | ⏳ | no `apertureRadius`/`focalDistance`/thin-lens sampling, no shutter/ISO — pinhole only |
+| Camera DoF / physical camera | ✅ core | `apertureRadius`/`focalDistance` + thin-lens sampling verified vs native (VBufferRT depth/viewW 0 bad px; PathTracer consumes `viewW`); shutter/ISO exposure params ⏳ |
 | Camera controllers | 🔶 partial | FirstPerson ✅ (app layer, mouse+WASD); Orbiter / SixDoF ⏳; gamepad ⏳ |
 | Node / skinned / morph animation | ✅ | CPU skinning + morph (upstream does GPU skinning 🟡); camera/light animation ✅; LINEAR/STEP/CUBICSPLINE |
 | Animated vertex caches (Alembic) | ⏳ | no `.abc`/AnimatedVertexCache support |

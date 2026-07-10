@@ -54,6 +54,8 @@ export class PathTracer extends RenderPass {
     private sampleOffset: Texture | null = null;
     private sampleCountInput: Texture | null = null;
     private statsEnabled = false;
+    private viewDirInput: Texture | null = null;
+    private useViewDir = false;
     private statsBuffer: Buffer | null = null;
     private statsResolvePass: ComputePass | null = null;
     private tracePass: ComputePass | null = null;
@@ -120,6 +122,9 @@ export class PathTracer extends RenderPass {
         const r = new RenderPassReflection();
         const [w, h] = compileData.defaultTexDims;
         r.addInput("vbuffer", "Fullscreen V-buffer for the primary hits").bindFlags(ResourceBindFlags.ShaderResource);
+        r.addInput("viewW", "World-space view direction (xyz float format)")
+            .bindFlags(ResourceBindFlags.ShaderResource)
+            .flags(FieldFlags.Optional);
         r.addInput("sampleCount", "Sample count buffer (integer format)")
             .format(ResourceFormat.R8Uint)
             .bindFlags(ResourceBindFlags.ShaderResource)
@@ -197,7 +202,7 @@ export class PathTracer extends RenderPass {
             USE_CURVES: 0,
             USE_SDF_GRIDS: 0,
             USE_HAIR_MATERIAL: 0,
-            USE_VIEW_DIR: 0,
+            USE_VIEW_DIR: this.useViewDir ? 1 : 0,
             OUTPUT_GUIDE_DATA: this.outputGuideData ? 1 : 0,
             OUTPUT_NRD_DATA: 0,
             OUTPUT_NRD_ADDITIONAL_DATA: 0,
@@ -232,7 +237,7 @@ export class PathTracer extends RenderPass {
             this.dummyBufferB = buf();
             this.dummySampler = new Sampler(this.device, {});
         }
-        var_["viewDir"] = this.dummyTexFloat;
+        var_["viewDir"] = this.viewDirInput ?? this.dummyTexFloat;
         var_["sampleCount"] = this.sampleCountInput ?? this.dummyTexUint;
         var_["sampleOffset"] = this.sampleOffset ?? this.dummyTexUint;
         var_["sampleColor"] = this.sampleColor ?? this.dummyBufferA;
@@ -276,10 +281,14 @@ export class PathTracer extends RenderPass {
         const fixedSampleCount = this.sampleCountInput === null;
         // Mirrors native: pixel stats collect when rayCount/pathLength connect.
         const statsEnabled = renderData.getTexture("rayCount") !== undefined || renderData.getTexture("pathLength") !== undefined;
-        if (outputGuideData !== this.outputGuideData || fixedSampleCount !== this.fixedSampleCount || statsEnabled !== this.statsEnabled) {
+        // Mirrors native USE_VIEW_DIR: DoF needs the per-pixel thin-lens dirs from the viewW input.
+        this.viewDirInput = renderData.getTexture("viewW") ?? null;
+        const useViewDir = this.scene.camera.getApertureRadius() > 0 && this.viewDirInput !== null;
+        if (outputGuideData !== this.outputGuideData || fixedSampleCount !== this.fixedSampleCount || statsEnabled !== this.statsEnabled || useViewDir !== this.useViewDir) {
             this.outputGuideData = outputGuideData;
             this.fixedSampleCount = fixedSampleCount;
             this.statsEnabled = statsEnabled;
+            this.useViewDir = useViewDir;
             this.generatePass = null;
         }
 
