@@ -1,0 +1,24 @@
+# Native oracle: upstream PathTracer.py graph with fixed samplesPerPixel=4
+# over cornell_box.pyscene, single frame.
+from falcor import *
+import os
+
+base = os.path.dirname(os.path.abspath(__file__))
+root = os.path.abspath(os.path.join(base, "../../Falcor"))
+
+exec(open(os.path.join(root, "tests/image_tests/renderpasses/graphs/PathTracer.py")).read())
+
+PathTracer.updatePass('PathTracer', {'samplesPerPixel': 4})
+
+m.loadScene(os.path.join(root, "media/test_scenes/cornell_box.pyscene"))
+m.resizeFrameBuffer(256, 256)
+m.ui = False
+m.clock.time = 0
+m.clock.pause()
+
+m.frameCapture.outputDir = os.path.join(base, "out-native")
+m.frameCapture.baseFilename = "oracle-imgtest-ptspp4"
+
+m.renderFrame()
+m.frameCapture.capture()
+exit()

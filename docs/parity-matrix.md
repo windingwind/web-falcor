@@ -72,7 +72,7 @@ Tallies today: 20 pass classes fully implemented, 4 partial, 14 not implemented
 | NRDPass | 🟠 SDK absent | NRD SDK not bundled in this Falcor drop (no `external/packman/nrd/`) → denoiser shaders uncompilable here. Host portable; NRD's HLSL source is public, genuine port stays the plan (§11.4). SVGF ✅ meanwhile |
 | OptixDenoiser | ❌ | requires CUDA+OptiX. Same substitutes as NRD |
 | OverlaySamplePass | ⏳ | demo/example pass; portable, not built |
-| PathTracer | ✅ verified | full upstream loop: NEE+MIS, Uniform/Power/LightBVH emissive samplers, EnvMapSampler, dielectrics/nested priority, guide outputs, adaptive spp (`sampleCount` input), rayCount/pathLength stats. Remaining ⏳: fixed spp>1 (throws), `USE_RTXDI` in-tracer integration, NRD guide outputs; SER ❌ |
+| PathTracer | ✅ verified | full upstream loop: NEE+MIS, Uniform/Power/LightBVH emissive samplers, EnvMapSampler, dielectrics/nested priority, guide outputs, adaptive spp (`sampleCount` input), rayCount/pathLength stats. Fixed spp 1–16 + variable spp verified (spp=4 vs native: 10/65536 bad px). Remaining ⏳: `USE_RTXDI` in-tracer integration, NRD guide outputs; SER ❌ |
 | PixelInspectorPass | ⏳ | cursor pixel/material inspector; portable, not built |
 | RenderPassTemplate | ⏳ | boilerplate template, not a feature |
 | RTXDIPass | ✅ verified vs native | Full port (PrepareSurfaceData + ReSTIR spatiotemporal resampling + FinalShading). Upstream RTXDI.py replica over Arcade at frames 1/16/64: bias <6e-4, ≤5/3600 bad 8x8 blocks. Overrides: texel buffers → structured, boiling filter compiled out (WaveActiveCountBits; native default off), bool cbuffer members → uint, outputs moved into the FinalShading block (4-bind-group cap), lightInfo+compactLightInfo merged (16-storage-buffer cap) |

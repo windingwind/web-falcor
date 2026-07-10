@@ -115,7 +115,8 @@ export class PathTracer extends RenderPass {
         }
         // PathTracer defaults to TinyUniform (unlike MinimalPathTracer).
         this.sampleGenerator = SampleGenerator.create(device, SAMPLE_GENERATOR_TINY_UNIFORM);
-        if (this.samplesPerPixel !== 1) throw new Error("PathTracer supports fixed spp == 1 (or the variable sampleCount input)");
+        // Native asserts spp fits the 16-bit tile sample offsets (tile 16x16 x 16 spp).
+        if (this.samplesPerPixel < 1 || this.samplesPerPixel > 16) throw new Error("PathTracer: samplesPerPixel must be in [1,16]");
     }
 
     override reflect(compileData: CompileData): RenderPassReflection {
@@ -300,7 +301,9 @@ export class PathTracer extends RenderPass {
             this.generatePass = ComputePass.create(this.device, { path: kGeneratePathsFile, defines });
             this.tracePass = ComputePass.create(this.device, { path: kTracePassFile, defines });
             this.resolvePass =
-                this.outputGuideData || !this.fixedSampleCount ? ComputePass.create(this.device, { path: kResolvePassFile, defines }) : null;
+                this.outputGuideData || !this.fixedSampleCount || this.samplesPerPixel > 1
+                    ? ComputePass.create(this.device, { path: kResolvePassFile, defines })
+                    : null;
         }
 
         // Per-sample buffers, padded to whole screen tiles; variable mode
@@ -336,7 +339,7 @@ export class PathTracer extends RenderPass {
             ctx.clearBuffer(this.statsBuffer);
         }
 
-        if (!this.fixedSampleCount) {
+        if (!this.fixedSampleCount || this.samplesPerPixel > 1) {
             // ColorType at COLOR_FORMAT LogLuvHDR = one packed uint per sample.
             if (!this.sampleColor || this.sampleColor.size < sampleCount * 4) {
                 this.sampleColor = new Buffer(this.device, {
@@ -348,7 +351,8 @@ export class PathTracer extends RenderPass {
                 });
             }
             // Native uses R16Uint; WGSL storage requires r32uint (values < 2^16).
-            if (!this.sampleOffset || this.sampleOffset.width !== frameDim[0] || this.sampleOffset.height !== frameDim[1]) {
+            // Offsets are implicit at fixed spp; the lookup table is variable-only.
+            if (!this.fixedSampleCount && (!this.sampleOffset || this.sampleOffset.width !== frameDim[0] || this.sampleOffset.height !== frameDim[1])) {
                 this.sampleOffset = new Texture(this.device, {
                     type: ResourceType.Texture2D,
                     width: frameDim[0],
@@ -394,9 +398,9 @@ export class PathTracer extends RenderPass {
             this.tracePass!.execute(ctx, frameDim[0], frameDim[1]);
         }
 
-        // Resolve guide data into the connected outputs (mirrors resolvePass;
-        // with fixed spp == 1 the color loop is compiled out).
-        if ((this.outputGuideData || !this.fixedSampleCount) && this.resolvePass) {
+        // Resolve guide data / multi-sample color into the connected outputs
+        // (mirrors resolvePass; with fixed spp == 1 the color loop is compiled out).
+        if (this.resolvePass) {
             const root = this.resolvePass.getRootVar();
             const cb = root["CB"]!["gResolvePass"] as ShaderVar;
             const p = cb["params"] as ShaderVar;
@@ -452,7 +456,9 @@ export class PathTracer extends RenderPass {
                 const key = `output${name[0]!.toUpperCase()}${name.slice(1)}`;
                 this.trySet(cb, key, renderData.getTexture(name) ?? outputDummy(name));
             }
-            this.trySet(cb, "outputColor", this.fixedSampleCount ? outputDummy("color") : color);
+            // The tracer writes color directly only at fixed spp == 1; otherwise
+            // the resolve averages the per-sample colors.
+            this.trySet(cb, "outputColor", this.fixedSampleCount && this.samplesPerPixel === 1 ? outputDummy("color") : color);
             this.resolvePass.execute(ctx, frameDim[0], frameDim[1]);
         }
 
