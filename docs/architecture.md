@@ -23,6 +23,8 @@ stay valid.
      (e.g. software ray tracing in compute).
    - 🔶 **Replaced** — same purpose, different technology (e.g. Python → TypeScript
      scripting), API kept shape-compatible.
+   - ⏳ **Not yet implemented** — possible on the web platform, no blocker; simply
+     not built yet (parity debt, not a divergence).
    - ❌ **Impossible** — cannot be provided on the web platform at all; API exists but
      throws `UnsupportedFeatureError` with a pointer to this document.
    - 🟠 **Blocked** — a tooling or asset gap (*not* a web-platform limitation) that

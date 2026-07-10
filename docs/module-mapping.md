@@ -45,6 +45,11 @@ targets, vertex caches), `CurveTessellation`, `SDFGrid` ×4 back-ends (NDSDF, SV
 SVO — all pure compute), `GridVolume`/`Grid` (NanoVDB parsing in TS; BC4-in-shader
 decode as native), `TriangleMesh`, `HitInfo`, `Transform`.
 
+This paragraph is the port *strategy*; see §8.4 for per-feature implementation
+status. As of the 2026-07-09 audit, still unimplemented ⏳: `SceneCache`,
+`LightProfile` (IES), MERL/MERLMix/RGL materials, `CurveTessellation` (curves/hair),
+vertex caches (Alembic), camera DoF/physical params, runtime material/light edits.
+
 Scene GPU access (`Scene.slang`, `SceneBlock`, geometry/material/light buffers) is the
 same reflection-bound parameter block. The **bindless problem**: Falcor binds all
 material textures as an unbounded descriptor array (`Texture2D gTextures[]`).
@@ -57,22 +62,25 @@ not the browser). Mitigation, in order:
 3. marked 🟡 with limits documented (`maxSampledTexturesPerShaderStage` typically 16;
    arrays count as one binding each).
 
-Importers (plugin package, like upstream):
-- **glTF/OBJ/PLY**: native TS loaders (glTF is the primary web format) — replaces the
-  Assimp path for these formats.
-- **Assimp (FBX, DAE, …)**: `assimpjs` (official Emscripten build) 🔶.
-- **PBRT / Mitsuba**: TS ports of Falcor's parsers ✅ (pure text parsing).
-- **USD**: 🔶 via Autodesk/Pixar `usd-wasm`; heavy (tens of MB WASM) and lags native
-  OpenUSD → optional plugin, off by default. Marked partial: usdz + core schemas work;
-  full nv-usd parity not promised.
-- **PythonImporter**: 🔶 via Pyodide (see §6.7).
+Importers (plugin package, like upstream; status per §8.4):
+- **glTF**: native TS loader ✅ (meshes, skinning, morph targets, animations,
+  cameras, lights; KTX2/Draco ⏳).
+- **Assimp (FBX, DAE, OBJ, PLY, …)**: `assimpjs` (official Emscripten build) 🔶 —
+  full-scene import is `.fbx`-only today; other formats load mesh-only via
+  `TriangleMesh.createFromFile` ⏳.
+- **PBRT**: TS port of Falcor's parser ✅ subset (materials map to Standard;
+  textures/spectra/media/curves ⏳). **Mitsuba**: ⏳ not started.
+- **USD**: ⏳ not started; planned via `usd-wasm` (heavy, tens of MB WASM, lags
+  native OpenUSD — full nv-usd parity not promised). Declared a real 1:1
+  deliverable (§11.2).
+- **PythonImporter**: 🔶 via Pyodide (see §6.7) — runs unmodified `.pyscene`.
 
 ### 6.3 `Rendering/`
 
 | Subsystem | Status | Notes |
 |---|---|---|
-| `Lights/` Emissive samplers (Uniform/Power/LightBVH), `LightBVH(+Builder/Refit)`, `EnvMapSampler` | ✅ | pure Slang + compute; LightBVH build is compute shaders already |
-| `Materials/` all BSDF modules (Lambert, OrenNayar, Disney/Frostbite diffuse, GGX iso/aniso, StandardBSDF, Sheen, Hair Chiang16, Cloth, MERL/RGL, PBRT set, LayeredBSDF, Fresnel/Microfacet/NDF, TexLOD) | ✅ | compile as-is to WGSL; TexLOD ray-cone variants fine, ray-diff variants fine |
+| `Lights/` Emissive samplers (Uniform/Power/LightBVH), `LightBVH(+Builder)`, `EnvMapSampler` | ✅ | Uniform/Power/LightBVH + EnvMapSampler ported and exercised by PathTracer; LightBVH GPU refit ⏳ (rebuild-only) and builder options not plumbed ⏳ |
+| `Materials/` BSDF modules (Lambert, OrenNayar, Disney/Frostbite diffuse, GGX iso/aniso, StandardBSDF, Sheen, Hair Chiang16, Cloth, MERL/RGL, PBRT set, LayeredBSDF, Fresnel/Microfacet/NDF, TexLOD) | ✅ exercised subset | Standard + PBRTConductor verified end-to-end; Cloth/Hair/PBRTDiffuse plumbed but WGSL-unvetted 🟡; MERL/RGL and the other PBRT types have no host instantiation path ⏳ (§8.4) |
 | `Volumes/` grid volumes (NanoVDB), GridVolumeSampler, phase functions | ✅ GPU-verified | Full chain verified vs native: browser parses the UNMODIFIED smoke.pyscene/.vdb -> byte-identical NanoVDB buffer -> gScene.grid0 + gridVolumes GPU plumbing -> SceneDebugger's 500-step ray-marched transmittance matches native at mean 3.7e-5 / 0 bad px (feature-smoke-debugger). PNanoVDB point lookups GPU-exact (0/500). NOTE: no upstream render pass consumes GridVolumeSampler in light transport in this drop (PathTracer handles homogeneous media only) — SceneDebugger is the upstream GPU consumer. ⚠ native openvdb broken on this machine -> native oracles use .nvdb (byte-identical, tools/vdb/) |
 | `RTXDI/` | ✅ GPU-verified | Full ReSTIR DI port: RTXDI SDK 1.3.0 resampling shaders (WGSL via 6 overrides), host orchestration (rtxdi::Context math, LightUpdater/EnvLightUpdater, presampling, spatiotemporal resampling), visibility rays through SoftwareRT. Upstream RTXDI.py over Arcade matches native at bias <6e-4, ≤5/3600 bad 8x8 blocks (frames 1/16/64). Web divergences: localLightPdf R32Float (no r16float storage), boiling filter compiled out (WaveActiveCountBits unmapped; native default off), lightInfo+compactLightInfo share one buffer (16-storage-buffer budget) |
 | `SDFs/` NDSDFGrid (+ base/voxel utils) | ✅ GPU-verified | Full ND chain: pyscene bridge (createNDGrid/generateCheeseValues, bit-exact host build incl. gcc mt19937 + RIGHT-TO-LEFT float3 ctor draws), R8Snorm Z-stacked LOD atlas (WGSL has no binding arrays; LOD widths 1+(c<<lod) are no mip chain), sphere tracing through SoftwareRT (upstream SDFGridIntersector). Web render matches a faithful CPU port of intersectSDF PIXEL-EXACTLY (0/230400; oracle mask committed). ⚠ native NDSDF is broken on this machine (SPIR-V offset texel fetches): gradients NaN, footprint dilated +24568 px, mesh-less TLAS instance IDs off by one — background still verified vs native. SparseBrickSet (createSBS): CPU brick build (validity→prefix-sum→bricks+AABBs) + brick-AABB-loop tracing; SDFSBS.pyscene body matches the shared surface footprint at 3/230400 px (native can't oracle SBS — Mogwai core-dumps the brick BLAS build). SVS/SVO compile to WGSL and the hosts are portable, but their runtime puts one AABB per SURFACE VOXEL (tens of thousands for the cheese) — impractical on the linear brick-loop; a procedural-AABB BVH over the SDF primitives would be needed (the triangle BVH is a natural base). NDSDF (dense) + SBS (sparse-brick) already cover both SDF representation classes |

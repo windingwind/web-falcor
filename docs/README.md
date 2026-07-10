@@ -21,10 +21,10 @@ the files**, so every `§N` cross-reference in the text resolves via the map bel
 | §4–§5 | [shader-system.md](shader-system.md) | Slang→WGSL compilation pipeline · reflection-driven binding · WebFalcor platform shims · software ray tracing (no RT hardware) |
 | §6 | [module-mapping.md](module-mapping.md) | Module-by-module Falcor→web mapping (`Core`, `Scene`, `Rendering`, `RenderGraph`, UI, scripting, `Utils`, `DiffRendering`) |
 | §7 | [testing.md](testing.md) | Testing strategy · verified oracle results (web vs native DXR) · upstream image-test graph pass-rate |
-| §8–§9 | [parity-matrix.md](parity-matrix.md) | Feature parity matrix (platform/core, all 31 render passes, ecosystem) · known behavioral divergences |
+| §8–§9 | [parity-matrix.md](parity-matrix.md) | Feature parity matrix (platform/core, all 29 render-pass directories / 38 pass classes, scene & materials, ecosystem) · known behavioral divergences |
 | §10–§11 | [roadmap.md](roadmap.md) | Roadmap (M0–M8) · resolved design questions |
 
 ## Status markers
 
-The ✅ / 🟡 / 🔶 / ❌ / 🟠 markers used throughout the parity matrix and mapping
+The ✅ / 🟡 / 🔶 / ⏳ / ❌ / 🟠 markers used throughout the parity matrix and mapping
 tables are defined in [architecture.md §1](architecture.md#1-goals-and-ground-rules).
