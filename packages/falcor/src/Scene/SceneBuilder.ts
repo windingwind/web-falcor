@@ -299,6 +299,7 @@ export class MaterialBridge {
     toDesc(): SceneMaterialDesc {
         const emissive = this._emissiveColor.x !== 0 || this._emissiveColor.y !== 0 || this._emissiveColor.z !== 0;
         return {
+            name: this.name,
             header: {
                 materialType: this.materialType,
                 doubleSided: this.doubleSided,
@@ -675,6 +676,7 @@ export class SceneBuilderBridge {
                 if (cmd.path.toLowerCase().endsWith(".fbx")) {
                     const dir = url.slice(0, url.lastIndexOf("/"));
                     const parsed = await FbxImporter.parseToDescs(bytes, dir, textureManager);
+                    parsed.materials.forEach((m, i) => (m.name ??= parsed.materialNames[i]));
                     materials.push(...parsed.materials);
                     importedMaterialNames.push(...parsed.materialNames);
                     const nodeOffset = nodes.length;
@@ -769,6 +771,7 @@ export class SceneBuilderBridge {
             const isArea = l.lightType === LightType.Rect || l.lightType === LightType.Disc || l.lightType === LightType.Sphere;
             return {
                 type: l.lightType,
+                name: l.name,
                 posW: l.getPosition(),
                 dirW: l.getDirection(),
                 intensity: l.getIntensity(),

@@ -157,6 +157,8 @@ export enum LightType {
 
 export interface AnalyticLight {
     type: LightType;
+    /** Light name (pyscene ctor arg); used by Scene.getLight(name). */
+    name?: string;
     /** Position (point lights) in world space. */
     posW?: float3;
     /** Direction (directional/spot), normalized. */

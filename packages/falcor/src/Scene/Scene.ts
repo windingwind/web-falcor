@@ -66,6 +66,8 @@ export interface SceneMeshDesc {
 }
 
 export interface SceneMaterialDesc {
+    /** Material name; used by Scene.getMaterial(name). */
+    name?: string;
     header?: Partial<MaterialHeaderDesc>;
     basic: BasicMaterialDesc;
 }
@@ -124,6 +126,7 @@ export class Scene {
     private envMap: EnvMap | null = null;
     private hasEmissiveMaterials = false;
     private materialTypes = new Set<MaterialType>();
+    private materialDescs: SceneMaterialDesc[] = [];
     private emissiveTriangleCount = 0;
     private emissiveMeshCount = 0;
     private emissiveFluxes = new Float32Array(0);
@@ -354,6 +357,7 @@ export class Scene {
 
         // Materials.
         this.materialCount = materials.length;
+        this.materialDescs = materials;
         const blobBytes = new Uint8Array(materials.length * 128);
         materials.forEach((m, i) => {
             this.materialTypes.add(m.header?.materialType ?? MaterialType.Standard);
@@ -384,6 +388,36 @@ export class Scene {
 
     setEnvMap(envMap: EnvMap | null): void {
         this.envMap = envMap;
+    }
+
+    /** Mirrors Scene::getLight / getLightByName (live object; call updateLights() after edits). */
+    getLight(ref: number | string): AnalyticLight {
+        const light = typeof ref === "number" ? this.analyticLights[ref] : this.analyticLights.find((l) => l.name === ref);
+        if (!light) throw new RuntimeError(`Scene.getLight: no light '${ref}'`);
+        return light;
+    }
+
+    /** Re-packs analytic lights after runtime property edits (mirrors Light change tracking in Scene::update). */
+    updateLights(): void {
+        this.buffers["lights"]!.setBlob(packLights(this.analyticLights));
+    }
+
+    /** Mirrors Scene::getMaterial / getMaterialByName (live descriptor; call updateMaterial() after edits). */
+    getMaterial(ref: number | string): SceneMaterialDesc {
+        const mat = typeof ref === "number" ? this.materialDescs[ref] : this.materialDescs.find((m) => m.name === ref);
+        if (!mat) throw new RuntimeError(`Scene.getMaterial: no material '${ref}'`);
+        return mat;
+    }
+
+    /** Re-packs one material blob after runtime property edits (mirrors
+     *  MaterialSystem::update). Emissive-affecting edits do NOT rebuild the
+     *  LightCollection (NEE flux tables) — hit shading picks them up, light
+     *  sampling keeps the load-time distribution. */
+    updateMaterial(ref: number | string | SceneMaterialDesc): void {
+        const index = typeof ref === "object" ? this.materialDescs.indexOf(ref) : typeof ref === "number" ? ref : this.materialDescs.findIndex((m) => m.name === ref);
+        const m = this.materialDescs[index];
+        if (!m) throw new RuntimeError(`Scene.updateMaterial: no material '${String(ref)}'`);
+        this.buffers["materialData"]!.setBlob(packBasicMaterialBlob({ materialType: MaterialType.Standard, ...m.header }, m.basic), index * 128);
     }
 
     /** True if the scene has keyframe animations (and thus responds to animate()). */
