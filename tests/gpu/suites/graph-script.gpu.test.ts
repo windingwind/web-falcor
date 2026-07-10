@@ -4,7 +4,7 @@
  * via Pyodide (falcor bridge), loads its .hdr asset, and renders.
  */
 
-import { initScripting, runGraphScript } from "@web-falcor/falcor";
+import { initScripting, runGraphScript, Properties } from "@web-falcor/falcor";
 import "@web-falcor/render-passes";
 import { gpuTest, expectEq } from "../harness/registry.js";
 
@@ -93,4 +93,52 @@ gpuTest("GraphScript.toneMappingMatchesNativePng", async ({ device }) => {
     mse /= size * size * 3;
     console.error(`# imgtestTonemap: mse=${mse.toExponential(2)} maxByteDiff=${maxDiff}`);
     expectEq(mse < 2e-4, true, `sRGB MSE ${mse}`); // upstream image tests use 1e-4..1e-3 per-test
+});
+
+gpuTest("GraphScript.toneMappingAutoExposureMatchesNativePng", async ({ device }) => {
+    // The test_ToneMapping.py 'autoExposure.True' variant: same graph with the
+    // log-luminance mip-chain exposure enabled.
+    // Regenerate: Mogwai --script tests/oracle/render-native-imgtest-tonemap-autoexp.py --headless
+    const size = 256;
+    const source = await (await fetch("/Falcor/tests/image_tests/renderpasses/graphs/ToneMapping.py")).text();
+    await initScripting("/node_modules/pyodide");
+    const [graph] = await runGraphScript(device, source);
+    graph!.getPass("ToneMapping")!.setProperties(new Properties({ autoExposure: true }));
+    await graph!.init();
+    graph!.onResize(size, size);
+    const ctx = device.renderContext;
+    graph!.execute(ctx);
+    const web = new Float32Array((await ctx.readTextureSubresource(graph!.getOutput("BlitPass.dst")!)).buffer);
+
+    const blob = await (await fetch("/tests/oracle/out-native/oracle-imgtest-tonemap-autoexp.BlitPass.dst.0.png")).blob();
+    const bitmap = await createImageBitmap(blob, { colorSpaceConversion: "none" });
+    expectEq(bitmap.width, size, "oracle resolution");
+    const canvas = new OffscreenCanvas(size, size);
+    const c2d = canvas.getContext("2d", { willReadFrequently: true })!;
+    c2d.drawImage(bitmap, 0, 0);
+    const nat = c2d.getImageData(0, 0, size, size).data;
+
+    const toSrgbByte = (v: number) => {
+        const c = Math.min(Math.max(v, 0), 1);
+        const s = c <= 0.0031308 ? c * 12.92 : 1.055 * Math.pow(c, 1 / 2.4) - 0.055;
+        return Math.round(s * 255);
+    };
+    let mse = 0;
+    let maxDiff = 0;
+    let signedSum = 0;
+    for (let i = 0; i < size * size; i++) {
+        for (let ch = 0; ch < 3; ch++) {
+            const d = (toSrgbByte(web[i * 4 + ch]!) - nat[i * 4 + ch]!) / 255;
+            mse += d * d;
+            signedSum += d;
+            maxDiff = Math.max(maxDiff, Math.abs(d) * 255);
+        }
+    }
+    mse /= size * size * 3;
+    const meanSigned = (signedSum / (size * size * 3)) * 255;
+    console.error(`# imgtestTonemapAutoExp: mse=${mse.toExponential(2)} maxByteDiff=${maxDiff} meanSignedByte=${meanSigned.toFixed(3)}`);
+    // The avg-luminance divisor couples the base test's minification residual
+    // into a global exposure scale, so the gate is looser than the manual test.
+    expectEq(mse < 4e-4, true, `sRGB MSE ${mse}`);
+    expectEq(Math.abs(meanSigned) < 1.0, true, `no global exposure bias (meanSignedByte=${meanSigned.toFixed(3)})`);
 });

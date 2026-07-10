@@ -83,7 +83,7 @@ Tallies today: 20 pass classes fully implemented, 4 partial, 14 not implemented
 | TAA | ✅ ported | feature-verified vs native (jittered GBufferRT graph, mse 8.4e-7) |
 | TestPasses: TestRtProgram | ⏳ | exercises RT shader-table/hit-group plumbing; mostly moot on software RT but portable as a megakernel |
 | TestPasses: TestPyTorchPass | ❌ | CUDA + PyTorch tensor interop |
-| ToneMapper | ✅ core | all 6 operators + manual exposure verified; **auto-exposure (luminance reduction) ⏳** — renders need manual `exposureCompensation` today |
+| ToneMapper | ✅ | all 6 operators + manual exposure verified; auto-exposure (log-luminance mip chain) verified vs native (sRGB MSE 2.1e-4, zero mean bias). fNumber/shutter/filmSpeed physical-exposure props ⏳ |
 | Utils (Composite/CrossFade/GaussianBlur) | ✅ | verified |
 | WARDiffPathTracer | 🟠 compiler-blocked | §6.9: autodiff primitive device-verified on WebGPU; slangc v2026.12.2 segfaults differentiating the full tracePaths (both wgsl and hlsl targets) → needs a Slang release with the large-function autodiff fix |
 | WhittedRayTracer | 🟡 | SoftwareRT, recursion → loop; verified byte-exact |
