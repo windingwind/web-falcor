@@ -83,6 +83,11 @@ struct Scene
     // geometryInstances (after SDF instances; not in the triangle BVH).
     uint webfalcorCurveInstanceFirst;
     uint webfalcorCurveInstanceCount;
+    // Curve segment-AABB BVH rides in webfalcorBvhNodes: nodes at
+    // [webfalcorCurveBvhOffset, webfalcorCurvePrimOffset), prim entries
+    // ((instance << 24) | segment) packed 4-per-float4 after.
+    uint webfalcorCurveBvhOffset;
+    uint webfalcorCurvePrimOffset;
     // SparseBrickSet/SparseVoxelSet: procedural-primitive count + a BVH over
     // the primitive AABBs (no procedural BLAS on the software RT path). The
     // RaytracingInline override traverses this to prune tens of thousands of

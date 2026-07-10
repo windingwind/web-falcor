@@ -297,6 +297,13 @@ bool intersectSdfGridsAny(const Ray ray)
 // native BLAS; the software path loops the segments of each curve instance
 // (flat loop — fine for test scenes; a segment-AABB BVH is the perf
 // follow-up, as done for SDF bricks).
+/** Curve prim entry i from the merged BVH buffer ((instance << 24) | segment). */
+uint webfalcorCurvePrimEntry(uint i)
+{
+    const float4 packed = gScene.webfalcorBvhNodes[gScene.webfalcorCurvePrimOffset + (i >> 2)];
+    return asuint(packed[i & 3]);
+}
+
 bool intersectCurves(const Ray ray, const float tMaxIn, out uint outInstance, out uint outSegment, out float2 outUV, out float outT)
 {
     outInstance = 0;
@@ -304,45 +311,63 @@ bool intersectCurves(const Ray ray, const float tMaxIn, out uint outInstance, ou
     outUV = float2(0.f);
     outT = tMaxIn;
     bool found = false;
-    for (uint i = 0; i < gScene.webfalcorCurveInstanceCount; i++)
+
+    const float3 invDir = float3(1.f) / ray.dir;
+    const uint base = gScene.webfalcorCurveBvhOffset;
+    uint stack[32];
+    uint stackSize = 0;
+    uint node = 0;
+    for (;;)
     {
-        GeometryInstanceID instanceID;
-        instanceID.index = gScene.webfalcorCurveInstanceFirst + i;
-        const uint segmentCount = gScene.getCurveDesc(instanceID).indexCount;
-        for (uint s = 0; s < segmentCount; s++)
+        const float4 n0 = gScene.webfalcorBvhNodes[base + node * 2];
+        const float4 n1 = gScene.webfalcorBvhNodes[base + node * 2 + 1];
+        if (intersectAabb(ray.origin, invDir, ray.tMin, outT, n0.xyz, n1.xyz))
         {
-            Ray clipped = ray;
-            clipped.tMax = outT;
-            CurveIntersector::Attribs attribs;
-            float t;
-            if (CurveIntersector::intersect(clipped, instanceID, s, attribs, t))
+            const uint leftFirst = asuint(n0.w);
+            const uint count = asuint(n1.w);
+            if (count > 0)
             {
-                outT = t;
-                outInstance = instanceID.index;
-                outSegment = s;
-                outUV = attribs.barycentrics;
-                found = true;
+                for (uint i = 0; i < count; i++)
+                {
+                    const uint entry = webfalcorCurvePrimEntry(leftFirst + i);
+                    GeometryInstanceID instanceID;
+                    instanceID.index = gScene.webfalcorCurveInstanceFirst + (entry >> 24);
+                    const uint segment = entry & 0xffffff;
+                    Ray clipped = ray;
+                    clipped.tMax = outT;
+                    CurveIntersector::Attribs attribs;
+                    float t;
+                    if (CurveIntersector::intersect(clipped, instanceID, segment, attribs, t))
+                    {
+                        outT = t;
+                        outInstance = instanceID.index;
+                        outSegment = segment;
+                        outUV = attribs.barycentrics;
+                        found = true;
+                    }
+                }
+            }
+            else
+            {
+                if (stackSize < 32) { stack[stackSize] = leftFirst; stackSize++; }
+                node = node + 1;
+                continue;
             }
         }
+        if (stackSize == 0) break;
+        stackSize--;
+        node = stack[stackSize];
     }
     return found;
 }
 
 bool intersectCurvesAny(const Ray ray)
 {
-    for (uint i = 0; i < gScene.webfalcorCurveInstanceCount; i++)
-    {
-        GeometryInstanceID instanceID;
-        instanceID.index = gScene.webfalcorCurveInstanceFirst + i;
-        const uint segmentCount = gScene.getCurveDesc(instanceID).indexCount;
-        for (uint s = 0; s < segmentCount; s++)
-        {
-            CurveIntersector::Attribs attribs;
-            float t;
-            if (CurveIntersector::intersect(ray, instanceID, s, attribs, t)) return true;
-        }
-    }
-    return false;
+    uint instance;
+    uint segment;
+    float2 uv;
+    float t;
+    return intersectCurves(ray, ray.tMax, instance, segment, uv, t);
 }
 #endif
 

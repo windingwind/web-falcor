@@ -138,6 +138,9 @@ export class Scene {
     private sdfBvhBuffers: { buf: Buffer; primOffset: number } | null = null;
     private curveInstanceFirst = 0;
     private curveDescs: SceneCurveDesc[] = [];
+    private curveBvhOffset = 0;
+    private curvePrimOffset = 0;
+    private curveBvhBytes: Float32Array | null = null;
     private envMap: EnvMap | null = null;
     private hasEmissiveMaterials = false;
     private materialTypes = new Set<MaterialType>();
@@ -297,11 +300,56 @@ export class Scene {
                 max: [bvh.nodes[4]!, bvh.nodes[5]!, bvh.nodes[6]!],
             };
         }
+        // Curve segment-AABB BVH appended into the same merged buffer (16-
+        // storage-buffer budget): prim entries encode (instance << 24 | segment).
+        let curveBvhData = new Float32Array(0);
+        if (curves.length > 0) {
+            const segAabbs: { min: [number, number, number]; max: [number, number, number] }[] = [];
+            curves.forEach((curve, ci) => {
+                const m = curve.transform ?? float4x4.identity();
+                const scale = Math.hypot(m.get(0, 0), m.get(0, 1), m.get(0, 2));
+                for (const seg of curve.indices) {
+                    const lo: [number, number, number] = [Infinity, Infinity, Infinity];
+                    const hi: [number, number, number] = [-Infinity, -Infinity, -Infinity];
+                    for (const v of [seg, seg + 1]) {
+                        const p = transformPoint(m, new float3(curve.positionsRadii[v * 4]!, curve.positionsRadii[v * 4 + 1]!, curve.positionsRadii[v * 4 + 2]!));
+                        const r = curve.positionsRadii[v * 4 + 3]! * scale;
+                        for (const [a, c] of [[0, p.x], [1, p.y], [2, p.z]] as const) {
+                            lo[a] = Math.min(lo[a], c - r);
+                            hi[a] = Math.max(hi[a], c + r);
+                        }
+                    }
+                    segAabbs.push({ min: lo, max: hi });
+                }
+                void ci;
+            });
+            const curveBvh = buildAabbBvh(segAabbs);
+            // Remap prim indices to (instance << 24 | local segment).
+            const encoded = new Uint32Array(curveBvh.primIndices.length);
+            const segToEnc: number[] = [];
+            curves.forEach((curve, ci) => {
+                for (let sIdx = 0; sIdx < curve.indices.length; sIdx++) segToEnc.push(((ci & 0xff) << 24) | sIdx);
+            });
+            for (let i = 0; i < curveBvh.primIndices.length; i++) encoded[i] = segToEnc[curveBvh.primIndices[i]!] ?? 0;
+            const primWords = Math.ceil(encoded.length / 4) * 4;
+            curveBvhData = new Float32Array(curveBvh.nodes.length + primWords);
+            curveBvhData.set(curveBvh.nodes, 0);
+            new Uint32Array(curveBvhData.buffer, curveBvh.nodes.length * 4).set(encoded);
+            this.curveBvhOffset = 0; // patched after the triangle merge below
+            this.curvePrimOffset = curveBvh.nodes.length / 4;
+        }
+
         // One merged buffer (16-storage-buffer budget): nodes then triangles.
-        const bvhMerged = new Float32Array(bvh.nodes.length + bvh.tris.length);
+        const bvhMerged = new Float32Array(bvh.nodes.length + bvh.tris.length + curveBvhData.length);
         bvhMerged.set(bvh.nodes, 0);
         bvhMerged.set(bvh.tris, bvh.nodes.length);
         this.bvhTrisOffset = bvh.nodes.length / 4;
+        if (curveBvhData.length > 0) {
+            bvhMerged.set(curveBvhData, bvh.nodes.length + bvh.tris.length);
+            this.curveBvhOffset = (bvh.nodes.length + bvh.tris.length) / 4;
+            this.curvePrimOffset += this.curveBvhOffset;
+            this.curveBvhBytes = curveBvhData;
+        }
         // A scene animates if it has keyframe channels, morph-weight tracks, or
         // morph meshes (weights may be static-but-nonzero) — all rebuild per frame.
         const hasAnimation = (animations.length > 0 || weightTracks.length > 0 || meshes.some((m) => m.morph)) && nodes.length > 0;
@@ -311,7 +359,7 @@ export class Scene {
             // destroying/recreating a buffer still referenced by an in-flight submit
             // is illegal.
             const numTris = allIndices.length / 3;
-            this.bvhCapacityBytes = ((2 * numTris + 2) * 8 + numTris * 12) * 4;
+            this.bvhCapacityBytes = ((2 * numTris + 2) * 8 + numTris * 12) * 4 + curveBvhData.byteLength;
             const buf = new Buffer(this.device, { size: Math.max(this.bvhCapacityBytes, 16), structSize: 16, bindFlags: storage, memoryType: MemoryType.DeviceLocal, name: "Scene::bvhNodes" });
             buf.setBlob(bvhMerged);
             this.buffers["bvhNodes"] = buf;
@@ -572,10 +620,18 @@ export class Scene {
         if (bvhTris.length > 0) {
             this.worldBounds = { min: [bvh.nodes[0]!, bvh.nodes[1]!, bvh.nodes[2]!], max: [bvh.nodes[4]!, bvh.nodes[5]!, bvh.nodes[6]!] };
         }
-        const bvhMerged = new Float32Array(bvh.nodes.length + bvh.tris.length);
+        const curveExtra = this.curveBvhBytes ?? new Float32Array(0);
+        const bvhMerged = new Float32Array(bvh.nodes.length + bvh.tris.length + curveExtra.length);
         bvhMerged.set(bvh.nodes, 0);
         bvhMerged.set(bvh.tris, bvh.nodes.length);
         this.bvhTrisOffset = bvh.nodes.length / 4;
+        if (curveExtra.length > 0) {
+            // Static curve BVH rides after the rebuilt triangle data.
+            bvhMerged.set(curveExtra, bvh.nodes.length + bvh.tris.length);
+            const nodeWords = this.curvePrimOffset - this.curveBvhOffset;
+            this.curveBvhOffset = (bvh.nodes.length + bvh.tris.length) / 4;
+            this.curvePrimOffset = this.curveBvhOffset + nodeWords;
+        }
         // Setblob in place into the worst-case-sized buffer (allocated in the ctor).
         this.buffers["bvhNodes"]!.setBlob(bvhMerged.subarray(0, Math.min(bvhMerged.length, this.bvhCapacityBytes / 4)));
         return true;
@@ -1032,6 +1088,8 @@ export class Scene {
         try {
             scene["webfalcorCurveInstanceFirst"] = this.curveInstanceFirst;
             scene["webfalcorCurveInstanceCount"] = this.curveDescs.length;
+            scene["webfalcorCurveBvhOffset"] = this.curveBvhOffset;
+            scene["webfalcorCurvePrimOffset"] = this.curvePrimOffset;
         } catch {
             /* curve-less kernel variant */
         }
