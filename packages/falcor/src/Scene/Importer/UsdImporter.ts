@@ -1,13 +1,14 @@
 /**
  * USD importer (subset of plugins/importers/USDImporter) via tinyusdz-wasm:
- * UsdGeomMesh + xform hierarchy + UsdPreviewSurface materials. Lights,
- * cameras, textures and UsdSkel are not exposed by the tinyusdz RenderScene
- * API yet (docs §8.4). Assets load as .usda/.usdc/.usdz.
+ * UsdGeomMesh + xform hierarchy + UsdPreviewSurface materials incl.
+ * UsdUVTexture baseColor (sRGB, V-flipped st). Lights, cameras and UsdSkel
+ * are not exposed by the tinyusdz RenderScene API yet (docs §8.4). Assets
+ * load as .usda/.usdc/.usdz.
  */
 
 import type { SceneMeshDesc, SceneMaterialDesc } from "../Scene.js";
 import type { TextureManager } from "../Material/TextureManager.js";
-import { MaterialType } from "../Material/MaterialData.js";
+import { MaterialType, packTextureHandle, TextureHandleMode } from "../Material/MaterialData.js";
 import { generateTangents } from "../TangentSpace.js";
 import { type StaticVertex } from "../SceneData.js";
 import { float2, float3, float4 } from "../../Utils/Math/Vector.js";
@@ -33,6 +34,7 @@ interface UsdMesh {
 
 interface UsdMaterial {
     name?: string;
+    diffuseColorTextureId?: number;
     diffuseColor?: ArrayLike<number>;
     roughness?: number;
     metallic?: number;
@@ -41,12 +43,24 @@ interface UsdMaterial {
     opacity?: number;
 }
 
+interface UsdImage {
+    uri?: string;
+    bufferId: number;
+    data?: Uint8Array;
+    decoded?: boolean;
+    width?: number;
+    height?: number;
+    channels?: number;
+}
+
 interface TinyUsdzScene {
     loadFromBinary(bytes: Uint8Array, path: string): boolean;
     error(): string;
     getDefaultRootNode(): UsdNode;
     getMesh(contentId: number): UsdMesh;
     getMaterial(materialId: number): UsdMaterial;
+    getTexture(textureId: number): { textureImageId: number };
+    getImage(imageId: number): UsdImage;
 }
 
 interface TinyUsdzModule {
@@ -104,7 +118,8 @@ export class UsdImporter {
     /** Parses USD (usda/usdc/usdz) into scene descriptors (device-free). */
     static async parseToDescs(
         bytes: Uint8Array,
-        _textureManager?: TextureManager,
+        textureManager?: TextureManager,
+        baseUrl = "",
     ): Promise<{ meshes: SceneMeshDesc[]; materials: SceneMaterialDesc[]; materialNames: string[] }> {
         const native = await loadTinyUsdz();
         const usd = new native.TinyUSDZLoaderNative();
@@ -116,6 +131,7 @@ export class UsdImporter {
         const materials: SceneMaterialDesc[] = [];
         const materialNames: string[] = [];
         const materialIndex = new Map<number, number>();
+        const textureJobs: { desc: SceneMaterialDesc; textureId: number }[] = [];
 
         const getOrAddMaterial = (materialId: number | undefined): number => {
             const id = materialId ?? -1;
@@ -139,6 +155,9 @@ export class UsdImporter {
                         emissiveFactor: 1,
                     },
                 };
+                if (m.diffuseColorTextureId !== undefined && m.diffuseColorTextureId >= 0) {
+                    textureJobs.push({ desc, textureId: m.diffuseColorTextureId });
+                }
             } else {
                 // UsdPreviewSurface fallback (18% gray).
                 desc = {
@@ -171,7 +190,9 @@ export class UsdImporter {
                         position: new float3(positions[i * 3]!, positions[i * 3 + 1]!, positions[i * 3 + 2]!),
                         normal: new float3(normals[i * 3]!, normals[i * 3 + 1]!, normals[i * 3 + 2]!),
                         tangent: new float4(0, 0, 0, 0),
-                        texCrd: uvs && uvs.length === vertexCount * 2 ? new float2(uvs[i * 2]!, uvs[i * 2 + 1]!) : new float2(0, 0),
+                        // USD st has a bottom-left origin; Falcor samples top-down
+                        // images with raw st (native parity) -> flip V.
+                        texCrd: uvs && uvs.length === vertexCount * 2 ? new float2(uvs[i * 2]!, 1 - uvs[i * 2 + 1]!) : new float2(0, 0),
                     };
                 }
                 generateTangents(vertices, indices);
@@ -183,6 +204,49 @@ export class UsdImporter {
         };
 
         walk(usd.getDefaultRootNode(), float4x4.identity());
+
+        // Resolve UsdUVTexture images (URI, embedded-encoded, or pre-decoded).
+        if (textureManager) {
+            for (const job of textureJobs) {
+                try {
+                    const bitmap = await resolveImageBitmap(usd, job.textureId, baseUrl);
+                    const id = textureManager.addTexture({ bitmap, srgb: true });
+                    job.desc.basic.texBaseColor = packTextureHandle(TextureHandleMode.Texture, id);
+                } catch (err) {
+                    Logger.warning(`UsdImporter: failed to load texture ${job.textureId} (${String(err)})`);
+                }
+            }
+        }
         return { meshes, materials, materialNames };
     }
+}
+
+/** Resolves a UsdUVTexture to an ImageBitmap (mirrors the three tinyusdz
+ *  image states: URI-only, embedded-encoded, embedded-decoded). */
+async function resolveImageBitmap(usd: TinyUsdzScene, textureId: number, baseUrl: string): Promise<ImageBitmap> {
+    const image = usd.getImage(usd.getTexture(textureId).textureImageId);
+    const opts: ImageBitmapOptions = { colorSpaceConversion: "none", premultiplyAlpha: "none" };
+    if (image.uri && image.bufferId === -1) {
+        const url = baseUrl ? `${baseUrl}/${image.uri}` : image.uri;
+        const res = await fetch(url);
+        if (!res.ok) throw new RuntimeError(`fetch '${url}' (${res.status})`);
+        return createImageBitmap(await res.blob(), opts);
+    }
+    if (image.bufferId >= 0 && image.data) {
+        if (image.decoded && image.width && image.height) {
+            // Raw pixels; expand to RGBA for ImageData.
+            const channels = image.channels ?? 4;
+            const count = image.width * image.height;
+            const rgba = new Uint8ClampedArray(count * 4);
+            for (let i = 0; i < count; i++) {
+                rgba[i * 4] = image.data[i * channels]!;
+                rgba[i * 4 + 1] = image.data[i * channels + (channels > 1 ? 1 : 0)]!;
+                rgba[i * 4 + 2] = image.data[i * channels + (channels > 2 ? 2 : 0)]!;
+                rgba[i * 4 + 3] = channels > 3 ? image.data[i * channels + 3]! : 255;
+            }
+            return createImageBitmap(new ImageData(rgba, image.width, image.height));
+        }
+        return createImageBitmap(new Blob([image.data.slice().buffer as ArrayBuffer]), opts);
+    }
+    throw new RuntimeError("unresolvable image (no uri, no buffer)");
 }

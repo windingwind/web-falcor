@@ -145,6 +145,30 @@ gpuTest("UsdImport.matchesNativeOracle", async ({ device }) => {
         return toByte(data[ni]!);
     }), size, size, false);
 
+    // Region diagnostics: split the bias by native brightness bands.
+    const bands = [
+        ["floor-bright", (nv: number, y: number) => y > 120 && nv > 0.3],
+        ["floor-dark", (nv: number, y: number) => y > 120 && nv <= 0.3],
+        ["box", (_nv: number, y: number) => y > 40 && y <= 120],
+    ] as const;
+    for (const [label, pred] of bands) {
+        let w = 0;
+        let n = 0;
+        let cnt = 0;
+        for (let y = 0; y < size; y++) {
+            for (let x = 0; x < size; x++) {
+                const wi = (y * size + x) * 4;
+                const ni = ((height - 1 - y) * width + x) * 4;
+                const nv = data[ni]! + data[ni + 1]! + data[ni + 2]!;
+                if (!pred(nv, y)) continue;
+                w += web[wi]! + web[wi + 1]! + web[wi + 2]!;
+                n += nv;
+                cnt++;
+            }
+        }
+        console.error(`# usdImport.band ${label}: web/nat=${(w / Math.max(n, 1e-6)).toFixed(3)} px=${cnt}`);
+    }
+
     const bias = signed / Math.max(natSum, 1e-6);
     console.error(`# usdImport: bias=${bias.toExponential(2)} badBlocks=${badBlocks}/${blocks * blocks} webLit=${webLit} natLit=${natLit}`);
     expectEq(Math.abs(bias) < 2e-2, true, `signed bias ${bias}`);

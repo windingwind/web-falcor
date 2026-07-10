@@ -49,10 +49,27 @@ def Xform "World"
             def Shader "Shader"
             {
                 uniform token info:id = "UsdPreviewSurface"
-                color3f inputs:diffuseColor = (0.7, 0.7, 0.7)
+                color3f inputs:diffuseColor.connect = </World/Materials/GrayMat/Tex.outputs:rgb>
                 float inputs:roughness = 0.8
                 float inputs:metallic = 0
                 token outputs:surface
+            }
+
+            def Shader "Reader"
+            {
+                uniform token info:id = "UsdPrimvarReader_float2"
+                token inputs:varname = "st"
+                float2 outputs:result
+            }
+
+            def Shader "Tex"
+            {
+                uniform token info:id = "UsdUVTexture"
+                asset inputs:file = @oracle-usd-checker.png@
+                float2 inputs:st.connect = </World/Materials/GrayMat/Reader.outputs:result>
+                token inputs:wrapS = "repeat"
+                token inputs:wrapT = "repeat"
+                float3 outputs:rgb
             }
         }
 

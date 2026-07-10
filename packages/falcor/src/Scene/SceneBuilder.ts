@@ -675,7 +675,8 @@ export class SceneBuilderBridge {
                 const bytes = new Uint8Array(await res.arrayBuffer());
                 const materialOffset = materials.length;
                 if (/\.usd[acz]?$/.test(cmd.path.toLowerCase())) {
-                    const parsed = await UsdImporter.parseToDescs(bytes, textureManager);
+                    const dir = url.slice(0, url.lastIndexOf("/"));
+                    const parsed = await UsdImporter.parseToDescs(bytes, textureManager, dir);
                     materials.push(...parsed.materials);
                     importedMaterialNames.push(...parsed.materialNames);
                     for (const m of parsed.meshes) meshes.push({ ...m, materialID: m.materialID + materialOffset });

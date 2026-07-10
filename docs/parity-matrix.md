@@ -99,7 +99,7 @@ Tallies today: 20 pass classes fully implemented, 4 partial, 14 not implemented
 | RenderGraphEditor (ImGui node UI) | ⏳ stretch | functional viewer done; node editor is dev tooling orthogonal to rendering parity |
 | RenderGraph `.py` export / RenderGraphIR | ⏳ | graphs load from `.py` but cannot be serialized back; `removeEdge`/`unmarkOutput` also missing |
 | ImageCompare | 🔶 | native tool used on CI host for oracle diffing; its MSE/FLIP gate policy reimplemented inline in the GPU suites + FLIPPass. No standalone in-browser tool ⏳ |
-| Importers | see §8.4 | glTF ✅ (TS), FBX 🔶 (assimpjs, `.fbx` full scenes only), PBRT ✅ subset, `.pyscene` ✅, USD 🔶 subset (tinyusdz-wasm: meshes/xforms/UsdPreviewSurface, verified vs native — lights/cameras/textures/skel/subdiv ⏳), Mitsuba ⏳ |
+| Importers | see §8.4 | glTF ✅ (TS), FBX 🔶 (assimpjs, `.fbx` full scenes only), PBRT ✅ subset, `.pyscene` ✅, USD 🔶 subset (tinyusdz-wasm: meshes/xforms/UsdPreviewSurface+baseColor textures, verified vs native — lights/cameras/skel/subdiv ⏳), Mitsuba ⏳ |
 | SceneCache | ⏳ | binary scene cache not built (OPFS/IndexedDB route available) |
 | Image IO (Bitmap/EXR read+write, image save) | 🟡 read | `.hdr`/DDS-BC/`.exr` decode (EXR via parse-exr, wired into ImageLoader + EnvMap); EXR write, unified Bitmap, save-to-file ⏳ (captures) |
 | NVTT texture compression | ❌ native / ⏳ substitute | decode side covered (DDS/BC parse + `texture-compression-bc` upload + CPU BC1/3/5 decode); a WASM BC *encoder* would be a substitute, not NVTT parity |
@@ -137,7 +137,7 @@ Tallies today: 20 pass classes fully implemented, 4 partial, 14 not implemented
 | Importer: Assimp | 🔶 partial | assimpjs: full scenes `.fbx` only (other formats mesh-only via `TriangleMesh.createFromFile`); >2 GB-heap FBX aborts (wasm32) — BistroExterior; DDS ✅ / TGA ⏳ textures |
 | Importer: PBRT (pbrt-v4) | ✅ subset | camera/lights/shapes/area lights verified; all materials → Standard (`usePBRTMaterials=true` path ⏳), textures/spectra/media/curves ⏳ |
 | Importer: `.pyscene` | ✅ | unmodified upstream scenes via Pyodide bridge |
-| Importer: USD | 🔶 subset | tinyusdz-wasm (1.9MB, reads usda/usdc/usdz): meshes + xform hierarchy + UsdPreviewSurface → Standard, verified vs native USDImporter (mask/viewW exact, 64spp radiance bias 4.5e-4). ⏳: lights/cameras (not exposed by tinyusdz RenderScene), textures, UsdSkel, subdivision refinement, instancing |
+| Importer: USD | 🔶 subset | tinyusdz-wasm (1.9MB, reads usda/usdc/usdz): meshes + xform hierarchy + UsdPreviewSurface → Standard incl. UsdUVTexture baseColor (sRGB, V-flip), verified vs native USDImporter (mask/viewW exact; textured 64spp radiance bias 1.2e-4, per-region 0.1%). ⏳: lights/cameras (not exposed by tinyusdz RenderScene), non-baseColor textures, UsdSkel, subdivision refinement, instancing |
 | Importer: Mitsuba | ⏳ | not started |
 | SceneBuilder flags (optimize/merge/dedup) | ⏳ | tangent generation ✅; optimization flags not built |
 
