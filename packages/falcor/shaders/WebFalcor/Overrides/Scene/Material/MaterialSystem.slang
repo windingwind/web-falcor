@@ -69,6 +69,8 @@ struct MaterialSystem
     StructuredBuffer<float4> materialTextureUvScale; ///< Per-texture: uvScale.xy, arraySelector (0 sRGB / 1 linear), layer.
     Texture2DArray materialTexturesArrayLinear; ///< Linear-colorspace textures (normal/specular maps).
     Texture2D<float4> webfalcorDummyTexture;
+    // Single displacement texture (v1: one displaced material per scene, docs §8.4).
+    Texture2D<float4> webfalcorDisplacementTexture;
     ByteAddressBuffer materialBuffer0;
     Texture3D<float4> materialTexture3D0;
 
@@ -383,17 +385,13 @@ struct MaterialSystem
             TextureHandle displacementHandle = getResolvedTextureHandle(md.texDisplacementMap);
             if (displacementHandle.getMode() == TextureHandle::Mode::Texture)
             {
-                textureID = displacementHandle.getTextureID();
-                samplerID = getMaterialHeader(materialID).getDefaultTextureSamplerID();
-                displacementMinSamplerID = md.getDisplacementMinSamplerID();
-                displacementMaxSamplerID = md.getDisplacementMaxSamplerID();
-
-                webfalcorDummyTexture.GetDimensions(displacementData.size.x, displacementData.size.y);
+                webfalcorDisplacementTexture.GetDimensions(displacementData.size.x, displacementData.size.y);
             }
         }
 
-        // If the material isn't displaced, return dummy resources at index 0 instead.
-        displacementData.texture = webfalcorDummyTexture;
+        // The min/max reduction samplers are unused (kShellForceMaxThickness
+        // override); the plain sampler stands in for all three.
+        displacementData.texture = webfalcorDisplacementTexture;
         displacementData.samplerState = materialSampler0;
         displacementData.samplerStateMin = materialSampler0;
         displacementData.samplerStateMax = materialSampler0;

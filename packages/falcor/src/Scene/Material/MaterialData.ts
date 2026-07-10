@@ -112,6 +112,7 @@ export interface BasicMaterialDesc {
     texSpecular?: number;
     texEmissive?: number;
     texNormalMap?: number;
+    texDisplacement?: number;
 }
 
 /**
@@ -166,7 +167,7 @@ export function packBasicMaterialBlob(header: MaterialHeaderDesc, mat: BasicMate
     dv.setUint32(off, mat.texEmissive ?? 0, true); off += 4;
     dv.setUint32(off, mat.texNormalMap ?? 0, true); off += 4;
     dv.setUint32(off, 0, true); off += 4; // texTransmission
-    dv.setUint32(off, 0, true); off += 4; // texDisplacementMap
+    dv.setUint32(off, mat.texDisplacement ?? 0, true); off += 4; // texDisplacementMap
 
     return new Uint8Array(blob);
 }

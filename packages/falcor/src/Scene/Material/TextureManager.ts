@@ -36,6 +36,11 @@ export class TextureManager {
      * Reads a texture back as linear float RGB (sRGB-decoded when flagged) for
      * CPU-side integration (mirrors GPU nearest-sampling of mip 0).
      */
+    /** Returns the raw source (displacement needs a standalone texture). */
+    getSource(textureID: number): TextureSource | undefined {
+        return this.sources[textureID];
+    }
+
     readLinearPixels(textureID: number): { width: number; height: number; rgb: Float32Array } | null {
         const source = this.sources[textureID];
         if (!source) return null;

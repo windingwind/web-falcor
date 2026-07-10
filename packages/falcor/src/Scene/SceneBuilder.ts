@@ -244,7 +244,7 @@ export class MaterialBridge {
 
     // Deferred texture loads (material.loadTexture(slot, path)); resolved in resolve().
     private _textures: { slot: string; path: string }[] = [];
-    private _texHandles: { texBaseColor?: number; texSpecular?: number; texEmissive?: number; texNormalMap?: number } = {};
+    private _texHandles: { texBaseColor?: number; texSpecular?: number; texEmissive?: number; texNormalMap?: number; texDisplacement?: number } = {};
 
     loadTexture(slot: string, path: string): void {
         this._textures.push({ slot: String(slot), path: String(path) });
@@ -264,6 +264,7 @@ export class MaterialBridge {
                 else if (t.slot === "Specular") this._texHandles.texSpecular = handle;
                 else if (t.slot === "Normal") this._texHandles.texNormalMap = handle;
                 else if (t.slot === "Emissive") this._texHandles.texEmissive = handle;
+                else if (t.slot === "Displacement") this._texHandles.texDisplacement = handle;
             } catch {
                 /* undecodable format (e.g. DDS) — material falls back to base color */
             }

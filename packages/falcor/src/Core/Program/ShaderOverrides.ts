@@ -28,6 +28,7 @@ export const kShaderOverrides: Readonly<Record<string, string>> = {
     "Scene/Material/MaterialSystem.slang": "WebFalcor/Overrides/Scene/Material/MaterialSystem.slang",
     "Scene/Material/TextureSampler.slang": "WebFalcor/Overrides/Scene/Material/TextureSampler.slang",
     "Scene/Scene.slang": "WebFalcor/Overrides/Scene/Scene.slang",
+    "Scene/Displacement/DisplacementMapping.slang": "WebFalcor/Overrides/Scene/Displacement/DisplacementMapping.slang",
     "Scene/SceneTypes.slang": "WebFalcor/Overrides/Scene/SceneTypes.slang",
     // Newer-Slang '= {}' / brace-init fixes + WGSL raster-path gaps.
     "Scene/Material/MaterialFactory.slang": "WebFalcor/Overrides/Scene/Material/MaterialFactory.slang",

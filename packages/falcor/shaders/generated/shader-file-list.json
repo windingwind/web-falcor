@@ -366,6 +366,7 @@
         "WebFalcor/Overrides/Rendering/Materials/IMaterial.slang",
         "WebFalcor/Overrides/Rendering/Materials/PBRT/PBRTConductorMaterial.slang",
         "WebFalcor/Overrides/Rendering/Materials/StandardMaterial.slang",
+        "WebFalcor/Overrides/Scene/Displacement/DisplacementMapping.slang",
         "WebFalcor/Overrides/Scene/HitInfo.slang",
         "WebFalcor/Overrides/Scene/Material/AlphaTest.slang",
         "WebFalcor/Overrides/Scene/Material/BasicMaterialData.slang",

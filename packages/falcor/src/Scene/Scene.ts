@@ -136,6 +136,7 @@ export class Scene {
     private svsResources: { voxels: Buffer } | null = null;
     private svoResources: { svo: Buffer } | null = null;
     private sdfBvhBuffers: { buf: Buffer; primOffset: number } | null = null;
+    private displacementTexture: Texture | null = null;
     private curveInstanceFirst = 0;
     private curveDescs: SceneCurveDesc[] = [];
     private curveBvhOffset = 0;
@@ -484,6 +485,24 @@ export class Scene {
         this.textureCount = Math.max(textureManager.count, 1);
         make("materialTextureUvScale", packed.texInfo, 16);
         this.dummyTexture = this.device.createTexture2D(1, 1, ResourceFormat.RGBA32Float, 1, 1, new Float32Array([0, 0, 0, 0]));
+        // Standalone displacement texture (v1: one displaced material per scene).
+        const dispHandle = materials.map((m) => m.basic.texDisplacement).find((h) => h !== undefined);
+        if (dispHandle !== undefined) {
+            const source = textureManager.getSource(dispHandle & 0x1fffffff);
+            if (source) {
+                const tex = this.device.createTexture2D(
+                    source.bitmap.width,
+                    source.bitmap.height,
+                    ResourceFormat.RGBA8Unorm,
+                    1,
+                    1,
+                    undefined,
+                    ResourceBindFlags.ShaderResource | ResourceBindFlags.RenderTarget,
+                );
+                this.device.gpuDevice.queue.copyExternalImageToTexture({ source: source.bitmap }, { texture: tex.gpuTexture }, [source.bitmap.width, source.bitmap.height]);
+                this.displacementTexture = tex;
+            }
+        }
         this.texture3D = this.device.createTexture3D(1, 1, 1, ResourceFormat.RGBA32Float, 1);
         this.gridRangeTex = this.device.createTexture3D(1, 1, 1, ResourceFormat.RG32Float, 1);
         this.gridIndirectionTex = this.device.createTexture3D(1, 1, 1, ResourceFormat.RGBA32Uint, 1);
@@ -1170,6 +1189,11 @@ export class Scene {
         materials["materialTexturesArrayLinear"] = this.textureArrayLinear;
         materials["materialTextureUvScale"] = this.buffers["materialTextureUvScale"]!;
         materials["webfalcorDummyTexture"] = this.dummyTexture;
+        try {
+            materials["webfalcorDisplacementTexture"] = this.displacementTexture ?? this.dummyTexture;
+        } catch {
+            /* displacement member absent in this kernel variant */
+        }
         materials["materialBuffer0"] = this.buffers["materialBuffer0"]!;
         materials["materialTexture3D0"] = this.texture3D;
     }
