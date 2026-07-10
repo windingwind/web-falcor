@@ -67,6 +67,18 @@ export function packStaticVertices(vertices: StaticVertex[]): ArrayBuffer {
     return buffer;
 }
 
+/** Packs PrevVertexData (float3 position; WGSL std430 stride 16). */
+export function packPrevVertices(vertices: { position: { x: number; y: number; z: number } }[]): Float32Array {
+    const out = new Float32Array(vertices.length * 4);
+    for (let i = 0; i < vertices.length; i++) {
+        const p = vertices[i]!.position;
+        out[i * 4] = p.x;
+        out[i * 4 + 1] = p.y;
+        out[i * 4 + 2] = p.z;
+    }
+    return out;
+}
+
 /** Mirrors GeometryType (SceneDefines.slangh GEOMETRY_TYPE_* values). */
 export enum GeometryType {
     None = 0,

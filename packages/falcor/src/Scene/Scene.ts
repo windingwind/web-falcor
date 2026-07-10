@@ -31,6 +31,7 @@ import {
     packGeometryInstances,
     packMeshDescs,
     packStaticVertices,
+    packPrevVertices,
     type GeometryInstance,
     type MeshDescData,
     type StaticVertex,
@@ -104,6 +105,9 @@ export class Scene {
     private sourceMeshes: SceneMeshDesc[] | null = null;
     private animData: SceneAnimations | null = null;
     private animNodeCount = 0;
+    // Prev-frame motion state: matrices/deformed verts as uploaded last frame.
+    private lastWorldMats: Float32Array | null = null;
+    private pendingPrevVerts = new Map<number, Float32Array>();
     /** Node whose animated global drives the camera (glTF camera); undefined if none. */
     private cameraNodeID?: number;
     /** True once any analytic light or the camera is bound to an animated node. */
@@ -158,6 +162,8 @@ export class Scene {
                 ibOffset,
                 vertexCount: mesh.vertices.length,
                 indexCount: mesh.indices.length,
+                // Prev-position buffer is laid out parallel to the vertex buffer.
+                prevVbOffset: vbOffset,
                 materialID: mesh.materialID,
             });
             instances.push({
@@ -169,6 +175,8 @@ export class Scene {
                 ibOffset,
                 instanceIndex: meshID,
                 geometryIndex: 0,
+                // IsDynamic routes getPrevPosW to the prevVertices buffer.
+                flags: mesh.skin || mesh.morph ? 0x2 : 0,
             });
         });
         // SDF grid instances append after the triangle instances (they are
@@ -274,6 +282,17 @@ export class Scene {
         // Retain source geometry + node graph for per-frame animation. Only for
         // animated scenes, so static scenes (e.g. Bistro) keep zero overhead.
         if (hasAnimation) {
+            // Prev-frame buffers for motion vectors (static scenes alias the
+            // current buffers in bindShaderData = zero motion).
+            const prevWorld = new Buffer(this.device, { size: world.byteLength, structSize: 64, bindFlags: storage, memoryType: MemoryType.DeviceLocal, name: "Scene::prevWorldMatrices" });
+            prevWorld.setBlob(world);
+            this.buffers["prevWorldMatrices"] = prevWorld;
+            this.lastWorldMats = world;
+            const prevVerts = packPrevVertices(allVertices);
+            const prevBuf = new Buffer(this.device, { size: Math.max(prevVerts.byteLength, 16), structSize: 16, bindFlags: storage, memoryType: MemoryType.DeviceLocal, name: "Scene::prevVertices" });
+            prevBuf.setBlob(prevVerts);
+            this.buffers["prevVertices"] = prevBuf;
+
             const allTimes = [...animations, ...weightTracks];
             const start = allTimes.reduce((s, ch) => Math.min(s, ch.times[0] ?? 0), Infinity);
             const duration = allTimes.reduce((d, ch) => Math.max(d, ch.times[ch.times.length - 1] ?? 0), 0);
@@ -384,9 +403,10 @@ export class Scene {
     animate(timeSec: number): boolean {
         if (!this.animData || !this.sourceMeshes) return false;
         const meshes = this.sourceMeshes;
-        // Loop within the clip's actual key span (clips needn't start at t=0, e.g. FBX).
-        const span = this.animData.duration - this.animData.start;
-        const sampleTime = span > 0 ? this.animData.start + (timeSec % span) : this.animData.start;
+        // Mirrors AnimationController: loop raw time over the clip length.
+        // Clips needn't start at t=0 (e.g. FBX): before the first key the
+        // samplers clamp to it (native Constant pre-behavior).
+        const sampleTime = this.animData.duration > 0 ? timeSec % this.animData.duration : 0;
         const globals = evaluateGlobals(this.animData, sampleTime);
 
         // Animatable camera/lights: rederive their pose from the node globals
@@ -400,19 +420,23 @@ export class Scene {
         const worldMats: float4x4[] = [];
         const worldPos: float3[][] = [];
         let vbOffset = 0;
-        for (const mesh of meshes) {
+        for (const [meshID, mesh] of meshes.entries()) {
             // Morph (blend shapes) deform the bind pose first (glTF applies morph
             // before skinning); the morphed object-space verts feed skin or matrix.
             const base = mesh.morph ? applyMorph(mesh.vertices, mesh.morph, sampleMorphWeights(mesh.morph, this.animData.weightTracks, sampleTime)) : mesh.vertices;
             if (mesh.skin) {
                 const skinned = skinVertices(base, mesh.skin, computeSkinMatrices(mesh.skin, globals));
+                this.rollPrevVertices(meshID, vbOffset, skinned);
                 this.buffers["vertices"]!.setBlob(packStaticVertices(skinned), vbOffset * 48);
                 worldMats.push(float4x4.identity());
                 worldPos.push(skinned.map((v) => v.position));
             } else {
                 const m = mesh.nodeID !== undefined && globals[mesh.nodeID] ? globals[mesh.nodeID]! : (mesh.transform ?? float4x4.identity());
                 // Morphed non-skinned meshes: re-upload deformed object-space verts.
-                if (mesh.morph) this.buffers["vertices"]!.setBlob(packStaticVertices(base), vbOffset * 48);
+                if (mesh.morph) {
+                    this.rollPrevVertices(meshID, vbOffset, base);
+                    this.buffers["vertices"]!.setBlob(packStaticVertices(base), vbOffset * 48);
+                }
                 worldMats.push(m);
                 worldPos.push(base.map((v) => transformPoint(m, v.position)));
             }
@@ -428,6 +452,11 @@ export class Scene {
         };
         meshes.forEach((_m, i) => putNode(i, worldMats[i]!));
         this.sdfGrids.forEach((desc, i) => putNode(meshes.length + i, desc.transform ?? float4x4.identity()));
+        // Prev matrices = the ones used last frame (mirrors Scene::updateMatrices).
+        if (this.lastWorldMats && this.buffers["prevWorldMatrices"]) {
+            this.buffers["prevWorldMatrices"]!.setBlob(this.lastWorldMats);
+        }
+        this.lastWorldMats = world;
         this.buffers["worldMatrices"]!.setBlob(world);
 
         // Rebuild the world-space triangle BVH over the current (rigid/skinned) verts.
@@ -455,6 +484,16 @@ export class Scene {
         // Setblob in place into the worst-case-sized buffer (allocated in the ctor).
         this.buffers["bvhNodes"]!.setBlob(bvhMerged.subarray(0, Math.min(bvhMerged.length, this.bvhCapacityBytes / 4)));
         return true;
+    }
+
+    /** Uploads last frame's deformed positions to prevVertices, then remembers
+     *  the current ones for the next frame (first frame keeps the bind pose). */
+    private rollPrevVertices(meshID: number, vbOffset: number, deformed: StaticVertex[]): void {
+        const prevBuf = this.buffers["prevVertices"];
+        if (!prevBuf) return;
+        const pending = this.pendingPrevVerts.get(meshID);
+        if (pending) prevBuf.setBlob(pending, vbOffset * 16);
+        this.pendingPrevVerts.set(meshID, packPrevVertices(deformed));
     }
 
     /**
@@ -848,7 +887,7 @@ export class Scene {
 
         // Geometry.
         scene["worldMatrices"] = this.buffers["worldMatrices"]!;
-        scene["prevWorldMatrices"] = this.buffers["worldMatrices"]!;
+        scene["prevWorldMatrices"] = this.buffers["prevWorldMatrices"] ?? this.buffers["worldMatrices"]!;
         scene["webfalcorInvTransposeOffset"] = this.invTransposeOffset;
         scene["geometryInstances"] = this.buffers["geometryInstances"]!;
         scene["meshes"] = this.buffers["meshes"]!;
@@ -857,7 +896,7 @@ export class Scene {
         scene["webfalcorBvhTrisOffset"] = this.bvhTrisOffset;
         scene["lights"] = this.buffers["lights"]!;
         scene["lightCount"] = this.lightCount;
-        scene["prevVertices"] = this.buffers["vertices"]!;
+        scene["prevVertices"] = this.buffers["prevVertices"] ?? this.buffers["vertices"]!;
         // Curve buffers (no curve geometry yet; dummies for DCE survivors).
         scene["curveVertices"] = this.buffers["curveDummy"]!;
         scene["prevCurveVertices"] = this.buffers["curveDummy"]!;

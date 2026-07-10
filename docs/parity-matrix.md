@@ -129,7 +129,7 @@ Tallies today: 20 pass classes fully implemented, 4 partial, 14 not implemented
 | Node / skinned / morph animation | ✅ | CPU skinning + morph (upstream does GPU skinning 🟡); camera/light animation ✅; LINEAR/STEP/CUBICSPLINE |
 | Animated vertex caches (Alembic) | ⏳ | no `.abc`/AnimatedVertexCache support |
 | Per-clip loop behaviors / global time control | ⏳ | whole-timeline modulo loop only; pre/post-infinity ignored; no AnimationController API |
-| Motion vectors for skinned geometry | ⏳ | prev-position vertex double-buffering not wired (camera mvecs correct) |
+| Motion vectors for animated geometry | ✅ | rigid (prev world matrices) native-exact (mean 1.2e-7); skinned/morphed (prev-position double buffer + IsDynamic) verified by reprojection — native itself writes zero skinned mvecs on this content (probed) |
 | Animated-scene BVH | 🟡 | full CPU rebuild per frame (correct, no refit path) |
 | GridVolumes (NanoVDB) | ✅ | `.vdb` parsed in-browser → NanoVDB, verified vs native; uncompressed codecs only ⏳ (zip/blosc), `.vdb` frame sequences ⏳, blackbody emission conversion ⏳ |
 | Runtime material/light property edits | ⏳ | scene data packed once at build; deferred pyscene edits at load ✅, post-build `updateMaterial`/light setters missing |
