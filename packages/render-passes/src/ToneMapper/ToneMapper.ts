@@ -41,6 +41,9 @@ export class ToneMapper extends RenderPass {
     private operator = ToneMapOperator.Aces;
     private exposureCompensation = 0;
     private autoExposure = false;
+    private fNumber = 1;
+    private shutter = 1;
+    private filmSpeed = 100;
     private clamp = true;
     private outputFormat = ResourceFormat.RGBA8UnormSrgb;
     private outputSize = IOSize.Default;
@@ -63,6 +66,9 @@ export class ToneMapper extends RenderPass {
             this.pass = null;
         }
         this.exposureCompensation = props.get("exposureCompensation", 0);
+        this.fNumber = props.get("fNumber", this.fNumber);
+        this.shutter = props.get("shutter", this.shutter);
+        this.filmSpeed = props.get("filmSpeed", this.filmSpeed);
         const autoExposure = props.get("autoExposure", this.autoExposure);
         if (autoExposure !== this.autoExposure) {
             this.autoExposure = autoExposure;
@@ -80,6 +86,9 @@ export class ToneMapper extends RenderPass {
             operator: ToneMapOperator[this.operator]!,
             exposureCompensation: this.exposureCompensation,
             autoExposure: this.autoExposure,
+            fNumber: this.fNumber,
+            shutter: this.shutter,
+            filmSpeed: this.filmSpeed,
             clamp: this.clamp,
         });
     }
@@ -125,9 +134,10 @@ export class ToneMapper extends RenderPass {
 
         if (this.autoExposure) this.runLuminancePass(ctx, src);
 
-        // Exposure compensation folds into the color transform (mirrors upstream
-        // ToneMapper::updateColorTransform: exposure scale * white balance).
-        const scale = Math.pow(2, this.exposureCompensation);
+        // Exposure folds into the color transform (mirrors updateColorTransform:
+        // white balance * 2^EC * manual physical exposure when auto is off).
+        const manualExposureScale = this.autoExposure ? 1 : this.filmSpeed / 100 / (this.shutter * this.fNumber * this.fNumber);
+        const scale = Math.pow(2, this.exposureCompensation) * manualExposureScale;
         // float3x4 row-major rows.
         const colorTransform = [scale, 0, 0, 0, 0, scale, 0, 0, 0, 0, scale, 0];
 

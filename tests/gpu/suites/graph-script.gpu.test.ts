@@ -95,6 +95,57 @@ gpuTest("GraphScript.toneMappingMatchesNativePng", async ({ device }) => {
     expectEq(mse < 2e-4, true, `sRGB MSE ${mse}`); // upstream image tests use 1e-4..1e-3 per-test
 });
 
+gpuTest("GraphScript.toneMappingPhysicalExposureMatchesNativePng", async ({ device }) => {
+    // The test_ToneMapping.py fNumber/shutter variants: manual physical
+    // exposure scale (filmSpeed/100)/(shutter*fNumber^2) in the color transform.
+    // Regenerate: Mogwai --script tests/oracle/render-native-imgtest-tonemap-physexp.py --headless
+    const size = 256;
+    const source = await (await fetch("/Falcor/tests/image_tests/renderpasses/graphs/ToneMapping.py")).text();
+    await initScripting("/node_modules/pyodide");
+    const toSrgbByte = (v: number) => {
+        const c = Math.min(Math.max(v, 0), 1);
+        const s = c <= 0.0031308 ? c * 12.92 : 1.055 * Math.pow(c, 1 / 2.4) - 0.055;
+        return Math.round(s * 255);
+    };
+    for (const [name, props] of [
+        ["fnumber", { autoExposure: false, fNumber: 0.5 }],
+        ["shutter", { autoExposure: false, fNumber: 1.0, shutter: 2.0 }],
+    ] as const) {
+        const [graph] = await runGraphScript(device, source);
+        graph!.getPass("ToneMapping")!.setProperties(new Properties(props));
+        await graph!.init();
+        graph!.onResize(size, size);
+        const ctx = device.renderContext;
+        graph!.execute(ctx);
+        const web = new Float32Array((await ctx.readTextureSubresource(graph!.getOutput("BlitPass.dst")!)).buffer);
+
+        const blob = await (await fetch(`/tests/oracle/out-native/oracle-imgtest-tonemap-${name}.BlitPass.dst.0.png`)).blob();
+        const bitmap = await createImageBitmap(blob, { colorSpaceConversion: "none" });
+        const canvas = new OffscreenCanvas(size, size);
+        const c2d = canvas.getContext("2d", { willReadFrequently: true })!;
+        c2d.drawImage(bitmap, 0, 0);
+        const nat = c2d.getImageData(0, 0, size, size).data;
+
+        let mse = 0;
+        let signed = 0;
+        for (let i = 0; i < size * size; i++) {
+            for (let ch = 0; ch < 3; ch++) {
+                const d = (toSrgbByte(web[i * 4 + ch]!) - nat[i * 4 + ch]!) / 255;
+                mse += d * d;
+                signed += d;
+            }
+        }
+        mse /= size * size * 3;
+        const meanSigned = (signed / (size * size * 3)) * 255;
+        console.error(`# imgtestTonemapPhysExp.${name}: mse=${mse.toExponential(2)} meanSignedByte=${meanSigned.toFixed(3)}`);
+        // Darker variants push the base minification residual into the steep
+        // sRGB region (larger byte deltas for the same linear error) — gate on
+        // MSE plus zero mean bias (which a wrong exposure scale would break).
+        expectEq(mse < 5e-4, true, `${name} sRGB MSE ${mse}`);
+        expectEq(Math.abs(meanSigned) < 1.0, true, `${name} no exposure bias (meanSignedByte=${meanSigned.toFixed(3)})`);
+    }
+});
+
 gpuTest("GraphScript.toneMappingAutoExposureMatchesNativePng", async ({ device }) => {
     // The test_ToneMapping.py 'autoExposure.True' variant: same graph with the
     // log-luminance mip-chain exposure enabled.
