@@ -32,4 +32,12 @@ m.frameCapture.baseFilename = "oracle-curves-mpt"
 for i in range(64):
     m.renderFrame()
 m.frameCapture.capture()
+
+m.removeGraph(MinimalPathTracer)
+exec(open(os.path.join(root, "tests/image_tests/renderpasses/graphs/PathTracer.py")).read())
+m.resizeFrameBuffer(256, 256)
+m.frameCapture.baseFilename = "oracle-curves-pt"
+for i in range(64):
+    m.renderFrame()
+m.frameCapture.capture()
 exit()

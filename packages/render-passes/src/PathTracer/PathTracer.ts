@@ -200,7 +200,7 @@ export class PathTracer extends RenderPass {
             USE_ENV_LIGHT: scene.useEnvLight ? 1 : 0,
             USE_ANALYTIC_LIGHTS: scene.useAnalyticLights ? 1 : 0,
             USE_EMISSIVE_LIGHTS: scene.useEmissiveLights ? 1 : 0,
-            USE_CURVES: 0,
+            USE_CURVES: scene.hasCurves ? 1 : 0,
             USE_SDF_GRIDS: 0,
             USE_HAIR_MATERIAL: 0,
             USE_VIEW_DIR: this.useViewDir ? 1 : 0,

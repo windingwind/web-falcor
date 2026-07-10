@@ -639,6 +639,11 @@ export class Scene {
         return this.envMap;
     }
 
+    /** Mirrors Scene::hasGeometryType(Curve). */
+    get hasCurves(): boolean {
+        return this.curveDescs.length > 0;
+    }
+
     /** Mirrors Scene::useAnalyticLights() (render settings default to enabled). */
     get useAnalyticLights(): boolean {
         return this.lightCount > 0;

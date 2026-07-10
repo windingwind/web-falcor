@@ -127,3 +127,55 @@ gpuTest("FeatureCurves.shadedMatchesNative", async ({ device }) => {
     expectEq(Math.abs(bias) < 1e-2, true, `signed bias ${bias}`);
     expectEq(badBlocks <= 60, true, `bad blocks ${badBlocks}`);
 });
+
+gpuTest("FeatureCurves.pathTracerMatchesNative", async ({ device }) => {
+    // Full PathTracer with USE_CURVES=1 (curve hits + Hair BSDF in the big
+    // megakernel), 64 accumulated frames vs native PathTracer.py.
+    const size = 256;
+    await initScripting("/node_modules/pyodide");
+    const graphSource = await (await fetch("/Falcor/tests/image_tests/renderpasses/graphs/PathTracer.py")).text();
+    const [graph] = await runGraphScript(device, graphSource);
+
+    let sceneSource = await (await fetch("/Falcor/media/test_scenes/curves/two_curves.pyscene")).text();
+    sceneSource = sceneSource.replace(/sceneBuilder\.addCustomPrimitive.*/g, "pass");
+    const scene = await runSceneScript(device, sceneSource, "/Falcor/media/test_scenes/curves");
+    scene.camera.setAspectRatio(1.0);
+
+    graph!.onResize(size, size);
+    graph!.setScene(scene);
+    const ctx = device.renderContext;
+    for (let f = 0; f < 64; f++) graph!.execute(ctx);
+
+    const web = new Float32Array((await ctx.readTextureSubresource(graph!.getOutput("PathTracer.color")!)).buffer);
+    const res = await fetch("/tests/oracle/out-native/oracle-curves-pt.PathTracer.color.0.exr");
+    const { data, width, height } = parseExr(await res.arrayBuffer(), 1015) as { data: Float32Array; width: number; height: number };
+    expectEq(width, size, "oracle resolution");
+
+    let signed = 0;
+    let natSum = 0;
+    const kBlock = 8;
+    let badBlocks = 0;
+    for (let by = 0; by < size / kBlock; by++) {
+        for (let bx = 0; bx < size / kBlock; bx++) {
+            let w = 0;
+            let n = 0;
+            for (let y = by * kBlock; y < (by + 1) * kBlock; y++) {
+                for (let x = bx * kBlock; x < (bx + 1) * kBlock; x++) {
+                    const wi = (y * size + x) * 4;
+                    const ni = ((height - 1 - y) * width + x) * 4;
+                    for (let c = 0; c < 3; c++) {
+                        w += Math.min(web[wi + c]!, 16);
+                        n += Math.min(data[ni + c]!, 16);
+                        signed += Math.min(web[wi + c]!, 16) - Math.min(data[ni + c]!, 16);
+                        natSum += Math.min(data[ni + c]!, 16);
+                    }
+                }
+            }
+            if (Math.abs(w - n) / Math.max(n, 1.0) > 0.05) badBlocks++;
+        }
+    }
+    const bias = signed / Math.max(natSum, 1e-6);
+    console.error(`# featureCurves.pt: bias=${bias.toExponential(2)} badBlocks=${badBlocks}/1024`);
+    expectEq(Math.abs(bias) < 1e-2, true, `signed bias ${bias}`);
+    expectEq(badBlocks <= 60, true, `bad blocks ${badBlocks}`);
+});
