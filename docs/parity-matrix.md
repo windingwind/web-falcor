@@ -60,9 +60,9 @@ Tallies today: 20 pass classes fully implemented, 4 partial, 14 not implemented
 | BSDFOptimizer | 🟠 | no host port; depends on the same slangc autodiff blocker as WARDiffPathTracer (§6.9), plus an optimizer loop |
 | BSDFViewer | ✅ | verified vs native (1.9e-4) |
 | DebugPasses: ColorMapPass / SideBySidePass / SplitScreenPass | ✅ | verified; TextRenderer overlay labels + interactive divider ⏳ |
-| DebugPasses: InvalidPixelDetectionPass | ⏳ | NaN/Inf highlighter; portable, not built |
+| DebugPasses: InvalidPixelDetectionPass | ✅ | unmodified upstream shader; functional GPU test (injected NaN→red, Inf→green, valid→black) |
 | DLSSPass | ❌ | NVIDIA NGX driver + hardware black box; nearest substitutes: TAA-upscale ✅ or FSR2-WGSL port 🔶 (separate pass, not DLSS parity) |
-| ErrorMeasurePass | ⏳ | portable; EXR reference loading now available (decodeExr) — pass port + csv output pending |
+| ErrorMeasurePass | ✅ core | difference kernel (WTexture2D override — rgba32float storage is write-only) + GPU-reduced mean error; reference from input or file (EXR/HDR/browser formats). Measurements surface on `measurements` via async readback — csv file output ❌ (no file IO), running-error smoothing ⏳ |
 | FLIPPass | ✅ core | LDR path verified (byte MSE 6.7e-5); HDR auto-exposure path + pooled UI values ⏳ |
 | GBufferRaster | ✅ | native oracle impossible on this host (ROV), RT-cross-verified |
 | GBufferRT | 🟡 | SoftwareRT; verified incl. texGrads (byte-exact) |

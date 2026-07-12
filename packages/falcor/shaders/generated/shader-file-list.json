@@ -354,6 +354,7 @@
         "SanityCompute.cs.slang",
         "SceneSmoke.cs.slang",
         "TangentQueryTest.cs.slang",
+        "WebFalcor/Overrides/RenderPasses/ErrorMeasurePass/ErrorMeasurer.cs.slang",
         "WebFalcor/Overrides/RenderPasses/AccumulatePass/Accumulate.cs.slang",
         "WebFalcor/Overrides/RenderPasses/GBuffer/GBuffer/GBufferRaster.3d.slang",
         "WebFalcor/Overrides/RenderPasses/GBuffer/VBuffer/VBufferRT.slang",
