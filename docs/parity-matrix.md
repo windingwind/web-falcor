@@ -6,7 +6,8 @@ stay valid. The ✅ / 🟡 / 🔶 / ⏳ / ❌ / 🟠 status markers are defined 
 [architecture.md §1](architecture.md#1-goals-and-ground-rules).
 
 Every row below was verified against the actual code (2026-07-09 audit of
-`packages/` vs upstream `Falcor/Source/`), not against intent: ✅/🟡/🔶 mean the
+`packages/` vs upstream `Falcor/Source/`, rows re-verified as features landed
+through 2026-07-12), not against intent: ✅/🟡/🔶 mean the
 thing exists and works today, ⏳ means portable-but-not-built, 🟠 means blocked
 by a documented toolchain/asset gap, ❌ means the web platform cannot provide it.
 
@@ -27,8 +28,9 @@ by a documented toolchain/asset gap, ❌ means the web platform cannot provide i
 | Wave/subgroup intrinsics | 🟡 | WebGPU `subgroups` feature where available; workgroup-shared fallback |
 | 64-bit shader integers/atomics | 🟡 | not in WGSL; paired-u32 emulation shim (verified bit-identical: SplitMix64 seeding, xoshiro128** streams) |
 | fp16 in shaders | 🟡 | Chromium does not expose `shader-f16` on this host (driver supports it): token-level f16→f32 demotion; f16 rounding only at pack boundaries. 16-bit ints demoted likewise (absent from WGSL entirely) |
-| fp64 in shaders | ❌ | absent from WGSL entirely (native Falcor uses it in a few reduction/accumulation paths → those switch to compensated-f32 🟡) |
+| fp64 in shaders | ❌ | absent from WGSL entirely; native's few uses switch to compensated-f32 🟡 (e.g. the watertight-triangle tiebreak in `IntersectionHelpers.slang` → Kahan difference-of-products via `fma`). Caution: fp64 reaching slangc's WGSL backend aborts emission *silently* — the compiler now fails loudly on empty entry points |
 | Bindless resources / unbounded descriptor arrays | 🟡 | not in browser WebGPU; texture-array packing per format class (§6.2), documented limits |
+| Min/max-reduction texture samplers | ❌ | D3D12 `TextureReductionMode` has no WebGPU equivalent. Sole upstream consumer (displacement shell tightening) is overridden to conservative global bounds — identical intersections (§9.7); host-built min/max mip pyramids are the substitute if tight bounds are ever needed |
 | Indirect dispatch | ✅ | `dispatchWorkgroupsIndirect` wired (`ComputeContext.dispatchRawIndirect`) |
 | Indirect draw / ExecuteIndirect | ⏳ | WebGPU has `drawIndirect`, not wired yet; ExecuteIndirect-style multi-draw would be loop-emulated 🟡 |
 | UAV counters / append buffers | 🟡 | emulated with explicit atomic counter buffers (packed-region pattern, see PixelStats) |
@@ -67,12 +69,12 @@ Tallies today: 20 pass classes fully implemented, 4 partial, 14 not implemented
 | VBufferRT | 🟡 | SoftwareRT; verified |
 | VBufferRaster | ⏳ | rasterized V-buffer; portable, not built |
 | ImageLoader | ✅ | browser-decodable formats + `.hdr` + `.dds`/BC + `.exr` (parse-exr; GPU-verified exact vs CPU decode) |
-| MinimalPathTracer | ✅ | SoftwareRT megakernel; oracle-verified (9.5e-7, §7.1) |
+| MinimalPathTracer | ✅ | SoftwareRT megakernel; oracle-verified (9.5e-7, §7.1); shades triangle, curve, displaced-triangle and SDF hits |
 | ModulateIllumination | ✅ | lives under `Utils/` in the web tree |
 | NRDPass | 🟠 SDK absent | NRD SDK not bundled in this Falcor drop (no `external/packman/nrd/`) → denoiser shaders uncompilable here. Host portable; NRD's HLSL source is public, genuine port stays the plan (§11.4). SVGF ✅ meanwhile |
 | OptixDenoiser | ❌ | requires CUDA+OptiX. Same substitutes as NRD |
 | OverlaySamplePass | ⏳ | demo/example pass; portable, not built |
-| PathTracer | ✅ verified | full upstream loop: NEE+MIS, Uniform/Power/LightBVH emissive samplers, EnvMapSampler, dielectrics/nested priority, guide outputs, adaptive spp (`sampleCount` input), rayCount/pathLength stats. Fixed spp 1–16 + variable spp verified (spp=4 vs native: 10/65536 bad px). Remaining ⏳: `USE_RTXDI` in-tracer integration, NRD guide outputs; SER ❌ |
+| PathTracer | ✅ verified | full upstream loop: NEE+MIS, Uniform/Power/LightBVH emissive samplers, EnvMapSampler, dielectrics/nested priority, guide outputs, adaptive spp (`sampleCount` input), rayCount/pathLength stats. Fixed spp 1–16 + variable spp verified (spp=4 vs native: 10/65536 bad px); curve geometry (`USE_CURVES` + Hair BSDF) verified vs native. Remaining ⏳: `USE_RTXDI` in-tracer integration, NRD guide outputs; SER ❌ |
 | PixelInspectorPass | ⏳ | cursor pixel/material inspector; portable, not built |
 | RenderPassTemplate | ⏳ | boilerplate template, not a feature |
 | RTXDIPass | ✅ verified vs native | Full port (PrepareSurfaceData + ReSTIR spatiotemporal resampling + FinalShading). Upstream RTXDI.py replica over Arcade at frames 1/16/64: bias <6e-4, ≤5/3600 bad 8x8 blocks. Overrides: texel buffers → structured, boiling filter compiled out (WaveActiveCountBits; native default off), bool cbuffer members → uint, outputs moved into the FinalShading block (4-bind-group cap), lightInfo+compactLightInfo merged (16-storage-buffer cap) |
@@ -99,7 +101,7 @@ Tallies today: 20 pass classes fully implemented, 4 partial, 14 not implemented
 | RenderGraphEditor (ImGui node UI) | ⏳ stretch | functional viewer done; node editor is dev tooling orthogonal to rendering parity |
 | RenderGraph `.py` export / RenderGraphIR | ⏳ | graphs load from `.py` but cannot be serialized back; `removeEdge`/`unmarkOutput` also missing |
 | ImageCompare | 🔶 | native tool used on CI host for oracle diffing; its MSE/FLIP gate policy reimplemented inline in the GPU suites + FLIPPass. No standalone in-browser tool ⏳ |
-| Importers | see §8.4 | glTF ✅ (TS), FBX 🔶 (assimpjs, `.fbx` full scenes only), PBRT ✅ subset, `.pyscene` ✅, USD 🔶 subset (tinyusdz-wasm: meshes/xforms/UsdPreviewSurface+baseColor textures, verified vs native — lights/cameras/skel/subdiv ⏳), Mitsuba ⏳ |
+| Importers | see §8.4 | glTF ✅ (TS), FBX 🔶 (assimpjs, `.fbx` full scenes only), PBRT ✅ subset, `.pyscene` ✅, USD 🔶 subset (tinyusdz-wasm: meshes/xforms/UsdPreviewSurface incl. baseColor/ORM/normal/emissive textures, verified vs native — lights/cameras/skel/subdiv ⏳), Mitsuba ⏳ (no Mitsuba content in the media drop → no oracle) |
 | SceneCache | ⏳ | binary scene cache not built (OPFS/IndexedDB route available) |
 | Image IO (Bitmap/EXR read+write, image save) | 🟡 read | `.hdr`/DDS-BC/`.exr` decode (EXR via parse-exr, wired into ImageLoader + EnvMap); EXR write, unified Bitmap, save-to-file ⏳ (captures) |
 | NVTT texture compression | ❌ native / ⏳ substitute | decode side covered (DDS/BC parse + `texture-compression-bc` upload + CPU BC1/3/5 decode); a WASM BC *encoder* would be a substitute, not NVTT parity |
@@ -110,7 +112,7 @@ Tallies today: 20 pass classes fully implemented, 4 partial, 14 not implemented
 |---|---|---|
 | TriangleMesh geometry | ✅ | full path incl. instancing, alpha test (Mask; Blend mode ⏳) |
 | DisplacedTriangleMesh / displacement mapping | ✅ core | full ray-marched displacement: displaced meshes get conservative per-tri AABBs in the merged BVH; upstream DisplacedTriangleMeshIntersector compiles via two overrides (max-shell-thickness — WebGPU lacks min/max-reduction samplers; Kahan diff-of-products replaces the fp64 watertight tiebreak). cornell_box_displaced FaceNormals match native (mean 5.1e-3; brick-edge march micro-divergence) and 256spp shaded radiance at bias 6.6e-4. v1: one displacement texture per scene |
-| Curve geometry (LSS) / hair | ✅ core | USD BasisCurves import (USDA text) → CurveTessellation port → linear-swept-sphere segments intersected in the software query (upstream CurveIntersector/Han19 over a segment-AABB BVH (rides in the merged BVH buffer — zero extra bindings; switch verified footprint-invariant)). two_curves.pyscene FaceNormals match native pixel-exactly (0/65536); shaded curves (default HairMaterial, Chiang16) match native through MPT and the full PathTracer (USE_CURVES) at 64spp (bias ≤1.1e-3). `.hair` files + segment BVH for hair-scale counts ⏳ |
+| Curve geometry (LSS) / hair | ✅ core | USD BasisCurves import (USDA text) → CurveTessellation port → linear-swept-sphere segments traversed via a segment-AABB BVH in the merged BVH buffer (zero extra bindings; verified footprint-invariant) → upstream CurveIntersector/Han19. two_curves.pyscene FaceNormals match native pixel-exactly (0/65536); shaded curves (native default HairMaterial, Chiang16) match native through MPT and the full PathTracer at 64spp (bias ≤1.1e-3). `.hair` files (no assets in the drop), CurveOTS/ribbon modes ⏳ |
 | SDF grids (NDSDF/SBS/SVS/SVO) | ✅ | all 4 representations GPU-verified. Content path limited to the procedural generator: `.sdf`/`.sdfg` file IO + runtime editing/`bake()` ⏳ (prereq for SDFEditor) |
 | Custom primitives (procedural AABBs) | 🟡 approximated | rendered as box meshes; app-supplied intersection shaders have no software-RT equivalent (true parity ❌, fixed-function intersectors ⏳) |
 | StandardMaterial | ✅ | verified across the oracle suite |
@@ -121,14 +123,14 @@ Tallies today: 20 pass classes fully implemented, 4 partial, 14 not implemented
 | Texture LOD (ray cones / ray diffs) | 🟡 partial | explicit-gradient path verified (GBufferRT texGrads byte-exact); ray-cone mode not wired through the megakernels everywhere |
 | Analytic lights (Point/Directional/Distant/Rect/Disc/Sphere) | ✅ | verified incl. area-light sampling |
 | Emissive geometry (LightCollection) | ✅ | incl. textured-emissive flux integration; LightBVH sampler ✅ (GPU refit ⏳ — rebuild-only; options not plumbed ⏳) |
-| EnvMap | ✅ core | rotation/intensity/tint; loads Radiance `.hdr` only — EXR env maps ⏳ |
+| EnvMap | ✅ | rotation/intensity/tint; loads Radiance `.hdr` and OpenEXR `.exr` (decodeExr) |
 | LightProfile (IES) | ⏳ | dummy binding only; no IES loader/bake |
 | Camera (pinhole, jitter, motion vectors) | ✅ | verified (incl. prev-matrix roll) |
 | Camera DoF / physical camera | ✅ core | `apertureRadius`/`focalDistance` + thin-lens sampling verified vs native (VBufferRT depth/viewW 0 bad px; PathTracer consumes `viewW`); shutter/ISO exposure params ⏳ |
 | Camera controllers | 🔶 partial | FirstPerson ✅ (app layer, mouse+WASD); Orbiter / SixDoF ⏳; gamepad ⏳ |
 | Node / skinned / morph animation | ✅ | CPU skinning + morph (upstream does GPU skinning 🟡); camera/light animation ✅; LINEAR/STEP/CUBICSPLINE |
 | Animated vertex caches (Alembic) | ⏳ | no `.abc`/AnimatedVertexCache support |
-| Per-clip loop behaviors / global time control | ⏳ | whole-timeline modulo loop only; pre/post-infinity ignored; no AnimationController API |
+| Per-clip loop behaviors / global time control | 🟡 partial | time loops `fmod(t, length)` and clamps before the first key — matches native defaults (AnimationController + Constant pre-behavior); per-clip pre/post-infinity behaviors (Linear/Cycle/Oscillate extrapolation, e.g. animated_cubes) and a global time-control API ⏳ |
 | Motion vectors for animated geometry | ✅ | rigid (prev world matrices) native-exact (mean 1.2e-7); skinned/morphed (prev-position double buffer + IsDynamic) verified by reprojection — native itself writes zero skinned mvecs on this content (probed) |
 | Animated-scene BVH | 🟡 | full CPU rebuild per frame (correct, no refit path) |
 | GridVolumes (NanoVDB) | ✅ | `.vdb` parsed in-browser → NanoVDB, verified vs native; uncompressed codecs only ⏳ (zip/blosc), `.vdb` frame sequences ⏳, blackbody emission conversion ⏳ |
@@ -174,3 +176,17 @@ Tallies today: 20 pass classes fully implemented, 4 partial, 14 not implemented
 6. **BC-textured scenes currently sample CPU-decoded RGBA8 (≤512px per texture)**
    instead of native full-res BC arrays — a quality/memory divergence until the
    per-format BC texture-array material path lands (⏳, §8.4).
+7. **Displacement marching uses the conservative global shell** (max thickness)
+   instead of native's per-triangle min/max-sampler tightening — WebGPU has no
+   reduction samplers (§8.1). The shell only bounds the search range, so
+   intersections are identical; marching is somewhat slower. v1 also binds a
+   single displacement texture per scene.
+8. **The fp64 watertight-triangle tiebreak is replaced by a Kahan
+   difference-of-products (`fma`)** — extended precision rather than true fp64;
+   affects only exactly-edge-grazing rays.
+9. **Custom primitives render as visible box meshes** (the 🟡 approximation in
+   §8.4); native draws nothing for them unless an app supplies an intersection
+   shader. Scene compares strip `addCustomPrimitive` calls.
+10. **Animation before the first keyframe clamps to it** (Constant behavior,
+   matching native defaults); scenes assigning per-clip pre/post-infinity
+   behaviors extrapolate natively but stay clamped on the web (§8.4).

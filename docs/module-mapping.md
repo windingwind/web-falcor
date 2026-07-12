@@ -46,9 +46,11 @@ SVO — all pure compute), `GridVolume`/`Grid` (NanoVDB parsing in TS; BC4-in-sh
 decode as native), `TriangleMesh`, `HitInfo`, `Transform`.
 
 This paragraph is the port *strategy*; see §8.4 for per-feature implementation
-status. As of the 2026-07-09 audit, still unimplemented ⏳: `SceneCache`,
-`LightProfile` (IES), MERL/MERLMix/RGL materials, `CurveTessellation` (curves/hair),
-vertex caches (Alembic), camera DoF/physical params, runtime material/light edits.
+status. Landed since the 2026-07-09 audit: `CurveTessellation` + curve rendering,
+displacement mapping, camera DoF, runtime material/light edits (incl. emissive
+flux rebuild). Still unimplemented ⏳: `SceneCache`, `LightProfile` (IES),
+MERL/MERLMix/RGL materials (no `.brdf`/`.bsdf` assets in the drop), vertex
+caches (Alembic).
 
 Scene GPU access (`Scene.slang`, `SceneBlock`, geometry/material/light buffers) is the
 same reflection-bound parameter block. The **bindless problem**: Falcor binds all
@@ -70,9 +72,10 @@ Importers (plugin package, like upstream; status per §8.4):
   `TriangleMesh.createFromFile` ⏳.
 - **PBRT**: TS port of Falcor's parser ✅ subset (materials map to Standard;
   textures/spectra/media/curves ⏳). **Mitsuba**: ⏳ not started.
-- **USD**: ⏳ not started; planned via `usd-wasm` (heavy, tens of MB WASM, lags
-  native OpenUSD — full nv-usd parity not promised). Declared a real 1:1
-  deliverable (§11.2).
+- **USD**: 🔶 subset via `tinyusdz`-wasm (1.9 MB; reads usda/usdc/usdz): meshes,
+  xform hierarchy, BasisCurves (USDA text), UsdPreviewSurface incl. textures —
+  verified vs the native USDImporter (§8.4). Lights/cameras/UsdSkel/subdiv wait
+  on tinyusdz API coverage.
 - **PythonImporter**: 🔶 via Pyodide (see §6.7) — runs unmodified `.pyscene`.
 
 ### 6.3 `Rendering/`
