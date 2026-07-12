@@ -34,8 +34,8 @@ by a documented toolchain/asset gap, ❌ means the web platform cannot provide i
 | Indirect dispatch | ✅ | `dispatchWorkgroupsIndirect` wired (`ComputeContext.dispatchRawIndirect`) |
 | Indirect draw / ExecuteIndirect | ⏳ | WebGPU has `drawIndirect`, not wired yet; ExecuteIndirect-style multi-draw would be loop-emulated 🟡 |
 | UAV counters / append buffers | 🟡 | emulated with explicit atomic counter buffers (packed-region pattern, see PixelStats) |
-| GpuTimer / timestamp queries | 🟡 partial | `Core/API/GpuTimer.ts` exists but uses the non-standard Chromium encoder `writeTimestamp` (no-ops elsewhere) and is not wired into passes/app; standard `timestampWrites` path ⏳ |
-| Profiler framework (FALCOR_PROFILE, Clock/FrameRate/TimeReport) | ⏳ | no CPU/GPU per-pass timing tree or overlay yet |
+| GpuTimer / timestamp queries | ✅ | standard `timestampWrites` on every compute/render pass via `Core/API/Profiler.ts` (RenderGraph labels each pass); legacy `Core/API/GpuTimer.ts` (`writeTimestamp`) kept for ad-hoc use |
+| Profiler framework (FALCOR_PROFILE, Clock/FrameRate/TimeReport) | 🟡 partial | per-pass GPU ms via `Profiler.getStats()` (timestampWrites + async resolve, ~1 frame late), shown in the Mogwai status line; no CPU events/timing tree/TimeReport |
 | Occlusion queries | ⏳ | WebGPU supports occlusion query sets; no QueryHeap/host API built yet. Pipeline-statistics queries ❌ (not in WebGPU) |
 | Async compute / multiple queues | ❌ | WebGPU exposes a single queue; Falcor's LowLevelContextData queue selection becomes a no-op (correctness unaffected) |
 | CUDA interop (buffers, semaphores, PyTorch tensors) | ❌ | no CUDA in browsers, full stop. `CudaUtils`/`CudaInterop` throw `UnsupportedFeatureError` |

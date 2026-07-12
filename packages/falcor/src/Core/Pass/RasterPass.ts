@@ -98,7 +98,10 @@ export class RasterPass {
         // Resolve bind groups (and flush dirty cbuffer uploads onto the encoder)
         // BEFORE opening the render pass — the encoder is locked while a pass is open.
         const bindGroups = this.vars.getGroupIndices().map((g) => ({ index: g, group: this.vars.getBindGroup(g) }));
-        const pass = ctx.getEncoder().beginRenderPass(fbo.getGpuRenderPassDescriptor());
+        const desc = fbo.getGpuRenderPassDescriptor();
+        const tw = this.device.profilerHook?.passTimestampWrites();
+        if (tw) desc.timestampWrites = tw;
+        const pass = ctx.getEncoder().beginRenderPass(desc);
         pass.setPipeline(gso.gpuPipeline);
         pass.setViewport(0, 0, fbo.width, fbo.height, 0, 1);
         const blendFactor = this.state.getBlendState().desc.blendFactor;

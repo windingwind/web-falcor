@@ -3,7 +3,7 @@
  * execute the graph each frame, present the marked output to the canvas.
  */
 
-import { Device, Logger, ProgramManager, RenderGraph, ResourceFormat, createPass, encodeExr, initScripting, initSlang, runGraphScript, runSceneScript, runPbrtScene, presentToCanvas, type Scene } from "@web-falcor/falcor";
+import { Device, Logger, Profiler, ProgramManager, RenderGraph, ResourceFormat, createPass, encodeExr, initScripting, initSlang, runGraphScript, runSceneScript, runPbrtScene, presentToCanvas, type Scene } from "@web-falcor/falcor";
 import "@web-falcor/render-passes";
 import { CameraController } from "./CameraController.js";
 import { buildUIPanel } from "./UIPanel.js";
@@ -141,6 +141,8 @@ async function loadInitialContent(state: ViewerState, device: Device): Promise<v
 
 async function main() {
     const device = await Device.create();
+    const profiler = new Profiler(device);
+    if (profiler.available) device.enableProfiler(profiler);
     const context = canvas.getContext("webgpu");
     if (!context) throw new Error("Failed to get webgpu canvas context");
     const format = navigator.gpu.getPreferredCanvasFormat();
@@ -172,6 +174,7 @@ async function main() {
     (window as unknown as { mogwai: ViewerState }).mogwai = state; // debug/test handle
 
     let animStart = -1;
+    let lastGpuLine = "";
     function frame(now: number) {
         const cam = state.scene?.camera;
         let dirty = cam ? camControl.update(cam, now) : false;
@@ -186,7 +189,11 @@ async function main() {
             const tex = state.graph.getOutput(state.output);
             if (tex) presentToCanvas(device, tex, context!.getCurrentTexture(), format);
             state.frame++;
-            status.textContent = `${state.output} · frame ${state.frame}`;
+            const gpu = profiler.available && state.frame % 30 === 0
+                ? [...profiler.getStats()].map(([k, v]) => `${k} ${v.toFixed(2)}ms`).join(" · ")
+                : null;
+            if (gpu) lastGpuLine = gpu;
+            status.textContent = `${state.output} · frame ${state.frame}${lastGpuLine ? " · " + lastGpuLine : ""}`;
         }
         requestAnimationFrame(frame);
     }

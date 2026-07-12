@@ -38,22 +38,29 @@ struct VSOut {
 `;
 
 export class RenderContext extends ComputeContext {
+    /** Attaches profiler timestamps to a render-pass descriptor when active. */
+    private withTimestamps(desc: GPURenderPassDescriptor): GPURenderPassDescriptor {
+        const tw = this.device.profilerHook?.passTimestampWrites();
+        if (tw) desc.timestampWrites = tw;
+        return desc;
+    }
+
     private blitPipelines = new Map<GPUTextureFormat, GPURenderPipeline>();
     private blitSamplers = new Map<GPUFilterMode, GPUSampler>();
 
     /** Mirrors RenderContext::clearRtv. */
     clearRtv(view: GPUTextureView, color: [number, number, number, number]): void {
-        const pass = this.getEncoder().beginRenderPass({
+        const pass = this.getEncoder().beginRenderPass(this.withTimestamps({
             colorAttachments: [
                 { view, clearValue: { r: color[0], g: color[1], b: color[2], a: color[3] }, loadOp: "clear", storeOp: "store" },
             ],
-        });
+        }));
         pass.end();
     }
 
     /** Mirrors RenderContext::clearDsv. */
     clearDsv(view: GPUTextureView, depth: number, stencil: number, clearDepth = true, clearStencil = false): void {
-        const pass = this.getEncoder().beginRenderPass({
+        const pass = this.getEncoder().beginRenderPass(this.withTimestamps({
             colorAttachments: [],
             depthStencilAttachment: {
                 view,
@@ -62,7 +69,7 @@ export class RenderContext extends ComputeContext {
                 depthStoreOp: "store",
                 ...(clearStencil ? { stencilClearValue: stencil, stencilLoadOp: "clear" as const, stencilStoreOp: "store" as const } : {}),
             },
-        });
+        }));
         pass.end();
     }
 
@@ -105,9 +112,9 @@ export class RenderContext extends ComputeContext {
                 { binding: 1, resource: sampler },
             ],
         });
-        const pass = this.getEncoder().beginRenderPass({
+        const pass = this.getEncoder().beginRenderPass(this.withTimestamps({
             colorAttachments: [{ view: dst.getRTV(dstMip), loadOp: "clear", clearValue: { r: 0, g: 0, b: 0, a: 0 }, storeOp: "store" }],
-        });
+        }));
         pass.setPipeline(pipeline);
         pass.setBindGroup(0, bindGroup);
         pass.draw(3);
@@ -127,7 +134,7 @@ export class RenderContext extends ComputeContext {
         instanceCount = 1,
         opts: { indexed?: boolean; blendConstant?: [number, number, number, number]; stencilRef?: number } = {},
     ): void {
-        const pass = this.getEncoder().beginRenderPass(fbo.getGpuRenderPassDescriptor());
+        const pass = this.getEncoder().beginRenderPass(this.withTimestamps(fbo.getGpuRenderPassDescriptor()));
         pass.setPipeline(gso.gpuPipeline);
         pass.setViewport(0, 0, fbo.width, fbo.height, 0, 1);
         bindGroups.forEach((bg, i) => bg && pass.setBindGroup(i, bg));
@@ -146,11 +153,11 @@ export class RenderContext extends ComputeContext {
     /** Mirrors RenderContext::resolveResource (MSAA resolve). */
     resolveResource(src: Texture, dst: Texture): void {
         if (src.sampleCount <= 1) throw new RuntimeError("resolveResource: source is not multisampled");
-        const pass = this.getEncoder().beginRenderPass({
+        const pass = this.getEncoder().beginRenderPass(this.withTimestamps({
             colorAttachments: [
                 { view: src.getRTV(), resolveTarget: dst.getRTV(), loadOp: "load", storeOp: "discard" },
             ],
-        });
+        }));
         pass.end();
     }
 }

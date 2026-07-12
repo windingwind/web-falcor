@@ -124,6 +124,14 @@ export class Device {
         return this.gpuDevice.features.has(feature);
     }
 
+    /** Per-pass GPU profiler (created on first access; inert without timestamp-query). */
+    private _profiler: import("./Profiler.js").Profiler | null = null;
+    profilerHook: import("./Profiler.js").Profiler | null = null;
+    enableProfiler(profiler: import("./Profiler.js").Profiler): void {
+        this._profiler = profiler;
+        this.profilerHook = profiler;
+    }
+
     getSupportedFeatures(): SupportedFeatures {
         return {
             raytracing: false,

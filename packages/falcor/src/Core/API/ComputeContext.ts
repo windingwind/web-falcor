@@ -16,7 +16,8 @@ export class ComputeContext extends CopyContext {
         groupsY = 1,
         groupsZ = 1,
     ): void {
-        const pass = this.getEncoder().beginComputePass();
+        const tw = this.device.profilerHook?.passTimestampWrites();
+        const pass = this.getEncoder().beginComputePass(tw ? { timestampWrites: tw } : undefined);
         pass.setPipeline(pipeline);
         bindGroups.forEach((bg, i) => bg && pass.setBindGroup(i, bg));
         pass.dispatchWorkgroups(groupsX, groupsY, groupsZ);
@@ -25,7 +26,8 @@ export class ComputeContext extends CopyContext {
 
     /** Mirrors ComputeContext::dispatchIndirect at the raw level. */
     dispatchRawIndirect(pipeline: GPUComputePipeline, bindGroups: (GPUBindGroup | null)[], argBuffer: Buffer, argOffset: number): void {
-        const pass = this.getEncoder().beginComputePass();
+        const tw = this.device.profilerHook?.passTimestampWrites();
+        const pass = this.getEncoder().beginComputePass(tw ? { timestampWrites: tw } : undefined);
         pass.setPipeline(pipeline);
         bindGroups.forEach((bg, i) => bg && pass.setBindGroup(i, bg));
         pass.dispatchWorkgroupsIndirect(argBuffer.gpuBuffer, argOffset);

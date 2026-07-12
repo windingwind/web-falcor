@@ -288,8 +288,14 @@ export class RenderGraph {
         // Native Mogwai calls Scene::update() (camera beginFrame: jitter pattern
         // advance) before executing the graph each frame; web folds it in here.
         this.scene?.camera.beginFrame();
+        const profiler = ctx.device.profilerHook;
         for (const { pass, resources } of this.compiled!) {
+            if (profiler) profiler.currentLabel = pass.name || pass.constructor.name;
             pass.execute(ctx, new RenderData(resources, this.defaultDims, this.passDictionary));
+        }
+        if (profiler) {
+            profiler.currentLabel = "";
+            profiler.endFrame(ctx.getEncoder());
         }
     }
 }
