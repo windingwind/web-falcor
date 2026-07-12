@@ -408,6 +408,7 @@
     "WebFalcor/Overrides/Scene/SDFs/SparseVoxelSet/SDFSVS.slang",
     "WebFalcor/Overrides/Scene/Scene.slang",
     "WebFalcor/Overrides/Scene/SceneTypes.slang",
+    "WebFalcor/Overrides/Utils/Algorithm/BitonicSort.cs.slang",
     "WebFalcor/Overrides/Utils/Algorithm/ParallelReduction.cs.slang",
     "WebFalcor/Overrides/Utils/Algorithm/PrefixSum.cs.slang",
     "WebFalcor/Overrides/Utils/Geometry/IntersectionHelpers.slang",

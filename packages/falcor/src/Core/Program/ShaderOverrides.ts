@@ -10,6 +10,7 @@
 
 export const kShaderOverrides: Readonly<Record<string, string>> = {
     // RWBuffer texel buffers + warp-size-32 wave reduction -> structured buffers + portable shared-memory reduction.
+    "Utils/Algorithm/BitonicSort.cs.slang": "WebFalcor/Overrides/Utils/Algorithm/BitonicSort.cs.slang",
     "Utils/Algorithm/ParallelReduction.cs.slang": "WebFalcor/Overrides/Utils/Algorithm/ParallelReduction.cs.slang",
     // ByteAddressBuffer atomics -> structured buffers with Atomic<uint> elements.
     "Utils/Algorithm/PrefixSum.cs.slang": "WebFalcor/Overrides/Utils/Algorithm/PrefixSum.cs.slang",

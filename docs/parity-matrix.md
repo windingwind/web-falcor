@@ -153,7 +153,7 @@ Tallies today: 20 pass classes fully implemented, 4 partial, 14 not implemented
 | PixelStats | ✅ | packed-atomic-buffer collection (verified vs native rayCount/pathLength dumps) + `Rendering/Utils/PixelStats.ts` `getStats()` aggregate (GPU region sums, async readback ~1 frame late, docs §9); PathTracer exposes `getPixelStats()` |
 | WarpProfiler | ⏳ | subgroup-dependent; portable where `subgroups` exists |
 | BSDFIntegrator (white furnace) | ⏳ | BSDFViewer pass exists; integrator harness not built |
-| Algorithm library | ✅ partial | ParallelReduction ✅, PrefixSum ✅, BitonicSort ⏳ (warp-32 assumptions; CPU sorts used instead) |
+| Algorithm library | ✅ | ParallelReduction ✅, PrefixSum ✅, BitonicSort ✅ (portable shared-memory override of the NVAPI warp-shuffle kernel, §9; exact vs CPU chunk sort incl. 2D dispatch + tail padding) |
 | Utils/Math | ✅ core | Vector/Matrix/Quaternion ✅; CubicSpline host / SphericalHarmonics ⏳ |
 | Gui (Dear ImGui) | 🔶 | DOM `UIWidgets` (text/button/checkbox/slider/dropdown/group); `renderUI` implemented on 2 passes so far ⏳; TextRenderer/Font/PixelZoom ⏳ |
 | Video (FFmpeg encode/decode) | ❌ native / ⏳ substitute | WebCodecs route not built |
