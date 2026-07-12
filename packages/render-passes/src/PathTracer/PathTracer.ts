@@ -10,6 +10,7 @@
  */
 
 import {
+    PixelStats,
     Buffer,
     ComputePass,
     FieldFlags,
@@ -58,6 +59,7 @@ export class PathTracer extends RenderPass {
     private useViewDir = false;
     private statsBuffer: Buffer | null = null;
     private statsResolvePass: ComputePass | null = null;
+    private pixelStats: PixelStats | null = null;
     private tracePass: ComputePass | null = null;
     private frameCount = 0;
     private sampleGenerator: SampleGenerator;
@@ -263,6 +265,11 @@ export class PathTracer extends RenderPass {
         } catch {
             /* binding absent in this variant */
         }
+    }
+
+    /** Mirrors PixelStats::getStats (valid once stats-collecting frames resolve). */
+    getPixelStats(): import("@web-falcor/falcor").PixelStatsAggregate {
+        return (this.pixelStats ?? new PixelStats(this.device)).getStats();
     }
 
     override execute(ctx: RenderContext, renderData: RenderData): void {
@@ -480,6 +487,9 @@ export class PathTracer extends RenderPass {
             if (rayCount) this.trySet(root, "gRayCount", rayCount);
             if (pathLength) this.trySet(root, "gPathLength", pathLength);
             this.statsResolvePass.execute(ctx, frameDim[0], frameDim[1]);
+            // Aggregate totals for getPixelStats (mirrors PixelStats::endFrame).
+            this.pixelStats ??= new PixelStats(this.device);
+            this.pixelStats.resolve(ctx, this.statsBuffer!, frameDim);
         }
 
         this.frameCount++;

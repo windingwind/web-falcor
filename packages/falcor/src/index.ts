@@ -70,6 +70,7 @@ export * from "./Scene/Importer/DDSLoader.js";
 export * from "./Scene/Material/TextureManager.js";
 export * from "./Scene/Lights/EnvMap.js";
 export * from "./Scene/TangentSpace.js";
+export * from "./Rendering/Utils/PixelStats.js";
 export * from "./Rendering/Lights/EnvMapSampler.js";
 export * from "./Rendering/Lights/EmissivePowerSampler.js";
 export * from "./Rendering/Lights/LightBVHTypes.js";

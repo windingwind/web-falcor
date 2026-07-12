@@ -150,7 +150,7 @@ Tallies today: 20 pass classes fully implemented, 4 partial, 14 not implemented
 | RenderGraph core (compile, alloc, I/O merge, `.py` load) | ✅ | verified across all feature graphs |
 | RenderPassReflection completeness | ⏳ gaps | `Persistent` flag, resolve-size callbacks, non-texture2D field builders missing |
 | PixelDebug host (shader `print()` readback/console) | ⏳ | shaders compile with `printSetPixel`, but no host class binds/reads `gPixelDebug` — shader print output never surfaces |
-| PixelStats | 🟡 inline | packed-atomic-buffer port verified inside PathTracer (rayCount/pathLength vs native); reusable class + `getStats()` aggregate readback ⏳ |
+| PixelStats | ✅ | packed-atomic-buffer collection (verified vs native rayCount/pathLength dumps) + `Rendering/Utils/PixelStats.ts` `getStats()` aggregate (GPU region sums, async readback ~1 frame late, docs §9); PathTracer exposes `getPixelStats()` |
 | WarpProfiler | ⏳ | subgroup-dependent; portable where `subgroups` exists |
 | BSDFIntegrator (white furnace) | ⏳ | BSDFViewer pass exists; integrator harness not built |
 | Algorithm library | ✅ partial | ParallelReduction ✅, PrefixSum ✅, BitonicSort ⏳ (warp-32 assumptions; CPU sorts used instead) |
