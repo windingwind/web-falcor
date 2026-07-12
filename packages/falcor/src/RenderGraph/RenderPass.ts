@@ -42,6 +42,10 @@ export const kRenderPassPRNGDimension = "prngDimension";
 
 export abstract class RenderPass {
     name = "";
+    /** Registry type string, set by createPass (used by RenderGraph.exportScript). */
+    type = "";
+    /** Creation properties (exportScript fallback for passes without getProperties). */
+    creationProps: Properties | null = null;
 
     constructor(public readonly device: Device) {}
 
@@ -92,6 +96,8 @@ export function createPass(device: Device, type: string, props: Properties | Rec
     const properties = props instanceof Properties ? props : new Properties(props as Record<string, never>);
     const pass = factory(device, properties);
     pass.name = type;
+    pass.type = type;
+    pass.creationProps = properties;
     return pass;
 }
 

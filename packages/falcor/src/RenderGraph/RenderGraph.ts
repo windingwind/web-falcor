@@ -80,11 +80,50 @@ export class RenderGraph {
         this.compiled = null;
     }
 
+    /** Mirrors RenderGraph::removeEdge(src, dst). */
+    removeEdge(src: string, dst: string): void {
+        const [srcPass, srcField] = splitFieldRef(src);
+        const [dstPass, dstField] = splitFieldRef(dst);
+        this.edges = this.edges.filter(
+            (e) => !(e.srcPass === srcPass && e.srcField === srcField && e.dstPass === dstPass && e.dstField === dstField),
+        );
+        this.compiled = null;
+    }
+
     /** Mirrors RenderGraph::markOutput. */
     markOutput(ref: string): void {
         const [pass, field] = splitFieldRef(ref);
         this.outputs.push({ pass, field });
         this.compiled = null;
+    }
+
+    /** Mirrors RenderGraph::unmarkOutput. */
+    unmarkOutput(ref: string): void {
+        const [pass, field] = splitFieldRef(ref);
+        this.outputs = this.outputs.filter((o) => !(o.pass === pass && o.field === field));
+        this.compiled = null;
+    }
+
+    /**
+     * Mirrors RenderGraphExporter: a python script reproducing this graph.
+     * Divergence (docs §9): emits the camelCase dialect of the upstream
+     * image-test graphs (what runGraphScript executes) rather than the native
+     * snake_case IR; markOutput channel masks are not tracked.
+     */
+    exportScript(): string {
+        let varName = this.name.replace(/\W/g, "_");
+        if (/^\d/.test(varName)) varName = "_" + varName;
+        const fn = `render_graph_${varName}`;
+        const lines = ["from falcor import *", "", `def ${fn}():`, `    g = RenderGraph(${pyRepr(this.name)})`];
+        for (const [name, pass] of this.passes) {
+            const live = pass.getProperties();
+            const props = [...live.entries()].length > 0 ? live : pass.creationProps;
+            lines.push(`    g.addPass(createPass(${pyRepr(pass.type || pass.constructor.name)}, ${pyRepr(props?.toJSON() ?? {})}), ${pyRepr(name)})`);
+        }
+        for (const e of this.edges) lines.push(`    g.addEdge(${pyRepr(`${e.srcPass}.${e.srcField}`)}, ${pyRepr(`${e.dstPass}.${e.dstField}`)})`);
+        for (const o of this.outputs) lines.push(`    g.markOutput(${pyRepr(`${o.pass}.${o.field}`)})`);
+        lines.push("    return g", "", `${varName} = ${fn}()`, `try: m.addGraph(${varName})`, "except NameError: None", "");
+        return lines.join("\n");
     }
 
     /** Mirrors RenderGraph::setInput: binds an external resource to an unconnected input. */
@@ -298,6 +337,25 @@ export class RenderGraph {
             profiler.endFrame(ctx.getEncoder());
         }
     }
+}
+
+/** Python literal for a property value (vectors as floatN(...) factory calls). */
+function pyRepr(v: unknown): string {
+    if (typeof v === "boolean") return v ? "True" : "False";
+    if (typeof v === "number") return Number.isFinite(v) ? String(v) : `float("${v > 0 ? "inf" : v < 0 ? "-inf" : "nan"}")`;
+    if (typeof v === "string") return JSON.stringify(v);
+    if (Array.isArray(v)) return `[${v.map(pyRepr).join(", ")}]`;
+    if (v && typeof v === "object") {
+        const o = v as Record<string, unknown>;
+        const comps = ["x", "y", "z", "w"].filter((c) => typeof o[c] === "number");
+        if (comps.length >= 2 && Object.keys(o).length === comps.length) {
+            return `float${comps.length}(${comps.map((c) => o[c]).join(", ")})`;
+        }
+        return `{${Object.entries(o)
+            .map(([k, val]) => `${JSON.stringify(k)}: ${pyRepr(val)}`)
+            .join(", ")}}`;
+    }
+    return "None";
 }
 
 function splitFieldRef(ref: string): [string, string] {
