@@ -441,9 +441,11 @@ export class Scene {
         this.hasAnimatedCameraOrLights = cameraNodeID !== undefined || lights.some((l) => l.nodeID !== undefined);
 
         // Emissive geometry (LightCollection); inputs retained so runtime
-        // emissive edits can rebuild the flux tables.
+        // emissive edits can rebuild the flux tables. materialDescs must be
+        // assigned first — the rebuild reads it.
         this.lcMeshes = meshes;
         this.lcTextureManager = textureManager;
+        this.materialDescs = materials;
         this.rebuildLightCollection();
 
         // Materials.

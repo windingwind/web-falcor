@@ -3,7 +3,7 @@
  * execute the graph each frame, present the marked output to the canvas.
  */
 
-import { Device, Logger, ProgramManager, RenderGraph, createPass, initScripting, initSlang, runGraphScript, runSceneScript, runPbrtScene, presentToCanvas, type Scene } from "@web-falcor/falcor";
+import { Device, Logger, ProgramManager, RenderGraph, ResourceFormat, createPass, encodeExr, initScripting, initSlang, runGraphScript, runSceneScript, runPbrtScene, presentToCanvas, type Scene } from "@web-falcor/falcor";
 import "@web-falcor/render-passes";
 import { CameraController } from "./CameraController.js";
 import { buildUIPanel } from "./UIPanel.js";
@@ -193,9 +193,49 @@ async function main() {
     requestAnimationFrame(frame);
 }
 
+/** Downloads the current marked output (mirrors Mogwai FrameCapture:
+ *  float formats save EXR, 8-bit formats save PNG). */
+async function captureFrame(state: ViewerState): Promise<void> {
+    if (!state.graph || !state.output) return;
+    const tex = state.graph.getOutput(state.output);
+    if (!tex) return;
+    const raw = await state.device.renderContext.readTextureSubresource(tex);
+    const name = `${state.output.replace(/\./g, "_")}.${state.frame}`;
+    const isFloat = ResourceFormat[tex.format]?.includes("Float") ?? false;
+    let blob: Blob;
+    let filename: string;
+    if (isFloat) {
+        const exr = encodeExr(new Float32Array(raw.buffer), tex.width, tex.height);
+        blob = new Blob([exr.slice().buffer as ArrayBuffer], { type: "image/x-exr" });
+        filename = `${name}.exr`;
+    } else {
+        // 8-bit path; swizzle BGRA-ordered readbacks to RGBA.
+        const bytes = new Uint8ClampedArray(raw.buffer.slice(0) as ArrayBuffer);
+        if (ResourceFormat[tex.format]?.startsWith("BGRA")) {
+            for (let i = 0; i < bytes.length; i += 4) {
+                const b = bytes[i]!;
+                bytes[i] = bytes[i + 2]!;
+                bytes[i + 2] = b;
+            }
+        }
+        const canvas2 = new OffscreenCanvas(tex.width, tex.height);
+        canvas2.getContext("2d")!.putImageData(new ImageData(bytes, tex.width, tex.height), 0, 0);
+        blob = await canvas2.convertToBlob({ type: "image/png" });
+        filename = `${name}.png`;
+    }
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = filename;
+    a.click();
+    URL.revokeObjectURL(a.href);
+}
+
 /** Wires the plain-DOM control bar (created in index.html). */
 function wireControls(state: ViewerState, rebuildUI: () => void): void {
     const $ = (id: string) => document.getElementById(id);
+    ($("capture") as HTMLButtonElement | null)?.addEventListener("click", () => {
+        void captureFrame(state);
+    });
     ($("play") as HTMLButtonElement | null)?.addEventListener("click", () => {
         state.playing = !state.playing;
         ($("play") as HTMLButtonElement).textContent = state.playing ? "Pause" : "Play";
