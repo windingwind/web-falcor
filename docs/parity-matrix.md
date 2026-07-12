@@ -94,7 +94,7 @@ Tallies today: 20 pass classes fully implemented, 4 partial, 14 not implemented
 
 | Component | Status | Notes |
 |---|---|---|
-| Mogwai app (functional viewer) | ✅ core | loads graph `.py` + `.pyscene`/`.pbrt`, per-frame execute, presents marked output (swapchain blit), play/pause + graph/output pickers, first-person camera, per-pass DOM `renderUI` panel, URL params. Missing ⏳: FrameCapture / VideoCapture (WebCodecs) / TimingCapture extensions, python console, scene/material/light UI, profiler overlay |
+| Mogwai app (functional viewer) | ✅ core | loads graph `.py` + `.pyscene`/`.pbrt`, per-frame execute, presents marked output (swapchain blit), play/pause + graph/output pickers, first-person camera, per-pass DOM `renderUI` panel, URL params. FrameCapture ✅ (Capture button: float outputs download as EXR, 8-bit as PNG). Missing ⏳: VideoCapture (WebCodecs) / TimingCapture extensions, python console, scene/material/light UI, profiler overlay |
 | Python scripting / console | 🔶 | Pyodide runs **unmodified** upstream `.py` graphs and `.pyscene` files via a curated `falcor` bridge (factories + SceneBuilderBridge). No auto-generated ScriptBindings, no ScriptWriter, no interactive console ⏳ |
 | PyTorch interop (`falcor.pytorch`) | ❌ | no CUDA/torch in browser; ONNX-web-style substitute would be non-parity ⏳ |
 | FalcorTest | 🔶 | vitest (unit) + Playwright GPU harness w/ native-oracle image compares (§7); no slang-driven `GPU_TEST` framework ⏳ |
@@ -103,7 +103,7 @@ Tallies today: 20 pass classes fully implemented, 4 partial, 14 not implemented
 | ImageCompare | 🔶 | native tool used on CI host for oracle diffing; its MSE/FLIP gate policy reimplemented inline in the GPU suites + FLIPPass. No standalone in-browser tool ⏳ |
 | Importers | see §8.4 | glTF ✅ (TS), FBX 🔶 (assimpjs, `.fbx` full scenes only), PBRT ✅ subset, `.pyscene` ✅, USD 🔶 subset (tinyusdz-wasm: meshes/xforms/UsdPreviewSurface incl. baseColor/ORM/normal/emissive textures, verified vs native — lights/cameras/skel/subdiv ⏳), Mitsuba ⏳ (no Mitsuba content in the media drop → no oracle) |
 | SceneCache | ⏳ | binary scene cache not built (OPFS/IndexedDB route available) |
-| Image IO (Bitmap/EXR read+write, image save) | 🟡 read | `.hdr`/DDS-BC/`.exr` decode (EXR via parse-exr, wired into ImageLoader + EnvMap); EXR write, unified Bitmap, save-to-file ⏳ (captures) |
+| Image IO (Bitmap/EXR read+write, image save) | 🟡 | `.hdr`/DDS-BC/`.exr` decode (EXR via parse-exr, wired into ImageLoader + EnvMap + ErrorMeasure); EXR write (uncompressed float scanlines, bit-exact round-trip) feeds the viewer capture; unified Bitmap class ⏳ |
 | NVTT texture compression | ❌ native / ⏳ substitute | decode side covered (DDS/BC parse + `texture-compression-bc` upload + CPU BC1/3/5 decode); a WASM BC *encoder* would be a substitute, not NVTT parity |
 
 ### 8.4 Scene, materials, lights, animation (audit 2026-07-09)
