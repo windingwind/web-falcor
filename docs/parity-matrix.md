@@ -36,7 +36,7 @@ by a documented toolchain/asset gap, ❌ means the web platform cannot provide i
 | UAV counters / append buffers | 🟡 | emulated with explicit atomic counter buffers (packed-region pattern, see PixelStats) |
 | GpuTimer / timestamp queries | ✅ | standard `timestampWrites` on every compute/render pass via `Core/API/Profiler.ts` (RenderGraph labels each pass); legacy `Core/API/GpuTimer.ts` (`writeTimestamp`) kept for ad-hoc use |
 | Profiler framework (FALCOR_PROFILE, Clock/FrameRate/TimeReport) | 🟡 partial | per-pass GPU ms via `Profiler.getStats()` (timestampWrites + async resolve, ~1 frame late), shown in the Mogwai status line; no CPU events/timing tree/TimeReport |
-| Occlusion queries | ⏳ | WebGPU supports occlusion query sets; no QueryHeap/host API built yet. Pipeline-statistics queries ❌ (not in WebGPU) |
+| Occlusion queries | ✅ | `Core/API/QueryHeap.ts` (occlusion + timestamp types) + `RasterPass.setOcclusionQuery`; verified: depth-rejected draw reads 0 samples, visible draw counts all. Pipeline-statistics queries ❌ (not in WebGPU) |
 | Async compute / multiple queues | ❌ | WebGPU exposes a single queue; Falcor's LowLevelContextData queue selection becomes a no-op (correctness unaffected) |
 | CUDA interop (buffers, semaphores, PyTorch tensors) | ❌ | no CUDA in browsers, full stop. `CudaUtils`/`CudaInterop` throw `UnsupportedFeatureError` |
 | NSight Aftermath | ❌ | driver crash-dump tech; browser substitute is WebGPU validation + device-lost logs |

@@ -14,6 +14,8 @@ import { ParameterBlock, makeRootVar, type ShaderVar } from "../Program/Paramete
 import { mergeWgslBindings } from "../Program/ProgramReflection.js";
 import type { Program, ProgramVersion } from "../Program/Program.js";
 import { GraphicsState } from "../State/GraphicsState.js";
+import { QueryHeap, QueryHeapType } from "../API/QueryHeap.js";
+import { ArgumentError } from "../Error.js";
 
 export interface RasterPassDesc {
     /** Module path(s); vs/ps entries reference them via vsModuleIndex/psModuleIndex. */
@@ -78,6 +80,14 @@ export class RasterPass {
         return this.vars;
     }
 
+    private occlusionQuery: { heap: QueryHeap; index: number } | null = null;
+
+    /** Wraps subsequent draws in an occlusion query (samples land in the heap). */
+    setOcclusionQuery(heap: QueryHeap | null, index = 0): void {
+        if (heap && heap.type !== QueryHeapType.Occlusion) throw new ArgumentError("setOcclusionQuery: heap must be an occlusion heap");
+        this.occlusionQuery = heap ? { heap, index } : null;
+    }
+
     /** Mirrors RasterPass::draw: non-indexed draw into the state's FBO. */
     draw(ctx: RenderContext, fbo: Fbo, vertexCount: number, instanceCount = 1): void {
         this.state.setFbo(fbo);
@@ -120,7 +130,9 @@ export class RasterPass {
         const desc = fbo.getGpuRenderPassDescriptor();
         const tw = this.device.profilerHook?.passTimestampWrites();
         if (tw) desc.timestampWrites = tw;
+        if (this.occlusionQuery) desc.occlusionQuerySet = this.occlusionQuery.heap.gpuQuerySet;
         const pass = ctx.getEncoder().beginRenderPass(desc);
+        if (this.occlusionQuery) pass.beginOcclusionQuery(this.occlusionQuery.index);
         pass.setPipeline(gso.gpuPipeline);
         pass.setViewport(0, 0, fbo.width, fbo.height, 0, 1);
         const blendFactor = this.state.getBlendState().desc.blendFactor;
@@ -130,6 +142,7 @@ export class RasterPass {
         for (const { index, group } of bindGroups) pass.setBindGroup(index, group);
         vao?.vertexBuffers.forEach((vb, i) => pass.setVertexBuffer(i, vb.gpuBuffer));
         emit(pass, vao);
+        if (this.occlusionQuery) pass.endOcclusionQuery();
         pass.end();
     }
 }

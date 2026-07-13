@@ -16,6 +16,7 @@ export * from "./Core/API/Present.js";
 export * from "./Core/API/Fence.js";
 export * from "./Core/API/GpuTimer.js";
 export * from "./Core/API/Profiler.js";
+export * from "./Core/API/QueryHeap.js";
 export * from "./Core/API/CopyContext.js";
 export * from "./Core/API/ComputeContext.js";
 export * from "./Core/API/RenderContext.js";
