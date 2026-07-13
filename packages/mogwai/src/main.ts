@@ -36,7 +36,7 @@ async function loadScene(state: ViewerState, url: string, baseUrl: string): Prom
     const source = await (await fetch(url)).text();
     const scene = url.toLowerCase().endsWith(".pbrt")
         ? await runPbrtScene(state.device, source, baseUrl)
-        : await runSceneScript(state.device, source, baseUrl);
+        : await runSceneScript(state.device, source, baseUrl, { cache: true }); // OPFS scene cache: fast reloads
     scene.camera.setAspectRatio(canvas.width / canvas.height);
     state.scene = scene;
     if (state.graph) state.graph.setScene(scene);
