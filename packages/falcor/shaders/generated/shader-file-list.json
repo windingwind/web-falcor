@@ -358,6 +358,7 @@
     "WebFalcor/Debug/SdfProbe.cs.slang",
     "WebFalcor/GridLookupTest.cs.slang",
     "WebFalcor/GridVolumeProbe.cs.slang",
+    "WebFalcor/IndirectTest.3d.slang",
     "WebFalcor/MixedStructRepro.cs.slang",
     "WebFalcor/Overrides/RenderPasses/AccumulatePass/Accumulate.cs.slang",
     "WebFalcor/Overrides/RenderPasses/BSDFViewer/BSDFViewer.cs.slang",

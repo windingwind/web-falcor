@@ -6,6 +6,7 @@
 import type { Device } from "../API/Device.js";
 import type { RenderContext } from "../API/RenderContext.js";
 import type { Fbo } from "../API/FBO.js";
+import type { Buffer } from "../API/Buffer.js";
 import type { Vao } from "../API/VAO.js";
 import { DefineList } from "../Program/DefineList.js";
 import { ShaderType } from "../Program/SlangCompiler.js";
@@ -89,6 +90,24 @@ export class RasterPass {
         this.drawCommon(ctx, fbo, (pass, vao) => {
             if (vao?.indexBuffer) pass.setIndexBuffer(vao.indexBuffer.gpuBuffer, vao.getGpuIndexFormat());
             pass.drawIndexed(indexCount, instanceCount);
+        });
+    }
+
+    /** Mirrors RenderContext::drawIndirect (§9: WebGPU has no GPU count
+     *  buffer; multiple commands loop over the 16-byte arg stride). */
+    drawIndirect(ctx: RenderContext, fbo: Fbo, commandCount: number, argBuffer: Buffer, argByteOffset = 0): void {
+        this.state.setFbo(fbo);
+        this.drawCommon(ctx, fbo, (pass) => {
+            for (let i = 0; i < commandCount; i++) pass.drawIndirect(argBuffer.gpuBuffer, argByteOffset + i * 16);
+        });
+    }
+
+    /** Mirrors RenderContext::drawIndexedIndirect (20-byte arg stride). */
+    drawIndexedIndirect(ctx: RenderContext, fbo: Fbo, commandCount: number, argBuffer: Buffer, argByteOffset = 0): void {
+        this.state.setFbo(fbo);
+        this.drawCommon(ctx, fbo, (pass, vao) => {
+            if (vao?.indexBuffer) pass.setIndexBuffer(vao.indexBuffer.gpuBuffer, vao.getGpuIndexFormat());
+            for (let i = 0; i < commandCount; i++) pass.drawIndexedIndirect(argBuffer.gpuBuffer, argByteOffset + i * 20);
         });
     }
 

@@ -32,7 +32,7 @@ by a documented toolchain/asset gap, ❌ means the web platform cannot provide i
 | Bindless resources / unbounded descriptor arrays | 🟡 | not in browser WebGPU; texture-array packing per format class (§6.2), documented limits |
 | Min/max-reduction texture samplers | ❌ | D3D12 `TextureReductionMode` has no WebGPU equivalent. Sole upstream consumer (displacement shell tightening) is overridden to conservative global bounds — identical intersections (§9.7); host-built min/max mip pyramids are the substitute if tight bounds are ever needed |
 | Indirect dispatch | ✅ | `dispatchWorkgroupsIndirect` wired (`ComputeContext.dispatchRawIndirect`) |
-| Indirect draw / ExecuteIndirect | ⏳ | WebGPU has `drawIndirect`, not wired yet; ExecuteIndirect-style multi-draw would be loop-emulated 🟡 |
+| Indirect draw / ExecuteIndirect | ✅ | `RasterPass.drawIndirect`/`drawIndexedIndirect` (GPU-driven args verified incl. zero-count command); §9: no GPU count buffer in WebGPU — multi-command loops over the arg stride |
 | UAV counters / append buffers | 🟡 | emulated with explicit atomic counter buffers (packed-region pattern, see PixelStats) |
 | GpuTimer / timestamp queries | ✅ | standard `timestampWrites` on every compute/render pass via `Core/API/Profiler.ts` (RenderGraph labels each pass); legacy `Core/API/GpuTimer.ts` (`writeTimestamp`) kept for ad-hoc use |
 | Profiler framework (FALCOR_PROFILE, Clock/FrameRate/TimeReport) | 🟡 partial | per-pass GPU ms via `Profiler.getStats()` (timestampWrites + async resolve, ~1 frame late), shown in the Mogwai status line; no CPU events/timing tree/TimeReport |
