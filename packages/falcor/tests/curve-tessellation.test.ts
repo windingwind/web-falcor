@@ -1,11 +1,13 @@
 import { describe, expect, it } from "vitest";
-import { readFileSync } from "node:fs";
+import { readFileSync, existsSync } from "node:fs";
 import { resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { CubicSpline, convertToLinearSweptSphere, extractBasisCurvesFromUsda } from "../src/Scene/Curves/CurveTessellation.js";
 import { float4x4 } from "../src/Utils/Math/Matrix.js";
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../../..");
+// Upstream fixture lives in the Falcor media tree, absent in CI (no clone).
+const curvesUsda = resolve(repoRoot, "Falcor/media/test_scenes/curves/two_curves.usda");
 
 describe("CurveTessellation", () => {
     it("matches an independent natural-spline solve (golden values)", () => {
@@ -50,8 +52,8 @@ describe("CurveTessellation", () => {
         expect(r.points[1]!.x).toBe(1);
     });
 
-    it("extracts BasisCurves from the upstream two_curves.usda", () => {
-        const source = readFileSync(resolve(repoRoot, "Falcor/media/test_scenes/curves/two_curves.usda"), "utf-8");
+    it.skipIf(!existsSync(curvesUsda))("extracts BasisCurves from the upstream two_curves.usda", () => {
+        const source = readFileSync(curvesUsda, "utf-8");
         const curves = extractBasisCurvesFromUsda(source);
         expect(curves.length).toBe(2);
         expect(curves[0]!.name).toBe("curve0");
