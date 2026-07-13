@@ -51,6 +51,7 @@ export * from "./Utils/Image/EXRDecoder.js";
 export * from "./Utils/Image/EXREncoder.js";
 export * from "./Utils/Scripting/Scripting.js";
 export * from "./Scene/Camera/Camera.js";
+export * from "./Scene/Camera/CameraController.js";
 export * from "./Utils/Math/Vector.js";
 export * from "./Utils/Math/Matrix.js";
 export * from "./Utils/Math/Quaternion.js";

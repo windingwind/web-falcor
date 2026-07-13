@@ -100,6 +100,7 @@ export class Camera {
     setTarget(t: float3): void { this.target = t.clone(); this.dirty = true; }
     getTarget(): float3 { return this.target.clone(); }
     setUpVector(u: float3): void { this.up = u.clone(); this.dirty = true; }
+    getUpVector(): float3 { return this.up.clone(); }
     setFocalLength(mm: number): void { this.focalLength = mm; this.dirty = true; }
     getFocalLength(): number { return this.focalLength; }
     /** Mirrors Camera::setFrameHeight (film-back height in mm; USD cameras author it). */

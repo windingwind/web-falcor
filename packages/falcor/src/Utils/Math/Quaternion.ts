@@ -55,6 +55,26 @@ export function rotateVector(q: quatf, v: float3): float3 {
     );
 }
 
+/** quatFromRotationBetweenVectors (QuaternionMath.h; inputs normalized). */
+export function quatFromRotationBetweenVectors(orig: float3, dest: float3): quatf {
+    const cosTheta = orig.x * dest.x + orig.y * dest.y + orig.z * dest.z;
+    if (cosTheta >= 1 - 1e-7) return new quatf(0, 0, 0, 1);
+    if (cosTheta < -1 + 1e-7) {
+        // Opposite directions: any perpendicular axis works (favor Y-ish).
+        let axis = new float3(-orig.y, orig.x, 0); // cross((0,0,1), orig)
+        if (axis.x * axis.x + axis.y * axis.y < 1e-7) axis = new float3(0, -orig.z, orig.y); // cross((1,0,0), orig)
+        const len = Math.hypot(axis.x, axis.y, axis.z);
+        return quatFromAngleAxis(Math.PI, new float3(axis.x / len, axis.y / len, axis.z / len));
+    }
+    const axis = new float3(
+        orig.y * dest.z - orig.z * dest.y,
+        orig.z * dest.x - orig.x * dest.z,
+        orig.x * dest.y - orig.y * dest.x,
+    );
+    const s = Math.sqrt((1 + cosTheta) * 2);
+    return new quatf(axis.x / s, axis.y / s, axis.z / s, s * 0.5);
+}
+
 /** matrixFromQuat (mirrors upstream 3x3 expansion, embedded in a 4x4). */
 export function matrixFromQuat(q: quatf): float4x4 {
     const qxx = q.x * q.x, qyy = q.y * q.y, qzz = q.z * q.z;
