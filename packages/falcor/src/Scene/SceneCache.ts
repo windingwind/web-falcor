@@ -2,9 +2,10 @@
  * Binary scene cache mirroring Scene/SceneCache.h in role: caches the
  * imported scene description so reloads skip script execution, importers,
  * and mesh processing. Web divergences (docs §9): OPFS storage keyed by a
- * SHA-256 of the scene source (no file timestamps); phase 1 covers static
- * geometry + materials + analytic lights + camera — scenes with textures,
- * env maps, volumes, SDF grids, curves, or animation fall back to import.
+ * SHA-256 of the scene source (no file timestamps); covers static geometry,
+ * materials, textures (lossless PNG re-encode), analytic lights, and the
+ * camera — env maps, volumes, SDF grids, curves, and animation fall back
+ * to a full import.
  */
 
 import type { Device } from "../Core/API/Device.js";
@@ -13,12 +14,12 @@ import { float2, float3, float4 } from "../Utils/Math/Vector.js";
 import { float4x4 } from "../Utils/Math/Matrix.js";
 import { quatf } from "../Utils/Math/Quaternion.js";
 import { Scene, type SceneMeshDesc, type SceneMaterialDesc } from "./Scene.js";
-import { TextureManager } from "./Material/TextureManager.js";
+import { TextureManager, type TextureSource } from "./Material/TextureManager.js";
 import type { AnalyticLight, StaticVertex } from "./SceneData.js";
 import type { SceneNode } from "./Animation/SceneAnimation.js";
 
 const kMagic = 0x43534657; // 'WFSC'
-const kVersion = 1;
+const kVersion = 2;
 const kFloatsPerVertex = 13; // pos3 + normal3 + tangent4 + texCrd2 + curveRadius
 
 export interface SceneCameraPose {
@@ -37,6 +38,8 @@ export interface CacheableScene {
     nodes: SceneNode[];
     cameraNodeID?: number;
     camera: SceneCameraPose;
+    /** Material textures as lossless PNG (phase 2). */
+    textures: { png: Uint8Array; srgb: boolean }[];
 }
 
 /** Tags math types so plain JSON survives the round trip. */
@@ -88,13 +91,15 @@ export function serializeScene(cached: CacheableScene): Uint8Array {
         nodes: encodeValue(cached.nodes),
         cameraNodeID: cached.cameraNodeID,
         camera: cached.camera,
+        textures: cached.textures.map((t) => ({ srgb: t.srgb, byteLength: t.png.byteLength })),
     };
     const json = new TextEncoder().encode(JSON.stringify(header));
     const jsonPadded = (json.length + 3) & ~3;
 
     let blobFloats = 0;
     for (const m of cached.meshes) blobFloats += m.vertices.length * kFloatsPerVertex + m.indices.length;
-    const total = 12 + jsonPadded + blobFloats * 4;
+    const textureBytes = cached.textures.reduce((acc, t) => acc + t.png.byteLength, 0);
+    const total = 12 + jsonPadded + blobFloats * 4 + textureBytes;
     const out = new Uint8Array(total);
     const dv = new DataView(out.buffer);
     dv.setUint32(0, kMagic, true);
@@ -103,8 +108,9 @@ export function serializeScene(cached: CacheableScene): Uint8Array {
     out.set(json, 12);
 
     let off = 12 + jsonPadded;
-    const f32 = new Float32Array(out.buffer);
-    const u32 = new Uint32Array(out.buffer);
+    const words = Math.floor(total / 4);
+    const f32 = new Float32Array(out.buffer, 0, words);
+    const u32 = new Uint32Array(out.buffer, 0, words);
     for (const m of cached.meshes) {
         for (const v of m.vertices) {
             let fi = off / 4;
@@ -117,6 +123,10 @@ export function serializeScene(cached: CacheableScene): Uint8Array {
         }
         u32.set(m.indices, off / 4);
         off += m.indices.length * 4;
+    }
+    for (const t of cached.textures) {
+        out.set(t.png, off);
+        off += t.png.byteLength;
     }
     return out;
 }
@@ -132,11 +142,14 @@ export function deserializeScene(bytes: Uint8Array): CacheableScene {
         nodes: unknown;
         cameraNodeID?: number;
         camera: SceneCameraPose;
+        textures?: { srgb: boolean; byteLength: number }[];
     };
 
     let off = 12 + ((jsonLen + 3) & ~3);
-    const f32 = new Float32Array(bytes.buffer, bytes.byteOffset);
-    const u32 = new Uint32Array(bytes.buffer, bytes.byteOffset);
+    // Views bounded to whole words (the trailing PNG bytes have arbitrary length).
+    const words = Math.floor(bytes.byteLength / 4);
+    const f32 = new Float32Array(bytes.buffer, bytes.byteOffset, words);
+    const u32 = new Uint32Array(bytes.buffer, bytes.byteOffset, words);
     const meshes: SceneMeshDesc[] = header.meshes.map((meta) => {
         const vertices: StaticVertex[] = [];
         for (let v = 0; v < meta.vertexCount; v++) {
@@ -161,6 +174,12 @@ export function deserializeScene(bytes: Uint8Array): CacheableScene {
         };
     });
 
+    const textures = (header.textures ?? []).map((meta) => {
+        const png = bytes.slice(off, off + meta.byteLength);
+        off += meta.byteLength;
+        return { png, srgb: meta.srgb };
+    });
+
     return {
         meshes,
         materials: decodeValue(header.materials) as SceneMaterialDesc[],
@@ -168,7 +187,37 @@ export function deserializeScene(bytes: Uint8Array): CacheableScene {
         nodes: decodeValue(header.nodes) as SceneNode[],
         cameraNodeID: header.cameraNodeID,
         camera: header.camera,
+        textures,
     };
+}
+
+/** Collects texture sources for the cache: the original compressed bytes
+ *  when retained (lossless), else a PNG re-encode (canvas roundtrip;
+ *  premultiply can differ by 1 lsb on translucent pixels). */
+export async function encodeTextureSources(textureManager: TextureManager): Promise<{ png: Uint8Array; srgb: boolean }[]> {
+    const out: { png: Uint8Array; srgb: boolean }[] = [];
+    for (let i = 0; i < textureManager.count; i++) {
+        const source = textureManager.getSource(i)!;
+        if (source.bytes) {
+            out.push({ png: source.bytes, srgb: source.srgb });
+            continue;
+        }
+        const canvas = new OffscreenCanvas(source.bitmap.width, source.bitmap.height);
+        canvas.getContext("2d")!.drawImage(source.bitmap, 0, 0);
+        const blob = await canvas.convertToBlob({ type: "image/png" });
+        out.push({ png: new Uint8Array(await blob.arrayBuffer()), srgb: source.srgb });
+    }
+    return out;
+}
+
+async function decodeTextureSources(textures: { png: Uint8Array; srgb: boolean }[]): Promise<TextureManager> {
+    const tm = new TextureManager();
+    for (const t of textures) {
+        // Same decode options as the pyscene import path (parity-critical).
+        const bitmap = await createImageBitmap(new Blob([t.png.slice().buffer as ArrayBuffer]), { colorSpaceConversion: "none" });
+        tm.addTexture({ bitmap, srgb: t.srgb, bytes: t.png } as TextureSource);
+    }
+    return tm;
 }
 
 const kCachePrefix = "webfalcor-scene-";
@@ -203,8 +252,9 @@ export async function clearSceneCache(): Promise<void> {
 }
 
 /** Rebuilds a Scene from cached data (the fast-reload path). */
-export function buildSceneFromCache(device: Device, cached: CacheableScene): Scene {
-    const scene = new Scene(device, cached.meshes, cached.materials, cached.lights, new TextureManager(), [], cached.nodes, [], cached.cameraNodeID, [], []);
+export async function buildSceneFromCache(device: Device, cached: CacheableScene): Promise<Scene> {
+    const textureManager = await decodeTextureSources(cached.textures);
+    const scene = new Scene(device, cached.meshes, cached.materials, cached.lights, textureManager, [], cached.nodes, [], cached.cameraNodeID, [], []);
     const cam = cached.camera;
     scene.camera.setPosition(new float3(...cam.position));
     scene.camera.setTarget(new float3(...cam.target));

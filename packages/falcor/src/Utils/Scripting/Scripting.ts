@@ -10,7 +10,7 @@
 import type { Device } from "../../Core/API/Device.js";
 import { RenderGraph } from "../../RenderGraph/RenderGraph.js";
 import { Settings } from "../Settings.js";
-import { buildSceneFromCache, loadSceneCache, sceneCacheKey, snapshotCameraPose, storeSceneCache } from "../../Scene/SceneCache.js";
+import { buildSceneFromCache, encodeTextureSources, loadSceneCache, sceneCacheKey, snapshotCameraPose, storeSceneCache } from "../../Scene/SceneCache.js";
 import { createPass } from "../../RenderGraph/RenderPass.js";
 import { Properties } from "../Properties.js";
 import { RuntimeError } from "../../Core/Error.js";
@@ -293,7 +293,7 @@ export async function runSceneScript(device: Device, source: string, baseUrl: st
         const cached = await loadSceneCache(cacheKey);
         if (cached) {
             sceneLoadedFromCache = true;
-            return buildSceneFromCache(device, cached);
+            return await buildSceneFromCache(device, cached);
         }
     }
     const builder = new SceneBuilderBridge();
@@ -360,8 +360,9 @@ export async function runSceneScript(device: Device, source: string, baseUrl: st
 
     const scene = await builder.resolve(device, baseUrl);
     if (cacheKey && builder.lastSceneArgs?.cacheable) {
-        const { meshes, materials, lights, nodes, cameraNodeID } = builder.lastSceneArgs;
-        await storeSceneCache(cacheKey, { meshes, materials, lights, nodes, cameraNodeID, camera: snapshotCameraPose(scene) });
+        const { meshes, materials, lights, nodes, cameraNodeID, textureManager } = builder.lastSceneArgs;
+        const textures = await encodeTextureSources(textureManager);
+        await storeSceneCache(cacheKey, { meshes, materials, lights, nodes, cameraNodeID, camera: snapshotCameraPose(scene), textures });
     }
     return scene;
 }

@@ -25,7 +25,7 @@ import { evaluateGlobals, computeSkinMatrices, skinVertices, sampleMorphWeights,
 import { decodeNormal2x16Host, type Vec3 } from "../Rendering/Lights/LightBVHTypes.js";
 import type { EmissiveTriangleInput } from "../Rendering/Lights/LightBVHBuilder.js";
 import { transformPoint, transformVector } from "../Utils/Math/Matrix.js";
-import { float3, normalize3 } from "../Utils/Math/Vector.js";
+import { float2, float3, float4, normalize3 } from "../Utils/Math/Vector.js";
 import {
     GeometryType,
     packGeometryInstances,
@@ -171,6 +171,18 @@ export class Scene {
     ) {
         this.cameraNodeID = cameraNodeID;
         this.sdfGrids = sdfGrids;
+        // Vertices normalize to f32 up front (native holds f32 StaticVertexData):
+        // vertex packing, the BVH build, and the scene cache then agree bit-exactly.
+        const fr = Math.fround;
+        for (const mesh of meshes) {
+            for (const v of mesh.vertices) {
+                v.position = new float3(fr(v.position.x), fr(v.position.y), fr(v.position.z));
+                v.normal = new float3(fr(v.normal.x), fr(v.normal.y), fr(v.normal.z));
+                v.tangent = new float4(fr(v.tangent.x), fr(v.tangent.y), fr(v.tangent.z), fr(v.tangent.w));
+                v.texCrd = new float2(fr(v.texCrd.x), fr(v.texCrd.y));
+                if (v.curveRadius !== undefined) v.curveRadius = fr(v.curveRadius);
+            }
+        }
         // Geometry-less scenes are legal (pure-volume scenes like smoke.pyscene):
         // buffers pad to one zeroed struct and ray queries simply miss.
         this.hasEmissiveMaterials = materials.some((m) => m.header?.emissive ?? false);

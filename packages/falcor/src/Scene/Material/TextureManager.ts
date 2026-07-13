@@ -17,6 +17,8 @@ import { ResourceFormat } from "../../Core/API/Formats.js";
 export interface TextureSource {
     bitmap: ImageBitmap;
     srgb: boolean;
+    /** Original compressed bytes when available (lossless SceneCache path). */
+    bytes?: Uint8Array;
 }
 
 export class TextureManager {

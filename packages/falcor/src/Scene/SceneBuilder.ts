@@ -258,8 +258,10 @@ export class MaterialBridge {
                 const res = await fetch(url);
                 if (!res.ok) continue;
                 const srgb = t.slot === "BaseColor" || t.slot === "Emissive";
-                const bitmap = await createImageBitmap(await res.blob(), { colorSpaceConversion: "none" });
-                const handle = packTextureHandle(TextureHandleMode.Texture, tm.addTexture({ bitmap, srgb }));
+                const blob = await res.blob();
+                const bitmap = await createImageBitmap(blob, { colorSpaceConversion: "none" });
+                const bytes = new Uint8Array(await blob.arrayBuffer());
+                const handle = packTextureHandle(TextureHandleMode.Texture, tm.addTexture({ bitmap, srgb, bytes }));
                 if (t.slot === "BaseColor") this._texHandles.texBaseColor = handle;
                 else if (t.slot === "Specular") this._texHandles.texSpecular = handle;
                 else if (t.slot === "Normal") this._texHandles.texNormalMap = handle;
@@ -666,6 +668,7 @@ export class SceneBuilderBridge {
         lights: AnalyticLight[];
         nodes: SceneNode[];
         cameraNodeID?: number;
+        textureManager: TextureManager;
         cacheable: boolean;
     } | null = null;
 
@@ -865,12 +868,12 @@ export class SceneBuilderBridge {
             lights,
             nodes,
             cameraNodeID,
+            textureManager,
             cacheable:
                 animations.length === 0 &&
                 weightTracks.length === 0 &&
                 curves.length === 0 &&
                 sdfGrids.length === 0 &&
-                textureManager.count === 0 &&
                 !this.envMap &&
                 this.gridVolumesList.length === 0 &&
                 meshes.every((m) => !m.skin && !m.morph),

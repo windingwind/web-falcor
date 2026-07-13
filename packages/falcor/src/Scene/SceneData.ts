@@ -18,10 +18,15 @@ export interface StaticVertex {
 
 /** Octahedral snorm2x16 encode (Utils/Math/PackedFormats.slang encodeNormal2x16). */
 export function encodeNormal2x16(n: float3): number {
-    const l1 = Math.abs(n.x) + Math.abs(n.y) + Math.abs(n.z) || 1;
-    let ox = n.x / l1;
-    let oy = n.y / l1;
-    if (n.z < 0) {
+    // Inputs round to f32 first (native holds f32 vertices; keeps the packed
+    // output identical whether values arrive as f64 imports or cached f32).
+    const x = Math.fround(n.x);
+    const y = Math.fround(n.y);
+    const z = Math.fround(n.z);
+    const l1 = Math.abs(x) + Math.abs(y) + Math.abs(z) || 1;
+    let ox = x / l1;
+    let oy = y / l1;
+    if (z < 0) {
         const tx = (1 - Math.abs(oy)) * (ox >= 0 ? 1 : -1);
         const ty = (1 - Math.abs(ox)) * (oy >= 0 ? 1 : -1);
         ox = tx;
@@ -53,8 +58,8 @@ export function packStaticVertices(vertices: StaticVertex[]): ArrayBuffer {
         const nx = f32tof16(v.normal.x);
         const ny = f32tof16(v.normal.y);
         const nz = f32tof16(v.normal.z);
-        let packedTangentSign = v.tangent.w;
-        if ((v.curveRadius ?? 0) > 0) packedTangentSign *= v.curveRadius!;
+        let packedTangentSign = Math.fround(v.tangent.w);
+        if ((v.curveRadius ?? 0) > 0) packedTangentSign *= Math.fround(v.curveRadius!);
         const tw = f32tof16(packedTangentSign);
 
         dv.setUint32(base + 16, ((ny << 16) | nx) >>> 0, true);
