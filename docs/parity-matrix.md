@@ -67,7 +67,7 @@ Tallies today: 20 pass classes fully implemented, 4 partial, 14 not implemented
 | GBufferRaster | ✅ | native oracle impossible on this host (ROV), RT-cross-verified |
 | GBufferRT | 🟡 | SoftwareRT; verified incl. texGrads (byte-exact) |
 | VBufferRT | 🟡 | SoftwareRT; verified |
-| VBufferRaster | ⏳ | rasterized V-buffer; portable, not built |
+| VBufferRaster | ✅ | non-indexed vertex-pulling raster (§9: WGSL lacks fragment barycentrics/primitive id — per-corner varyings + flat triangle index instead); cross-verified vs VBufferRT on cornell (1/50175 hit-pixel diff, 0 barycentric outliers); mvec/mask extra channels ⏳ (ROV-dependent) |
 | ImageLoader | ✅ | browser-decodable formats + `.hdr` + `.dds`/BC + `.exr` (parse-exr; GPU-verified exact vs CPU decode) |
 | MinimalPathTracer | ✅ | SoftwareRT megakernel; oracle-verified (9.5e-7, §7.1); shades triangle, curve, displaced-triangle and SDF hits |
 | ModulateIllumination | ✅ | lives under `Utils/` in the web tree |
