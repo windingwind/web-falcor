@@ -46,7 +46,7 @@ by a documented toolchain/asset gap, ❌ means the web platform cannot provide i
 | Shader hot reload (in-app `reloadShaders`) | ⏳ | Vite HMR 🔶 reloads the dev app; Falcor's F5-style in-session shader reload not built |
 | Multithreaded scene build (TaskManager) | ⏳ | scene build is single-threaded today; Web Workers (+ SharedArrayBuffer) possible |
 | Plugin system (dynamic pass/importer loading) | 🔶 static | native .dll/.so loading ❌; passes register via a static factory + side-effect import. A dynamic JS plugin registry ⏳ |
-| Settings system (global `Settings`, attribute filters) | ⏳ | per-pass `Properties` dicts only |
+| Settings system (global `Settings`, attribute filters) | ✅ | `Utils/Settings.ts`: colon-flattened options, ordered attribute filters (full-match regex, nested flatten, deprecated `.filter` + negation), `m.settings` python binding, `RenderPass.onOptionsChange` hook; §9: no settings.json autoload / search-directory categories |
 
 ### 8.2 Render passes (29 upstream directories, 38 registered pass classes)
 

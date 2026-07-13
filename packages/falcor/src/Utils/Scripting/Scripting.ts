@@ -9,6 +9,7 @@
 
 import type { Device } from "../../Core/API/Device.js";
 import { RenderGraph } from "../../RenderGraph/RenderGraph.js";
+import { Settings } from "../Settings.js";
 import { createPass } from "../../RenderGraph/RenderPass.js";
 import { Properties } from "../Properties.js";
 import { RuntimeError } from "../../Core/Error.js";
@@ -35,6 +36,13 @@ export async function initScripting(indexURL: string): Promise<void> {
         loadPyodide(options: { indexURL: string }): Promise<PyodideApi>;
     };
     pyodide = await mod.loadPyodide({ indexURL });
+}
+
+/** Shared Settings instance (native: SampleApp::getSettings()). */
+const globalSettings = new Settings();
+
+export function getGlobalSettings(): Settings {
+    return globalSettings;
 }
 
 export function isScriptingInitialized(): boolean {
@@ -75,6 +83,16 @@ export async function runGraphScript(device: Device, source: string): Promise<Re
     const mogwai = {
         addGraph: (graph: RenderGraph) => {
             graphs.push(graph);
+        },
+        // Mirrors the native Settings script binding (Mogwai getSettings()).
+        settings: {
+            addOptions: (dict: unknown) => {
+                globalSettings.addOptions(toJs(dict) as Record<string, never>);
+                for (const g of graphs) for (const { pass } of g.getPasses()) pass.onOptionsChange(globalSettings.getOptions());
+            },
+            addFilteredAttributes: (dictOrList: unknown) => globalSettings.addFilteredAttributes(toJs(dictOrList) as Record<string, never>),
+            clearOptions: () => globalSettings.clearOptions(),
+            clearFilteredAttributes: () => globalSettings.clearFilteredAttributes(),
         },
     };
     pyodide.globals.set("m", mogwai);

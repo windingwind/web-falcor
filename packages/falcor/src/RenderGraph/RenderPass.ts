@@ -72,6 +72,10 @@ export abstract class RenderPass {
     }
 
     setProperties(_props: Properties): void {}
+
+    /** Mirrors RenderPass::onOptionsChange (global Settings options updated). */
+    onOptionsChange(_options: Record<string, unknown>): void {}
+
     getProperties(): Properties {
         return new Properties();
     }
