@@ -1,9 +1,11 @@
 name: CI
 
 # Validates the "just want to use it" setup path (no Falcor clone, no native
-# CMake build) and runs typecheck + the unit suite. GPU image tests need real
-# hardware WebGPU + the Falcor media tree, so they run locally, not here
-# (see README → Full setup).
+# CMake build) and runs typecheck + the unit suite. The unit suite includes the
+# tests that need Falcor's `test_scenes` media (curves, volumes) — CI fetches
+# just that bundle (no full clone). GPU image tests still need real hardware
+# WebGPU + a native oracle build, so they run locally, not here (see README →
+# Full setup).
 
 on:
   push:
@@ -47,6 +49,22 @@ jobs:
 
       - name: Typecheck
         run: npm run typecheck
+
+      # test_scenes carries the curve/volume fixtures the unit suite reads
+      # (two_curves.usda, smoke.vdb). Cache the extracted folder keyed on the
+      # media bundle version (scripts/download-scenes.mjs FALCOR_MEDIA_VERSION);
+      # on a hit the download step no-ops. Bistro (dds-loader) is an 853 MB ORCA
+      # download, so that test stays skipped here.
+      - name: Cache Falcor test_scenes media
+        uses: actions/cache@v4
+        with:
+          path: Falcor/media/test_scenes
+          key: falcor-media-test_scenes-7acdf8b0
+
+      - name: Fetch test_scenes media bundle
+        run: |
+          sudo apt-get update && sudo apt-get install -y p7zip-full
+          node scripts/download-scenes.mjs test_scenes
 
       - name: Unit tests
         run: npm test
