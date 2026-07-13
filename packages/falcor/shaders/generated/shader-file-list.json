@@ -412,11 +412,13 @@
     "WebFalcor/Overrides/Utils/Algorithm/BitonicSort.cs.slang",
     "WebFalcor/Overrides/Utils/Algorithm/ParallelReduction.cs.slang",
     "WebFalcor/Overrides/Utils/Algorithm/PrefixSum.cs.slang",
+    "WebFalcor/Overrides/Utils/Debug/PixelDebug.slang",
     "WebFalcor/Overrides/Utils/Geometry/IntersectionHelpers.slang",
     "WebFalcor/Overrides/Utils/Math/FormatConversion.slang",
     "WebFalcor/Overrides/Utils/Math/PackedFormats.slang",
     "WebFalcor/Overrides/Utils/Sampling/Pseudorandom/SplitMix64.slang",
     "WebFalcor/Overrides/Utils/Sampling/UniformSampleGenerator.slang",
+    "WebFalcor/PixelDebugTest.cs.slang",
     "WebFalcor/PixelStatsProbe.cs.slang",
     "WebFalcor/PixelStatsResolve.cs.slang",
     "WebFalcor/PixelStatsSum.cs.slang"

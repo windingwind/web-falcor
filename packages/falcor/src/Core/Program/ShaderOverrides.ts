@@ -11,6 +11,7 @@
 export const kShaderOverrides: Readonly<Record<string, string>> = {
     // RWBuffer texel buffers + warp-size-32 wave reduction -> structured buffers + portable shared-memory reduction.
     "RenderPasses/GBuffer/VBuffer/VBufferRaster.3d.slang": "WebFalcor/Overrides/RenderPasses/GBuffer/VBuffer/VBufferRaster.3d.slang",
+    "Utils/Debug/PixelDebug.slang": "WebFalcor/Overrides/Utils/Debug/PixelDebug.slang",
     "Utils/Algorithm/BitonicSort.cs.slang": "WebFalcor/Overrides/Utils/Algorithm/BitonicSort.cs.slang",
     "Utils/Algorithm/ParallelReduction.cs.slang": "WebFalcor/Overrides/Utils/Algorithm/ParallelReduction.cs.slang",
     // ByteAddressBuffer atomics -> structured buffers with Atomic<uint> elements.
