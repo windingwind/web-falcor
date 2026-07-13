@@ -3,7 +3,7 @@
  * execute the graph each frame, present the marked output to the canvas.
  */
 
-import { Device, Logger, Profiler, ProgramManager, RenderGraph, ResourceFormat, createPass, encodeExr, initScripting, initSlang, runGraphScript, runSceneScript, runPbrtScene, presentToCanvas, type Scene } from "@web-falcor/falcor";
+import { Device, Logger, Profiler, VideoRecorder, ProgramManager, RenderGraph, ResourceFormat, createPass, encodeExr, initScripting, initSlang, runGraphScript, runSceneScript, runPbrtScene, presentToCanvas, type Scene } from "@web-falcor/falcor";
 import "@web-falcor/render-passes";
 import { CameraController } from "./CameraController.js";
 import { buildUIPanel } from "./UIPanel.js";
@@ -139,6 +139,8 @@ async function loadInitialContent(state: ViewerState, device: Device): Promise<v
     }
 }
 
+const videoRecorder = new VideoRecorder();
+
 async function main() {
     const device = await Device.create();
     const profiler = new Profiler(device);
@@ -188,6 +190,7 @@ async function main() {
             state.graph.execute(device.renderContext);
             const tex = state.graph.getOutput(state.output);
             if (tex) presentToCanvas(device, tex, context!.getCurrentTexture(), format);
+            if (videoRecorder.recording) videoRecorder.captureFrame();
             state.frame++;
             const gpu = profiler.available && state.frame % 30 === 0
                 ? [...profiler.getStats()].map(([k, v]) => `${k} ${v.toFixed(2)}ms`).join(" · ")
@@ -240,6 +243,22 @@ async function captureFrame(state: ViewerState): Promise<void> {
 /** Wires the plain-DOM control bar (created in index.html). */
 function wireControls(state: ViewerState, rebuildUI: () => void): void {
     const $ = (id: string) => document.getElementById(id);
+    ($("record") as HTMLButtonElement | null)?.addEventListener("click", (e) => {
+        const btn = e.currentTarget as HTMLButtonElement;
+        if (!videoRecorder.recording) {
+            videoRecorder.start(document.getElementById("canvas") as HTMLCanvasElement);
+            btn.textContent = "Stop";
+        } else {
+            void videoRecorder.stop().then((blob: Blob) => {
+                btn.textContent = "Record";
+                const a = document.createElement("a");
+                a.href = URL.createObjectURL(blob);
+                a.download = "mogwai.webm";
+                a.click();
+                URL.revokeObjectURL(a.href);
+            });
+        }
+    });
     ($("capture") as HTMLButtonElement | null)?.addEventListener("click", () => {
         void captureFrame(state);
     });

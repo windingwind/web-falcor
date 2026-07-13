@@ -40,6 +40,7 @@ export * from "./Core/State/GraphicsState.js";
 export * from "./Core/State/ComputeState.js";
 export * from "./Core/Program/ShaderOverrides.js";
 export * from "./Utils/Settings.js";
+export * from "./Utils/Video/VideoRecorder.js";
 export * from "./Utils/Debug/PixelDebug.js";
 export * from "./Utils/Algorithm/BitonicSort.js";
 export * from "./Utils/Algorithm/ParallelReduction.js";

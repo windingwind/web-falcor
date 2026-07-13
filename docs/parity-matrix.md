@@ -94,7 +94,7 @@ Tallies today: 20 pass classes fully implemented, 4 partial, 14 not implemented
 
 | Component | Status | Notes |
 |---|---|---|
-| Mogwai app (functional viewer) | ✅ core | loads graph `.py` + `.pyscene`/`.pbrt`, per-frame execute, presents marked output (swapchain blit), play/pause + graph/output pickers, first-person camera, per-pass DOM `renderUI` panel, URL params. FrameCapture ✅ (Capture button: float outputs download as EXR, 8-bit as PNG). Missing ⏳: VideoCapture (WebCodecs) / TimingCapture extensions, python console, scene/material/light UI, profiler overlay |
+| Mogwai app (functional viewer) | ✅ core | loads graph `.py` + `.pyscene`/`.pbrt`, per-frame execute, presents marked output (swapchain blit), play/pause + graph/output pickers, first-person camera, per-pass DOM `renderUI` panel, URL params. FrameCapture ✅ (Capture button: float outputs download as EXR, 8-bit as PNG). VideoCapture ✅ (Record button; §9: MediaRecorder WebM, frames pushed per presented frame like native). Missing ⏳: TimingCapture extension, python console, scene/material/light UI, profiler overlay |
 | Python scripting / console | 🔶 | Pyodide runs **unmodified** upstream `.py` graphs and `.pyscene` files via a curated `falcor` bridge (factories + SceneBuilderBridge). No auto-generated ScriptBindings, no ScriptWriter, no interactive console ⏳ |
 | PyTorch interop (`falcor.pytorch`) | ❌ | no CUDA/torch in browser; ONNX-web-style substitute would be non-parity ⏳ |
 | FalcorTest | 🔶 | vitest (unit) + Playwright GPU harness w/ native-oracle image compares (§7); no slang-driven `GPU_TEST` framework ⏳ |
