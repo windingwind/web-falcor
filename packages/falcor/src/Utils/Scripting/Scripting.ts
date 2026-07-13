@@ -10,6 +10,7 @@
 import type { Device } from "../../Core/API/Device.js";
 import { RenderGraph } from "../../RenderGraph/RenderGraph.js";
 import { Settings } from "../Settings.js";
+import { buildSceneFromCache, loadSceneCache, sceneCacheKey, snapshotCameraPose, storeSceneCache } from "../../Scene/SceneCache.js";
 import { createPass } from "../../RenderGraph/RenderPass.js";
 import { Properties } from "../Properties.js";
 import { RuntimeError } from "../../Core/Error.js";
@@ -276,8 +277,25 @@ class SDFGrid:
  * Executes an unmodified .pyscene through the SceneBuilder bridge and
  * resolves the resulting scene (assets fetched relative to baseUrl).
  */
-export async function runSceneScript(device: Device, source: string, baseUrl: string): Promise<Scene> {
+let sceneLoadedFromCache = false;
+
+/** Whether the last runSceneScript call was served from the scene cache. */
+export function wasSceneLoadedFromCache(): boolean {
+    return sceneLoadedFromCache;
+}
+
+export async function runSceneScript(device: Device, source: string, baseUrl: string, options?: { cache?: boolean }): Promise<Scene> {
     if (!pyodide) throw new RuntimeError("Call initScripting() first");
+    sceneLoadedFromCache = false;
+    let cacheKey: string | null = null;
+    if (options?.cache) {
+        cacheKey = await sceneCacheKey(source);
+        const cached = await loadSceneCache(cacheKey);
+        if (cached) {
+            sceneLoadedFromCache = true;
+            return buildSceneFromCache(device, cached);
+        }
+    }
     const builder = new SceneBuilderBridge();
 
     type VecLike = { x: number; y: number; z: number };
@@ -340,5 +358,10 @@ export async function runSceneScript(device: Device, source: string, baseUrl: st
 
     pyodide.runPython(kScenePrelude + "\n" + source);
 
-    return builder.resolve(device, baseUrl);
+    const scene = await builder.resolve(device, baseUrl);
+    if (cacheKey && builder.lastSceneArgs?.cacheable) {
+        const { meshes, materials, lights, nodes, cameraNodeID } = builder.lastSceneArgs;
+        await storeSceneCache(cacheKey, { meshes, materials, lights, nodes, cameraNodeID, camera: snapshotCameraPose(scene) });
+    }
+    return scene;
 }

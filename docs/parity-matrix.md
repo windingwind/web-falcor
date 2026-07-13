@@ -102,7 +102,7 @@ Tallies today: 20 pass classes fully implemented, 4 partial, 14 not implemented
 | RenderGraph `.py` export / RenderGraphIR | ✅ | `exportScript()` emits the camelCase image-test dialect (round-trip fixpoint verified); `removeEdge`/`unmarkOutput` added; divergence (§9): no snake_case IR, markOutput channel masks untracked |
 | ImageCompare | 🔶 | native tool used on CI host for oracle diffing; its MSE/FLIP gate policy reimplemented inline in the GPU suites + FLIPPass. No standalone in-browser tool ⏳ |
 | Importers | see §8.4 | glTF ✅ (TS), FBX 🔶 (assimpjs, `.fbx` full scenes only), PBRT ✅ subset, `.pyscene` ✅, USD 🔶 subset (tinyusdz-wasm: meshes/xforms/UsdPreviewSurface incl. baseColor/ORM/normal/emissive textures, verified vs native — lights/cameras/skel/subdiv ⏳), Mitsuba ⏳ (no Mitsuba content in the media drop → no oracle) |
-| SceneCache | ⏳ | binary scene cache not built (OPFS/IndexedDB route available) |
+| SceneCache | 🟡 phase 1 | `Scene/SceneCache.ts`: OPFS binary cache keyed by SHA-256 of the scene source (§9: no file timestamps); static geometry + materials + analytic lights + camera; cache-hit render byte-identical to import (verified); textures/env maps/volumes/SDF/curves/animation fall back to import ⏳ |
 | Image IO (Bitmap/EXR read+write, image save) | 🟡 | `.hdr`/DDS-BC/`.exr` decode (EXR via parse-exr, wired into ImageLoader + EnvMap + ErrorMeasure); EXR write (uncompressed float scanlines, bit-exact round-trip) feeds the viewer capture; unified Bitmap class ⏳ |
 | NVTT texture compression | ❌ native / ⏳ substitute | decode side covered (DDS/BC parse + `texture-compression-bc` upload + CPU BC1/3/5 decode); a WASM BC *encoder* would be a substitute, not NVTT parity |
 

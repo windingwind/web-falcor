@@ -659,6 +659,16 @@ export class SceneBuilderBridge {
     }
 
     /** Fetches referenced assets and constructs the Scene. */
+    /** Scene ctor args snapshot from the last resolve() (SceneCache capture). */
+    lastSceneArgs: {
+        meshes: SceneMeshDesc[];
+        materials: SceneMaterialDesc[];
+        lights: AnalyticLight[];
+        nodes: SceneNode[];
+        cameraNodeID?: number;
+        cacheable: boolean;
+    } | null = null;
+
     async resolve(device: Device, baseUrl: string): Promise<Scene> {
         const textureManager = new TextureManager();
         const meshes: SceneMeshDesc[] = [];
@@ -848,6 +858,23 @@ export class SceneBuilderBridge {
         // its own camera (an explicit pyscene camera wins and stays static).
         const cameraNodeID = this.camera ? undefined : this.importedCameraNodeID;
         const scene = new Scene(device, meshes, materials, lights, textureManager, sdfGrids, nodes, animations, cameraNodeID, weightTracks, curves);
+        // Snapshot for the scene cache (phase 1: static texture-less scenes only).
+        this.lastSceneArgs = {
+            meshes,
+            materials,
+            lights,
+            nodes,
+            cameraNodeID,
+            cacheable:
+                animations.length === 0 &&
+                weightTracks.length === 0 &&
+                curves.length === 0 &&
+                sdfGrids.length === 0 &&
+                textureManager.count === 0 &&
+                !this.envMap &&
+                this.gridVolumesList.length === 0 &&
+                meshes.every((m) => !m.skin && !m.morph),
+        };
         if (this.camera) {
             scene.camera.setPosition(this.camera.getPosition());
             scene.camera.setTarget(this.camera.getTarget());

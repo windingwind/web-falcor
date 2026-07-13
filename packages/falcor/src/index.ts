@@ -39,6 +39,7 @@ export * from "./Core/Pass/FullScreenPass.js";
 export * from "./Core/State/GraphicsState.js";
 export * from "./Core/State/ComputeState.js";
 export * from "./Core/Program/ShaderOverrides.js";
+export * from "./Scene/SceneCache.js";
 export * from "./Utils/Settings.js";
 export * from "./Utils/Video/VideoRecorder.js";
 export * from "./Utils/Debug/PixelDebug.js";
