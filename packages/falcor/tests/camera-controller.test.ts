@@ -124,3 +124,54 @@ describe("SixDoFCameraController", () => {
         expect(viewDir.z).toBeCloseTo(-1, 5); // roll leaves the view direction alone
     });
 });
+
+describe("Gamepad input (FirstPersonCameraControllerCommon)", () => {
+    const idle = { leftX: 0, leftY: 0, rightX: 0, rightY: 0, leftTrigger: 0, rightTrigger: 0 };
+
+    it("ignores input inside the dead zone", () => {
+        const cam = lookNegZ();
+        const ctl = new FirstPersonCameraController(cam);
+        ctl.update(0);
+        expect(ctl.onGamepadState({ ...idle, leftY: 0.05, rightX: 0.09 })).toBe(false);
+        expect(ctl.update(0.05)).toBe(false);
+    });
+
+    it("moves forward on full left-stick push (dead zone + power curve pass-through at 1)", () => {
+        const cam = lookNegZ();
+        const ctl = new FirstPersonCameraController(cam);
+        ctl.update(0);
+        expect(ctl.onGamepadState({ ...idle, leftY: -1 })).toBe(true); // stick up
+        ctl.update(0.05);
+        // |stick|=1: dead zone scale (1-0.1)/0.9 = 1, pow(1,1.2)=1 -> full speed.
+        expect(cam.getPosition().z).toBeCloseTo(-0.05, 6);
+        // gamepadPresent resets after update; no further motion without a new state.
+        expect(ctl.update(0.1)).toBe(false);
+    });
+
+    it("yaws by rotationSpeed * elapsed with the native response curve", () => {
+        const cam = lookNegZ();
+        const ctl = new FirstPersonCameraController(cam);
+        ctl.update(0);
+        const x = 0.5;
+        ctl.onGamepadState({ ...idle, rightX: x });
+        ctl.update(0.04);
+        // Native curve: deadzone scale then power curve, * 2.5 rad/s * dt.
+        const expected = Math.pow((x * Math.max(x - 0.1, 0)) / (1 - 0.1), 1.2);
+        const angle = 2.5 * 0.04 * expected;
+        const viewDir = sub3(cam.getTarget(), cam.getPosition());
+        expect(viewDir.x).toBeCloseTo(Math.sin(angle), 5);
+        expect(viewDir.z).toBeCloseTo(-Math.cos(angle), 5);
+    });
+
+    it("triggers move vertically (right up, left down)", () => {
+        const cam = lookNegZ();
+        const ctl = new FirstPersonCameraController(cam);
+        ctl.update(0);
+        ctl.onGamepadState({ ...idle, rightTrigger: 1 });
+        ctl.update(0.05);
+        expect(cam.getPosition().y).toBeCloseTo(0.05, 6);
+        ctl.onGamepadState({ ...idle, leftTrigger: 1 });
+        ctl.update(0.1);
+        expect(cam.getPosition().y).toBeCloseTo(0, 6);
+    });
+});

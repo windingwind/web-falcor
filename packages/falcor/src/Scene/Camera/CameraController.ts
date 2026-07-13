@@ -21,6 +21,16 @@ export interface ControllerMouseEvent {
     wheelDelta?: float2;
 }
 
+/** Mirrors GamepadState (axes in [-1,1], triggers in [0,1]). */
+export interface ControllerGamepadState {
+    leftX: number;
+    leftY: number;
+    rightX: number;
+    rightY: number;
+    leftTrigger: number;
+    rightTrigger: number;
+}
+
 export interface ControllerKeyEvent {
     type: "keyPressed" | "keyReleased";
     /** Lower-case key letter (w/a/s/d/q/e). */
@@ -46,6 +56,27 @@ function project2DCrdToUnitSphere(xy: float2): float3 {
     return new float3(xy.x / len, xy.y / len, 0);
 }
 
+const kGamepadDeadZone = 0.1;
+const kGamepadPowerCurve = 1.2;
+const kGamepadRotationSpeed = 2.5;
+
+function applyDeadZone1(v: number, deadZone: number): number {
+    return (v * Math.max(v - deadZone, 0)) / (1 - deadZone);
+}
+
+function applyDeadZone2(v: float2, deadZone: number): float2 {
+    const scale = Math.max(Math.hypot(v.x, v.y) - deadZone, 0) / (1 - deadZone);
+    return new float2(v.x * scale, v.y * scale);
+}
+
+function applyPowerCurve1(v: number, power: number): number {
+    return Math.pow(Math.abs(v), power) * (v < 0 ? -1 : 1);
+}
+
+function applyPowerCurve2(v: float2, power: number): float2 {
+    return new float2(applyPowerCurve1(v.x, power), applyPowerCurve1(v.y, power));
+}
+
 /** [0,1] screen position to [-1,1] with y flipped (native convertCamPosRange). */
 function convertCamPosRange(pos: float2): float2 {
     return new float2(pos.x * 2 - 1, pos.y * -2 + 1);
@@ -61,6 +92,7 @@ export abstract class CameraController {
 
     onMouseEvent(_ev: ControllerMouseEvent): boolean { return false; }
     onKeyEvent(_ev: ControllerKeyEvent): boolean { return false; }
+    onGamepadState(_state: ControllerGamepadState): boolean { return false; }
 
     /** Applies pending input to the camera; returns whether it changed. */
     abstract update(nowSeconds?: number): boolean;
@@ -182,6 +214,11 @@ abstract class FirstPersonCameraControllerCommon extends CameraController {
     private movement = new Set<Direction>();
     private speedModifier = 1;
     private lastTime: number | null = null;
+    private gamepadPresent = false;
+    private gamepadLeftStick = new float2(0, 0);
+    private gamepadRightStick = new float2(0, 0);
+    private gamepadLeftTrigger = 0;
+    private gamepadRightTrigger = 0;
 
     protected constructor(camera: Camera, private readonly sixDoF: boolean) {
         super(camera);
@@ -195,6 +232,20 @@ abstract class FirstPersonCameraControllerCommon extends CameraController {
         if (pressed) this.movement.add(dir);
         else this.movement.delete(dir);
         return true;
+    }
+
+    override onGamepadState(state: ControllerGamepadState): boolean {
+        this.gamepadPresent = true;
+        this.gamepadLeftStick = applyPowerCurve2(applyDeadZone2(new float2(state.leftX, state.leftY), kGamepadDeadZone), kGamepadPowerCurve);
+        this.gamepadRightStick = applyPowerCurve2(applyDeadZone2(new float2(state.rightX, state.rightY), kGamepadDeadZone), kGamepadPowerCurve);
+        this.gamepadLeftTrigger = applyPowerCurve1(applyDeadZone1(state.leftTrigger, kGamepadDeadZone), kGamepadPowerCurve);
+        this.gamepadRightTrigger = applyPowerCurve1(applyDeadZone1(state.rightTrigger, kGamepadDeadZone), kGamepadPowerCurve);
+        return (
+            Math.hypot(this.gamepadLeftStick.x, this.gamepadLeftStick.y) > 0 ||
+            Math.hypot(this.gamepadRightStick.x, this.gamepadRightStick.y) > 0 ||
+            this.gamepadLeftTrigger > 0 ||
+            this.gamepadRightTrigger > 0
+        );
     }
 
     override onMouseEvent(ev: ControllerMouseEvent): boolean {
@@ -236,14 +287,24 @@ abstract class FirstPersonCameraControllerCommon extends CameraController {
         this.lastTime = nowSeconds;
 
         let dirty = false;
-        if (this.shouldRotate) {
+        const anyGamepadMovement =
+            this.gamepadPresent && (Math.hypot(this.gamepadLeftStick.x, this.gamepadLeftStick.y) > 0 || this.gamepadLeftTrigger > 0 || this.gamepadRightTrigger > 0);
+        const anyGamepadRotation = this.gamepadPresent && Math.hypot(this.gamepadRightStick.x, this.gamepadRightStick.y) > 0;
+
+        if (this.shouldRotate || anyGamepadRotation) {
             const camPos = this.camera.getPosition();
             let camUp = this.sixDoF ? this.camera.getUpVector() : this.getUpVector();
             let viewDir = normalize3(sub3(this.camera.getTarget(), camPos));
 
-            if (this.isLeftButtonDown) {
+            if (this.isLeftButtonDown || anyGamepadRotation) {
                 const sideway = cross(viewDir, normalize3(camUp));
-                const rotation = new float2(this.mouseDelta.x * this.speedModifier, this.mouseDelta.y * this.speedModifier);
+                const mouseRotation = this.isLeftButtonDown
+                    ? new float2(this.mouseDelta.x * this.speedModifier, this.mouseDelta.y * this.speedModifier)
+                    : new float2(0, 0);
+                const gamepadRotation = anyGamepadRotation
+                    ? new float2(this.gamepadRightStick.x * kGamepadRotationSpeed * elapsed, this.gamepadRightStick.y * kGamepadRotationSpeed * elapsed)
+                    : new float2(0, 0);
+                const rotation = new float2(mouseRotation.x + gamepadRotation.x, mouseRotation.y + gamepadRotation.y);
 
                 const rotY = matrixFromQuat(quatFromAngleAxis(rotation.y, sideway));
                 viewDir = mulVecMat(viewDir, rotY);
@@ -266,7 +327,7 @@ abstract class FirstPersonCameraControllerCommon extends CameraController {
             this.shouldRotate = false;
         }
 
-        if (this.movement.size > 0 && elapsed > 0) {
+        if ((this.movement.size > 0 || anyGamepadMovement) && elapsed > 0) {
             const movement = new float3(0, 0, 0);
             if (this.movement.has(Direction.Forward)) movement.z += 1;
             if (this.movement.has(Direction.Backward)) movement.z -= 1;
@@ -274,6 +335,13 @@ abstract class FirstPersonCameraControllerCommon extends CameraController {
             if (this.movement.has(Direction.Right)) movement.x -= 1;
             if (this.movement.has(Direction.Up)) movement.y += 1;
             if (this.movement.has(Direction.Down)) movement.y -= 1;
+
+            if (anyGamepadMovement) {
+                movement.x += this.gamepadLeftStick.x;
+                movement.z -= this.gamepadLeftStick.y;
+                movement.y -= this.gamepadLeftTrigger;
+                movement.y += this.gamepadRightTrigger;
+            }
 
             let camPos = this.camera.getPosition();
             const camUp = this.camera.getUpVector();
@@ -291,6 +359,9 @@ abstract class FirstPersonCameraControllerCommon extends CameraController {
             dirty = true;
         }
 
+        // Will be set true in the next onGamepadState call (native pattern).
+        this.gamepadPresent = false;
+
         return dirty;
     }
 
@@ -299,6 +370,10 @@ abstract class FirstPersonCameraControllerCommon extends CameraController {
         this.isRightButtonDown = false;
         this.shouldRotate = false;
         this.movement.clear();
+        this.gamepadLeftStick = new float2(0, 0);
+        this.gamepadRightStick = new float2(0, 0);
+        this.gamepadLeftTrigger = 0;
+        this.gamepadRightTrigger = 0;
     }
 }
 

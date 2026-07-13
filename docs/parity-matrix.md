@@ -127,7 +127,7 @@ Tallies today: 20 pass classes fully implemented, 4 partial, 14 not implemented
 | LightProfile (IES) | ⏳ | dummy binding only; no IES loader/bake |
 | Camera (pinhole, jitter, motion vectors) | ✅ | verified (incl. prev-matrix roll) |
 | Camera DoF / physical camera | ✅ core | `apertureRadius`/`focalDistance` + thin-lens sampling verified vs native (VBufferRT depth/viewW 0 bad px; PathTracer consumes `viewW`); shutter/ISO exposure params ⏳ |
-| Camera controllers | ✅ | `Scene/Camera/CameraController.ts` ports Orbiter / FirstPerson / SixDoF (native math verbatim incl. row-vector rotations, unit-tested); viewer keeps its own app-layer controller; gamepad ⏳ (§9: normalized input events, update(now) instead of CpuTimer) |
+| Camera controllers | ✅ | `Scene/Camera/CameraController.ts` ports Orbiter / FirstPerson / SixDoF incl. gamepad (dead zone + power curve + rotation/movement mapping, native math verbatim, unit-tested); viewer keeps its own app-layer controller (§9: normalized input events, update(now) instead of CpuTimer) |
 | Node / skinned / morph animation | ✅ | CPU skinning + morph (upstream does GPU skinning 🟡); camera/light animation ✅; LINEAR/STEP/CUBICSPLINE |
 | Animated vertex caches (Alembic) | ⏳ | no `.abc`/AnimatedVertexCache support |
 | Per-clip loop behaviors / global time control | 🟡 partial | time loops `fmod(t, length)` and clamps before the first key — matches native defaults (AnimationController + Constant pre-behavior); per-clip pre/post-infinity behaviors (Linear/Cycle/Oscillate extrapolation, e.g. animated_cubes) and a global time-control API ⏳ |
