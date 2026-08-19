@@ -3,7 +3,7 @@
  * execute the graph each frame, present the marked output to the canvas.
  */
 
-import { Device, Logger, Profiler, VideoRecorder, ProgramManager, RenderGraph, ResourceFormat, createPass, encodeExr, initScripting, initSlang, runConsoleCommand, runGraphScript, runSceneScript, runPbrtScene, presentToCanvas, type Scene } from "@web-falcor/falcor";
+import { Clock, Device, Logger, Profiler, VideoRecorder, ProgramManager, RenderGraph, ResourceFormat, createPass, encodeExr, initScripting, initSlang, runConsoleCommand, runGraphScript, runSceneScript, runPbrtScene, presentToCanvas, type Scene } from "@web-falcor/falcor";
 import "@web-falcor/render-passes";
 import { CameraController } from "./CameraController.js";
 import { buildUIPanel } from "./UIPanel.js";
@@ -20,6 +20,39 @@ interface ViewerState {
     output: string | null;
     frame: number;
     playing: boolean;
+    /** Global time control (mirrors m.clock; drives scene animation). */
+    clock: Clock;
+    timingCapture: TimingCapture;
+}
+
+/** Mirrors the Mogwai TimingCapture extension. Web divergence (docs §9):
+ *  no file IO — captureFrameTime(name) starts collecting per-frame CPU ms,
+ *  calling it again (or with no name) stops and downloads the log. */
+class TimingCapture {
+    private times: number[] = [];
+    private active = false;
+    private filename = "timing.txt";
+
+    captureFrameTime(filename?: string): string {
+        if (!this.active && filename) {
+            this.filename = filename;
+            this.times = [];
+            this.active = true;
+            return `capturing frame times to ${filename}`;
+        }
+        this.active = false;
+        const blob = new Blob([this.times.map((t) => t.toFixed(3)).join("\n") + "\n"], { type: "text/plain" });
+        const a = document.createElement("a");
+        a.href = URL.createObjectURL(blob);
+        a.download = this.filename;
+        a.click();
+        URL.revokeObjectURL(a.href);
+        return `downloaded ${this.times.length} frame times as ${this.filename}`;
+    }
+
+    record(ms: number): void {
+        if (this.active) this.times.push(ms);
+    }
 }
 
 async function loadGraph(state: ViewerState, url: string): Promise<void> {
@@ -153,7 +186,7 @@ async function main() {
     await initProgramSystem(device);
     await initScripting("/node_modules/pyodide");
 
-    const state: ViewerState = { device, context, format, graph: null, scene: null, output: null, frame: 0, playing: true };
+    const state: ViewerState = { device, context, format, graph: null, scene: null, output: null, frame: 0, playing: true, clock: new Clock(), timingCapture: new TimingCapture() };
 
     // Initial content from URL params (?scene=/?graph=/?output=), or the default
     // cornell-box path tracer when none are given.
@@ -177,18 +210,21 @@ async function main() {
     const camControl = new CameraController(canvas);
     (window as unknown as { mogwai: ViewerState }).mogwai = state; // debug/test handle
 
-    let animStart = -1;
     let lastGpuLine = "";
+    let lastNow = -1;
     function frame(now: number) {
         const cam = state.scene?.camera;
         let dirty = cam ? camControl.update(cam, now) : false;
-        // Advance scene animation (rebuilds geometry/BVH each frame; no-op if static).
-        if (state.playing && state.scene?.isAnimated()) {
-            if (animStart < 0) animStart = now;
-            if (state.scene.animate((now - animStart) / 1000)) dirty = true;
+        // Advance the global clock (mirrors m.clock; console pause/frame stepping applies here).
+        if (state.playing) {
+            state.clock.tick();
+            // Scene animation follows clock time (rebuilds geometry/BVH; no-op if static).
+            if (state.scene?.isAnimated() && state.scene.animate(state.clock.getTime())) dirty = true;
         }
         if (dirty && state.graph) resetAccum(); // camera or geometry moved: restart accumulation
         if (state.playing && state.graph && state.output) {
+            if (lastNow >= 0) state.timingCapture.record(now - lastNow);
+            lastNow = now;
             state.graph.execute(device.renderContext);
             const tex = state.graph.getOutput(state.output);
             if (tex) presentToCanvas(device, tex, context!.getCurrentTexture(), format);
@@ -277,7 +313,7 @@ function wireConsole(state: ViewerState, resetAccum: () => void, rebuildUI: () =
             input.value = "";
             append(`>>> ${src}`, "in");
             try {
-                const out = runConsoleCommand(state.device, src, { scene: state.scene, graph: state.graph });
+                const out = runConsoleCommand(state.device, src, { scene: state.scene, graph: state.graph, clock: state.clock, timingCapture: state.timingCapture });
                 if (out) append(out);
             } catch (e) {
                 append(String(e), "err");

@@ -41,6 +41,7 @@ export * from "./Core/State/ComputeState.js";
 export * from "./Core/Program/ShaderOverrides.js";
 export * from "./Scene/SceneCache.js";
 export * from "./Utils/Settings.js";
+export * from "./Utils/Timing/Clock.js";
 export * from "./Utils/Video/VideoRecorder.js";
 export * from "./Utils/Debug/PixelDebug.js";
 export * from "./Utils/Algorithm/BitonicSort.js";

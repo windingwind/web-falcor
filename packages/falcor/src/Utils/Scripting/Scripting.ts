@@ -112,7 +112,11 @@ export async function runGraphScript(device: Device, source: string): Promise<Re
  * The last expression's repr and print() output are returned (native echoes
  * the same way). Vector factories come from `from falcor import *`.
  */
-export function runConsoleCommand(device: Device, source: string, context: { scene: Scene | null; graph: RenderGraph | null }): string {
+export function runConsoleCommand(
+    device: Device,
+    source: string,
+    context: { scene: Scene | null; graph: RenderGraph | null; clock?: unknown; timingCapture?: unknown },
+): string {
     if (!pyodide) throw new RuntimeError("Call initScripting() first");
     const lines: string[] = [];
     pyodide.registerJsModule("falcor", {
@@ -124,6 +128,8 @@ export function runConsoleCommand(device: Device, source: string, context: { sce
     pyodide.globals.set("m", {
         scene: context.scene,
         activeGraph: context.graph,
+        clock: context.clock,
+        timingCapture: context.timingCapture,
         settings: {
             addOptions: (dict: unknown) => globalSettings.addOptions(toJs(dict) as Record<string, never>),
         },
