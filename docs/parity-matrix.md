@@ -122,7 +122,7 @@ Tallies today: 21 pass classes fully implemented, 4 partial, 13 not implemented
 | MERL / MERLMix / RGL measured materials | ⏳ | not instantiable: no factory case, no `.brdf`/`.bsdf` loaders, no data packers, no RGLAcquisition |
 | Texture LOD (ray cones / ray diffs) | 🟡 partial | explicit-gradient path verified (GBufferRT texGrads byte-exact); ray-cone mode not wired through the megakernels everywhere |
 | Analytic lights (Point/Directional/Distant/Rect/Disc/Sphere) | ✅ | verified incl. area-light sampling |
-| Emissive geometry (LightCollection) | ✅ | incl. textured-emissive flux integration; LightBVH sampler ✅ (GPU refit ⏳ — rebuild-only; options not plumbed ⏳) |
+| Emissive geometry (LightCollection) | ✅ | incl. textured-emissive flux integration; LightBVH sampler ✅ incl. `lightBVHOptions` plumbing (sampler + builder options via the native nested-dict keys; BinnedSAH heuristic not ported — warns and uses BinnedSAOH; unit-tested tree structure + defines, end-to-end options oracle vs native); GPU refit ⏳ — rebuild-only |
 | EnvMap | ✅ | rotation/intensity/tint; loads Radiance `.hdr` and OpenEXR `.exr` (decodeExr) |
 | LightProfile (IES) | ⏳ | dummy binding only; no IES loader/bake |
 | Camera (pinhole, jitter, motion vectors) | ✅ | verified (incl. prev-matrix roll) |

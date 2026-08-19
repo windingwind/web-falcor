@@ -5,7 +5,7 @@
  */
 
 import { describe, expect, it } from "vitest";
-import { buildLightBVH, type EmissiveTriangleInput } from "../src/Rendering/Lights/LightBVHBuilder.js";
+import { buildLightBVH, kDefaultLightBVHOptions, type EmissiveTriangleInput } from "../src/Rendering/Lights/LightBVHBuilder.js";
 import { PackedNode, decodeNormal2x16Host, encodeNormal2x16Host } from "../src/Rendering/Lights/LightBVHTypes.js";
 
 function quadTris(cx: number, cy: number, cz: number, flux: number): EmissiveTriangleInput[] {
@@ -89,5 +89,58 @@ describe("LightBVHBuilder", () => {
         // Culled triangles keep the invalid bitmask.
         expect(result.triangleBitmasks[0]).toBe(0xffffffff);
         expect(result.triangleBitmasks[1]).toBe(0xffffffff);
+    });
+});
+
+describe("LightBVHBuilder options", () => {
+    it("maxTriangleCountPerLeaf 1 builds a full tree over few triangles", () => {
+        // Default options put 2 triangles into one root leaf; 1/leaf must split.
+        const result = buildLightBVH(quadTris(0, 0, 0, 1), { ...kDefaultLightBVHOptions, maxTriangleCountPerLeaf: 1 });
+        expect(result.valid).toBe(true);
+        expect(result.nodeCount).toBe(3); // internal root + 2 single-triangle leaves
+        const root = nodeAt(result.nodes, 0);
+        expect(root.isLeaf()).toBe(false);
+        for (const child of [1, root.getRightChildIdx()]) {
+            const c = nodeAt(result.nodes, child);
+            expect(c.isLeaf()).toBe(true);
+            expect(c.getLeafTriangleCount()).toBe(1);
+        }
+    });
+
+    it("Equal splits divide clusters at the median regardless of flux", () => {
+        // 2 dim tris near origin + 6 bright tris far away: SAOH weighs flux and
+        // isolates the bright cluster; Equal must split 4|4 at the median.
+        const tris: EmissiveTriangleInput[] = [...quadTris(0, 0, 0, 0.01), ...quadTris(100, 0, 0, 10), ...quadTris(101, 0, 0, 10), ...quadTris(102, 0, 0, 10)];
+        const equal = buildLightBVH(tris, { ...kDefaultLightBVHOptions, splitHeuristicSelection: "Equal", maxTriangleCountPerLeaf: 4 });
+        expect(equal.valid).toBe(true);
+        const root = nodeAt(equal.nodes, 0);
+        expect(root.isLeaf()).toBe(false);
+        const left = nodeAt(equal.nodes, 1);
+        expect(left.isLeaf()).toBe(true);
+        expect(left.getLeafTriangleCount()).toBe(4); // median split: 4 | 4
+        // SAOH default instead splits the 2-dim / 6-bright clusters apart.
+        const saoh = buildLightBVH(tris, { ...kDefaultLightBVHOptions, maxTriangleCountPerLeaf: 4 });
+        const saohLeft = nodeAt(saoh.nodes, 1);
+        expect(saohLeft.isLeaf()).toBe(true);
+        expect(saohLeft.getLeafTriangleCount()).toBe(2); // the dim near-origin quad
+    });
+});
+
+describe("LightBVHSampler option defines", () => {
+    it("derives shader defines from sampler options", async () => {
+        const { kDefaultLightBVHSamplerOptions } = await import("../src/Rendering/Lights/LightBVHSamplerHost.js");
+        // getDefines is exercised without a device via a minimal stand-in.
+        const opts = {
+            ...kDefaultLightBVHSamplerOptions,
+            useBoundingCone: false,
+            solidAngleBoundMethod: 2,
+            buildOptions: { ...kDefaultLightBVHOptions, maxTriangleCountPerLeaf: 1 },
+        };
+        const proto = (await import("../src/Rendering/Lights/LightBVHSamplerHost.js")).LightBVHSampler.prototype;
+        const defines = proto.getDefines.call({ options: opts } as never);
+        expect(defines.get("_USE_BOUNDING_CONE")).toBe("0");
+        expect(defines.get("_USE_LIGHTING_CONE")).toBe("1");
+        expect(defines.get("_SOLID_ANGLE_BOUND_METHOD")).toBe("2");
+        expect(defines.get("_ACTUAL_MAX_TRIANGLES_PER_NODE")).toBe("1");
     });
 });

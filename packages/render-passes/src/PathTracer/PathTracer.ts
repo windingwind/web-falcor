@@ -17,6 +17,9 @@ import {
     EmissivePowerSampler,
     EnvMapSampler,
     LightBVHSampler,
+    kDefaultLightBVHSamplerOptions,
+    kDefaultLightBVHOptions,
+    kSolidAngleBoundMethods,
     MemoryType,
     Properties,
     RenderData,
@@ -89,6 +92,7 @@ export class PathTracer extends RenderPass {
     private emissiveSampler = "LightBVH"; // native default (PathTracer.h)
     private powerSampler: EmissivePowerSampler | null = null;
     private lightBVHSampler: LightBVHSampler | null = null;
+    private lightBVHOptions = kDefaultLightBVHSamplerOptions;
 
     constructor(device: Device, props: Properties) {
         super(device);
@@ -114,6 +118,25 @@ export class PathTracer extends RenderPass {
         this.emissiveSampler = props.get("emissiveSampler", "LightBVH");
         if (!(this.emissiveSampler in kEmissiveSamplerTypes)) {
             throw new Error(`PathTracer: unknown emissiveSampler '${this.emissiveSampler}'`);
+        }
+        // Mirrors kLightBVHOptions: nested dict following the native serialization keys.
+        const bvhOpts = props.getOpt("lightBVHOptions") as Record<string, unknown> | undefined;
+        if (bvhOpts) {
+            const build = (bvhOpts["buildOptions"] ?? {}) as Record<string, unknown>;
+            const split = build["splitHeuristicSelection"];
+            const bound = bvhOpts["solidAngleBoundMethod"];
+            this.lightBVHOptions = {
+                ...kDefaultLightBVHSamplerOptions,
+                ...Object.fromEntries(Object.entries(bvhOpts).filter(([k]) => k in kDefaultLightBVHSamplerOptions && k !== "buildOptions" && k !== "solidAngleBoundMethod")),
+                solidAngleBoundMethod:
+                    typeof bound === "string" ? (kSolidAngleBoundMethods[bound] ?? kDefaultLightBVHSamplerOptions.solidAngleBoundMethod) : typeof bound === "number" ? bound : kDefaultLightBVHSamplerOptions.solidAngleBoundMethod,
+                buildOptions: {
+                    ...kDefaultLightBVHOptions,
+                    ...Object.fromEntries(Object.entries(build).filter(([k]) => k in kDefaultLightBVHOptions && k !== "splitHeuristicSelection")),
+                    splitHeuristicSelection:
+                        split === "Equal" || split === "BinnedSAH" || split === "BinnedSAOH" ? split : kDefaultLightBVHOptions.splitHeuristicSelection,
+                },
+            };
         }
         // PathTracer defaults to TinyUniform (unlike MinimalPathTracer).
         this.sampleGenerator = SampleGenerator.create(device, SAMPLE_GENERATOR_TINY_UNIFORM);
@@ -302,7 +325,7 @@ export class PathTracer extends RenderPass {
 
         if (!this.generatePass) {
             if (this.emissiveSampler === "LightBVH" && this.scene.useEmissiveLights && !this.lightBVHSampler) {
-                this.lightBVHSampler = new LightBVHSampler(this.device, this.scene.getEmissiveTriangles());
+                this.lightBVHSampler = new LightBVHSampler(this.device, this.scene.getEmissiveTriangles(), this.lightBVHOptions);
             }
             const defines = this.getStaticDefines();
             this.generatePass = ComputePass.create(this.device, { path: kGeneratePathsFile, defines });

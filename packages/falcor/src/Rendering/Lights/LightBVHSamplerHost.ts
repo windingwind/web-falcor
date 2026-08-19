@@ -13,13 +13,37 @@ import { DefineList } from "../../Core/Program/DefineList.js";
 import type { ShaderVar } from "../../Core/Program/ParameterBlock.js";
 import { buildLightBVH, kDefaultLightBVHOptions, type EmissiveTriangleInput, type LightBVHOptions } from "./LightBVHBuilder.js";
 
+/** Mirrors SolidAngleBoundMethod (LightBVHSamplerSharedDefinitions.slang). */
+export const kSolidAngleBoundMethods: Record<string, number> = { BoxToCenter: 1, BoxToAverage: 2, Sphere: 3 };
+
+/** Mirrors LightBVHSampler::Options (buildOptions nested like the native serialization). */
+export interface LightBVHSamplerOptions {
+    buildOptions: LightBVHOptions;
+    useBoundingCone: boolean;
+    useLightingCone: boolean;
+    disableNodeFlux: boolean;
+    useUniformTriangleSampling: boolean;
+    solidAngleBoundMethod: number; // SolidAngleBoundMethod
+}
+
+export const kDefaultLightBVHSamplerOptions: LightBVHSamplerOptions = {
+    buildOptions: kDefaultLightBVHOptions,
+    useBoundingCone: true,
+    useLightingCone: true,
+    disableNodeFlux: false,
+    useUniformTriangleSampling: true,
+    solidAngleBoundMethod: kSolidAngleBoundMethods["Sphere"]!,
+};
+
 export class LightBVHSampler {
     private readonly nodes: Buffer;
     private readonly triangleIndices: Buffer;
     private readonly triangleBitmasks: Buffer;
+    private readonly options: LightBVHSamplerOptions;
 
-    constructor(device: Device, triangles: EmissiveTriangleInput[], options: LightBVHOptions = kDefaultLightBVHOptions) {
-        const result = buildLightBVH(triangles, options);
+    constructor(device: Device, triangles: EmissiveTriangleInput[], options: LightBVHSamplerOptions = kDefaultLightBVHSamplerOptions) {
+        this.options = options;
+        const result = buildLightBVH(triangles, options.buildOptions);
 
         const make = (name: string, data: ArrayBufferView | ArrayBuffer, structSize: number) => {
             const bytes = data instanceof ArrayBuffer ? new Uint8Array(data) : new Uint8Array(data.buffer, data.byteOffset, data.byteLength);
@@ -38,16 +62,17 @@ export class LightBVHSampler {
         this.triangleBitmasks = make("triangleBitmasks", result.triangleBitmasks, 8);
     }
 
-    /** Mirrors LightBVHSampler::getDefines (default options). */
+    /** Mirrors LightBVHSampler::getDefines. */
     getDefines(): DefineList {
+        const o = this.options;
         return new DefineList()
             .add("_EMISSIVE_LIGHT_SAMPLER_TYPE", "1") // EMISSIVE_LIGHT_SAMPLER_LIGHT_BVH
-            .add("_USE_BOUNDING_CONE", "1")
-            .add("_USE_LIGHTING_CONE", "1")
-            .add("_DISABLE_NODE_FLUX", "0")
-            .add("_USE_UNIFORM_TRIANGLE_SAMPLING", "1")
-            .add("_ACTUAL_MAX_TRIANGLES_PER_NODE", "10")
-            .add("_SOLID_ANGLE_BOUND_METHOD", "3"); // SolidAngleBoundMethod::Sphere
+            .add("_USE_BOUNDING_CONE", o.useBoundingCone ? "1" : "0")
+            .add("_USE_LIGHTING_CONE", o.useLightingCone ? "1" : "0")
+            .add("_DISABLE_NODE_FLUX", o.disableNodeFlux ? "1" : "0")
+            .add("_USE_UNIFORM_TRIANGLE_SAMPLING", o.useUniformTriangleSampling ? "1" : "0")
+            .add("_ACTUAL_MAX_TRIANGLES_PER_NODE", String(o.buildOptions.maxTriangleCountPerLeaf))
+            .add("_SOLID_ANGLE_BOUND_METHOD", String(o.solidAngleBoundMethod));
     }
 
     /** Binds under emissiveSampler (fields live at _lightBVH.*). */
