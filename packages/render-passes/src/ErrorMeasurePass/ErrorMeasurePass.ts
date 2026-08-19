@@ -27,6 +27,7 @@ import {
     type CompileData,
     type Device,
     type RenderContext,
+    type UIWidgets,
 } from "@web-falcor/falcor";
 
 const kShaderFile = "RenderPasses/ErrorMeasurePass/ErrorMeasurer.cs.slang";
@@ -48,6 +49,14 @@ export class ErrorMeasurePass extends RenderPass {
     /** Mirrors ErrorMeasurePass::mMeasurements (async readback; ~1 frame late). */
     measurements: { valid: boolean; error: [number, number, number]; avgError: number } = { valid: false, error: [0, 0, 0], avgError: 0 };
 
+    /** Mirrors mRunningError/mRunningAvgError: exponential moving average, one
+     * step per landed measurement (native steps per frame; the readback is the
+     * web's measurement cadence). runningAvgError < 0 means no sample yet. */
+    runningError: [number, number, number] = [0, 0, 0];
+    runningAvgError = -1;
+    private reportRunningError = true;
+    private runningErrorSigma = 0.995;
+
     constructor(device: Device, props: Properties) {
         super(device);
         this.referenceImagePath = props.get("ReferenceImagePath", "");
@@ -55,11 +64,13 @@ export class ErrorMeasurePass extends RenderPass {
         this.computeSquaredDifference = props.get("ComputeSquaredDifference", true);
         this.computeAverage = props.get("ComputeAverage", false);
         this.selectedOutput = props.get("SelectedOutputId", "Source");
-        // 'MeasurementsFilePath', 'ReportRunningError', 'RunningErrorSigma'
-        // accepted: no file IO on the web; running-error smoothing pending.
+        this.reportRunningError = props.get("ReportRunningError", true);
+        this.runningErrorSigma = props.get("RunningErrorSigma", 0.995);
+        // 'MeasurementsFilePath' accepted: no file IO on the web (docs §9).
     }
 
     override async initAsync(): Promise<void> {
+        this.runningAvgError = -1; // Mirrors loadReference: running error restarts with a new reference.
         if (!this.referenceImagePath) return;
         const url = kMediaBaseUrl + this.referenceImagePath;
         const res = await fetch(url);
@@ -141,7 +152,21 @@ export class ErrorMeasurePass extends RenderPass {
             void this.reduction.execute(ctx, this.differenceTexture, ParallelReductionType.Sum).then((sum) => {
                 const n = w * h;
                 const error: [number, number, number] = [sum[0]! / n, sum[1]! / n, sum[2]! / n];
-                this.measurements = { valid: true, error, avgError: (error[0] + error[1] + error[2]) / 3 };
+                const avgError = (error[0] + error[1] + error[2]) / 3;
+                this.measurements = { valid: true, error, avgError };
+                // Mirrors the native running-error update (endFrame).
+                if (this.runningAvgError < 0) {
+                    this.runningError = [...error];
+                    this.runningAvgError = avgError;
+                } else {
+                    const s = this.runningErrorSigma;
+                    this.runningError = [
+                        s * this.runningError[0] + (1 - s) * error[0],
+                        s * this.runningError[1] + (1 - s) * error[1],
+                        s * this.runningError[2] + (1 - s) * error[2],
+                    ];
+                    this.runningAvgError = s * this.runningAvgError + (1 - s) * avgError;
+                }
                 this.readbackInFlight = false;
             });
         }
@@ -156,6 +181,25 @@ export class ErrorMeasurePass extends RenderPass {
             default:
                 ctx.blit(source, output);
         }
+    }
+
+    override renderUI(ui: UIWidgets): void {
+        ui.dropdown("Output", ["Source", "Reference", "Difference"], this.selectedOutput, (v) => (this.selectedOutput = v));
+        ui.checkbox("Ignore background", this.ignoreBackground, (v) => (this.ignoreBackground = v));
+        ui.checkbox("Compute squared difference", this.computeSquaredDifference, (v) => (this.computeSquaredDifference = v));
+        ui.checkbox("Compute average", this.computeAverage, (v) => (this.computeAverage = v));
+        ui.checkbox("Report running error", this.reportRunningError, (v) => {
+            this.reportRunningError = v;
+            if (v) this.runningAvgError = -1; // native resets the average on enable
+        });
+        if (!this.measurements.valid) {
+            ui.text("No measurements (reference missing)");
+            return;
+        }
+        const useRunning = this.reportRunningError && this.runningAvgError >= 0;
+        const err = useRunning ? this.runningError : this.measurements.error;
+        const avg = useRunning ? this.runningAvgError : this.measurements.avgError;
+        ui.text(`${useRunning ? "Running avg" : "Avg"} error: ${avg.toExponential(3)} (${err.map((x) => x.toExponential(2)).join(", ")})`);
     }
 }
 

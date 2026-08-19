@@ -52,3 +52,29 @@ gpuTest("ErrorMeasure.exrFileReferenceSelfDiff", async ({ device }) => {
     // diffSqr 0.25 on R over a quarter of pixels -> avg (0.0625 + 0 + 0)/3.
     expectEq(Math.abs(pass.measurements.avgError - 0.0625 / 3) < 1e-4, true, `perturbed avgError ${pass.measurements.avgError}`);
 });
+
+gpuTest("ErrorMeasure.runningErrorEMA", async ({ device }) => {
+    const size = 8;
+    const mk = (v: number) => device.createTexture2D(size, size, ResourceFormat.RGBA32Float, 1, 1, new Float32Array(size * size * 4).fill(v));
+    const srcA = mk(0.75); // |0.75-0.5|^2 = 0.0625
+    const srcB = mk(1.0); //  |1.0-0.5|^2 = 0.25
+    const ref = mk(0.5);
+    const out = device.createTexture2D(size, size, ResourceFormat.RGBA32Float, 1, 1, undefined, ResourceBindFlags.ShaderResource | ResourceBindFlags.RenderTarget);
+
+    const pass = new ErrorMeasurePass(device, new Properties({ RunningErrorSigma: 0.5 }));
+    // One execute -> exactly one readback landing (measurements is reassigned per landing).
+    const landOnce = async (src: typeof srcA) => {
+        const prev = pass.measurements;
+        pass.execute(device.renderContext, new RenderData(new Map([["Source", src], ["Reference", ref], ["Output", out]]), [size, size]));
+        for (let i = 0; i < 100 && pass.measurements === prev; i++) await new Promise((r) => setTimeout(r, 10));
+    };
+
+    await landOnce(srcA); // first sample initializes the EMA
+    expectEq(Math.abs(pass.runningAvgError - 0.0625) < 1e-6, true, `EMA init ${pass.runningAvgError} == 0.0625`);
+    await landOnce(srcB); // 0.5*0.0625 + 0.5*0.25
+    expectEq(Math.abs(pass.measurements.avgError - 0.25) < 1e-6, true, `avgError ${pass.measurements.avgError} == 0.25`);
+    expectEq(Math.abs(pass.runningAvgError - 0.15625) < 1e-6, true, `EMA step1 ${pass.runningAvgError} == 0.15625`);
+    await landOnce(srcB); // 0.5*0.15625 + 0.5*0.25
+    expectEq(Math.abs(pass.runningAvgError - 0.203125) < 1e-6, true, `EMA step2 ${pass.runningAvgError} == 0.203125`);
+    expectEq(Math.abs(pass.runningError[0]! - 0.203125) < 1e-6, true, `EMA channel ${pass.runningError[0]}`);
+});

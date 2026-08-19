@@ -62,7 +62,7 @@ Tallies today: 21 pass classes fully implemented, 4 partial, 13 not implemented
 | DebugPasses: ColorMapPass / SideBySidePass / SplitScreenPass | ✅ | verified; TextRenderer overlay labels + interactive divider ⏳ |
 | DebugPasses: InvalidPixelDetectionPass | ✅ | unmodified upstream shader; functional GPU test (injected NaN→red, Inf→green, valid→black) |
 | DLSSPass | ❌ | NVIDIA NGX driver + hardware black box; nearest substitutes: TAA-upscale ✅ or FSR2-WGSL port 🔶 (separate pass, not DLSS parity) |
-| ErrorMeasurePass | ✅ core | difference kernel (WTexture2D override — rgba32float storage is write-only) + GPU-reduced mean error; reference from input or file (EXR/HDR/browser formats). Measurements surface on `measurements` via async readback — csv file output ❌ (no file IO), running-error smoothing ⏳ |
+| ErrorMeasurePass | ✅ | difference kernel (WTexture2D override — rgba32float storage is write-only) + GPU-reduced mean error; reference from input or file (EXR/HDR/browser formats); running-error EMA (one step per landed measurement) + `renderUI`. Measurements surface on `measurements`/`runningError` via async readback — csv file output ❌ (no file IO) |
 | FLIPPass | ✅ core | LDR path verified (byte MSE 6.7e-5); HDR auto-exposure path + pooled UI values ⏳ |
 | GBufferRaster | ✅ | native oracle impossible on this host (ROV), RT-cross-verified |
 | GBufferRT | 🟡 | SoftwareRT; verified incl. texGrads (byte-exact) |
@@ -155,7 +155,7 @@ Tallies today: 21 pass classes fully implemented, 4 partial, 13 not implemented
 | BSDFIntegrator (white furnace) | ⏳ | BSDFViewer pass exists; integrator harness not built |
 | Algorithm library | ✅ | ParallelReduction ✅, PrefixSum ✅, BitonicSort ✅ (portable shared-memory override of the NVAPI warp-shuffle kernel, §9; exact vs CPU chunk sort incl. 2D dispatch + tail padding) |
 | Utils/Math | ✅ core | Vector/Matrix/Quaternion ✅; CubicSpline host / SphericalHarmonics ⏳ |
-| Gui (Dear ImGui) | 🔶 | DOM `UIWidgets` (text/button/checkbox/slider/dropdown/group); `renderUI` implemented on 3 passes so far ⏳; TextRenderer/Font/PixelZoom ⏳ |
+| Gui (Dear ImGui) | 🔶 | DOM `UIWidgets` (text/button/checkbox/slider/dropdown/group); `renderUI` implemented on 4 passes so far ⏳; TextRenderer/Font/PixelZoom ⏳ |
 | Video (FFmpeg encode/decode) | ❌ native / ⏳ substitute | WebCodecs route not built |
 | AssetResolver | 🔶 ad-hoc | URL resolution inline in the app; no search-path API |
 
