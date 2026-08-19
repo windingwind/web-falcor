@@ -1,0 +1,15 @@
+# Minimal probe: bunny.obj at identity (no parent), fixed camera.
+# Adjudicates TriangleMesh.createFromFile geometry parity.
+bunnyMesh = TriangleMesh.createFromFile('../../../Falcor/media/test_scenes/meshes/bunny.obj')
+mat = StandardMaterial('Gray')
+mat.baseColor = float4(0.5, 0.5, 0.5, 1.0)
+mat.roughness = 0.5
+meshID = sceneBuilder.addTriangleMesh(bunnyMesh, mat)
+nodeID = sceneBuilder.addNode('Bunny', Transform(scaling=1))
+sceneBuilder.addMeshInstance(nodeID, meshID)
+
+camera = Camera("Camera")
+camera.position = float3(0.0, 0.12, 0.35)
+camera.target = float3(0.0, 0.1, 0.0)
+camera.up = float3(0, 1, 0)
+sceneBuilder.addCamera(camera)

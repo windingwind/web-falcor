@@ -531,8 +531,12 @@ export class SceneBuilderBridge {
         return this.meshGeometry.length - 1;
     }
 
-    addNode(_name: string, transform: float4x4): number {
-        this.nodes.push(transform);
+    addNode(_name: string, transform: float4x4, parentID?: number): number {
+        // Nodes store WORLD matrices (static scenes): compose under the parent
+        // (native SceneBuilder::addNode's third argument was silently dropped
+        // before — parented pyscene nodes lost the parent transform).
+        const parent = parentID !== undefined && parentID >= 0 ? this.nodes[parentID] : undefined;
+        this.nodes.push(parent ? mulMat(parent, transform) : transform);
         return this.nodes.length - 1;
     }
 
@@ -810,7 +814,7 @@ export class SceneBuilderBridge {
             const url = baseUrl ? `${baseUrl}/${geo._fromFile.path}` : geo._fromFile.path;
             const res = await fetch(url);
             if (!res.ok) throw new RuntimeError(`TriangleMesh.createFromFile: failed to fetch '${url}' (${res.status})`);
-            const loaded = await FbxImporter.parseMeshOnly(new Uint8Array(await res.arrayBuffer()), geo._fromFile.path);
+            const loaded = await FbxImporter.parseMeshOnly(new Uint8Array(await res.arrayBuffer()), geo._fromFile.path, geo._fromFile.smoothNormals);
             geo.vertices = loaded.vertices;
             geo.indices = loaded.indices;
             geo._fromFile = undefined;

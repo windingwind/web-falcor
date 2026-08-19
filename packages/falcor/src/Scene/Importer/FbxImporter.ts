@@ -14,7 +14,7 @@
  * geometry is verified against native renders instead of buffer equality.
  */
 
-import { float2, float3, float4, normalize3 } from "../../Utils/Math/Vector.js";
+import { float2, float3, float4, normalize3, cross, sub3, add3 } from "../../Utils/Math/Vector.js";
 import { float4x4, mulMat, transformPoint, transformVector } from "../../Utils/Math/Matrix.js";
 import { RuntimeError } from "../../Core/Error.js";
 import { generateTangents } from "../TangentSpace.js";
@@ -396,34 +396,83 @@ export class FbxImporter {
     }
 
     /** Parses a single mesh asset (.obj/.ply/etc. via assimp) into one merged
-     *  local-space TriangleMesh, for TriangleMesh.createFromFile(). Materials and
-     *  node transforms are ignored (the caller assigns its own material/instance).
+     *  TriangleMesh, for TriangleMesh.createFromFile(). Mirrors native
+     *  TriangleMesh::createFromFile postprocessing: node transforms baked
+     *  (aiProcess_PreTransformVertices), V flipped (aiProcess_FlipUVs), and
+     *  missing normals generated — flat per-face by default, smooth when
+     *  smoothNormals is set (aiProcess_GenNormals / GenSmoothNormals).
+     *  Materials are ignored (the caller assigns its own material/instance).
      *  `filename` must keep the real extension so assimp picks the right importer. */
-    static async parseMeshOnly(bytes: Uint8Array, filename: string): Promise<{ vertices: StaticVertex[]; indices: Uint32Array }> {
+    static async parseMeshOnly(bytes: Uint8Array, filename: string, smoothNormals = false): Promise<{ vertices: StaticVertex[]; indices: Uint32Array }> {
         const ajs = await getAssimp();
         const files = new ajs.FileList();
         files.AddFile(filename, bytes);
         const result = ajs.ConvertFileList(files, "assjson");
         if (!result.IsSuccess()) throw new RuntimeError(`TriangleMesh.createFromFile('${filename}'): assimp failed (${result.GetErrorCode()})`);
         const json = JSON.parse(new TextDecoder().decode(result.GetFile(0).GetContent())) as AiScene;
+
+        // Bake node transforms (native aiProcess_PreTransformVertices).
+        const meshWorld = new Map<number, float4x4>();
+        const visit = (node: AiNode, parentWorld: float4x4) => {
+            const local = new float4x4();
+            for (let r = 0; r < 4; r++) for (let c = 0; c < 4; c++) local.set(r, c, node.transformation[r * 4 + c]!);
+            const world = mulMat(parentWorld, local);
+            for (const mi of node.meshes ?? []) meshWorld.set(mi, world);
+            for (const child of node.children ?? []) visit(child, world);
+        };
+        if (json.rootnode) visit(json.rootnode, float4x4.identity());
+
         const vertices: StaticVertex[] = [];
         const indices: number[] = [];
-        for (const mesh of json.meshes ?? []) {
+        (json.meshes ?? []).forEach((mesh, mi) => {
             const base = vertices.length;
             const count = mesh.vertices.length / 3;
             const uvs = mesh.texturecoords?.[0];
+            const world = meshWorld.get(mi) ?? float4x4.identity();
             for (let i = 0; i < count; i++) {
+                const p = transformPoint(world, new float3(mesh.vertices[i * 3]!, mesh.vertices[i * 3 + 1]!, mesh.vertices[i * 3 + 2]!));
+                const n = mesh.normals
+                    ? normalize3(transformVector(world, new float3(mesh.normals[i * 3]!, mesh.normals[i * 3 + 1]!, mesh.normals[i * 3 + 2]!)))
+                    : new float3(0, 0, 1); // regenerated below when absent
                 vertices.push({
-                    position: new float3(mesh.vertices[i * 3]!, mesh.vertices[i * 3 + 1]!, mesh.vertices[i * 3 + 2]!),
-                    normal: mesh.normals ? new float3(mesh.normals[i * 3]!, mesh.normals[i * 3 + 1]!, mesh.normals[i * 3 + 2]!) : new float3(0, 0, 1),
+                    position: p,
+                    normal: n,
                     tangent: new float4(0, 0, 0, 0),
-                    texCrd: uvs ? new float2(uvs[i * 2]!, uvs[i * 2 + 1]!) : new float2(0, 0),
+                    // Native imports with aiProcess_FlipUVs.
+                    texCrd: uvs ? new float2(uvs[i * 2]!, 1 - uvs[i * 2 + 1]!) : new float2(0, 0),
                 });
             }
             for (const face of mesh.faces) if (face.length === 3) indices.push(base + face[0]!, base + face[1]!, base + face[2]!);
-        }
+        });
         if (vertices.length === 0) throw new RuntimeError(`TriangleMesh.createFromFile('${filename}'): no geometry`);
-        const idx = new Uint32Array(indices);
+
+        // Generate normals when the asset has none (assimpjs runs no GenNormals pass).
+        const missingNormals = (json.meshes ?? []).some((m) => !m.normals);
+        let idx = new Uint32Array(indices);
+        if (missingNormals && !smoothNormals) {
+            // Flat per-face normals (aiProcess_GenNormals): split vertices per face.
+            const flat: StaticVertex[] = [];
+            for (let f = 0; f < idx.length; f += 3) {
+                const [a, b, c] = [vertices[idx[f]!]!, vertices[idx[f + 1]!]!, vertices[idx[f + 2]!]!];
+                const n = normalize3(cross(sub3(b.position, a.position), sub3(c.position, a.position)));
+                for (const v of [a, b, c]) flat.push({ ...v, normal: n });
+            }
+            vertices.length = 0;
+            vertices.push(...flat);
+            idx = new Uint32Array(flat.length);
+            for (let i = 0; i < flat.length; i++) idx[i] = i;
+        } else if (missingNormals) {
+            // Smooth normals (aiProcess_GenSmoothNormals): area-weighted average
+            // over the faces sharing each vertex (assimpjs already joined
+            // identical vertices).
+            const acc = vertices.map(() => new float3(0, 0, 0));
+            for (let f = 0; f < idx.length; f += 3) {
+                const [a, b, c] = [idx[f]!, idx[f + 1]!, idx[f + 2]!];
+                const n = cross(sub3(vertices[b]!.position, vertices[a]!.position), sub3(vertices[c]!.position, vertices[a]!.position));
+                for (const vi of [a, b, c]) acc[vi] = add3(acc[vi]!, n);
+            }
+            vertices.forEach((v, i) => (v.normal = normalize3(acc[i]!)));
+        }
         generateTangents(vertices, idx);
         return { vertices, indices: idx };
     }
