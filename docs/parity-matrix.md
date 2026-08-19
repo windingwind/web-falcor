@@ -118,7 +118,7 @@ Tallies today: 21 pass classes fully implemented, 4 partial, 13 not implemented
 | StandardMaterial | ✅ | verified across the oracle suite |
 | PBRTConductor | ✅ | override shader + bridge |
 | Cloth / Hair / PBRTDiffuse materials | ✅ | oracle-verified vs native (cloth-pt / hair-pt / pbrt-diffuse-pt / pbrt-conductor-pt suites); Hair additionally exercised by the curve scenes (Chiang16) — the old "unverified" marker was stale |
-| PBRTDielectric / CoatedConductor / CoatedDiffuse / DiffuseTransmission | 🟡 | instantiable via the native Settings key `PBRTImporter:usePBRTMaterials` (first web Settings consumer); all four compile to WGSL and render through the full PathTracer (one override: CoatedConductor instance aggregate-init vs explicit `__init`); functional GPU test, no native radiance oracle yet |
+| PBRTDielectric / CoatedConductor / CoatedDiffuse / DiffuseTransmission | ✅ | instantiable via the native Settings key `PBRTImporter:usePBRTMaterials` (first web Settings consumer); one override (CoatedConductor instance aggregate-init vs explicit `__init`); verified vs native (`m.addOptions` oracle, 256-frame PT: per-material region means within 0.8%, bias 2.3e-3, 10/256 16×16 blocks) |
 | MERL / MERLMix / RGL measured materials | ⏳ | not instantiable: no factory case, no `.brdf`/`.bsdf` loaders, no data packers, no RGLAcquisition |
 | Texture LOD (ray cones / ray diffs) | 🟡 partial | explicit-gradient path verified (GBufferRT texGrads byte-exact); ray-cone mode not wired through the megakernels everywhere |
 | Analytic lights (Point/Directional/Distant/Rect/Disc/Sphere) | ✅ | verified incl. area-light sampling |

@@ -19,59 +19,14 @@ import {
     type Device,
 } from "@web-falcor/falcor";
 import "@web-falcor/render-passes";
+import parseExr from "parse-exr";
 import { gpuTest, expectEq } from "../harness/registry.js";
 
 const W = 256;
 const H = 256;
 
-// Six spheres in a row (one per material type) over a diffuse floor, lit by
-// an emissive quad. Left-handed pbrt coords; camera looks down -z (kInvertZ).
-const kScene = `
-LookAt 0 1.5 6.5  0 1 0  0 1 0
-Camera "perspective" "float fov" [40]
-WorldBegin
-AttributeBegin
-  AreaLightSource "diffuse" "rgb L" [14 14 14]
-  Translate 0 4.6 0
-  Shape "trianglemesh"
-    "point3 P" [-1.5 0 -1.5  1.5 0 -1.5  1.5 0 1.5  -1.5 0 1.5]
-    "integer indices" [0 1 2 0 2 3]
-AttributeEnd
-Material "diffuse" "rgb reflectance" [0.7 0.7 0.7]
-Shape "trianglemesh"
-  "point3 P" [-8 0 -8  8 0 -8  8 0 8  -8 0 8]
-  "integer indices" [0 2 1 0 3 2]
-AttributeBegin
-  Material "diffuse" "rgb reflectance" [0.8 0.1 0.1]
-  Translate -3.4 1 0
-  Shape "sphere" "float radius" [0.6]
-AttributeEnd
-AttributeBegin
-  Material "coateddiffuse" "rgb reflectance" [0.1 0.5 0.8] "float roughness" [0.1]
-  Translate -2.0 1 0
-  Shape "sphere" "float radius" [0.6]
-AttributeEnd
-AttributeBegin
-  Material "conductor" "float roughness" [0.05]
-  Translate -0.7 1 0
-  Shape "sphere" "float radius" [0.6]
-AttributeEnd
-AttributeBegin
-  Material "coatedconductor" "float conductor.roughness" [0.1] "float interface.roughness" [0.05]
-  Translate 0.7 1 0
-  Shape "sphere" "float radius" [0.6]
-AttributeEnd
-AttributeBegin
-  Material "dielectric" "float eta" [1.5]
-  Translate 2.0 1 0
-  Shape "sphere" "float radius" [0.6]
-AttributeEnd
-AttributeBegin
-  Material "diffusetransmission" "rgb reflectance" [0.6 0.5 0.1] "rgb transmittance" [0.2 0.4 0.6]
-  Translate 3.4 1 0
-  Shape "sphere" "float radius" [0.6]
-AttributeEnd
-`;
+// Shared scene asset (also rendered by render-native-pbrt-materials.py).
+const kSceneUrl = "/tests/oracle/assets/oracle-pbrt-materials.pbrt";
 
 async function render(device: Device, scene: Scene, frames: number): Promise<Float32Array> {
     scene.camera.setAspectRatio(W / H);
@@ -90,12 +45,12 @@ async function render(device: Device, scene: Scene, frames: number): Promise<Flo
 
 gpuTest("PbrtMaterials.usePBRTMaterialsPath", async ({ device }) => {
     // Standard mapping first (option off = default).
-    const stdScene = await runPbrtScene(device, kScene, "/Falcor/media");
+    const stdScene = await runPbrtScene(device, await (await fetch(kSceneUrl)).text(), "/Falcor/media");
     const stdImg = await render(device, stdScene, 16);
 
     getGlobalSettings().addOptions({ PBRTImporter: { usePBRTMaterials: true } });
     try {
-        const scene = await runPbrtScene(device, kScene, "/Falcor/media");
+        const scene = await runPbrtScene(device, await (await fetch(kSceneUrl)).text(), "/Falcor/media");
         const defines = scene.getSceneDefines();
         for (const name of [
             "WEBFALCOR_MTL_PBRT_DIFFUSE",
@@ -110,18 +65,72 @@ gpuTest("PbrtMaterials.usePBRTMaterialsPath", async ({ device }) => {
         // Area light + floor stay Standard (native keeps area-light materials Standard).
         expectEq(String(defines.get("WEBFALCOR_MTL_STANDARD")), "1", "Standard still present");
 
-        const img = await render(device, scene, 16);
+        // 256 accumulated frames: the dielectric/diffusetransmission spheres
+        // leave too much variance for block gates at 64 (displaced-cornell lesson).
+        const img = await render(device, scene, 256);
+
+        // Radiance oracle: native render with the same graph + option enabled.
+        // Regenerate with:
+        //   xvfb-run -a Falcor/build/linux-gcc/bin/Debug/Mogwai --script tests/oracle/render-native-pbrt-materials.py --headless
+        const res = await fetch("/tests/oracle/out-native/oracle-pbrt-materials.Accumulate.output.0.exr");
+        const { data, width, height } = parseExr(await res.arrayBuffer(), 1015) as { data: Float32Array; width: number; height: number };
+        expectEq(width, W, "oracle resolution");
+        let oracleGates = { bias: 0, badBlocks: 0 };
+        {
+            let bias = 0;
+            let refSum = 0;
+            // 16x16 blocks: at 8x8 the sphere-silhouette/caustic RNG variance
+            // still trips the gate at 256 frames (displaced-cornell lesson);
+            // the per-region native compare below is the fine-grained assert.
+            const block = 16;
+            let badBlocks = 0;
+            for (let by = 0; by < H / block; by++) {
+                for (let bx = 0; bx < W / block; bx++) {
+                    let diff = 0;
+                    let ref = 0;
+                    for (let y = by * block; y < (by + 1) * block; y++) {
+                        for (let x = bx * block; x < (bx + 1) * block; x++) {
+                            const wi = (y * W + x) * 4;
+                            const ni = ((height - 1 - y) * width + x) * 4;
+                            for (let c = 0; c < 3; c++) {
+                                diff += Math.abs(img[wi + c]! - data[ni + c]!);
+                                bias += img[wi + c]! - data[ni + c]!;
+                                ref += data[ni + c]!;
+                            }
+                        }
+                    }
+                    refSum += ref;
+                    if (diff > Math.max(ref, block * block * 3 * 0.02) * 0.1) badBlocks++;
+                }
+            }
+            const n = W * H * 3;
+            const meanRef = refSum / n;
+            console.error(`# pbrt-materials oracle: bias=${(bias / n).toExponential(2)} meanRef=${meanRef.toFixed(4)} badBlocks=${badBlocks}/256`);
+            oracleGates = { bias: bias / n, badBlocks };
+        }
 
         // Per-sphere screen regions (row of spheres at y≈1): sample a horizontal band.
         const bandY0 = Math.floor(H * 0.45);
         const bandY1 = Math.floor(H * 0.62);
-        const regionMean = (data: Float32Array, x0: number, x1: number) => {
+        const regionMeanNative = (x0: number, x1: number) => {
+            let s = 0;
+            let c = 0;
+            for (let y = bandY0; y < bandY1; y++) {
+                for (let x = x0; x < x1; x++) {
+                    const i = ((height - 1 - y) * width + x) * 4;
+                    s += data[i]! + data[i + 1]! + data[i + 2]!;
+                    c += 3;
+                }
+            }
+            return s / c;
+        };
+        const regionMean = (img4: Float32Array, x0: number, x1: number) => {
             let s = 0;
             let c = 0;
             for (let y = bandY0; y < bandY1; y++) {
                 for (let x = x0; x < x1; x++) {
                     const i = (y * W + x) * 4;
-                    s += data[i]! + data[i + 1]! + data[i + 2]!;
+                    s += img4[i]! + img4[i + 1]! + img4[i + 2]!;
                     c += 3;
                 }
             }
@@ -139,12 +148,16 @@ gpuTest("PbrtMaterials.usePBRTMaterialsPath", async ({ device }) => {
         for (const [name, f0, f1] of kRegions) {
             const m = regionMean(img, Math.floor(W * f0), Math.floor(W * f1));
             const ms = regionMean(stdImg, Math.floor(W * f0), Math.floor(W * f1));
+            const mn = regionMeanNative(Math.floor(W * f0), Math.floor(W * f1));
             expectEq(Number.isFinite(m) && m > 1e-3, true, `${name} region lit (mean ${m})`);
+            expectEq(Math.abs(m - mn) / Math.max(mn, 1e-2) < 0.05, true, `${name} region matches native (web ${m.toFixed(4)} vs ${mn.toFixed(4)})`);
             sumRel += Math.abs(m - ms) / Math.max(ms, 1e-3);
-            console.error(`# pbrt-materials ${name}: pbrt=${m.toFixed(4)} std=${ms.toFixed(4)}`);
+            console.error(`# pbrt-materials ${name}: pbrt=${m.toFixed(4)} native=${mn.toFixed(4)} std=${ms.toFixed(4)}`);
         }
         // The PBRT material models must actually change the shading vs Standard.
         expectEq(sumRel > 0.05, true, `PBRT vs Standard shading differs (sum rel diff ${sumRel.toFixed(3)})`);
+        expectEq(Math.abs(oracleGates.bias) < 3e-3, true, `radiance bias ${oracleGates.bias}`);
+        expectEq(oracleGates.badBlocks <= 16, true, `bad 16x16 blocks ${oracleGates.badBlocks}`);
     } finally {
         getGlobalSettings().addOptions({ PBRTImporter: { usePBRTMaterials: false } });
     }
