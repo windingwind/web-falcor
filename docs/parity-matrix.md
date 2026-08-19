@@ -63,7 +63,7 @@ Tallies today: 21 pass classes fully implemented, 4 partial, 13 not implemented
 | DebugPasses: InvalidPixelDetectionPass | ✅ | unmodified upstream shader; functional GPU test (injected NaN→red, Inf→green, valid→black) |
 | DLSSPass | ❌ | NVIDIA NGX driver + hardware black box; nearest substitutes: TAA-upscale ✅ or FSR2-WGSL port 🔶 (separate pass, not DLSS parity) |
 | ErrorMeasurePass | ✅ | difference kernel (WTexture2D override — rgba32float storage is write-only) + GPU-reduced mean error; reference from input or file (EXR/HDR/browser formats); running-error EMA (one step per landed measurement) + `renderUI`. Measurements surface on `measurements`/`runningError` via async readback — csv file output ❌ (no file IO) |
-| FLIPPass | ✅ core | LDR path verified (byte MSE 6.7e-5); HDR auto-exposure path + pooled UI values ⏳ |
+| FLIPPass | ✅ | LDR path verified vs native (byte MSE 6.7e-5); HDR auto-exposure (reference-luminance median/max → exposure range, async readback §9 — same 1-frame latency as native's member-after-cbuffer-write order) + pooled avg/min/max FLIP via ParallelReduction, both pinned by GPU test vs CPU recomputation |
 | GBufferRaster | ✅ | native oracle impossible on this host (ROV), RT-cross-verified |
 | GBufferRT | 🟡 | SoftwareRT; verified incl. texGrads (byte-exact) |
 | VBufferRT | 🟡 | SoftwareRT; verified |
