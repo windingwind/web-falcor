@@ -160,7 +160,7 @@ export class RTXDI {
     private compactLightOffset = 1;
     private reservoirBuffer: Buffer | null = null;
     private surfaceDataBuffer: Buffer | null = null;
-    private neighborOffsetsBuffer: Buffer | null = null;
+    private neighborOffsetsTexture: Texture | null = null;
     private analyticLightIDBuffer: Buffer | null = null;
     private localLightPdfTexture: Texture | null = null;
     private envLightLuminanceTexture: Texture | null = null;
@@ -308,8 +308,17 @@ export class RTXDI {
         this.surfaceDataBuffer = makeBuffer("RTXDI::surfaceData", 2 * this.frameDim[0] * this.frameDim[1] * kPackedSurfaceDataSize, kPackedSurfaceDataSize);
 
         const offsets = fillNeighborOffsets(kNeighborOffsetCount);
-        this.neighborOffsetsBuffer = makeBuffer("RTXDI::neighborOffsets", offsets.byteLength, 8);
-        this.neighborOffsetsBuffer.setBlob(new Uint8Array(offsets.buffer));
+        // 1-row texture instead of a buffer: the 17th storage buffer would
+        // exceed the 16-per-stage cap in the PathTracer+RTXDI megakernels.
+        this.neighborOffsetsTexture = new Texture(this.device, {
+            type: ResourceType.Texture2D,
+            width: kNeighborOffsetCount,
+            height: 1,
+            format: ResourceFormat.RG32Float,
+            bindFlags: ResourceBindFlags.ShaderResource,
+            name: "RTXDI::neighborOffsets",
+        });
+        this.neighborOffsetsTexture.setSubresourceBlob(0, 0, new Uint8Array(offsets.buffer));
 
         this.prevEmissiveLightCount = -1;
         this.prevLocalAnalyticLightCount = -1;
@@ -581,7 +590,7 @@ export class RTXDI {
         v["surfaceData"] = this.surfaceDataBuffer!;
         v["risBuffer"] = this.lightTileBuffer!;
         v["reservoirs"] = this.reservoirBuffer!;
-        v["neighborOffsets"] = this.neighborOffsetsBuffer!;
+        (v["neighborOffsets"] as ShaderVar)["tex"] = this.neighborOffsetsTexture!;
         if (motionVectors) v["motionVectors"] = motionVectors;
 
         v["localLightPdfTexture"] = this.localLightPdfTexture ?? this.dummyR32Tex();

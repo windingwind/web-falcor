@@ -53,6 +53,17 @@ __exported import Scene.Material.VolumeProperties;
 #error "MaterialSystem defines are not set!"
 #endif
 
+/** WebFalcor: buffer-indexable view over a 1-row texture (frees a storage
+ *  buffer under the 16-per-stage cap; values identical to the old buffer). */
+struct TexInfoTexture
+{
+    Texture2D<float4> tex;
+    __subscript(uint index) -> float4
+    {
+        get { return tex[uint2(index, 0)]; }
+    }
+};
+
 /** This struct represents the GPU-side material system.
 */
 struct MaterialSystem
@@ -66,7 +77,7 @@ struct MaterialSystem
     // documented in the parity matrix; revisit for scenes with mixed sampler modes).
     SamplerState materialSampler0;
     Texture2DArray<float4> materialTexturesArray;
-    StructuredBuffer<float4> materialTextureUvScale; ///< Per-texture: uvScale.xy, arraySelector (0 sRGB / 1 linear), layer.
+    TexInfoTexture materialTextureUvScale; ///< Per-texture: uvScale.xy, arraySelector (0 sRGB / 1 linear), layer (1-row texture; 16-storage-buffer budget).
     Texture2DArray materialTexturesArrayLinear; ///< Linear-colorspace textures (normal/specular maps).
     Texture2D<float4> webfalcorDummyTexture;
     // Single displacement texture (v1: one displaced material per scene, docs §8.4).

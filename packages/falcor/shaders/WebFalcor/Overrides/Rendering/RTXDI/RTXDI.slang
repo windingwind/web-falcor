@@ -23,6 +23,17 @@ import Scene.RaytracingInline;
 // Thread groups size for launches. Not user controllable, due to internal RTXDI restrictions
 static const uint kRTXDIGroupSize = 16;
 
+/** WebFalcor: buffer-indexable view over a 1-row texture (frees a storage
+ *  buffer under the 16-per-stage cap; values identical to the old buffer). */
+struct NeighborOffsetsTexture
+{
+    Texture2D<float2> tex;
+    __subscript(uint index) -> float2
+    {
+        get { return tex[uint2(index, 0)]; }
+    }
+};
+
 /** Global data structure used to hold parameters and resources for RTXDI.
 */
 struct RTXDI
@@ -79,7 +90,10 @@ struct RTXDI
     uint webfalcorCompactLightOffset;                               ///< First compact-light-info element in lightInfo.
     RWStructuredBuffer<uint2> risBuffer;                                      ///< Buffer storing presampled light tiles.
     RWStructuredBuffer<PackedSurfaceData> surfaceData;              ///< Buffer storing the surface data for the current and previous frames.
-    StructuredBuffer<float2> neighborOffsets;                                 ///< Buffer storing a poisson(-ish) distribution of offsets for sampling randomized neighbors.
+    // WebFalcor: the neighbor-offset table lives in a texture (16-storage-buffer
+    // budget — a 17th buffer invalidates PathTracer+RTXDI kernels); the
+    // __subscript wrapper keeps the SDK's buffer-style [i] indexing.
+    NeighborOffsetsTexture neighborOffsets;                         ///< Poisson(-ish) offset distribution for sampling randomized neighbors.
     RWStructuredBuffer<RTXDI_PackedReservoir> reservoirs;           ///< Buffer storing reservoirs.
     Texture2D<float2> motionVectors;                                ///< Texture storing screen-space motion vectors.
 

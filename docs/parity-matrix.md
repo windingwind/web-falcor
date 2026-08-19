@@ -74,7 +74,7 @@ Tallies today: 21 pass classes fully implemented, 4 partial, 13 not implemented
 | NRDPass | 🟠 SDK absent | NRD SDK not bundled in this Falcor drop (no `external/packman/nrd/`) → denoiser shaders uncompilable here. Host portable; NRD's HLSL source is public, genuine port stays the plan (§11.4). SVGF ✅ meanwhile |
 | OptixDenoiser | ❌ | requires CUDA+OptiX. Same substitutes as NRD |
 | OverlaySamplePass | ❌ | demo draws via raw ImGui draw lists (no web ImGui); closest equivalent would be DOM overlays — not a 1:1 port target |
-| PathTracer | ✅ verified | full upstream loop: NEE+MIS, Uniform/Power/LightBVH emissive samplers, EnvMapSampler, dielectrics/nested priority, guide outputs, adaptive spp (`sampleCount` input), rayCount/pathLength stats. Fixed spp 1–16 + variable spp verified (spp=4 vs native: 10/65536 bad px); curve geometry (`USE_CURVES` + Hair BSDF) verified vs native. Remaining ⏳: `USE_RTXDI` in-tracer integration, NRD guide outputs; SER ❌ |
+| PathTracer | ✅ verified | full upstream loop: NEE+MIS, Uniform/Power/LightBVH emissive samplers, EnvMapSampler, dielectrics/nested priority, guide outputs, adaptive spp (`sampleCount` input), rayCount/pathLength stats. Fixed spp 1–16 + variable spp verified (spp=4 vs native: 10/65536 bad px); curve geometry (`USE_CURVES` + Hair BSDF) verified vs native. `USE_RTXDI` in-tracer ReSTIR direct lighting verified vs native (16-frame temporal reservoir chain, meanAbs 8.9e-4, 42 bad px; needed two storage-buffer-budget moves — see §9). Remaining ⏳: NRD guide outputs; SER ❌ |
 | PixelInspectorPass | ✅ | pixel/material inspector: PixelData record via async readback (§9) + `renderUI` panel; two overrides (`ShadingData sd = {}` frontend error, `this = {};` WGSL abort); functional GPU test cross-checks the record against the G-buffer inputs; viewer click-to-select wiring ⏳ |
 | RenderPassTemplate | ✅ | authoring skeleton at `render-passes/src/RenderPassTemplate.ts` (registered; pass-through verified in a graph) |
 | RTXDIPass | ✅ verified vs native | Full port (PrepareSurfaceData + ReSTIR spatiotemporal resampling + FinalShading). Upstream RTXDI.py replica over Arcade at frames 1/16/64: bias <6e-4, ≤5/3600 bad 8x8 blocks. Overrides: texel buffers → structured, boiling filter compiled out (WaveActiveCountBits; native default off), bool cbuffer members → uint, outputs moved into the FinalShading block (4-bind-group cap), lightInfo+compactLightInfo merged (16-storage-buffer cap) |
@@ -187,7 +187,13 @@ Tallies today: 21 pass classes fully implemented, 4 partial, 13 not implemented
 9. **Custom primitives render as visible box meshes** (the 🟡 approximation in
    §8.4); native draws nothing for them unless an app supplies an intersection
    shader. Scene compares strip `addCustomPrimitive` calls.
-10. **Animation clip behaviors match native** (Constant default; per-clip
+10. **The 16-storage-buffer-per-stage cap shapes bindings.** This Chromium's
+   per-stage limit is 16 even at the adapter maximum. Small read-only tables
+   (RTXDI neighbor offsets, per-texture uv-scale info) live in 1-row textures
+   behind buffer-style `__subscript` wrappers. The PathTracer+RTXDI megakernel
+   sits exactly at 16; combining USE_RTXDI with pixel stats or curve scenes
+   would exceed it (not currently co-usable).
+11. **Animation clip behaviors match native** (Constant default; per-clip
    Linear/Cycle/Oscillate honored, §8.4); the Linear edge-slope extrapolation
    quantizes at f32 keyframe precision on both sides, so it is
    tolerance-compared like all float outputs.

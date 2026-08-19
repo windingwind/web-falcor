@@ -102,6 +102,7 @@ export class Scene {
     private buffers: Record<string, Buffer> = {};
     private textureArray: Texture;
     private textureArrayLinear: Texture;
+    private texInfoTexture!: Texture;
     private dummyTexture: Texture;
     private texture3D: Texture;
     private sampler: Sampler;
@@ -505,7 +506,16 @@ export class Scene {
         this.textureArray.generateMips(this.device.renderContext);
         this.textureArrayLinear.generateMips(this.device.renderContext);
         this.textureCount = Math.max(textureManager.count, 1);
-        make("materialTextureUvScale", packed.texInfo, 16);
+        // 1-row texture (16-storage-buffer budget: frees a slot in every scene-bound kernel).
+        this.texInfoTexture = new Texture(this.device, {
+            type: ResourceType.Texture2D,
+            width: packed.texInfo.length / 4,
+            height: 1,
+            format: ResourceFormat.RGBA32Float,
+            bindFlags: ResourceBindFlags.ShaderResource,
+            name: "Scene::materialTextureUvScale",
+        });
+        this.texInfoTexture.setSubresourceBlob(0, 0, new Uint8Array(packed.texInfo.buffer, packed.texInfo.byteOffset, packed.texInfo.byteLength));
         this.dummyTexture = this.device.createTexture2D(1, 1, ResourceFormat.RGBA32Float, 1, 1, new Float32Array([0, 0, 0, 0]));
         // Standalone displacement texture (v1: one displaced material per scene).
         const dispHandle = materials.map((m) => m.basic.texDisplacement).find((h) => h !== undefined);
@@ -1276,7 +1286,7 @@ export class Scene {
         materials["materialSampler0"] = this.sampler;
         materials["materialTexturesArray"] = this.textureArray;
         materials["materialTexturesArrayLinear"] = this.textureArrayLinear;
-        materials["materialTextureUvScale"] = this.buffers["materialTextureUvScale"]!;
+        (materials["materialTextureUvScale"] as ShaderVar)["tex"] = this.texInfoTexture;
         materials["webfalcorDummyTexture"] = this.dummyTexture;
         try {
             materials["webfalcorDisplacementTexture"] = this.displacementTexture ?? this.dummyTexture;
