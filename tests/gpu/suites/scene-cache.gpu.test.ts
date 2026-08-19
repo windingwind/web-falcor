@@ -86,3 +86,46 @@ gpuTest("SceneCache.cachedSceneRendersIdentically", async ({ device }) => {
 
     await clearSceneCache();
 });
+
+gpuTest("SceneCache.curvesAndEnvMapClasses", async ({ device }) => {
+    await initScripting("/node_modules/pyodide");
+    await clearSceneCache();
+    const ctx = device.renderContext;
+    const graphSource = await (await fetch("/Falcor/tests/image_tests/renderpasses/graphs/MinimalPathTracer.py")).text();
+
+    const render = async (scene: Awaited<ReturnType<typeof runSceneScript>>) => {
+        const [graph] = await runGraphScript(device, graphSource);
+        scene.camera.setAspectRatio(1.0);
+        graph!.onResize(size, size);
+        graph!.setScene(scene);
+        graph!.execute(ctx);
+        return new Uint8Array((await ctx.readTextureSubresource(graph!.getOutput("ToneMapper.dst")!)).buffer);
+    };
+
+    // Phase 3 classes: curve geometry (two_curves) and env map (sphere_array).
+    for (const [label, dir, file] of [
+        ["curves", "/Falcor/media/test_scenes/curves", "two_curves.pyscene"],
+        ["envmap", "/Falcor/media/test_scenes", "sphere_array.pyscene"],
+    ] as const) {
+        const source = await (await fetch(`${dir}/${file}`)).text();
+        const s1 = await runSceneScript(device, source, dir, { cache: true });
+        expectEq(wasSceneLoadedFromCache(), false, `${label} first load imports`);
+        const img1 = await render(s1);
+        const t0 = performance.now();
+        const s2 = await runSceneScript(device, source, dir, { cache: true });
+        const cachedMs = performance.now() - t0;
+        expectEq(wasSceneLoadedFromCache(), true, `${label} second load hits the cache`);
+        const img2 = await render(s2);
+        let diff = 0;
+        let nonzero = 0;
+        for (let i = 0; i < img1.length; i++) {
+            if (img1[i] !== img2[i]) diff++;
+            if (img1[i] !== 0) nonzero++;
+        }
+        console.error(`# scene-cache ${label}: cached load ${cachedMs.toFixed(1)}ms, ${diff} differing bytes of ${img1.length} (${nonzero} nonzero)`);
+        expectEq(nonzero > 1000, true, `${label} renders content (${nonzero} nonzero bytes)`);
+        expectEq(diff, 0, `${label} cached scene renders byte-identically`);
+    }
+
+    await clearSceneCache();
+});

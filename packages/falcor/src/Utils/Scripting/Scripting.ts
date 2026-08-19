@@ -360,10 +360,24 @@ export async function runSceneScript(device: Device, source: string, baseUrl: st
     pyodide.runPython(kScenePrelude + "\n" + source);
 
     const scene = await builder.resolve(device, baseUrl);
-    if (cacheKey && builder.lastSceneArgs?.cacheable) {
-        const { meshes, materials, lights, nodes, cameraNodeID, textureManager } = builder.lastSceneArgs;
+    const env = scene.getEnvMap();
+    // Programmatic env maps without retained source bytes can't be restored.
+    if (cacheKey && builder.lastSceneArgs?.cacheable && (!env || env.sourceBytes)) {
+        const { meshes, materials, lights, nodes, cameraNodeID, textureManager, curves } = builder.lastSceneArgs;
         const textures = await encodeTextureSources(textureManager);
-        await storeSceneCache(cacheKey, { meshes, materials, lights, nodes, cameraNodeID, camera: snapshotCameraPose(scene), textures });
+        await storeSceneCache(cacheKey, {
+            meshes,
+            materials,
+            lights,
+            nodes,
+            cameraNodeID,
+            camera: snapshotCameraPose(scene),
+            textures,
+            curves,
+            envMap: env?.sourceBytes
+                ? { bytes: env.sourceBytes, isExr: env.sourceIsExr, intensity: env.intensity, tint: env.tint, rotationDeg: env.rotationDeg }
+                : undefined,
+        });
     }
     return scene;
 }
