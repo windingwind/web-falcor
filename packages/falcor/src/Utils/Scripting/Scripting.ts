@@ -104,6 +104,41 @@ export async function runGraphScript(device: Device, source: string): Promise<Re
     return graphs;
 }
 
+/**
+ * Interactive python console (mirrors Mogwai's console): runs a snippet with
+ * `m` bound to the LIVE viewer state — `m.scene` is the real Scene (edits via
+ * getLight/updateLights, getMaterial/updateMaterial, camera), `m.activeGraph`
+ * the running graph (getPass/markOutput), `m.settings` the global Settings.
+ * The last expression's repr and print() output are returned (native echoes
+ * the same way). Vector factories come from `from falcor import *`.
+ */
+export function runConsoleCommand(device: Device, source: string, context: { scene: Scene | null; graph: RenderGraph | null }): string {
+    if (!pyodide) throw new RuntimeError("Call initScripting() first");
+    const lines: string[] = [];
+    pyodide.registerJsModule("falcor", {
+        createPass: (type: string, props?: unknown) => createPass(device, type, new Properties((toJs(props) as Record<string, never>) ?? {})),
+        float2: (x = 0, y = 0) => new float2(x, y),
+        float3: (x = 0, y = 0, z = 0) => new float3(x, y, z),
+        float4: (x = 0, y = 0, z = 0, w = 0) => new float4(x, y, z, w),
+    });
+    pyodide.globals.set("m", {
+        scene: context.scene,
+        activeGraph: context.graph,
+        settings: {
+            addOptions: (dict: unknown) => globalSettings.addOptions(toJs(dict) as Record<string, never>),
+        },
+    });
+    const py = pyodide as unknown as { setStdout(opts: { batched: (s: string) => void }): void; runPython(src: string): unknown };
+    py.setStdout({ batched: (s) => lines.push(s) });
+    try {
+        const result = py.runPython("from falcor import *\n" + source);
+        if (result !== undefined && result !== null) lines.push(String(result));
+    } finally {
+        py.setStdout({ batched: (s) => console.log(s) });
+    }
+    return lines.join("\n");
+}
+
 /** Python prelude adapting pythonic pyscene API (kwargs, class-style ctors)
  *  to the JS SceneBuilder bridge. */
 const kScenePrelude = `
