@@ -376,6 +376,8 @@
     "WebFalcor/Overrides/RenderPasses/PathTracer/PathTracer.slang",
     "WebFalcor/Overrides/RenderPasses/PathTracer/ResolvePass.cs.slang",
     "WebFalcor/Overrides/RenderPasses/PathTracer/TracePass.rt.slang",
+    "WebFalcor/Overrides/RenderPasses/PixelInspectorPass/PixelInspector.cs.slang",
+    "WebFalcor/Overrides/RenderPasses/PixelInspectorPass/PixelInspectorData.slang",
     "WebFalcor/Overrides/RenderPasses/RTXDIPass/FinalShading.cs.slang",
     "WebFalcor/Overrides/RenderPasses/RTXDIPass/LoadShadingData.slang",
     "WebFalcor/Overrides/RenderPasses/SceneDebugger/SceneDebugger.cs.slang",

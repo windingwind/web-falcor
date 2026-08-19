@@ -1,0 +1,115 @@
+/**
+ * WebFalcor override of RenderPasses/PixelInspectorPass/PixelInspectorData.slang
+ * (docs §4.3). Diff vs upstream: `this = {};` in __init aborts the Slang
+ * 2026.12.2 WGSL backend silently (the HitInfo/FormatConversion class) —
+ * replaced with explicit field initialization. Host-code branch dropped
+ * (the web host mirrors the struct in TypeScript).
+ */
+/***************************************************************************
+ # Copyright (c) 2015-23, NVIDIA CORPORATION. All rights reserved.
+ #
+ # Redistribution and use in source and binary forms, with or without
+ # modification, are permitted provided that the following conditions
+ # are met:
+ #  * Redistributions of source code must retain the above copyright
+ #    notice, this list of conditions and the following disclaimer.
+ #  * Redistributions in binary form must reproduce the above copyright
+ #    notice, this list of conditions and the following disclaimer in the
+ #    documentation and/or other materials provided with the distribution.
+ #  * Neither the name of NVIDIA CORPORATION nor the names of its
+ #    contributors may be used to endorse or promote products derived
+ #    from this software without specific prior written permission.
+ #
+ # THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS "AS IS" AND ANY
+ # EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+ # IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR
+ # PURPOSE ARE DISCLAIMED.  IN NO EVENT SHALL THE COPYRIGHT OWNER OR
+ # CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL,
+ # EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO,
+ # PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR
+ # PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY
+ # OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+ # (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+ # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ **************************************************************************/
+__exported import Scene.HitInfoType;
+
+/**
+ * Pixel data read out by the PixelInspectorPass.
+ */
+struct PixelData
+{
+    static const uint kInvalidIndex = 0xffffffff;
+
+    // Geometry data
+    float3 posW;
+    float3 normal;
+    float3 tangent;
+    float3 bitangent;
+    float3 faceNormal;
+    float3 view;
+    float2 texCoord;
+    int frontFacing;
+
+    // Material data
+    uint materialID;
+    int doubleSided;
+    float opacity;
+    float IoR;
+
+    // Material instance properties
+    float3 emission;
+    float roughness;
+    float3 guideNormal;
+    float3 diffuseReflectionAlbedo;
+    float3 diffuseTransmissionAlbedo;
+    float3 specularReflectionAlbedo;
+    float3 specularTransmissionAlbedo;
+    float3 specularReflectance;
+    int isTransmissive;
+
+    // Output data
+    float4 linearColor;
+    float4 outputColor;
+    float luminance;
+
+    // Visibility data
+    uint hitType; ///< Type of hit, see enum HitType. Only valid if instanceID != kInvalidIndex.
+    uint instanceID;
+    uint primitiveIndex;
+    float2 barycentrics;
+
+    __init()
+    {
+        posW = float3(0.f);
+        normal = float3(0.f);
+        tangent = float3(0.f);
+        bitangent = float3(0.f);
+        faceNormal = float3(0.f);
+        view = float3(0.f);
+        texCoord = float2(0.f);
+        frontFacing = 0;
+        materialID = 0;
+        doubleSided = 0;
+        opacity = 0.f;
+        IoR = 0.f;
+        emission = float3(0.f);
+        roughness = 0.f;
+        guideNormal = float3(0.f);
+        diffuseReflectionAlbedo = float3(0.f);
+        diffuseTransmissionAlbedo = float3(0.f);
+        specularReflectionAlbedo = float3(0.f);
+        specularTransmissionAlbedo = float3(0.f);
+        specularReflectance = float3(0.f);
+        isTransmissive = 0;
+        linearColor = float4(0.f);
+        outputColor = float4(0.f);
+        luminance = 0.f;
+        barycentrics = float2(0.f);
+
+        // V-buffer data.
+        hitType = (uint)HitType::Triangle;
+        instanceID = kInvalidIndex;
+        primitiveIndex = kInvalidIndex;
+    }
+};

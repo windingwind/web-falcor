@@ -50,7 +50,7 @@ by a documented toolchain/asset gap, ❌ means the web platform cannot provide i
 
 ### 8.2 Render passes (29 upstream directories, 38 registered pass classes)
 
-Tallies today: 20 pass classes fully implemented, 4 partial, 14 not implemented
+Tallies today: 21 pass classes fully implemented, 4 partial, 13 not implemented
 (of which 4 ❌ NVIDIA-SDK-bound, 2 🟠 autodiff-blocked).
 
 | Pass | Status | Notes |
@@ -75,7 +75,7 @@ Tallies today: 20 pass classes fully implemented, 4 partial, 14 not implemented
 | OptixDenoiser | ❌ | requires CUDA+OptiX. Same substitutes as NRD |
 | OverlaySamplePass | ❌ | demo draws via raw ImGui draw lists (no web ImGui); closest equivalent would be DOM overlays — not a 1:1 port target |
 | PathTracer | ✅ verified | full upstream loop: NEE+MIS, Uniform/Power/LightBVH emissive samplers, EnvMapSampler, dielectrics/nested priority, guide outputs, adaptive spp (`sampleCount` input), rayCount/pathLength stats. Fixed spp 1–16 + variable spp verified (spp=4 vs native: 10/65536 bad px); curve geometry (`USE_CURVES` + Hair BSDF) verified vs native. Remaining ⏳: `USE_RTXDI` in-tracer integration, NRD guide outputs; SER ❌ |
-| PixelInspectorPass | ⏳ | cursor pixel/material inspector; portable, not built |
+| PixelInspectorPass | ✅ | pixel/material inspector: PixelData record via async readback (§9) + `renderUI` panel; two overrides (`ShadingData sd = {}` frontend error, `this = {};` WGSL abort); functional GPU test cross-checks the record against the G-buffer inputs; viewer click-to-select wiring ⏳ |
 | RenderPassTemplate | ✅ | authoring skeleton at `render-passes/src/RenderPassTemplate.ts` (registered; pass-through verified in a graph) |
 | RTXDIPass | ✅ verified vs native | Full port (PrepareSurfaceData + ReSTIR spatiotemporal resampling + FinalShading). Upstream RTXDI.py replica over Arcade at frames 1/16/64: bias <6e-4, ≤5/3600 bad 8x8 blocks. Overrides: texel buffers → structured, boiling filter compiled out (WaveActiveCountBits; native default off), bool cbuffer members → uint, outputs moved into the FinalShading block (4-bind-group cap), lightInfo+compactLightInfo merged (16-storage-buffer cap) |
 | SceneDebugger | ✅ | verified (1.0e-5) |
@@ -155,7 +155,7 @@ Tallies today: 20 pass classes fully implemented, 4 partial, 14 not implemented
 | BSDFIntegrator (white furnace) | ⏳ | BSDFViewer pass exists; integrator harness not built |
 | Algorithm library | ✅ | ParallelReduction ✅, PrefixSum ✅, BitonicSort ✅ (portable shared-memory override of the NVAPI warp-shuffle kernel, §9; exact vs CPU chunk sort incl. 2D dispatch + tail padding) |
 | Utils/Math | ✅ core | Vector/Matrix/Quaternion ✅; CubicSpline host / SphericalHarmonics ⏳ |
-| Gui (Dear ImGui) | 🔶 | DOM `UIWidgets` (text/button/checkbox/slider/dropdown/group); `renderUI` implemented on 2 passes so far ⏳; TextRenderer/Font/PixelZoom ⏳ |
+| Gui (Dear ImGui) | 🔶 | DOM `UIWidgets` (text/button/checkbox/slider/dropdown/group); `renderUI` implemented on 3 passes so far ⏳; TextRenderer/Font/PixelZoom ⏳ |
 | Video (FFmpeg encode/decode) | ❌ native / ⏳ substitute | WebCodecs route not built |
 | AssetResolver | 🔶 ad-hoc | URL resolution inline in the app; no search-path API |
 
