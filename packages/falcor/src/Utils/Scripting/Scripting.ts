@@ -209,7 +209,8 @@ DiscLight = _guarded(DiscLight, _lightProps)
 SphereLight = _guarded(SphereLight, _lightProps)
 Camera = _guarded(Camera, _camProps)
 
-# Animation behavior enum (accepted for parity; web animation loops the whole clip).
+# Animation behavior enum (values mirror native Animation::Behavior; applied to
+# imported clips via sceneBuilder.animations[i].pre/postInfinityBehavior).
 class Animation:
     class Behavior:
         Constant = 0

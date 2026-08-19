@@ -355,16 +355,20 @@ export class FbxImporter {
         // Animation channels (assimp: per-node position/rotation/scaling key tracks;
         // times in ticks -> seconds; rotation quaternions are [w,x,y,z]).
         const animations: AnimationChannel[] = [];
+        // Clip ordinal mirrors native (one Animation per assimp node-anim, in
+        // order) so pyscene `sceneBuilder.animations[i]` behavior writes land.
+        let clip = 0;
         for (const anim of json.animations ?? []) {
             const tps = anim.tickspersecond && anim.tickspersecond > 0 ? anim.tickspersecond : 24;
             for (const ch of anim.channels ?? []) {
+                const thisClip = clip++; // count every node-anim (native creates an Animation even for unmatched nodes)
                 const nodeID = nameToNodeID.get(ch.name);
                 if (nodeID === undefined) continue;
                 const track = (keys: AiKey[] | undefined, path: "translation" | "rotation" | "scale", quat: boolean) => {
                     if (!keys?.length) return;
                     const times = new Float32Array(keys.map((k) => k[0] / tps));
                     const values = new Float32Array(quat ? keys.flatMap((k) => [k[1][1]!, k[1][2]!, k[1][3]!, k[1][0]!]) : keys.flatMap((k) => k[1]));
-                    animations.push({ nodeID, path, times, values, interp: "LINEAR" });
+                    animations.push({ nodeID, path, times, values, interp: "LINEAR", clip: thisClip });
                 };
                 track(ch.positionkeys, "translation", false);
                 track(ch.rotationkeys, "rotation", true);

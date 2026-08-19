@@ -8,6 +8,14 @@ import type { StaticVertex } from "../SceneData.js";
 
 export type AnimationPath = "translation" | "rotation" | "scale";
 
+/** Mirrors Animation::Behavior (native enum order; the pyscene bridge passes the ints). */
+export enum AnimationBehavior {
+    Constant = 0,
+    Linear = 1,
+    Cycle = 2,
+    Oscillate = 3,
+}
+
 export interface AnimationChannel {
     nodeID: number;
     path: AnimationPath;
@@ -15,6 +23,12 @@ export interface AnimationChannel {
     values: Float32Array; // flattened vec3 (translation/scale) or vec4 xyzw quat (rotation).
     // CUBICSPLINE stores 3 blocks per keyframe: [inTangent, value, outTangent].
     interp: "LINEAR" | "STEP" | "CUBICSPLINE";
+    /** Import clip ordinal (native: one Animation per assimp node-anim); pyscene
+     *  behavior writes target this index. */
+    clip?: number;
+    /** Pre/post-infinity behaviors outside the key range (default Constant). */
+    preInfinity?: AnimationBehavior;
+    postInfinity?: AnimationBehavior;
 }
 
 /** Retained scene-graph node with its bind-pose local TRS. Parents precede children. */
@@ -182,7 +196,47 @@ function cubicSpline(ch: AnimationChannel, i0: number, i1: number, f: number, C:
     return cubicSplineN(ch.values, ch.times, i0, i1, f, C);
 }
 
-function sampleVec3(ch: AnimationChannel, time: number): float3 {
+// Mirrors Animation.cpp kEpsilonTime (the edge-segment span Linear behavior extrapolates).
+const kEpsilonTime = 1e-5;
+
+/**
+ * Maps a sample time outside the key range per the channel's infinity behavior
+ * (mirrors Animation::calcSampleTime); Linear returns an extrapolation recipe
+ * instead (mirrors the isLinearPre/PostInfinity paths in Animation::animate).
+ */
+function behaviorSampleTime(ch: AnimationChannel, time: number): { time: number; linear?: { from: number; to: number; t: number } } {
+    const n = ch.times.length;
+    if (n === 0) return { time };
+    const t0 = ch.times[0]!;
+    const tn = ch.times[n - 1]!;
+    if (time >= t0 && time <= tn) return { time };
+    const behavior = time < t0 ? (ch.preInfinity ?? AnimationBehavior.Constant) : (ch.postInfinity ?? AnimationBehavior.Constant);
+    const duration = tn - t0;
+    if (duration <= 0) return { time: t0 };
+    switch (behavior) {
+        case AnimationBehavior.Linear: {
+            if (n < 2) return { time: Math.min(Math.max(time, t0), tn) };
+            return time < t0
+                ? { time, linear: { from: t0, to: t0 + kEpsilonTime, t: (time - t0) / kEpsilonTime } }
+                : { time, linear: { from: tn - kEpsilonTime, to: tn, t: (time - (tn - kEpsilonTime)) / kEpsilonTime } };
+        }
+        case AnimationBehavior.Cycle: {
+            let m = t0 + ((time - t0) % duration);
+            if (m < t0) m += duration;
+            return { time: m };
+        }
+        case AnimationBehavior.Oscillate: {
+            let off = (time - t0) % (2 * duration);
+            if (off < 0) off += 2 * duration;
+            if (off > duration) off = 2 * duration - off;
+            return { time: t0 + off };
+        }
+        default:
+            return { time: Math.min(Math.max(time, t0), tn) };
+    }
+}
+
+function sampleVec3At(ch: AnimationChannel, time: number): float3 {
     const { i0, i1, f } = findSpan(ch.times, time);
     if (ch.interp === "CUBICSPLINE") {
         const c = cubicSpline(ch, i0, i1, f, 3);
@@ -194,7 +248,19 @@ function sampleVec3(ch: AnimationChannel, time: number): float3 {
     return lerp3(a, b, f);
 }
 
-function sampleQuat(ch: AnimationChannel, time: number): quatf {
+function sampleVec3(ch: AnimationChannel, time: number): float3 {
+    const bt = behaviorSampleTime(ch, time);
+    if (bt.linear) {
+        // Native interpolateLinear with t outside [0,1]: extrapolate the edge slope.
+        const a = sampleVec3At(ch, bt.linear.from);
+        const b = sampleVec3At(ch, bt.linear.to);
+        const t = bt.linear.t;
+        return new float3(a.x + (b.x - a.x) * t, a.y + (b.y - a.y) * t, a.z + (b.z - a.z) * t);
+    }
+    return sampleVec3At(ch, bt.time);
+}
+
+function sampleQuatAt(ch: AnimationChannel, time: number): quatf {
     const { i0, i1, f } = findSpan(ch.times, time);
     if (ch.interp === "CUBICSPLINE") {
         const c = cubicSpline(ch, i0, i1, f, 4);
@@ -205,6 +271,15 @@ function sampleQuat(ch: AnimationChannel, time: number): quatf {
     if (ch.interp === "STEP" || i0 === i1) return a;
     const b = new quatf(ch.values[i1 * 4]!, ch.values[i1 * 4 + 1]!, ch.values[i1 * 4 + 2]!, ch.values[i1 * 4 + 3]!);
     return slerp(a, b, f);
+}
+
+function sampleQuat(ch: AnimationChannel, time: number): quatf {
+    const bt = behaviorSampleTime(ch, time);
+    if (bt.linear) {
+        // Native interpolateLinear slerps with the extrapolation factor.
+        return slerp(sampleQuatAt(ch, bt.linear.from), sampleQuatAt(ch, bt.linear.to), bt.linear.t);
+    }
+    return sampleQuatAt(ch, bt.time);
 }
 
 /**

@@ -105,3 +105,57 @@ describe("SceneAnimation morph targets", () => {
         expect(sampleMorphWeights(morph, [], 0.5)).toEqual([0]);
     });
 });
+
+describe("SceneAnimation pre/post-infinity behaviors", () => {
+    // Keys at t=1..3: x 0 -> 10 (slope 5/s), mirrors Animation::calcSampleTime cases.
+    const mk = (pre?: number, post?: number): AnimationChannel => ({
+        nodeID: 0, path: "translation", interp: "LINEAR",
+        times: new Float32Array([1, 3]),
+        values: new Float32Array([0, 0, 0, 10, 0, 0]),
+        preInfinity: pre, postInfinity: post,
+    });
+
+    it("Constant clamps outside the key range (default)", () => {
+        closeTo(evalTranslation(mk(), 0)[0], 0);
+        closeTo(evalTranslation(mk(), 4)[0], 10);
+    });
+
+    it("Cycle wraps relative to the first keyframe (both sides)", () => {
+        const ch = mk(2, 2); // Behavior.Cycle
+        closeTo(evalTranslation(ch, 0)[0], 5); // t=0 -> wrapped 2
+        closeTo(evalTranslation(ch, 4)[0], 5); // t=4 -> wrapped 2
+        closeTo(evalTranslation(ch, 4.5)[0], 7.5); // t=4.5 -> wrapped 2.5
+    });
+
+    it("Oscillate ping-pongs over 2x duration", () => {
+        const ch = mk(3, 3); // Behavior.Oscillate
+        closeTo(evalTranslation(ch, 4)[0], 5); // offset 3 -> mirrored 1 -> t=2
+        closeTo(evalTranslation(ch, 5.5)[0], 2.5); // offset 0.5 -> t=1.5
+        closeTo(evalTranslation(ch, 0)[0], 5); // pre side: offset -1 -> 3 -> mirrored 1
+    });
+
+    it("Linear extrapolates the edge slope (both sides)", () => {
+        const ch = mk(1, 1); // Behavior.Linear
+        closeTo(evalTranslation(ch, 0)[0], -5, 1e-3);
+        closeTo(evalTranslation(ch, 4)[0], 15, 1e-3);
+        closeTo(evalTranslation(ch, 5)[0], 20, 1e-3);
+    });
+
+    it("Linear extrapolates rotations via slerp", () => {
+        // 90deg around z over t=1..3; at t=4 Linear extrapolation reaches 135deg.
+        const s = Math.SQRT1_2;
+        const ch: AnimationChannel = {
+            nodeID: 0, path: "rotation", interp: "LINEAR",
+            times: new Float32Array([1, 3]),
+            values: new Float32Array([0, 0, 0, 1, 0, 0, s, s]),
+            postInfinity: 1,
+        };
+        const nodes: SceneNode[] = [{ parent: -1, t: new float3(0, 0, 0), r: new quatf(0, 0, 0, 1), s: new float3(1, 1, 1) }];
+        const anim: SceneAnimations = { nodes, channels: [ch], start: 0, duration: 1 };
+        const g = evaluateGlobals(anim, 4)[0]!;
+        // Loose tolerance: the epsilon-segment slope quantizes at f32 keyframe
+        // precision (native extrapolates from the same float keys).
+        closeTo(g.get(0, 0), Math.cos((135 * Math.PI) / 180), 0.05);
+        closeTo(g.get(1, 0), Math.sin((135 * Math.PI) / 180), 0.05);
+    });
+});

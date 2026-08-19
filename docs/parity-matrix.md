@@ -130,7 +130,7 @@ Tallies today: 21 pass classes fully implemented, 4 partial, 13 not implemented
 | Camera controllers | ✅ | `Scene/Camera/CameraController.ts` ports Orbiter / FirstPerson / SixDoF incl. gamepad (dead zone + power curve + rotation/movement mapping, native math verbatim, unit-tested); viewer keeps its own app-layer controller (§9: normalized input events, update(now) instead of CpuTimer) |
 | Node / skinned / morph animation | ✅ | CPU skinning + morph (upstream does GPU skinning 🟡); camera/light animation ✅; LINEAR/STEP/CUBICSPLINE |
 | Animated vertex caches (Alembic) | ⏳ | no `.abc`/AnimatedVertexCache support |
-| Per-clip loop behaviors / global time control | 🟡 partial | time loops `fmod(t, length)` and clamps before the first key — matches native defaults (AnimationController + Constant pre-behavior); per-clip pre/post-infinity behaviors (Linear/Cycle/Oscillate extrapolation, e.g. animated_cubes) and a global time-control API ⏳ |
+| Per-clip loop behaviors / global time control | ✅ core | time loops `fmod(t, length)` (AnimationController parity); per-clip pre/post-infinity behaviors (Constant/Linear/Cycle/Oscillate, set via `sceneBuilder.animations[i]` like native) verified vs native on animated_cubes — pre-infinity depth 0 bad px, hit coverage exactly equal; global time-control API ⏳ |
 | Motion vectors for animated geometry | ✅ | rigid (prev world matrices) native-exact (mean 1.2e-7); skinned/morphed (prev-position double buffer + IsDynamic) verified by reprojection — native itself writes zero skinned mvecs on this content (probed) |
 | Animated-scene BVH | 🟡 | full CPU rebuild per frame (correct, no refit path) |
 | GridVolumes (NanoVDB) | ✅ | `.vdb` parsed in-browser → NanoVDB, verified vs native; uncompressed codecs only ⏳ (zip/blosc), `.vdb` frame sequences ⏳, blackbody emission conversion ⏳ |
@@ -187,6 +187,7 @@ Tallies today: 21 pass classes fully implemented, 4 partial, 13 not implemented
 9. **Custom primitives render as visible box meshes** (the 🟡 approximation in
    §8.4); native draws nothing for them unless an app supplies an intersection
    shader. Scene compares strip `addCustomPrimitive` calls.
-10. **Animation before the first keyframe clamps to it** (Constant behavior,
-   matching native defaults); scenes assigning per-clip pre/post-infinity
-   behaviors extrapolate natively but stay clamped on the web (§8.4).
+10. **Animation clip behaviors match native** (Constant default; per-clip
+   Linear/Cycle/Oscillate honored, §8.4); the Linear edge-slope extrapolation
+   quantizes at f32 keyframe precision on both sides, so it is
+   tolerance-compared like all float outputs.
