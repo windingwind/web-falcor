@@ -501,6 +501,9 @@ export class Scene {
         const packed = textureManager.build(this.device);
         this.textureArray = packed.array;
         this.textureArrayLinear = packed.arrayLinear;
+        // Mip chains for texture-LOD (uploads are queue-ordered before the blits).
+        this.textureArray.generateMips(this.device.renderContext);
+        this.textureArrayLinear.generateMips(this.device.renderContext);
         this.textureCount = Math.max(textureManager.count, 1);
         make("materialTextureUvScale", packed.texInfo, 16);
         this.dummyTexture = this.device.createTexture2D(1, 1, ResourceFormat.RGBA32Float, 1, 1, new Float32Array([0, 0, 0, 0]));
@@ -526,7 +529,8 @@ export class Scene {
         this.gridRangeTex = this.device.createTexture3D(1, 1, 1, ResourceFormat.RG32Float, 1);
         this.gridIndirectionTex = this.device.createTexture3D(1, 1, 1, ResourceFormat.RGBA32Uint, 1);
         this.gridAtlasTex = this.device.createTexture3D(1, 1, 1, ResourceFormat.R32Float, 1);
-        this.sampler = this.device.createSampler();
+        // Mirrors MaterialSystem's default texture sampler: trilinear + anisotropy 8.
+        this.sampler = this.device.createSampler({ maxAnisotropy: 8 });
     }
 
     private gridRangeTex: Texture;

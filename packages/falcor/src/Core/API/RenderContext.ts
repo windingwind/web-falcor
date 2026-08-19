@@ -87,7 +87,7 @@ export class RenderContext extends ComputeContext {
      * Handles format conversion via the render pipeline; complex reductions
      * (BlitContext's parity/min/max modes) come with M2 programs.
      */
-    blit(src: Texture, dst: Texture, filter: GPUFilterMode = "linear", srcMip = 0, dstMip = 0): void {
+    blit(src: Texture, dst: Texture, filter: GPUFilterMode = "linear", srcMip = 0, dstMip = 0, srcLayer = 0, dstLayer = 0): void {
         if (isDepthFormat(dst.format)) throw new RuntimeError("blit to depth target not supported (use copy)");
         let pipeline = this.blitPipelines.get(dst.gpuFormat);
         if (!pipeline) {
@@ -108,12 +108,12 @@ export class RenderContext extends ComputeContext {
         const bindGroup = this.device.gpuDevice.createBindGroup({
             layout: pipeline.getBindGroupLayout(0),
             entries: [
-                { binding: 0, resource: src.getSRV(srcMip, 1) },
+                { binding: 0, resource: src.getSRV(srcMip, 1, srcLayer, 1) },
                 { binding: 1, resource: sampler },
             ],
         });
         const pass = this.getEncoder().beginRenderPass(this.withTimestamps({
-            colorAttachments: [{ view: dst.getRTV(dstMip), loadOp: "clear", clearValue: { r: 0, g: 0, b: 0, a: 0 }, storeOp: "store" }],
+            colorAttachments: [{ view: dst.getRTV(dstMip, dstLayer), loadOp: "clear", clearValue: { r: 0, g: 0, b: 0, a: 0 }, storeOp: "store" }],
         }));
         pass.setPipeline(pipeline);
         pass.setBindGroup(0, bindGroup);

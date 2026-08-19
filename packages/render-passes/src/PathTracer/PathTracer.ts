@@ -93,6 +93,7 @@ export class PathTracer extends RenderPass {
     private powerSampler: EmissivePowerSampler | null = null;
     private lightBVHSampler: LightBVHSampler | null = null;
     private lightBVHOptions = kDefaultLightBVHSamplerOptions;
+    private primaryLodMode = 0; // TexLODMode::Mip0
 
     constructor(device: Device, props: Properties) {
         super(device);
@@ -118,6 +119,17 @@ export class PathTracer extends RenderPass {
         this.emissiveSampler = props.get("emissiveSampler", "LightBVH");
         if (!(this.emissiveSampler in kEmissiveSamplerTypes)) {
             throw new Error(`PathTracer: unknown emissiveSampler '${this.emissiveSampler}'`);
+        }
+        // Mirrors kPrimaryLodMode (TexLODMode): Mip0 or RayDiffs; native also
+        // rejects RayCones here ("Unsupported tex lod mode. Defaulting to Mip0.").
+        const lodModes: Record<string, number> = { Mip0: 0, RayCones: 1, RayDiffs: 2 };
+        const lod = props.getOpt<string | number>("primaryLodMode");
+        if (lod !== undefined) {
+            this.primaryLodMode = (typeof lod === "string" ? lodModes[lod] : lod) ?? 0;
+            if (this.primaryLodMode === 1) {
+                console.warn("PathTracer: unsupported tex lod mode. Defaulting to Mip0.");
+                this.primaryLodMode = 0;
+            }
         }
         // Mirrors kLightBVHOptions: nested dict following the native serialization keys.
         const bvhOpts = props.getOpt("lightBVHOptions") as Record<string, unknown> | undefined;
@@ -206,7 +218,7 @@ export class PathTracer extends RenderPass {
             USE_ALPHA_TEST: this.useAlphaTest ? 1 : 0,
             USE_LIGHTS_IN_DIELECTRIC_VOLUMES: 0,
             DISABLE_CAUSTICS: 0,
-            PRIMARY_LOD_MODE: 0, // TexLODMode::Mip0
+            PRIMARY_LOD_MODE: this.primaryLodMode,
             USE_NRD_DEMODULATION: 1,
             USE_SER: 0,
             COLOR_FORMAT: 1, // ColorFormat::LogLuvHDR (native default; unused at spp==1)
