@@ -391,6 +391,7 @@
     "WebFalcor/Overrides/Rendering/Lights/EmissivePowerSampler.slang",
     "WebFalcor/Overrides/Rendering/Lights/LightBVHSampler.slang",
     "WebFalcor/Overrides/Rendering/Materials/IMaterial.slang",
+    "WebFalcor/Overrides/Rendering/Materials/PBRT/PBRTCoatedConductorMaterialInstance.slang",
     "WebFalcor/Overrides/Rendering/Materials/PBRT/PBRTConductorMaterial.slang",
     "WebFalcor/Overrides/Rendering/Materials/StandardMaterial.slang",
     "WebFalcor/Overrides/Rendering/RTXDI/LightUpdater.cs.slang",

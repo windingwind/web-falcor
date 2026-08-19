@@ -83,6 +83,9 @@ export const kShaderOverrides: Readonly<Record<string, string>> = {
     "RenderPasses/FLIPPass/FLIPPass.cs.slang": "WebFalcor/Overrides/RenderPasses/FLIPPass/FLIPPass.cs.slang",
     // RWBuffer<float> texel buffer -> RWStructuredBuffer<float>.
     "RenderPasses/FLIPPass/ComputeLuminance.cs.slang": "WebFalcor/Overrides/RenderPasses/FLIPPass/ComputeLuminance.cs.slang",
+    // Aggregate init of a struct with an explicit __init is rejected by Slang 2026.12.2 -> member-wise.
+    "Rendering/Materials/PBRT/PBRTCoatedConductorMaterialInstance.slang":
+        "WebFalcor/Overrides/Rendering/Materials/PBRT/PBRTCoatedConductorMaterialInstance.slang",
     // RT pipeline -> compute megakernel over SceneRayQuery; existential lod
     // samplers restructured into generic helpers.
     "RenderPasses/WhittedRayTracer/WhittedRayTracer.rt.slang": "WebFalcor/Overrides/RenderPasses/WhittedRayTracer/WhittedRayTracer.rt.slang",
