@@ -222,3 +222,20 @@ gpuTest("RenderGraphFields.srOnlyConsumerKeepsProducerWritable", async ({ device
     expectEq(flagsFor(ResourceBindFlags.None), SR | UAV | RT, "None output + SR-only consumer resolves SR|UAV|RT");
     expectEq(flagsFor(UAV), UAV | SR, "explicit UAV output + SR consumer merges to UAV|SR, nothing resolved");
 });
+
+gpuTest("RenderGraphFields.getEdgesTracksAddRemove", async ({ device }) => {
+    const graph = new RenderGraph(device, "Edges");
+    graph.addPass(new FieldZoo(device, new Properties()), "Zoo");
+    graph.addPass(new Probe(device, ResourceFormat.Unknown), "Probe");
+    const edges = () => graph.getEdges().map((e) => `${e.srcPass}.${e.srcField}->${e.dstPass}.${e.dstField}`);
+    expectEq(edges(), [], "no edges after adding passes");
+    graph.addEdge("Zoo.color", "Probe.src");
+    expectEq(edges(), ["Zoo.color->Probe.src"], "getEdges lists the edge with split pass/field names");
+    graph.getEdges().length = 0;
+    expectEq(edges().length, 1, "getEdges returns a copy");
+    graph.removeEdge("Zoo.color", "Probe.src");
+    expectEq(edges(), [], "removeEdge drops it");
+    graph.addEdge("Zoo.color", "Probe.src");
+    graph.removePass("Probe");
+    expectEq(edges(), [], "removePass drops its edges");
+});

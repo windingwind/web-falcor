@@ -19,7 +19,8 @@ import { Field, FieldType, RenderPassReflection, resourceTypeToFieldType } from 
 import { ArgumentError, RuntimeError } from "../Core/Error.js";
 import { Logger } from "../Utils/Logger.js";
 
-interface Edge {
+/** One graph edge, srcPass.srcField -> dstPass.dstField (native: RenderGraph::EdgeData). */
+export interface RenderGraphEdge {
     srcPass: string;
     srcField: string;
     dstPass: string;
@@ -35,7 +36,7 @@ interface CompiledPass {
 
 export class RenderGraph {
     private passes = new Map<string, RenderPass>();
-    private edges: Edge[] = [];
+    private edges: RenderGraphEdge[] = [];
     private outputs: { pass: string; field: string }[] = [];
     private externalInputs = new Map<string, Resource>();
     private compiled: CompiledPass[] | null = null;
@@ -74,6 +75,11 @@ export class RenderGraph {
     /** Pass entries (name→pass) in insertion order, for UI/introspection. */
     getPasses(): { name: string; pass: RenderPass }[] {
         return [...this.passes].map(([name, pass]) => ({ name, pass }));
+    }
+
+    /** Edges in addEdge order (fresh copies), for UI/introspection. */
+    getEdges(): RenderGraphEdge[] {
+        return this.edges.map((e) => ({ ...e }));
     }
 
     /** Mirrors RenderGraph::addEdge("srcPass.field", "dstPass.field"). */
