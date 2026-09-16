@@ -1,5 +1,6 @@
 /**
- * DirectDraw Surface (.dds) parser for BC-compressed textures — the format
+ * DirectDraw Surface (.dds) parser for BC-compressed textures (plus plain
+ * 24/32-bit RGB(A) surfaces, converted to RGBA8) — the format
  * used by most game assets (Bistro, Sponza, SunTemple). The browser's
  * createImageBitmap can't decode these; this reads the header and hands the
  * compressed blocks straight to a WebGPU BC-format texture (the device
@@ -39,10 +40,16 @@ export function parseDDS(buffer: ArrayBuffer, srgb: boolean): DDSImage {
     const height = dv.getUint32(12, true);
     const width = dv.getUint32(16, true);
     const mipCount = Math.max(1, dv.getUint32(28, true));
+    const pfFlags = dv.getUint32(80, true);
     const pfFourCC = dv.getUint32(84, true);
 
     let format: ResourceFormat;
     let dataOffset = 128; // 4 (magic) + 124 (DDS_HEADER)
+
+    // Uncompressed RGB(A) surface (DDPF_RGB without DDPF_FOURCC): swizzle to RGBA8 by the channel masks.
+    if ((pfFlags & 0x40) !== 0 && (pfFlags & 0x4) === 0) {
+        return parseUncompressed(dv, buffer, width, height, mipCount, pfFlags, srgb);
+    }
 
     if (pfFourCC === fourCC("DX10")) {
         // DDS_HEADER_DXT10 (20 bytes) follows the base header.
@@ -81,6 +88,43 @@ export function parseDDS(buffer: ArrayBuffer, srgb: boolean): DDSImage {
     if (levels.length === 0) throw new Error("DDSLoader: no mip data");
 
     return { width, height, format, levels };
+}
+
+/** 24/32-bit RGB(A) surfaces → RGBA8 levels (rows padded to the header pitch on mip 0). */
+function parseUncompressed(dv: DataView, buffer: ArrayBuffer, width: number, height: number, mipCount: number, pfFlags: number, srgb: boolean): DDSImage {
+    const flags = dv.getUint32(8, true);
+    const bitCount = dv.getUint32(88, true);
+    if (bitCount !== 24 && bitCount !== 32) throw new Error(`DDSLoader: unsupported uncompressed bit depth ${bitCount}`);
+    const masks = [dv.getUint32(92, true), dv.getUint32(96, true), dv.getUint32(100, true), (pfFlags & 0x1) !== 0 ? dv.getUint32(104, true) : 0];
+    const shifts = masks.map((m) => (m === 0 ? -1 : 31 - Math.clz32(m & -m)));
+    const bytes = bitCount / 8;
+    const levels: DDSImage["levels"] = [];
+    let offset = 128;
+    let w = width;
+    let h = height;
+    for (let m = 0; m < mipCount; m++) {
+        const pitch = m === 0 && (flags & 0x8) !== 0 ? dv.getUint32(20, true) : w * bytes;
+        const size = pitch * h;
+        if (offset + size > buffer.byteLength) break;
+        const rgba = new Uint8Array(w * h * 4);
+        for (let y = 0; y < h; y++) {
+            for (let x = 0; x < w; x++) {
+                let px = 0;
+                const o = offset + y * pitch + x * bytes;
+                for (let b = 0; b < bytes; b++) px |= dv.getUint8(o + b) << (8 * b);
+                const dst = (y * w + x) * 4;
+                for (let c = 0; c < 4; c++) {
+                    rgba[dst + c] = masks[c]! === 0 ? (c === 3 ? 255 : 0) : ((px & masks[c]!) >>> shifts[c]!) & 0xff;
+                }
+            }
+        }
+        levels.push({ data: rgba, width: w, height: h });
+        offset += size;
+        w = Math.max(1, w >> 1);
+        h = Math.max(1, h >> 1);
+    }
+    if (levels.length === 0) throw new Error("DDSLoader: no mip data");
+    return { width, height, format: srgb ? ResourceFormat.RGBA8UnormSrgb : ResourceFormat.RGBA8Unorm, levels };
 }
 
 /** Minimal DXGI_FORMAT → ResourceFormat map for the BC subset. */
@@ -179,6 +223,7 @@ function decodeBC4Channel(data: Uint8Array, o: number, out: Uint8Array, ox: numb
 
 /** Decode one BC level to RGBA8 (BC1/BC3/BC5). */
 function decodeLevelToRGBA(data: Uint8Array, format: ResourceFormat, w: number, h: number): Uint8Array {
+    if (format === ResourceFormat.RGBA8Unorm || format === ResourceFormat.RGBA8UnormSrgb) return data; // already RGBA8
     const out = new Uint8Array(w * h * 4);
     const blocksW = Math.max(1, Math.ceil(w / 4));
     const blocksH = Math.max(1, Math.ceil(h / 4));

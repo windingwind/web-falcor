@@ -1,6 +1,6 @@
 /**
  * Comparison pass base mirroring Source/RenderPasses/DebugPasses/ComparisonPass:
- * fullscreen split view of two inputs. TextRenderer labels are not ported
+ * fullscreen split view of two inputs. Labels draw through the TextRenderer port
  * (Mogwai UI, M8); the image-test defaults keep them off.
  */
 
@@ -16,6 +16,7 @@ import {
     ResourceFormat,
     ResourceType,
     Texture,
+    TextRenderer,
     registerRenderPass,
     type CompileData,
     type Device,
@@ -38,7 +39,7 @@ export abstract class ComparisonPass extends RenderPass {
     protected splitLoc = -1;
     protected dividerSize = 2;
     protected showLabels = false;
-    private warnedLabels = false;
+    private textRenderer: TextRenderer | null = null;
     protected leftLabel = "Left side";
     protected rightLabel = "Right side";
     /** SplitScreen assigns the real arrow sprite; others get a 1x1 dummy. */
@@ -63,7 +64,16 @@ export abstract class ComparisonPass extends RenderPass {
         });
     }
 
-    /** Mirrors ComparisonPass::renderUI (labels need the TextRenderer, ⏳). */
+    /** Font atlas loads asynchronously (docs §9); wait for it when labels start enabled. */
+    override async initAsync(): Promise<void> {
+        if (this.showLabels) await this.getTextRenderer().init();
+    }
+
+    private getTextRenderer(): TextRenderer {
+        return (this.textRenderer ??= new TextRenderer(this.device));
+    }
+
+    /** Mirrors ComparisonPass::renderUI. */
     override renderUI(ui: UIWidgets): void {
         ui.checkbox("Swap Sides", this.swapSides, (v) => (this.swapSides = v));
         ui.checkbox("Show Labels", this.showLabels, (v) => (this.showLabels = v));
@@ -85,10 +95,6 @@ export abstract class ComparisonPass extends RenderPass {
         this.outputDims = [output.width, output.height];
 
         if (this.splitLoc < 0) this.splitLoc = 0.5;
-        if (this.showLabels && !this.warnedLabels) {
-            this.warnedLabels = true;
-            Logger.warning("ComparisonPass: text labels are not ported (Mogwai UI, M8)");
-        }
 
         const root = this.splitShader!.getRootVar();
         root["GlobalCB"]["gSplitLocation"] = Math.trunc(this.splitLoc * renderData.defaultTexDims[0]);
@@ -109,6 +115,18 @@ export abstract class ComparisonPass extends RenderPass {
 
         this.fbo.attachColorTarget(output, 0);
         this.splitShader!.execute(ctx, this.fbo);
+
+        // Render some labels (mirrors ComparisonPass::execute; 9 px per monospaced glyph).
+        if (this.showLabels) {
+            const tr = this.getTextRenderer();
+            const screenLocX = Math.trunc(this.splitLoc * renderData.defaultTexDims[0]);
+            const screenLocY = Math.trunc(renderData.defaultTexDims[1] - 32);
+            const rightSide = this.swapSides ? this.leftLabel : this.rightLabel;
+            tr.render(ctx, rightSide, this.fbo, [screenLocX + 16, screenLocY]);
+            const leftSide = this.swapSides ? this.rightLabel : this.leftLabel;
+            const leftLength = leftSide.length * 9;
+            tr.render(ctx, leftSide, this.fbo, [screenLocX - 16 - leftLength, screenLocY]);
+        }
     }
 }
 

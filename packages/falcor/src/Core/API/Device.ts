@@ -73,6 +73,7 @@ export class Device {
             "shader-f16",
             "texture-compression-bc",
             "float32-filterable",
+            "float32-blendable", // alpha-blended overlays (TextRenderer) onto float targets
             "indirect-first-instance",
             "subgroups",
             "chromium-experimental-timestamp-query-inside-passes" as GPUFeatureName,

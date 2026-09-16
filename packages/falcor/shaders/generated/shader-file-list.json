@@ -425,6 +425,7 @@
     "WebFalcor/Overrides/Utils/Math/PackedFormats.slang",
     "WebFalcor/Overrides/Utils/Sampling/Pseudorandom/SplitMix64.slang",
     "WebFalcor/Overrides/Utils/Sampling/UniformSampleGenerator.slang",
+    "WebFalcor/Overrides/Utils/UI/TextRenderer.3d.slang",
     "WebFalcor/PixelDebugTest.cs.slang",
     "WebFalcor/PixelStatsProbe.cs.slang",
     "WebFalcor/PixelStatsResolve.cs.slang",
