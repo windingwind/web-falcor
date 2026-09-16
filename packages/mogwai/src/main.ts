@@ -7,6 +7,7 @@ import { AssetCategory, AssetResolver, isAbsoluteUrl, kProjectMediaUrl, Clock, D
 import "@web-falcor/render-passes";
 import { CameraController, kCameraControllerTypes, kUpDirectionNames } from "./CameraController.js";
 import { buildUIPanel } from "./UIPanel.js";
+import { GraphEditor } from "./GraphEditor.js";
 
 const canvas = document.getElementById("canvas") as HTMLCanvasElement;
 const status = document.getElementById("status") as HTMLDivElement;
@@ -25,6 +26,8 @@ interface ViewerState {
     timingCapture: TimingCapture;
     /** Scene panel "Animate Scene" (mirrors AnimationController::setEnabled). */
     animateScene: boolean;
+    /** Last graph execute error (graph edits can leave inputs unconnected); cleared on the next edit. */
+    graphError: string | null;
 }
 
 /** Mirrors the Mogwai TimingCapture extension. Web divergence (docs §9):
@@ -190,7 +193,7 @@ async function main() {
     await initProgramSystem(device);
     await initScripting("/node_modules/pyodide");
 
-    const state: ViewerState = { device, context, format, graph: null, scene: null, output: null, frame: 0, playing: true, clock: new Clock(), timingCapture: new TimingCapture(), animateScene: true };
+    const state: ViewerState = { device, context, format, graph: null, scene: null, output: null, frame: 0, playing: true, clock: new Clock(), timingCapture: new TimingCapture(), animateScene: true, graphError: null };
 
     // Initial content from URL params (?scene=/?graph=/?output=), or the default
     // cornell-box path tracer when none are given.
@@ -226,6 +229,7 @@ async function main() {
     wireControls(state, rebuildUI);
     wireConsole(state, resetAccum, rebuildUI, profiler);
     wireMouseForwarding(state);
+    wireGraphEditor(state, rebuildUI, resetAccum);
     wirePixelPicking(state, rebuildUI);
     rebuildUI();
     // Profiler panel (native: P toggles the profiler window).
@@ -253,7 +257,12 @@ async function main() {
         if (state.playing && state.graph && state.output) {
             if (lastNow >= 0) state.timingCapture.record(now - lastNow);
             lastNow = now;
-            state.graph.execute(device.renderContext);
+            try {
+                state.graph.execute(device.renderContext);
+            } catch (e) {
+                // Mid-edit graphs (unconnected required inputs) must not kill the frame loop.
+                state.graphError = String(e);
+            }
             const tex = state.graph.getOutput(state.output);
             if (tex) presentToCanvas(device, tex, context!.getCurrentTexture(), format);
             if (videoRecorder.recording) videoRecorder.captureFrame();
@@ -262,7 +271,7 @@ async function main() {
                 ? [...profiler.getStats()].map(([k, v]) => `${k} ${v.toFixed(2)}ms`).join(" · ")
                 : null;
             if (gpu) lastGpuLine = gpu;
-            status.textContent = `${state.output} · frame ${state.frame}${lastGpuLine ? " · " + lastGpuLine : ""}`;
+            status.textContent = state.graphError ? `graph error: ${state.graphError}` : `${state.output} · frame ${state.frame}${lastGpuLine ? " · " + lastGpuLine : ""}`;
         }
         if (!profilerPanel.hidden) profilerUI.render();
         requestAnimationFrame(frame);
@@ -401,6 +410,31 @@ function wireMouseForwarding(state: ViewerState): void {
     window.addEventListener("mousedown", (ev) => forward(ev, "buttonDown"), true);
     window.addEventListener("mousemove", (ev) => forward(ev, "move"), true);
     window.addEventListener("mouseup", (ev) => forward(ev, "buttonUp"), true);
+}
+
+/** Render-graph editor panel (Graph button); edits refresh outputs, pass panels and accumulation. */
+function wireGraphEditor(state: ViewerState, rebuildUI: () => void, resetAccum: () => void): void {
+    const panel = document.getElementById("graphEditor") as HTMLDivElement | null;
+    const toggle = document.getElementById("graphToggle") as HTMLButtonElement | null;
+    if (!panel || !toggle) return;
+    const editor = new GraphEditor(panel, {
+        defaultTexDims: () => [canvas.width, canvas.height],
+        onGraphChanged: () => {
+            state.graphError = null;
+            if (state.graph) {
+                const outputs = state.graph.getOutputNames();
+                if (!state.output || !outputs.includes(state.output)) state.output = outputs[0] ?? null;
+            }
+            refreshOutputs(state);
+            rebuildUI();
+            resetAccum();
+        },
+    });
+    toggle.addEventListener("click", () => {
+        panel.hidden = !panel.hidden;
+        if (!panel.hidden) editor.setGraph(state.graph);
+    });
+    (window as unknown as { mogwaiGraphEditor: GraphEditor }).mogwaiGraphEditor = editor;
 }
 
 /** Wires the plain-DOM control bar (created in index.html). */

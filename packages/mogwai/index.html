@@ -28,6 +28,20 @@
       #consoleLog .in { color: #8cf; }
       #consoleLog .err { color: #f88; }
       #consoleInput { width: calc(100% - 16px); margin: 0 8px 6px; background: #1e1e1e; color: #ddd; border: 1px solid #444; font-family: monospace; font-size: 12px; }
+      #graphEditor { position: absolute; top: 44px; left: 8px; max-width: calc(100% - 270px); max-height: calc(100% - 90px); overflow: auto; background: #2a2a2ad8; padding: 6px 8px; border-radius: 4px; font-size: 12px; }
+      #graphEditor .graph-toolbar { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; margin-bottom: 6px; }
+      #graphEditor .graph-toolbar button, #graphEditor .graph-toolbar select, #graphEditor .graph-toolbar input { font-family: monospace; font-size: 11px; }
+      #graphEditor .graph-canvas { display: block; font-family: monospace; font-size: 11px; }
+      #graphEditor .graph-node-bg { fill: #1e1e1e; stroke: #8cf; stroke-width: 1; }
+      #graphEditor .graph-node-title { fill: #8cf; font-weight: bold; }
+      #graphEditor .graph-port { fill: #ddd; cursor: pointer; }
+      #graphEditor .graph-port-selected { fill: #ff7f00; }
+      #graphEditor .graph-port-label { fill: #ddd; }
+      #graphEditor .graph-edge { fill: none; stroke: #ddd; stroke-width: 1.5; cursor: pointer; }
+      #graphEditor .graph-edge:hover { stroke: #f88; }
+      #graphEditor .graph-mark { fill: #555; cursor: pointer; }
+      #graphEditor .graph-marked { fill: #fc6; }
+      #graphEditor .graph-remove { fill: #f88; cursor: pointer; }
       #profiler { position: absolute; top: 32px; left: 8px; width: 620px; max-height: calc(100% - 80px); overflow-y: auto; background: #2a2a2ad8; padding: 6px 8px; border-radius: 4px; font-size: 12px; }
       #profiler .profiler-options { display: flex; gap: 12px; align-items: center; margin-bottom: 6px; border-bottom: 1px solid #444; padding-bottom: 6px; }
       #profiler .profiler-options button, #profiler .profiler-options select { font-family: monospace; font-size: 11px; }
@@ -51,7 +65,9 @@
       <label>graph <input id="graphFile" type="file" accept=".py" /></label>
       <label>output <select id="output"></select></label>
       <button id="consoleToggle">Console</button>
+      <button id="graphToggle">Graph</button>
     </div>
+    <div id="graphEditor" hidden></div>
     <div id="console" hidden>
       <div id="consoleLog"></div>
       <input id="consoleInput" placeholder="python — m.scene / m.activeGraph / m.settings; Enter to run" />

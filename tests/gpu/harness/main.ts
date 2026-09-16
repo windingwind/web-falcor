@@ -87,11 +87,15 @@ async function run() {
         const start = performance.now();
         try {
             await test.fn({ device });
-            // Surface asynchronous validation errors per-test.
+            // Flush the shared encoder so a test's commands never share a command buffer with the
+            // next test's (an invalid command from one test would otherwise drop both), then
+            // surface asynchronous validation errors per-test.
+            device.renderContext.submit();
             await device.gpuDevice.queue.onSubmittedWorkDone();
             results.push({ name: test.name, status: "pass", ms: performance.now() - start });
             log(`PASS ${test.name}`);
         } catch (err) {
+            device.renderContext.submit(); // drop a failed test's pending commands before the next test records
             if (err instanceof SkipError) {
                 results.push({ name: test.name, status: "skip", error: err.message, ms: performance.now() - start });
                 log(`SKIP ${test.name} (${err.message})`);

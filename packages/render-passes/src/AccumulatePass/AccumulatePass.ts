@@ -34,8 +34,18 @@ export enum AccumulatePrecision {
     SingleCompensated = 2,
 }
 
+/** Mirrors AccumulatePass::OverflowMode. */
+export enum AccumulateOverflowMode {
+    Stop = 0,
+    Reset = 1,
+    EMA = 2,
+}
+
 export class AccumulatePass extends RenderPass {
     private enabled = true;
+    /** 0 = unlimited; otherwise frames beyond it follow overflowMode (native mMaxFrameCount). */
+    private maxFrameCount = 0;
+    private overflowMode = AccumulateOverflowMode.Stop;
     private outputSize = IOSize.Default;
     /** Native kFixedOutputSize default (used when outputSize == Fixed). */
     private fixedOutputSize: [number, number] = [512, 512];
@@ -67,10 +77,13 @@ export class AccumulatePass extends RenderPass {
             this.precision = AccumulatePrecision.SingleCompensated;
         }
         this.autoReset = props.get("autoReset", true);
+        this.maxFrameCount = props.get("maxFrameCount", 0);
+        const overflow = props.getOpt<string | number>("overflowMode");
+        if (overflow !== undefined) this.overflowMode = (typeof overflow === "string" ? AccumulateOverflowMode[overflow as keyof typeof AccumulateOverflowMode] : overflow) ?? this.overflowMode;
     }
 
     override getProperties(): Properties {
-        return new Properties({ enabled: this.enabled, precisionMode: AccumulatePrecision[this.precision]!, autoReset: this.autoReset, outputSize: IOSize[this.outputSize]!, fixedOutputSize: this.fixedOutputSize });
+        return new Properties({ enabled: this.enabled, precisionMode: AccumulatePrecision[this.precision]!, autoReset: this.autoReset, outputSize: IOSize[this.outputSize]!, fixedOutputSize: this.fixedOutputSize, maxFrameCount: this.maxFrameCount, overflowMode: AccumulateOverflowMode[this.overflowMode]! });
     }
 
     reset(): void {
@@ -99,6 +112,16 @@ export class AccumulatePass extends RenderPass {
             this.pass = null; // precision selects the compute entry point — rebuild
             this.reset();
         });
+        // Native: the frame limit is not supported in SingleCompensated mode.
+        ui.slider("Max Frames", this.maxFrameCount, 0, 4096, 1, (v) => {
+            this.maxFrameCount = Math.round(v);
+            this.reset();
+        });
+        ui.dropdown("Overflow Mode", ["Stop", "Reset", "EMA"], AccumulateOverflowMode[this.overflowMode]!, (v) => {
+            this.overflowMode = AccumulateOverflowMode[v as keyof typeof AccumulateOverflowMode];
+            this.reset();
+        });
+        ui.text(`Frames accumulated ${this.frameCount}`);
     }
 
     override reflect(compileData: CompileData): RenderPassReflection {
@@ -116,6 +139,14 @@ export class AccumulatePass extends RenderPass {
         const input = renderData.getTexture("input")!;
         const output = renderData.getTexture("output")!;
         const [w, h] = [output.width, output.height];
+
+        // Mirrors the native overflow handling once maxFrameCount frames were accumulated.
+        const limited = this.maxFrameCount > 0 && this.precision !== AccumulatePrecision.SingleCompensated;
+        if (limited && this.frameCount === this.maxFrameCount) {
+            if (this.overflowMode === AccumulateOverflowMode.Stop) return; // retain the accumulated image
+            if (this.overflowMode === AccumulateOverflowMode.Reset) this.reset();
+            // EMA: keep blending with the constant weight 1 / (maxFrameCount + 1) below.
+        }
 
         if (this.dims[0] !== w || this.dims[1] !== h) {
             this.dims = [w, h];
@@ -138,14 +169,16 @@ export class AccumulatePass extends RenderPass {
         root["PerFrameCB"]["gResolution"] = [w, h];
         root["PerFrameCB"]["gAccumCount"] = this.frameCount;
         root["PerFrameCB"]["gAccumulate"] = this.enabled;
-        root["PerFrameCB"]["gMovingAverageMode"] = false;
+        // With a frame limit the kernel runs as a moving average: weight 1/(count+1) equals the running mean until
+        // the count stops at the limit, then it becomes an exponential moving average (native semantics).
+        root["PerFrameCB"]["gMovingAverageMode"] = limited ? 1 : 0;
         root["gCurFrame"] = input;
         root["gOutputFrame"] = output;
         root["gLastFrameSum"] = this.lastFrameSum!;
         root["gLastFrameCorr"] = this.lastFrameCorr!;
 
         this.pass.execute(ctx, w, h);
-        if (this.enabled) this.frameCount++;
+        if (this.enabled && (!limited || this.frameCount < this.maxFrameCount)) this.frameCount++;
     }
 }
 

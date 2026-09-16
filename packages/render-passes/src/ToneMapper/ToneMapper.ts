@@ -23,7 +23,10 @@ import {
     type Device,
     type RenderContext,
     type UIWidgets,
+    Logger,
 } from "@web-falcor/falcor";
+
+import { calculateWhiteBalanceTransformRGB_Rec709, invertMat3, mulMat3Vec, type Mat3 } from "./ColorUtils.js";
 
 const kShaderFile = "RenderPasses/ToneMapper/ToneMapping.ps.slang";
 const kLuminanceFile = "RenderPasses/ToneMapper/Luminance.ps.slang";
@@ -37,6 +40,20 @@ export enum ToneMapOperator {
     Aces = 5,
 }
 
+/** Mirrors ToneMapper::ExposureMode. */
+export enum ExposureMode {
+    AperturePriority = 0,
+    ShutterPriority = 1,
+}
+// Native clamps (ToneMapper.cpp).
+const kExposureCompensationMin = -12, kExposureCompensationMax = 12;
+const kFilmSpeedMin = 1, kFilmSpeedMax = 6400;
+const kFNumberMin = 0.1, kFNumberMax = 100;
+const kShutterMin = 0.1, kShutterMax = 10000;
+const kExposureValueMin = Math.log2(kShutterMin * kFNumberMin * kFNumberMin), kExposureValueMax = Math.log2(kShutterMax * kFNumberMax * kFNumberMax);
+const kWhitePointMin = 1905, kWhitePointMax = 25000;
+const kIdentity3: Mat3 = [1, 0, 0, 0, 1, 0, 0, 0, 1];
+
 export class ToneMapper extends RenderPass {
     private operator = ToneMapOperator.Aces;
     private exposureCompensation = 0;
@@ -44,6 +61,14 @@ export class ToneMapper extends RenderPass {
     private fNumber = 1;
     private shutter = 1;
     private filmSpeed = 100;
+    private exposureMode = ExposureMode.AperturePriority;
+    private exposureValue = 0; // log2(shutter * fNumber^2), kept in sync like native updateExposureValue
+    private whiteBalance = false;
+    private whitePoint = 6500;
+    private whiteBalanceTransform: Mat3 = kIdentity3;
+    private sourceWhite: [number, number, number] = [1, 1, 1];
+    private whiteMaxLuminance = 1.0;
+    private whiteScale = 11.2;
     private clamp = true;
     private outputFormat = ResourceFormat.RGBA8UnormSrgb;
     private outputSize = IOSize.Default;
@@ -69,10 +94,21 @@ export class ToneMapper extends RenderPass {
             this.operator = (typeof op === "string" ? ToneMapOperator[op as keyof typeof ToneMapOperator] : op) ?? ToneMapOperator.Aces;
             this.pass = null;
         }
-        this.exposureCompensation = props.get("exposureCompensation", 0);
-        this.fNumber = props.get("fNumber", this.fNumber);
-        this.shutter = props.get("shutter", this.shutter);
-        this.filmSpeed = props.get("filmSpeed", this.filmSpeed);
+        this.exposureCompensation = Math.min(kExposureCompensationMax, Math.max(kExposureCompensationMin, props.get("exposureCompensation", 0)));
+        const mode = props.getOpt<string | number>("exposureMode");
+        if (mode !== undefined) this.exposureMode = (typeof mode === "string" ? ExposureMode[mode as keyof typeof ExposureMode] : mode) ?? this.exposureMode;
+        this.setFNumber(props.get("fNumber", this.fNumber));
+        this.setShutter(props.get("shutter", this.shutter));
+        this.filmSpeed = Math.min(kFilmSpeedMax, Math.max(kFilmSpeedMin, props.get("filmSpeed", this.filmSpeed)));
+        // Native parseProperties has no case for 'exposureValue' (only the python property setter applies it);
+        // the upstream image-test graphs pass it and the oracles match with it ignored.
+        if (props.has("exposureValue")) Logger.warning("Unknown property 'exposureValue' in a ToneMapping properties.");
+        this.whiteBalance = props.get("whiteBalance", this.whiteBalance);
+        this.whitePoint = Math.min(kWhitePointMax, Math.max(kWhitePointMin, props.get("whitePoint", this.whitePoint)));
+        this.whiteMaxLuminance = props.get("whiteMaxLuminance", this.whiteMaxLuminance);
+        this.whiteScale = props.get("whiteScale", this.whiteScale);
+        // 'useSceneMetadata' accepted (no camera metadata on imported web scenes yet).
+        this.updateWhiteBalanceTransform();
         const autoExposure = props.get("autoExposure", this.autoExposure);
         if (autoExposure !== this.autoExposure) {
             this.autoExposure = autoExposure;
@@ -92,11 +128,46 @@ export class ToneMapper extends RenderPass {
             operator: ToneMapOperator[this.operator]!,
             exposureCompensation: this.exposureCompensation,
             autoExposure: this.autoExposure,
+            exposureMode: ExposureMode[this.exposureMode]!,
             fNumber: this.fNumber,
             shutter: this.shutter,
             filmSpeed: this.filmSpeed,
+            whiteBalance: this.whiteBalance,
+            whitePoint: this.whitePoint,
+            whiteMaxLuminance: this.whiteMaxLuminance,
+            whiteScale: this.whiteScale,
             clamp: this.clamp,
         });
+    }
+
+    /** Mirrors ToneMapper::setFNumber / setShutter / setExposureValue / updateExposureValue. */
+    setFNumber(fNumber: number): void {
+        this.fNumber = Math.min(kFNumberMax, Math.max(kFNumberMin, fNumber));
+        this.exposureValue = Math.log2(this.shutter * this.fNumber * this.fNumber);
+    }
+    setShutter(shutter: number): void {
+        this.shutter = Math.min(kShutterMax, Math.max(kShutterMin, shutter));
+        this.exposureValue = Math.log2(this.shutter * this.fNumber * this.fNumber);
+    }
+    setExposureValue(ev: number): void {
+        this.exposureValue = Math.min(kExposureValueMax, Math.max(kExposureValueMin, ev));
+        if (this.exposureMode === ExposureMode.AperturePriority) {
+            this.shutter = Math.min(kShutterMax, Math.max(kShutterMin, Math.pow(2, this.exposureValue) / (this.fNumber * this.fNumber)));
+        } else {
+            this.fNumber = Math.min(kFNumberMax, Math.max(kFNumberMin, Math.sqrt(Math.pow(2, this.exposureValue) / this.shutter)));
+        }
+    }
+    getExposureValue(): number {
+        return this.exposureValue;
+    }
+    setWhitePoint(kelvin: number): void {
+        this.whitePoint = Math.min(kWhitePointMax, Math.max(kWhitePointMin, kelvin));
+        this.updateWhiteBalanceTransform();
+    }
+    /** Mirrors updateWhiteBalanceTransform (also derives the source white shown in the UI). */
+    private updateWhiteBalanceTransform(): void {
+        this.whiteBalanceTransform = this.whiteBalance ? calculateWhiteBalanceTransformRGB_Rec709(this.whitePoint) : kIdentity3;
+        this.sourceWhite = mulMat3Vec(invertMat3(this.whiteBalanceTransform), [1, 1, 1]);
     }
 
     override renderUI(ui: UIWidgets): void {
@@ -113,17 +184,35 @@ export class ToneMapper extends RenderPass {
             this.fixedOutputSize = [this.fixedOutputSize[0], Math.round(v)];
             this.requestRecompile();
         });
-        ui.slider("Exposure Compensation", this.exposureCompensation, -8, 8, 0.1, (v) => (this.exposureCompensation = v));
-        ui.checkbox("Auto Exposure", this.autoExposure, (v) => {
+        const exposure = ui.group("Exposure");
+        exposure.slider("Exposure Compensation", this.exposureCompensation, kExposureCompensationMin, kExposureCompensationMax, 0.1, (v) => (this.exposureCompensation = v));
+        exposure.checkbox("Auto Exposure", this.autoExposure, (v) => {
             this.autoExposure = v;
             this.pass = null; // shader define — rebuild next execute
         });
+        exposure.dropdown("Exposure mode", ["AperturePriority", "ShutterPriority"], ExposureMode[this.exposureMode]!, (v) => (this.exposureMode = ExposureMode[v as keyof typeof ExposureMode]));
+        exposure.slider("Exposure Value (EV)", this.exposureValue, kExposureValueMin, kExposureValueMax, 0.1, (v) => this.setExposureValue(v));
+        exposure.slider("Film Speed (ISO)", this.filmSpeed, kFilmSpeedMin, kFilmSpeedMax, 0.1, (v) => (this.filmSpeed = v));
+        exposure.slider("f-Number", this.fNumber, kFNumberMin, kFNumberMax, 0.1, (v) => this.setFNumber(v));
+        exposure.slider("Shutter", this.shutter, kShutterMin, kShutterMax, 0.1, (v) => this.setShutter(v));
+        const grading = ui.group("Color Grading");
+        grading.checkbox("White Balance", this.whiteBalance, (v) => {
+            this.whiteBalance = v;
+            this.updateWhiteBalanceTransform();
+        });
+        grading.slider("White Point (K)", this.whitePoint, kWhitePointMin, kWhitePointMax, 5, (v) => this.setWhitePoint(v));
+        const w = this.sourceWhite;
+        const wMax = Math.max(w[0], w[1], w[2]);
+        grading.text(`Source white (normalized): ${(w[0] / wMax).toFixed(3)}, ${(w[1] / wMax).toFixed(3)}, ${(w[2] / wMax).toFixed(3)}`);
+        const tone = ui.group("Tonemapping");
         const ops = Object.keys(ToneMapOperator).filter((k) => isNaN(Number(k)));
-        ui.dropdown("Operator", ops, ToneMapOperator[this.operator]!, (v) => {
+        tone.dropdown("Operator", ops, ToneMapOperator[this.operator]!, (v) => {
             this.operator = ToneMapOperator[v as keyof typeof ToneMapOperator];
             this.pass = null; // operator is a shader define — rebuild next execute
         });
-        ui.checkbox("Clamp Output", this.clamp, (v) => {
+        tone.slider("White Luminance", this.whiteMaxLuminance, 0.1, 100, 0.2, (v) => (this.whiteMaxLuminance = v)); // ReinhardModified
+        tone.slider("Linear White", this.whiteScale, 0, 100, 0.01, (v) => (this.whiteScale = v)); // HableUc2
+        tone.checkbox("Clamp Output", this.clamp, (v) => {
             this.clamp = v;
             this.pass = null; // clamp is a shader define — rebuild next execute
         });
@@ -157,14 +246,15 @@ export class ToneMapper extends RenderPass {
         // white balance * 2^EC * manual physical exposure when auto is off).
         const manualExposureScale = this.autoExposure ? 1 : this.filmSpeed / 100 / (this.shutter * this.fNumber * this.fNumber);
         const scale = Math.pow(2, this.exposureCompensation) * manualExposureScale;
-        // float3x4 row-major rows.
-        const colorTransform = [scale, 0, 0, 0, 0, scale, 0, 0, 0, 0, scale, 0];
+        // float3x4 row-major rows: whiteBalanceTransform * exposureScale * manualExposureScale (updateColorTransform).
+        const m = this.whiteBalanceTransform;
+        const colorTransform = [m[0] * scale, m[1] * scale, m[2] * scale, 0, m[3] * scale, m[4] * scale, m[5] * scale, 0, m[6] * scale, m[7] * scale, m[8] * scale, 0];
 
         const root = this.pass.getRootVar();
         root["gColorTex"] = src;
         root["gColorSampler"] = this.device.createSampler();
-        root["PerImageCB"]["gParams"]["whiteScale"] = 11.2;
-        root["PerImageCB"]["gParams"]["whiteMaxLuminance"] = 1.0;
+        root["PerImageCB"]["gParams"]["whiteScale"] = this.whiteScale;
+        root["PerImageCB"]["gParams"]["whiteMaxLuminance"] = this.whiteMaxLuminance;
         root["PerImageCB"]["gParams"]["colorTransform"] = colorTransform;
         if (this.autoExposure) {
             root["gLuminanceTexSampler"] = this.device.createSampler();

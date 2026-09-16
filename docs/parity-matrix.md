@@ -55,10 +55,10 @@ Tallies today: 21 pass classes fully implemented, 4 partial, 13 not implemented
 
 | Pass | Status | Notes |
 |---|---|---|
-| AccumulatePass | ✅ | `Double` mode maps to SingleCompensated (fp64 gap 🟡) |
+| AccumulatePass | ✅ | `Double` mode maps to SingleCompensated (fp64 gap 🟡); `maxFrameCount` + `overflowMode` (Stop / Reset / EMA) honoured like native (moving-average kernel mode, count stops at the limit; not in SingleCompensated, like native) |
 | BlitPass | ✅ | |
 | BSDFOptimizer | 🟠 | no host port; depends on the same slangc autodiff blocker as WARDiffPathTracer (§6.9), plus an optimizer loop |
-| BSDFViewer | ✅ | verified vs native (1.9e-4) |
+| BSDFViewer | ✅ | verified vs native (1.9e-4); Slice viewer mode (`viewerMode`) exposed on the host |
 | DebugPasses: ColorMapPass / SideBySidePass / SplitScreenPass | ✅ | verified; interactive divider ✅ (native `onMouseEvent`: hover highlight within max(6, dividerSize) px, left-drag moves it, double click recenters, "Show Arrows" — the viewer forwards canvas mouse events to passes before the camera controller, like `Renderer::onMouseEvent`); TextRenderer overlay labels ⏳ |
 | DebugPasses: InvalidPixelDetectionPass | ✅ | unmodified upstream shader; functional GPU test (injected NaN→red, Inf→green, valid→black) |
 | DLSSPass | ❌ | NVIDIA NGX driver + hardware black box; nearest substitutes: TAA-upscale ✅ or FSR2-WGSL port 🔶 (separate pass, not DLSS parity) |
@@ -85,7 +85,7 @@ Tallies today: 21 pass classes fully implemented, 4 partial, 13 not implemented
 | TAA | ✅ ported | feature-verified vs native (jittered GBufferRT graph, mse 8.4e-7) |
 | TestPasses: TestRtProgram | ⏳ | exercises RT shader-table/hit-group plumbing; mostly moot on software RT but portable as a megakernel |
 | TestPasses: TestPyTorchPass | ❌ | CUDA + PyTorch tensor interop |
-| ToneMapper | ✅ | all 6 operators + manual exposure verified; auto-exposure (log-luminance mip chain) verified vs native (sRGB MSE 2.1e-4, zero mean bias); fNumber/shutter/filmSpeed physical exposure verified (upstream test variants, sub-byte bias) |
+| ToneMapper | ✅ | all 6 operators + manual exposure verified; auto-exposure (log-luminance mip chain) verified vs native (sRGB MSE 2.1e-4, zero mean bias); fNumber/shutter/filmSpeed physical exposure verified (upstream test variants, sub-byte bias); native option set completed: exposure mode (Aperture/Shutter priority) + exposure value, white balance (CAT02 von Kries port of `Utils/Color/ColorUtils.h`, D65 preserved at 6500 K) + white point, ReinhardModified white luminance / HableUc2 linear white as options; `useSceneMetadata` accepted (no camera metadata on web scenes yet) |
 | Utils (Composite/CrossFade/GaussianBlur) | ✅ | verified |
 | WARDiffPathTracer | 🟠 compiler-blocked | §6.9: autodiff primitive device-verified on WebGPU; slangc v2026.12.2 segfaults differentiating the full tracePaths (both wgsl and hlsl targets) → needs a Slang release with the large-function autodiff fix |
 | WhittedRayTracer | 🟡 | SoftwareRT, recursion → loop; verified byte-exact |

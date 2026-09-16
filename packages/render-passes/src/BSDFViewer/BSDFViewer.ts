@@ -36,7 +36,9 @@ export class BSDFViewer extends RenderPass {
     private pass: ComputePass | null = null;
     private frameCount = 0;
     private materialID = 0;
-    // BSDFViewerParams (native defaults); Material viewer mode only on the web.
+    /** BSDFViewerMode: 0 = Material (shaded sphere), 1 = Slice (BSDF slice over theta_h / theta_d). */
+    private viewerMode = 0;
+    // BSDFViewerParams (native defaults).
     private useNormalMapping = false;
     private useFixedTexCoords = false;
     private texCoords: [number, number] = [0, 0];
@@ -65,11 +67,13 @@ export class BSDFViewer extends RenderPass {
     constructor(device: Device, props: Properties) {
         super(device);
         this.materialID = props.get("materialID", 0);
+        const mode = props.getOpt<string | number>("viewerMode");
+        if (mode !== undefined) this.viewerMode = mode === "Slice" || mode === 1 ? 1 : 0;
         this.sampleGenerator = SampleGenerator.create(device, SAMPLE_GENERATOR_DEFAULT);
     }
 
     override getProperties(): Properties {
-        return new Properties({ materialID: this.materialID });
+        return new Properties({ materialID: this.materialID, viewerMode: this.viewerMode === 1 ? "Slice" : "Material" });
     }
 
     /** Mirrors BSDFViewer::renderUI (Material viewer mode; every change restarts accumulation). */
@@ -82,7 +86,12 @@ export class BSDFViewer extends RenderPass {
             set(v);
             this.frameCount = 0;
         };
-        ui.text("The current mode shows a shaded unit sphere. The coordinate frame is right-handed with xy pointing right/up and +z towards the viewer.");
+        ui.dropdown("Mode", ["Material", "Slice"], this.viewerMode === 1 ? "Slice" : "Material", dirty((v: string) => (this.viewerMode = v === "Slice" ? 1 : 0)));
+        ui.text(
+            this.viewerMode === 1
+                ? "The current mode shows a slice of the BSDF. The x-axis is theta_h (angle between H and normal) and y-axis is theta_d (angle between H and wi/wo), both in [0,pi/2] with origin in the lower/left."
+                : "The current mode shows a shaded unit sphere. The coordinate frame is right-handed with xy pointing right/up and +z towards the viewer.",
+        );
         const mtl = ui.group("Material");
         const names: string[] = [];
         for (let i = 0; i < this.scene.getMaterialCount(); i++) names.push(`${i}: ${this.scene.getMaterial(i).name}`);
@@ -108,7 +117,8 @@ export class BSDFViewer extends RenderPass {
         flag("Diffuse transmission", 4);
         flag("Specular reflection", 8);
         flag("Specular transmission", 16);
-        bsdf.checkbox("Apply NdotL", this.applyNdotL, dirty((v) => (this.applyNdotL = v)));
+        bsdf.text("Slice viewer settings:");
+        bsdf.checkbox("Multiply BSDF slice by NdotL", this.applyNdotL, dirty((v) => (this.applyNdotL = v)));
         const light = ui.group("Light");
         light.checkbox("Use env map", this.useEnvMap, dirty((v) => (this.useEnvMap = v)));
         light.checkbox("Use directional light", this.useDirectionalLight, dirty((v) => (this.useDirectionalLight = v)));
@@ -163,6 +173,7 @@ export class BSDFViewer extends RenderPass {
         const p = v["params"] as ShaderVar;
         p["frameDim"] = [w, h];
         p["frameCount"] = this.frameCount;
+        p["viewerMode"] = this.viewerMode;
         // Mirrors BSDFViewer::compile: centered square viewport.
         const extent = Math.min(w, h);
         p["viewportOffset"] = [Math.floor((w - extent) / 2), Math.floor((h - extent) / 2)];
