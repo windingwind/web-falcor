@@ -1,8 +1,12 @@
 /**
  * WebFalcor override of RenderPasses/GBuffer/GBuffer/GBufferRaster.3d.slang
- * (docs §4.3). Diffs vs upstream: psMain drops SV_PrimitiveID and
- * SV_Barycentrics (absent from WGSL; barycentrics was unused) and
- * [earlydepthstencil]; face normal computed from screen-space derivatives.
+ * (docs §4.3/§9). Diffs vs upstream: psMain drops SV_PrimitiveID and
+ * SV_Barycentrics (absent from WGSL) and [earlydepthstencil]; the face normal
+ * comes from screen-space derivatives. WebGPU has no rasterizer-ordered
+ * views, so the "extra" UAV channels are render targets too: the host assigns
+ * every connected channel a batch + location (LOC_<texname>, is_valid_<texname>)
+ * and draws one geometry pass per batch of <= 8 targets. The vbuffer channel
+ * needs the primitive id and is served by VBufferRaster instead.
  */
 /***************************************************************************
  # Copyright (c) 2015-24, NVIDIA CORPORATION. All rights reserved.
@@ -43,31 +47,65 @@ cbuffer PerFrameCB
     uint2 gFrameDim;
 };
 
-// GBuffer channels
+#define is_valid(name) (is_valid_##name != 0)
+
+// Render-target location per channel, assigned by the host for the current batch.
+#define WEBFALCOR_CAT_(a, b) a##b
+#define WEBFALCOR_CAT(a, b) WEBFALCOR_CAT_(a, b)
+#define WEBFALCOR_TARGET(name) WEBFALCOR_CAT(SV_TARGET, LOC_##name)
+
+// GBuffer channels present in this batch (members exist only for attached targets).
 struct GBufferPSOut
 {
-    float4 posW : SV_TARGET0;
-    float4 normW : SV_TARGET1;
-    float4 tangentW : SV_TARGET2;
-    float4 faceNormalW : SV_TARGET3;
-    float2 texC : SV_TARGET4;
-    float4 texGrads : SV_TARGET5;
-    float2 mvec : SV_TARGET6;
-    uint4 mtlData : SV_TARGET7;
+#if is_valid(gPosW)
+    float4 posW : WEBFALCOR_TARGET(gPosW);
+#endif
+#if is_valid(gNormW)
+    float4 normW : WEBFALCOR_TARGET(gNormW);
+#endif
+#if is_valid(gTangentW)
+    float4 tangentW : WEBFALCOR_TARGET(gTangentW);
+#endif
+#if is_valid(gFaceNormalW)
+    float4 faceNormalW : WEBFALCOR_TARGET(gFaceNormalW);
+#endif
+#if is_valid(gTexC)
+    float2 texC : WEBFALCOR_TARGET(gTexC);
+#endif
+#if is_valid(gTexGrads)
+    float4 texGrads : WEBFALCOR_TARGET(gTexGrads);
+#endif
+#if is_valid(gMotionVector)
+    float2 mvec : WEBFALCOR_TARGET(gMotionVector);
+#endif
+#if is_valid(gMaterialData)
+    uint4 mtlData : WEBFALCOR_TARGET(gMaterialData);
+#endif
+#if is_valid(gGuideNormalW)
+    float4 guideNormalW : WEBFALCOR_TARGET(gGuideNormalW);
+#endif
+#if is_valid(gDiffOpacity)
+    float4 diffuseOpacity : WEBFALCOR_TARGET(gDiffOpacity);
+#endif
+#if is_valid(gSpecRough)
+    float4 specRough : WEBFALCOR_TARGET(gSpecRough);
+#endif
+#if is_valid(gEmissive)
+    float4 emissive : WEBFALCOR_TARGET(gEmissive);
+#endif
+#if is_valid(gViewW)
+    float4 viewW : WEBFALCOR_TARGET(gViewW);
+#endif
+#if is_valid(gPosNormalFwidth)
+    float2 pnFwidth : WEBFALCOR_TARGET(gPosNormalFwidth);
+#endif
+#if is_valid(gLinearZAndDeriv)
+    float2 linearZ : WEBFALCOR_TARGET(gLinearZAndDeriv);
+#endif
+#if is_valid(gMask)
+    float mask : WEBFALCOR_TARGET(gMask);
+#endif
 };
-
-// GBufferRaster channels
-RasterizerOrderedTexture2D<PackedHitInfo> gVBuffer;
-RasterizerOrderedTexture2D<float4> gGuideNormalW;
-RasterizerOrderedTexture2D<float4> gDiffOpacity;
-RasterizerOrderedTexture2D<float4> gSpecRough;
-RasterizerOrderedTexture2D<float4> gEmissive;
-RasterizerOrderedTexture2D<float4> gViewW;
-RasterizerOrderedTexture2D<float2> gPosNormalFwidth;
-RasterizerOrderedTexture2D<float2> gLinearZAndDeriv;
-RasterizerOrderedTexture2D<float> gMask;
-
-#define is_valid(name) (is_valid_##name != 0)
 
 VSOut vsMain(VSIn vsIn)
 {
@@ -91,10 +129,6 @@ GBufferPSOut psMain(VSOut vsOut)
 {
     // Using vOut.posH.xy as pixel coordinate since it has the SV_Position semantic.
     int2 ipos = int2(vsOut.posH.xy);
-
-    // Dummies for the (disabled) VBuffer output path, which reads these.
-    const uint triangleIndex = 0;
-    const float3 barycentrics = float3(0.f);
 
     float3 faceNormal = normalize(cross(ddy(vsOut.posW), ddx(vsOut.posW)));
     VertexData v = prepareVertexData(vsOut, faceNormal);
@@ -120,73 +154,67 @@ GBufferPSOut psMain(VSOut vsOut)
 
     const GBufferData gbuf = prepareGBufferData(sd, v, mi, bsdfProperties);
 
-    const float4 texGrads = float4(ddx(sd.uv), ddy(sd.uv));
-    const float2 mvec = computeMotionVector(vsOut, ipos);
-
     GBufferPSOut psOut = {};
 
     // Store render target outputs.
-    if (is_valid(gPosW))
-        psOut.posW = gbuf.posW;
-    if (is_valid(gNormW))
-        psOut.normW = gbuf.normW;
-    if (is_valid(gTangentW))
-        psOut.tangentW = gbuf.tangentW;
-    if (is_valid(gFaceNormalW))
-        psOut.faceNormalW = gbuf.faceNormalW;
-    if (is_valid(gTexC))
-        psOut.texC = gbuf.texC;
-    if (is_valid(gTexGrads))
-        psOut.texGrads = texGrads;
-    if (is_valid(gMotionVector))
-        psOut.mvec = mvec;
-    if (is_valid(gMaterialData))
-        psOut.mtlData = gbuf.mtlData;
+#if is_valid(gPosW)
+    psOut.posW = gbuf.posW;
+#endif
+#if is_valid(gNormW)
+    psOut.normW = gbuf.normW;
+#endif
+#if is_valid(gTangentW)
+    psOut.tangentW = gbuf.tangentW;
+#endif
+#if is_valid(gFaceNormalW)
+    psOut.faceNormalW = gbuf.faceNormalW;
+#endif
+#if is_valid(gTexC)
+    psOut.texC = gbuf.texC;
+#endif
+#if is_valid(gTexGrads)
+    psOut.texGrads = float4(ddx(sd.uv), ddy(sd.uv));
+#endif
+#if is_valid(gMotionVector)
+    psOut.mvec = computeMotionVector(vsOut, ipos);
+#endif
+#if is_valid(gMaterialData)
+    psOut.mtlData = gbuf.mtlData;
+#endif
 
-    // Store UAV outputs.
-    if (is_valid(gViewW))
-        gViewW[ipos] = float4(sd.V, 0.f);
-    if (is_valid(gGuideNormalW))
-        gGuideNormalW[ipos] = gbuf.guideNormalW;
-    if (is_valid(gDiffOpacity))
-        gDiffOpacity[ipos] = gbuf.diffuseOpacity;
-    if (is_valid(gSpecRough))
-        gSpecRough[ipos] = gbuf.specRough;
-    if (is_valid(gEmissive))
-        gEmissive[ipos] = gbuf.emissive;
-    if (is_valid(gMask))
-        gMask[ipos] = 1.f;
+    // Upstream UAV outputs, written as render targets here.
+#if is_valid(gViewW)
+    psOut.viewW = float4(sd.V, 0.f);
+#endif
+#if is_valid(gGuideNormalW)
+    psOut.guideNormalW = gbuf.guideNormalW;
+#endif
+#if is_valid(gDiffOpacity)
+    psOut.diffuseOpacity = gbuf.diffuseOpacity;
+#endif
+#if is_valid(gSpecRough)
+    psOut.specRough = gbuf.specRough;
+#endif
+#if is_valid(gEmissive)
+    psOut.emissive = gbuf.emissive;
+#endif
+#if is_valid(gMask)
+    psOut.mask = 1.f;
+#endif
 
     // Length of derivatives of position and guide normal.
     // This is a feature guide for the SVGF denoiser pass.
-    if (is_valid(gPosNormalFwidth))
-    {
-        gPosNormalFwidth[ipos] = float2(length(fwidth(sd.posW)), length(fwidth(bsdfProperties.guideNormal)));
-    }
+#if is_valid(gPosNormalFwidth)
+    psOut.pnFwidth = float2(length(fwidth(sd.posW)), length(fwidth(bsdfProperties.guideNormal)));
+#endif
 
     // Linear z and its derivative
-    if (is_valid(gLinearZAndDeriv))
+#if is_valid(gLinearZAndDeriv)
     {
         const float linearZ = vsOut.posH.z * vsOut.posH.w;
-        gLinearZAndDeriv[ipos] = float2(linearZ, max(abs(ddx(linearZ)), abs(ddy(linearZ))));
+        psOut.linearZ = float2(linearZ, max(abs(ddx(linearZ)), abs(ddy(linearZ))));
     }
-
-    // Note on barycentrics:
-    // The barycentric weights provided to pixel shader correspond to vertices A, B, C of the rasterized triangle.
-    // For triangle strips, every odd primitive has the order for vertices B and C flipped. We don't handle triangle
-    // strips as DXR does not support them and Falcor uses triangle lists exclusively in its scene representation.
-    // DXR intersection attributes store barycentric weights in a float2 for triangle vertices B and C.
-    // This is what we store in the hit info.
-
-    // Store hit information.
-    if (is_valid(gVBuffer))
-    {
-        TriangleHit triangleHit;
-        triangleHit.instanceID = vsOut.instanceID;
-        triangleHit.primitiveIndex = triangleIndex;
-        triangleHit.barycentrics = barycentrics.yz;
-        gVBuffer[ipos] = triangleHit.pack();
-    }
+#endif
 
     return psOut;
 }

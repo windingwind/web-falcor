@@ -3,17 +3,29 @@
  * (docs §9). WGSL fragment shaders have no SV_Barycentrics/SV_PrimitiveID,
  * so the pass draws NON-INDEXED (3 * triangleCount vertices) and pulls
  * vertices from the scene buffers: barycentrics interpolate from per-corner
- * unit weights and the triangle index rides a flat varying. Motion vectors
- * and the mask output (RasterizerOrderedTexture2D, no WebGPU equivalent)
- * are not produced.
+ * unit weights and the triangle index rides a flat varying. WebGPU has no
+ * rasterizer-ordered views, so the optional motion-vector and mask channels
+ * are extra render targets (SV_TARGET1/2) instead of UAV stores.
  */
 import Scene.Raster;
+import Utils.Math.MathHelpers;
+
+cbuffer PerFrameCB
+{
+    uint2 gFrameDim;
+};
 
 #define is_valid(name) (is_valid_##name != 0)
 
 struct VBufferPSOut
 {
     PackedHitInfo packedHitInfo : SV_TARGET0;
+#if is_valid(gMotionVector)
+    float2 mvec : SV_TARGET1;
+#endif
+#if is_valid(gMask)
+    float mask : SV_TARGET2;
+#endif
 };
 
 struct VBufferVSIn
@@ -33,6 +45,10 @@ struct VBufferVSOut
     nointerpolation uint materialID : MATERIAL_ID;
 
     float4 posH : SV_POSITION;
+
+#if is_valid(gMotionVector)
+    float4 prevPosH : PREVPOSH; ///< Position in clip space for the previous frame.
+#endif
 };
 
 VBufferVSOut vsMain(VBufferVSIn vsIn)
@@ -55,6 +71,20 @@ VBufferVSOut vsMain(VBufferVSIn vsIn)
     vsOut.instanceIdx = vsIn.instanceID;
     vsOut.triangleIndex = triangleIndex;
     vsOut.materialID = gScene.getMaterialID(instanceID);
+
+#if is_valid(gMotionVector)
+    // Compute the vertex position in the previous frame (dynamic meshes keep
+    // their previous positions in prevVertices at prevVbOffset + local index).
+    float3 prevPos = v.position;
+    GeometryInstanceData instance = gScene.getGeometryInstance(instanceID);
+    if (instance.isDynamic())
+    {
+        const uint3 localIndices = gScene.getLocalIndices(instance.ibOffset, triangleIndex, instance.flags & uint(GeometryInstanceFlags::Use16BitIndices));
+        prevPos = gScene.prevVertices[gScene.meshes[instance.geometryID].prevVbOffset + localIndices[corner]].position;
+    }
+    float3 prevPosW = mul(gScene.getPrevWorldMatrix(instanceID), float4(prevPos, 1.f)).xyz;
+    vsOut.prevPosH = mul(gScene.camera.data.prevViewProjMatNoJitter, float4(prevPosW, 1.f));
+#endif
     return vsOut;
 }
 
@@ -76,5 +106,19 @@ VBufferPSOut psMain(VBufferVSOut vsOut)
     triangleHit.primitiveIndex = vsOut.triangleIndex;
     triangleHit.barycentrics = vsOut.bary.yz;
     psOut.packedHitInfo = triangleHit.pack();
+
+#if is_valid(gMask)
+    psOut.mask = 1.f;
+#endif
+
+#if is_valid(gMotionVector)
+    {
+        const int2 ipos = int2(vsOut.posH.xy);
+        // Current sample in pixel coords; previous-frame sample in unjittered clip space.
+        const float2 pixelPos = ipos + float2(0.5, 0.5);
+        // Remove camera jitter from motion vector
+        psOut.mvec = calcMotionVector(pixelPos, vsOut.prevPosH, gFrameDim) + float2(gScene.camera.data.jitterX, -gScene.camera.data.jitterY);
+    }
+#endif
     return psOut;
 }

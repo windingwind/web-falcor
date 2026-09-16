@@ -1,14 +1,15 @@
 /**
  * Raster V-buffer pass mirroring Source/RenderPasses/GBuffer/VBuffer/
  * VBufferRaster. The override shader draws non-indexed with scene vertex
- * pulling (WGSL has no fragment barycentrics/primitive id, docs §9);
- * mvec/mask extra channels are not produced.
+ * pulling (WGSL has no fragment barycentrics/primitive id, docs §9); the
+ * optional mvec/mask channels are extra render targets (no ROVs on WebGPU).
  */
 
 import {
     DepthStencilState,
     DepthStencilStateDesc,
     Fbo,
+    FieldFlags,
     GraphicsState,
     CullMode,
     RasterizerState,
@@ -47,12 +48,20 @@ import {
 
 const kShaderFile = "RenderPasses/GBuffer/VBuffer/VBufferRaster.3d.slang";
 
+/** Optional extra channels (kVBufferExtraChannels): [output name, shader texture name, format]. */
+const kExtraChannels: { name: string; texname: string; format: ResourceFormat; desc: string }[] = [
+    { name: "mvec", texname: "gMotionVector", format: ResourceFormat.RG32Float, desc: "Motion vector" },
+    { name: "mask", texname: "gMask", format: ResourceFormat.R32Float, desc: "Mask" },
+];
+
 export class VBufferRaster extends RenderPass {
     private version: ProgramVersion | null = null;
     private vars: ParameterBlock | null = null;
     private root: ShaderVar | null = null;
     private state: GraphicsState | null = null;
     private pipelineLayout: GPUPipelineLayout | null = null;
+    /** Extra-channel validity the current program was compiled for (is_valid_ defines). */
+    private programKey = "";
     private outputSize = IOSize.Default;
     /** Native kFixedOutputSize default (used when outputSize == Fixed). */
     private fixedOutputSize: [number, number] = [512, 512];
@@ -141,14 +150,22 @@ export class VBufferRaster extends RenderPass {
             .texture2D(w, h)
             .format(ResourceFormat.D32Float)
             .bindFlags(ResourceBindFlags.DepthStencil | ResourceBindFlags.ShaderResource);
+        // Mirrors addRenderPassOutputs(kVBufferExtraChannels): optional, allocated when consumed.
+        for (const ch of kExtraChannels) {
+            r.addOutput(ch.name, ch.desc)
+                .texture2D(w, h)
+                .format(ch.format)
+                .bindFlags(ResourceBindFlags.RenderTarget | ResourceBindFlags.ShaderResource)
+                .flags(FieldFlags.Optional);
+        }
         return r;
     }
 
-    private createProgram(): void {
+    private createProgram(valid: Record<string, number>): void {
         const scene = this.scene!;
         const defines = scene.getSceneDefines();
         defines.add("USE_ALPHA_TEST", this.useAlphaTest ? 1 : 0);
-        for (const name of ["gMotionVector", "gMask"]) defines.add(`is_valid_${name}`, 0);
+        defines.addAll(valid);
 
         const program = this.device.programManager.createProgram(
             {
@@ -197,10 +214,23 @@ export class VBufferRaster extends RenderPass {
     }
 
     override execute(ctx: RenderContext, renderData: RenderData): void {
-        if (!this.scene) return;
-        if (!this.version) this.createProgram();
-
         const vbuffer = renderData.getTexture("vbuffer")!;
+        const extras = kExtraChannels.map((ch) => renderData.getTexture(ch.name));
+        // Mirrors VBufferRaster::execute: clear outputs (and the optional channels) before drawing.
+        ctx.clearTexture(vbuffer, [0, 0, 0, 0]);
+        ctx.clearDsv(renderData.getTexture("depth")!.getDSV(), 1, 0);
+        extras.forEach((tex) => tex && ctx.clearTexture(tex, [0, 0, 0, 0]));
+        if (!this.scene) return;
+
+        // For optional I/O resources, set 'is_valid_<name>' defines to inform the program of which ones it can access.
+        const valid: Record<string, number> = {};
+        kExtraChannels.forEach((ch, i) => (valid[`is_valid_${ch.texname}`] = extras[i] ? 1 : 0));
+        const key = JSON.stringify(valid);
+        if (!this.version || this.programKey !== key) {
+            this.createProgram(valid);
+            this.programKey = key;
+        }
+
         this.scene.camera.setPatternGenerator(
             this.sampleGenerator,
             new float2(Math.fround(1 / vbuffer.width), Math.fround(1 / vbuffer.height)),
@@ -208,11 +238,11 @@ export class VBufferRaster extends RenderPass {
 
         const fbo = new Fbo();
         fbo.attachColorTarget(vbuffer, 0);
+        extras.forEach((tex, i) => tex && fbo.attachColorTarget(tex, i + 1));
         fbo.attachDepthStencilTarget(renderData.getTexture("depth")!);
-        ctx.clearTexture(vbuffer, [0, 0, 0, 0]);
-        ctx.clearDsv(renderData.getTexture("depth")!.getDSV(), 1, 0);
 
         this.scene.bindShaderData(this.root!);
+        this.root!["PerFrameCB"]["gFrameDim"] = [vbuffer.width, vbuffer.height];
 
         const state = this.state!;
         state.setFbo(fbo);

@@ -57,8 +57,11 @@ struct VSIn
     }
 };
 
+// WebFalcor: upstream defaults to HLSL `linear` (= perspective-correct), but the
+// WGSL backend emits it as @interpolate(linear) (= screen-space linear), which
+// skews world-space attributes on tilted surfaces. Leave the default (perspective).
 #ifndef INTERPOLATION_MODE
-#define INTERPOLATION_MODE linear
+#define INTERPOLATION_MODE
 #endif
 
 struct VSOut
@@ -101,7 +104,8 @@ VSOut defaultVS(VSIn vIn)
     GeometryInstanceData instance = gScene.getGeometryInstance(instanceID);
     if (instance.isDynamic())
     {
-        uint prevVertexIndex = gScene.meshes[instance.geometryID].prevVbOffset + vIn.vertexID;
+        // WebFalcor: SV_VertexID is global (index + base vertex); prevVbOffset indexes local vertices.
+        uint prevVertexIndex = gScene.meshes[instance.geometryID].prevVbOffset + (vIn.vertexID - instance.vbOffset);
         prevPos = gScene.prevVertices[prevVertexIndex].position;
     }
     float3 prevPosW = mul(gScene.getPrevWorldMatrix(instanceID), float4(prevPos, 1.f)).xyz;
