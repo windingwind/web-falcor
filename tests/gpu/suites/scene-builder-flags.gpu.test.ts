@@ -5,7 +5,7 @@
  * python scripts can combine SceneBuilderFlags like the upstream image tests.
  */
 
-import { SceneBuilderFlags, clearSceneCache, initScripting, runGraphScript, runSceneScript, wasSceneLoadedFromCache } from "@web-falcor/falcor";
+import { GeometryType, SceneBuilderFlags, clearSceneCache, initScripting, runGraphScript, runSceneScript, wasSceneLoadedFromCache } from "@web-falcor/falcor";
 import "@web-falcor/render-passes";
 import { gpuTest, expectEq } from "../harness/registry.js";
 
@@ -30,9 +30,12 @@ gpuTest("SceneBuilderFlags.honouredFlags", async ({ device }) => {
     const displaced = await (await fetch("/Falcor/media/test_scenes/cornell_box_displaced.pyscene")).text();
     const withDisp = await runSceneScript(device, displaced, "/Falcor/media/test_scenes");
     const noDisp = await runSceneScript(device, displaced, "/Falcor/media/test_scenes", { flags: SceneBuilderFlags.DontUseDisplacement });
+    // SCENE_GEOMETRY_TYPES is a mask of 1 << GeometryType (TriangleMesh = 1, DisplacedTriangleMesh = 2).
     const types = (scene: Awaited<ReturnType<typeof runSceneScript>>) => Number(scene.getSceneDefines().get("SCENE_GEOMETRY_TYPES"));
-    expectEq((types(withDisp) & 4) !== 0, true, `displaced geometry type present by default (types=${types(withDisp)})`);
-    expectEq(types(noDisp), 1, `DontUseDisplacement leaves triangle meshes only (types=${types(noDisp)})`);
+    const kTri = 1 << GeometryType.TriangleMesh;
+    const kDisplaced = 1 << GeometryType.DisplacedTriangleMesh;
+    expectEq((types(withDisp) & kDisplaced) !== 0, true, `displaced geometry type present by default (types=${types(withDisp)})`);
+    expectEq(types(noDisp), kTri, `DontUseDisplacement leaves triangle meshes only (types=${types(noDisp)})`);
 
     // UseCache / RebuildCache.
     const cornell = await (await fetch("/Falcor/media/test_scenes/cornell_box.pyscene")).text();
