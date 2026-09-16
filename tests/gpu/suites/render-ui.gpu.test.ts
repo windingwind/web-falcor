@@ -71,10 +71,10 @@ gpuTest("RenderUI.everyPassExposesFlippableControls", async ({ device }) => {
     }
     console.error(`# render-ui: controls: ${withControls.join(" ")}`);
     console.error(`# render-ui: no controls: ${without.join(" ")}`);
-    // Native passes without any renderUI: InvalidPixelDetection, RenderPassTemplate; RTXDIPass's options UI lives in
-    // the RTXDI module (⏳); BSDFViewer only lists controls once a scene is set (covered below).
-    expectEq(without.every((t) => ["InvalidPixelDetectionPass", "RenderPassTemplate", "RTXDIPass", "BSDFViewer"].includes(t)), true, `unexpected passes without controls: ${without.join(", ")}`);
-    expectEq(withControls.length >= 24, true, `${withControls.length} passes expose controls`);
+    // Native passes without any renderUI: InvalidPixelDetection, RenderPassTemplate; BSDFViewer only lists
+    // controls once a scene is set (covered below).
+    expectEq(without.every((t) => ["InvalidPixelDetectionPass", "RenderPassTemplate", "BSDFViewer"].includes(t)), true, `unexpected passes without controls: ${without.join(", ")}`);
+    expectEq(withControls.length >= 25, true, `${withControls.length} passes expose controls`);
 });
 
 gpuTest("RenderUI.controlsDriveOptionsAndKernelRebuild", async ({ device }) => {

@@ -30,6 +30,9 @@ import {
     type RenderContext,
     type RTXDIOptions,
     type ShaderVar,
+    type UIWidgets,
+    kDefaultRTXDIOptions,
+    type RTXDIMode,
 } from "@web-falcor/falcor";
 
 const kPrepareSurfaceDataFile = "RenderPasses/RTXDIPass/PrepareSurfaceData.cs.slang";
@@ -82,6 +85,55 @@ export class RTXDIPass extends RenderPass {
 
     override compile(_ctx: RenderContext, compileData: CompileData): void {
         this.frameDim = [compileData.defaultTexDims[0], compileData.defaultTexDims[1]];
+    }
+
+    override getProperties(): Properties {
+        return new Properties({ options: this.options as Record<string, never> });
+    }
+
+    /**
+     * Mirrors RTXDIPass::renderUI -> RTXDI::renderUI: edits the RTXDI options; a change
+     * recreates the RTXDI context (native setOptions re-creates its resources/programs).
+     */
+    override renderUI(ui: UIWidgets): void {
+        const o: RTXDIOptions = { ...kDefaultRTXDIOptions, ...this.options };
+        const set = <K extends keyof RTXDIOptions>(key: K) => (v: RTXDIOptions[K]) => {
+            this.options = { ...o, [key]: v };
+            if (this.scene) {
+                this.rtxdi = new RTXDI(this.device, this.scene, this.options);
+                this.prepareSurfaceDataPass = null;
+                this.finalShadingPass = null;
+            }
+        };
+        const int = <K extends keyof RTXDIOptions>(key: K) => (v: number) => set(key)(Math.round(v) as RTXDIOptions[K]);
+        const modes: RTXDIMode[] = ["NoResampling", "SpatialResampling", "TemporalResampling", "SpatiotemporalResampling"];
+        ui.dropdown("Mode", modes, o.mode, (v) => set("mode")(v as RTXDIMode));
+        const presample = ui.group("Light presampling");
+        presample.slider("Tile count", o.presampledTileCount, 1, 1024, 1, int("presampledTileCount"));
+        presample.slider("Tile size", o.presampledTileSize, 256, 8192, 128, int("presampledTileSize"));
+        presample.checkbox("Store compact light info", o.storeCompactLightInfo, set("storeCompactLightInfo"));
+        const initial = ui.group("Initial candidate sampling");
+        initial.slider("Local light samples", o.localLightCandidateCount, 0, 256, 1, int("localLightCandidateCount"));
+        initial.slider("Infinite light samples", o.infiniteLightCandidateCount, 0, 256, 1, int("infiniteLightCandidateCount"));
+        initial.slider("Environment light samples", o.envLightCandidateCount, 0, 256, 1, int("envLightCandidateCount"));
+        initial.slider("BRDF samples", o.brdfCandidateCount, 0, 256, 1, int("brdfCandidateCount"));
+        initial.slider("BRDF Cutoff", o.brdfCutoff, 0, 1, 0.001, set("brdfCutoff"));
+        initial.checkbox("Test selected candidate visibility", o.testCandidateVisibility, set("testCandidateVisibility"));
+        const resampling = ui.group("Resampling");
+        const bias = ["Off", "Basic", "Pairwise", "RayTraced"];
+        resampling.dropdown("Bias correction", bias, bias[o.biasCorrection] ?? "Basic", (v) => set("biasCorrection")(Math.max(0, bias.indexOf(v))));
+        resampling.slider("Depth threshold", o.depthThreshold, 0, 1, 0.001, set("depthThreshold"));
+        resampling.slider("Normal threshold", o.normalThreshold, 0, 1, 0.001, set("normalThreshold"));
+        const spatial = ui.group("Spatial resampling");
+        spatial.slider("Sampling radius", o.samplingRadius, 0, 100, 0.1, set("samplingRadius"));
+        spatial.slider("Sample count", o.spatialSampleCount, 0, 25, 1, int("spatialSampleCount"));
+        spatial.slider("Iterations", o.spatialIterations, 0, 10, 1, int("spatialIterations"));
+        const temporal = ui.group("Temporal resampling");
+        temporal.slider("Max history length", o.maxHistoryLength, 0, 100, 1, int("maxHistoryLength"));
+        temporal.slider("Boiling filter strength", o.boilingFilterStrength, 0, 1, 0.001, set("boilingFilterStrength"));
+        const misc = ui.group("Misc");
+        misc.checkbox("Use emissive textures", o.useEmissiveTextures, set("useEmissiveTextures"));
+        misc.checkbox("Enable permutation sampling", o.enablePermutationSampling, set("enablePermutationSampling"));
     }
 
     override setScene(scene: typeof this.scene): void {

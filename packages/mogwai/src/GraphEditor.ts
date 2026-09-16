@@ -1,7 +1,7 @@
 // Render-graph editor panel (DOM/SVG analog of Falcor's RenderGraphEditor): passes laid out by
 // dependency depth with input/output ports, edges as curves, and the graph's editing API
 // (addPass/removePass, addEdge/removeEdge, markOutput/unmarkOutput) wired to clicks.
-import { createPass, getRegisteredRenderPasses, type RenderGraph, type RenderPass } from "@web-falcor/falcor";
+import { createPass, getRegisteredRenderPasses, type RenderGraph, type RenderGraphEdge, type RenderPass } from "@web-falcor/falcor";
 
 export interface GraphEditorHooks {
     /** Called after any edit (viewer: refresh outputs, rebuild pass panels, restart accumulation). */
@@ -10,36 +10,18 @@ export interface GraphEditorHooks {
     defaultTexDims: () => [number, number];
 }
 
-interface Edge {
-    srcPass: string;
-    srcField: string;
-    dstPass: string;
-    dstField: string;
-}
+type Edge = RenderGraphEdge;
 
 const kNodeW = 170;
 const kPortH = 16;
 const kColGap = 60;
 const kRowGap = 24;
 
-/** Graph edges: RenderGraph.getEdges() when available, else parsed from the script export (`g.addEdge("A.x", "B.y")` lines). */
+/** Graph edges as fresh copies (RenderGraph.getEdges(), addEdge order). */
 export function graphEdges(graph: RenderGraph): Edge[] {
-    const getEdges = (graph as unknown as { getEdges?: () => readonly Edge[] }).getEdges;
-    if (typeof getEdges === "function") return getEdges.call(graph).map((e) => ({ ...e }));
-    const edges: Edge[] = [];
-    const re = /g\.addEdge\("([^"]+)", "([^"]+)"\)/g;
-    for (const m of graph.exportScript().matchAll(re)) {
-        const [srcPass, srcField] = splitRef(m[1]!);
-        const [dstPass, dstField] = splitRef(m[2]!);
-        edges.push({ srcPass, srcField, dstPass, dstField });
-    }
-    return edges;
+    return graph.getEdges().map((e) => ({ ...e }));
 }
 
-function splitRef(ref: string): [string, string] {
-    const i = ref.lastIndexOf(".");
-    return [ref.slice(0, i), ref.slice(i + 1)];
-}
 
 export class GraphEditor {
     private graph: RenderGraph | null = null;
