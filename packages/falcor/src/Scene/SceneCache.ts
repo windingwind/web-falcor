@@ -2,10 +2,11 @@
  * Binary scene cache mirroring Scene/SceneCache.h in role: caches the
  * imported scene description so reloads skip script execution, importers,
  * and mesh processing. Web divergences (docs §9): OPFS storage keyed by a
- * SHA-256 of the scene source (no file timestamps); covers static geometry,
- * materials, textures (lossless PNG re-encode), analytic lights, and the
- * camera — env maps, volumes, SDF grids, curves, and animation fall back
- * to a full import.
+ * SHA-256 of the scene source (no file timestamps). v4 covers every scene
+ * class: geometry (incl. skin/morph data), materials, textures (original
+ * bytes or lossless PNG), lights, camera, curves, env map (original bytes),
+ * node animations + morph weight tracks, SDF grids (as rebuildable recipes)
+ * and grid volumes (NanoVDB buffers).
  */
 
 import type { Device } from "../Core/API/Device.js";
@@ -17,10 +18,14 @@ import { Scene, type SceneMeshDesc, type SceneMaterialDesc, type SceneCurveDesc 
 import { TextureManager, type TextureSource } from "./Material/TextureManager.js";
 import { EnvMap } from "./Lights/EnvMap.js";
 import type { AnalyticLight, StaticVertex } from "./SceneData.js";
-import type { SceneNode } from "./Animation/SceneAnimation.js";
+import type { AnimationChannel, MorphDesc, SceneNode, SkinDesc, WeightTrack } from "./Animation/SceneAnimation.js";
+import { buildSDFGridFromRecipe, type SDFGridRecipe } from "./SDFs/SDFGridRecipe.js";
+import type { SceneSDFGridDesc } from "./Scene.js";
+import { GridVolume, type GridSlot } from "./Volume/GridVolume.js";
+import { Grid } from "./Volume/Grid.js";
 
 const kMagic = 0x43534657; // 'WFSC'
-const kVersion = 3; // v3: + curves, env map
+const kVersion = 4; // v4: + animation, skin/morph, SDF recipes, grid volumes
 const kFloatsPerVertex = 13; // pos3 + normal3 + tangent4 + texCrd2 + curveRadius
 
 export interface SceneCameraPose {
@@ -30,6 +35,8 @@ export interface SceneCameraPose {
     focalLength: number;
     focalDistance: number;
     apertureRadius: number;
+    shutterSpeed?: number;
+    ISOSpeed?: number;
 }
 
 export interface CacheableScene {
@@ -45,6 +52,39 @@ export interface CacheableScene {
     curves: SceneCurveDesc[];
     /** Env map as the original encoded .hdr/.exr file (phase 3). */
     envMap?: { bytes: Uint8Array; isExr: boolean; intensity: number; tint: [number, number, number]; rotationDeg: [number, number, number] };
+    /** Node animation channels + morph weight tracks (v4). */
+    animations: AnimationChannel[];
+    weightTracks: WeightTrack[];
+    /** SDF grids as recipes (rebuilt deterministically) + instances (v4). */
+    sdfGrids: { recipes: SDFGridRecipe[]; instances: { gridIndex: number; materialID: number; transform?: float4x4 }[] };
+    /** Grid volumes with their NanoVDB buffers (v4). */
+    gridVolumes: CachedGridVolume[];
+}
+
+export interface CachedGridVolume {
+    name: string;
+    densityScale: number;
+    emissionScale: number;
+    albedo: [number, number, number];
+    anisotropy: number;
+    emissionTemperature: number;
+    grids: { slot: GridSlot; bytes: Uint8Array }[];
+}
+
+/** Plain-data snapshot of a scene's grid volumes for the cache. */
+export function snapshotGridVolumes(scene: Scene): CachedGridVolume[] {
+    return scene.gridVolumes.map((v) => ({
+        name: v.name,
+        densityScale: v.densityScale,
+        emissionScale: v.emissionScale,
+        albedo: [v.albedo.x, v.albedo.y, v.albedo.z],
+        anisotropy: v.anisotropy,
+        emissionTemperature: v.emissionTemperature,
+        grids: (["density", "emission"] as GridSlot[]).flatMap((slot) => {
+            const g = v.getGrid(slot);
+            return g ? [{ slot, bytes: g.gridBuffer }] : [];
+        }),
+    }));
 }
 
 /** Tags math types so plain JSON survives the round trip. */
@@ -81,13 +121,65 @@ export async function sceneCacheKey(source: string): Promise<string> {
     return [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, "0")).join("");
 }
 
+interface MeshMeta {
+    materialID: number;
+    nodeID?: number;
+    transform?: { __m4: number[] };
+    vertexCount: number;
+    indexCount: number;
+    skin?: { boneNodeIDs: number[]; inverseBind: unknown; count: number };
+    morph?: { nodeID: number; baseWeights: number[]; targets: { posCount: number; normalCount: number }[] };
+}
+
+interface TrackMeta {
+    nodeID: number;
+    timesCount: number;
+    valuesCount: number;
+    interp: string;
+    path?: string;
+    clip?: number;
+    preInfinity?: number;
+    postInfinity?: number;
+    numTargets?: number;
+}
+
+/** Word-aligned typed-array payload of the mesh/curve/animation classes, in file order. */
+function wordBlobs(cached: CacheableScene): (Float32Array | Uint32Array)[] {
+    const blobs: (Float32Array | Uint32Array)[] = [];
+    for (const m of cached.meshes) {
+        const verts = new Float32Array(m.vertices.length * kFloatsPerVertex);
+        m.vertices.forEach((v, i) => {
+            verts.set([v.position.x, v.position.y, v.position.z, v.normal.x, v.normal.y, v.normal.z, v.tangent.x, v.tangent.y, v.tangent.z, v.tangent.w, v.texCrd.x, v.texCrd.y, v.curveRadius ?? 0], i * kFloatsPerVertex);
+        });
+        blobs.push(verts, m.indices);
+        if (m.skin) blobs.push(m.skin.boneIDs, m.skin.weights);
+        if (m.morph) for (const t of m.morph.targets) blobs.push(t.position, t.normal ?? new Float32Array(0));
+    }
+    for (const c of cached.curves) blobs.push(c.positionsRadii, c.texCrds ?? new Float32Array(0), c.indices);
+    for (const a of cached.animations) blobs.push(a.times, a.values);
+    for (const w of cached.weightTracks) blobs.push(w.times, w.values);
+    return blobs;
+}
+
+/** Byte-granular payload (compressed images, env map, NanoVDB buffers), in file order. */
+function byteBlobs(cached: CacheableScene): Uint8Array[] {
+    const blobs: Uint8Array[] = cached.textures.map((t) => t.png);
+    if (cached.envMap) blobs.push(cached.envMap.bytes);
+    for (const v of cached.gridVolumes) for (const g of v.grids) blobs.push(g.bytes);
+    return blobs;
+}
+
 export function serializeScene(cached: CacheableScene): Uint8Array {
-    const meshMeta = cached.meshes.map((m) => ({
+    const meshMeta: MeshMeta[] = cached.meshes.map((m) => ({
         materialID: m.materialID,
         nodeID: m.nodeID,
         transform: m.transform ? { __m4: Array.from(m.transform.data) } : undefined,
         vertexCount: m.vertices.length,
         indexCount: m.indices.length,
+        skin: m.skin ? { boneNodeIDs: m.skin.boneNodeIDs, inverseBind: encodeValue(m.skin.inverseBind), count: m.skin.boneIDs.length } : undefined,
+        morph: m.morph
+            ? { nodeID: m.morph.nodeID, baseWeights: m.morph.baseWeights, targets: m.morph.targets.map((t) => ({ posCount: t.position.length, normalCount: t.normal?.length ?? 0 })) }
+            : undefined,
     }));
     const header = {
         meshes: meshMeta,
@@ -113,18 +205,24 @@ export function serializeScene(cached: CacheableScene): Uint8Array {
                   rotationDeg: cached.envMap.rotationDeg,
               }
             : undefined,
+        animations: cached.animations.map(
+            (a): TrackMeta => ({ nodeID: a.nodeID, path: a.path, interp: a.interp, clip: a.clip, preInfinity: a.preInfinity, postInfinity: a.postInfinity, timesCount: a.times.length, valuesCount: a.values.length }),
+        ),
+        weightTracks: cached.weightTracks.map((w): TrackMeta => ({ nodeID: w.nodeID, numTargets: w.numTargets, interp: w.interp, timesCount: w.times.length, valuesCount: w.values.length })),
+        sdfGrids: {
+            recipes: cached.sdfGrids.recipes,
+            instances: cached.sdfGrids.instances.map((i) => ({ gridIndex: i.gridIndex, materialID: i.materialID, transform: i.transform ? { __m4: Array.from(i.transform.data) } : undefined })),
+        },
+        gridVolumes: cached.gridVolumes.map((v) => ({ ...v, grids: v.grids.map((g) => ({ slot: g.slot, byteLength: g.bytes.byteLength })) })),
     };
     const json = new TextEncoder().encode(JSON.stringify(header));
     const jsonPadded = (json.length + 3) & ~3;
 
-    let blobFloats = 0;
-    for (const m of cached.meshes) blobFloats += m.vertices.length * kFloatsPerVertex + m.indices.length;
-    // Curve payloads are word-sized and precede the byte-granular texture/env blobs.
-    for (const c of cached.curves) blobFloats += c.positionsRadii.length + (c.texCrds?.length ?? 0) + c.indices.length;
-    const textureBytes = cached.textures.reduce((acc, t) => acc + t.png.byteLength, 0);
-    const envBytes = cached.envMap?.bytes.byteLength ?? 0;
-    const total = 12 + jsonPadded + blobFloats * 4 + textureBytes + envBytes;
-    const out = new Uint8Array(total);
+    const words = wordBlobs(cached);
+    const bytesList = byteBlobs(cached);
+    const wordBytes = words.reduce((acc, b) => acc + b.length * 4, 0);
+    const byteBytes = bytesList.reduce((acc, b) => acc + b.byteLength, 0);
+    const out = new Uint8Array(12 + jsonPadded + wordBytes + byteBytes);
     const dv = new DataView(out.buffer);
     dv.setUint32(0, kMagic, true);
     dv.setUint32(4, kVersion, true);
@@ -132,39 +230,14 @@ export function serializeScene(cached: CacheableScene): Uint8Array {
     out.set(json, 12);
 
     let off = 12 + jsonPadded;
-    const words = Math.floor(total / 4);
-    const f32 = new Float32Array(out.buffer, 0, words);
-    const u32 = new Uint32Array(out.buffer, 0, words);
-    for (const m of cached.meshes) {
-        for (const v of m.vertices) {
-            let fi = off / 4;
-            f32[fi++] = v.position.x; f32[fi++] = v.position.y; f32[fi++] = v.position.z;
-            f32[fi++] = v.normal.x; f32[fi++] = v.normal.y; f32[fi++] = v.normal.z;
-            f32[fi++] = v.tangent.x; f32[fi++] = v.tangent.y; f32[fi++] = v.tangent.z; f32[fi++] = v.tangent.w;
-            f32[fi++] = v.texCrd.x; f32[fi++] = v.texCrd.y;
-            f32[fi++] = v.curveRadius ?? 0;
-            off += kFloatsPerVertex * 4;
-        }
-        u32.set(m.indices, off / 4);
-        off += m.indices.length * 4;
+    for (const b of words) {
+        // Typed views need 4-byte alignment; `off` is word-aligned here by construction.
+        out.set(new Uint8Array(b.buffer, b.byteOffset, b.length * 4), off);
+        off += b.length * 4;
     }
-    for (const c of cached.curves) {
-        f32.set(c.positionsRadii, off / 4);
-        off += c.positionsRadii.length * 4;
-        if (c.texCrds) {
-            f32.set(c.texCrds, off / 4);
-            off += c.texCrds.length * 4;
-        }
-        u32.set(c.indices, off / 4);
-        off += c.indices.length * 4;
-    }
-    for (const t of cached.textures) {
-        out.set(t.png, off);
-        off += t.png.byteLength;
-    }
-    if (cached.envMap) {
-        out.set(cached.envMap.bytes, off);
-        off += cached.envMap.bytes.byteLength;
+    for (const b of bytesList) {
+        out.set(b, off);
+        off += b.byteLength;
     }
     return out;
 }
@@ -174,82 +247,107 @@ export function deserializeScene(bytes: Uint8Array): CacheableScene {
     if (dv.getUint32(0, true) !== kMagic || dv.getUint32(4, true) !== kVersion) throw new RuntimeError("SceneCache: bad magic/version");
     const jsonLen = dv.getUint32(8, true);
     const header = JSON.parse(new TextDecoder().decode(bytes.subarray(12, 12 + jsonLen))) as {
-        meshes: { materialID: number; nodeID?: number; transform?: { __m4: number[] }; vertexCount: number; indexCount: number }[];
+        meshes: MeshMeta[];
         materials: unknown;
         lights: unknown;
         nodes: unknown;
         cameraNodeID?: number;
         camera: SceneCameraPose;
-        textures?: { srgb: boolean; byteLength: number }[];
-        curves?: { floatCount: number; texCrdCount: number; indexCount: number; materialID: number; transform?: { __m4: number[] } }[];
+        textures: { srgb: boolean; byteLength: number }[];
+        curves: { floatCount: number; texCrdCount: number; indexCount: number; materialID: number; transform?: { __m4: number[] } }[];
         envMap?: { byteLength: number; isExr: boolean; intensity: number; tint: [number, number, number]; rotationDeg: [number, number, number] };
+        animations: TrackMeta[];
+        weightTracks: TrackMeta[];
+        sdfGrids: { recipes: SDFGridRecipe[]; instances: { gridIndex: number; materialID: number; transform?: { __m4: number[] } }[] };
+        gridVolumes: (Omit<CachedGridVolume, "grids"> & { grids: { slot: GridSlot; byteLength: number }[] })[];
     };
 
     let off = 12 + ((jsonLen + 3) & ~3);
-    // Views bounded to whole words (the trailing PNG bytes have arbitrary length).
+    // Views bounded to whole words (the trailing byte blobs have arbitrary length).
     const words = Math.floor(bytes.byteLength / 4);
     const f32 = new Float32Array(bytes.buffer, bytes.byteOffset, words);
     const u32 = new Uint32Array(bytes.buffer, bytes.byteOffset, words);
+    const takeF32 = (count: number): Float32Array => {
+        const a = new Float32Array(f32.subarray(off / 4, off / 4 + count));
+        off += count * 4;
+        return a;
+    };
+    const takeU32 = (count: number): Uint32Array => {
+        const a = new Uint32Array(u32.subarray(off / 4, off / 4 + count));
+        off += count * 4;
+        return a;
+    };
+    const takeBytes = (count: number): Uint8Array => {
+        const a = bytes.slice(off, off + count);
+        off += count;
+        return a;
+    };
+    const mat4 = (m?: { __m4: number[] }) => (m ? new float4x4(new Float32Array(m.__m4)) : undefined);
+
     const meshes: SceneMeshDesc[] = header.meshes.map((meta) => {
+        const verts = takeF32(meta.vertexCount * kFloatsPerVertex);
         const vertices: StaticVertex[] = [];
         for (let v = 0; v < meta.vertexCount; v++) {
-            let fi = off / 4;
+            const fi = v * kFloatsPerVertex;
             vertices.push({
-                position: new float3(f32[fi]!, f32[fi + 1]!, f32[fi + 2]!),
-                normal: new float3(f32[fi + 3]!, f32[fi + 4]!, f32[fi + 5]!),
-                tangent: new float4(f32[fi + 6]!, f32[fi + 7]!, f32[fi + 8]!, f32[fi + 9]!),
-                texCrd: new float2(f32[fi + 10]!, f32[fi + 11]!),
-                curveRadius: f32[fi + 12]!,
+                position: new float3(verts[fi]!, verts[fi + 1]!, verts[fi + 2]!),
+                normal: new float3(verts[fi + 3]!, verts[fi + 4]!, verts[fi + 5]!),
+                tangent: new float4(verts[fi + 6]!, verts[fi + 7]!, verts[fi + 8]!, verts[fi + 9]!),
+                texCrd: new float2(verts[fi + 10]!, verts[fi + 11]!),
+                curveRadius: verts[fi + 12]!,
             });
-            off += kFloatsPerVertex * 4;
         }
-        const indices = new Uint32Array(u32.subarray(off / 4, off / 4 + meta.indexCount));
-        off += meta.indexCount * 4;
-        return {
-            vertices,
-            indices,
-            materialID: meta.materialID,
-            nodeID: meta.nodeID,
-            transform: meta.transform ? new float4x4(new Float32Array(meta.transform.__m4)) : undefined,
-        };
-    });
-
-    const curves: SceneCurveDesc[] = (header.curves ?? []).map((meta) => {
-        const positionsRadii = new Float32Array(f32.subarray(off / 4, off / 4 + meta.floatCount));
-        off += meta.floatCount * 4;
-        let texCrds: Float32Array | null = null;
-        if (meta.texCrdCount > 0) {
-            texCrds = new Float32Array(f32.subarray(off / 4, off / 4 + meta.texCrdCount));
-            off += meta.texCrdCount * 4;
+        const indices = takeU32(meta.indexCount);
+        let skin: SkinDesc | undefined;
+        if (meta.skin) {
+            skin = { boneNodeIDs: meta.skin.boneNodeIDs, inverseBind: decodeValue(meta.skin.inverseBind) as float4x4[], boneIDs: takeU32(meta.skin.count), weights: takeF32(meta.skin.count) };
         }
-        const indices = new Uint32Array(u32.subarray(off / 4, off / 4 + meta.indexCount));
-        off += meta.indexCount * 4;
-        return {
-            positionsRadii,
-            texCrds,
-            indices,
-            materialID: meta.materialID,
-            transform: meta.transform ? new float4x4(new Float32Array(meta.transform.__m4)) : undefined,
-        };
+        let morph: MorphDesc | undefined;
+        if (meta.morph) {
+            morph = {
+                nodeID: meta.morph.nodeID,
+                baseWeights: meta.morph.baseWeights,
+                targets: meta.morph.targets.map((t) => {
+                    const position = takeF32(t.posCount);
+                    const normal = t.normalCount > 0 ? takeF32(t.normalCount) : undefined;
+                    return normal ? { position, normal } : { position };
+                }),
+            };
+        }
+        return { vertices, indices, materialID: meta.materialID, nodeID: meta.nodeID, transform: mat4(meta.transform), skin, morph };
     });
 
-    const textures = (header.textures ?? []).map((meta) => {
-        const png = bytes.slice(off, off + meta.byteLength);
-        off += meta.byteLength;
-        return { png, srgb: meta.srgb };
+    const curves: SceneCurveDesc[] = header.curves.map((meta) => {
+        const positionsRadii = takeF32(meta.floatCount);
+        const texCrds = meta.texCrdCount > 0 ? takeF32(meta.texCrdCount) : null;
+        const indices = takeU32(meta.indexCount);
+        return { positionsRadii, texCrds, indices, materialID: meta.materialID, transform: mat4(meta.transform) };
     });
 
+    const animations: AnimationChannel[] = header.animations.map((meta) => ({
+        nodeID: meta.nodeID,
+        path: meta.path as AnimationChannel["path"],
+        times: takeF32(meta.timesCount),
+        values: takeF32(meta.valuesCount),
+        interp: meta.interp as AnimationChannel["interp"],
+        clip: meta.clip,
+        preInfinity: meta.preInfinity,
+        postInfinity: meta.postInfinity,
+    }));
+    const weightTracks: WeightTrack[] = header.weightTracks.map((meta) => ({
+        nodeID: meta.nodeID,
+        times: takeF32(meta.timesCount),
+        values: takeF32(meta.valuesCount),
+        numTargets: meta.numTargets ?? 0,
+        interp: meta.interp as WeightTrack["interp"],
+    }));
+
+    const textures = header.textures.map((meta) => ({ png: takeBytes(meta.byteLength), srgb: meta.srgb }));
     let envMap: CacheableScene["envMap"];
     if (header.envMap) {
-        envMap = {
-            bytes: bytes.slice(off, off + header.envMap.byteLength),
-            isExr: header.envMap.isExr,
-            intensity: header.envMap.intensity,
-            tint: header.envMap.tint,
-            rotationDeg: header.envMap.rotationDeg,
-        };
-        off += header.envMap.byteLength;
+        envMap = { bytes: takeBytes(header.envMap.byteLength), isExr: header.envMap.isExr, intensity: header.envMap.intensity, tint: header.envMap.tint, rotationDeg: header.envMap.rotationDeg };
     }
+    const gridVolumes: CachedGridVolume[] = header.gridVolumes.map((v) => ({ ...v, grids: v.grids.map((g) => ({ slot: g.slot, bytes: takeBytes(g.byteLength) })) }));
 
     return {
         meshes,
@@ -261,6 +359,10 @@ export function deserializeScene(bytes: Uint8Array): CacheableScene {
         textures,
         curves,
         envMap,
+        animations,
+        weightTracks,
+        sdfGrids: { recipes: header.sdfGrids.recipes, instances: header.sdfGrids.instances.map((i) => ({ gridIndex: i.gridIndex, materialID: i.materialID, transform: mat4(i.transform) })) },
+        gridVolumes,
     };
 }
 
@@ -327,7 +429,21 @@ export async function clearSceneCache(): Promise<void> {
 /** Rebuilds a Scene from cached data (the fast-reload path). */
 export async function buildSceneFromCache(device: Device, cached: CacheableScene): Promise<Scene> {
     const textureManager = await decodeTextureSources(cached.textures);
-    const scene = new Scene(device, cached.meshes, cached.materials, cached.lights, textureManager, [], cached.nodes, [], cached.cameraNodeID, [], cached.curves);
+    // SDF grids are rebuilt from their recipes (deterministic generators), shared across instances.
+    const builtGrids = cached.sdfGrids.recipes.map(buildSDFGridFromRecipe);
+    const sdfGrids: SceneSDFGridDesc[] = cached.sdfGrids.instances.map((i) => ({ grid: builtGrids[i.gridIndex]!, materialID: i.materialID, transform: i.transform }));
+    const scene = new Scene(device, cached.meshes, cached.materials, cached.lights, textureManager, sdfGrids, cached.nodes, cached.animations, cached.cameraNodeID, cached.weightTracks, cached.curves);
+    for (const v of cached.gridVolumes) {
+        const vol = new GridVolume(v.name);
+        vol.densityScale = v.densityScale;
+        vol.emissionScale = v.emissionScale;
+        vol.albedo = new float3(...v.albedo);
+        vol.anisotropy = v.anisotropy;
+        vol.emissionTemperature = v.emissionTemperature;
+        for (const g of v.grids) vol.setGrid(g.slot, new Grid(device, g.bytes));
+        scene.gridVolumes.push(vol);
+    }
+    scene.finalizeGridVolumes();
     if (cached.envMap) {
         const env = EnvMap.createFromBytes(device, cached.envMap.bytes, cached.envMap.isExr);
         env.intensity = cached.envMap.intensity;
@@ -342,6 +458,8 @@ export async function buildSceneFromCache(device: Device, cached: CacheableScene
     scene.camera.setFocalLength(cam.focalLength);
     scene.camera.setFocalDistance(cam.focalDistance);
     scene.camera.setApertureRadius(cam.apertureRadius);
+    if (cam.shutterSpeed !== undefined) scene.camera.setShutterSpeed(cam.shutterSpeed);
+    if (cam.ISOSpeed !== undefined) scene.camera.setISOSpeed(cam.ISOSpeed);
     return scene;
 }
 
@@ -357,5 +475,7 @@ export function snapshotCameraPose(scene: Scene): SceneCameraPose {
         focalLength: scene.camera.getFocalLength(),
         focalDistance: scene.camera.getFocalDistance(),
         apertureRadius: scene.camera.getApertureRadius(),
+        shutterSpeed: scene.camera.getShutterSpeed(),
+        ISOSpeed: scene.camera.getISOSpeed(),
     };
 }

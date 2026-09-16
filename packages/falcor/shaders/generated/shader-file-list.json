@@ -428,7 +428,8 @@
     "WebFalcor/PixelDebugTest.cs.slang",
     "WebFalcor/PixelStatsProbe.cs.slang",
     "WebFalcor/PixelStatsResolve.cs.slang",
-    "WebFalcor/PixelStatsSum.cs.slang"
+    "WebFalcor/PixelStatsSum.cs.slang",
+    "WebFalcor/SHTest.cs.slang"
   ],
   "externalFiles": [
     {

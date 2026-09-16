@@ -10,12 +10,12 @@
 import type { Device } from "../../Core/API/Device.js";
 import { RenderGraph } from "../../RenderGraph/RenderGraph.js";
 import { Settings } from "../Settings.js";
-import { buildSceneFromCache, encodeTextureSources, loadSceneCache, sceneCacheKey, snapshotCameraPose, storeSceneCache } from "../../Scene/SceneCache.js";
+import { buildSceneFromCache, encodeTextureSources, loadSceneCache, sceneCacheKey, snapshotCameraPose, snapshotGridVolumes, storeSceneCache } from "../../Scene/SceneCache.js";
 import { createPass } from "../../RenderGraph/RenderPass.js";
 import { Properties } from "../Properties.js";
 import { RuntimeError } from "../../Core/Error.js";
 import { AssetResolver, withScriptSearchPath } from "../../Core/AssetResolver.js";
-import { CameraBridge, GridVolumeBridge, LightBridge, MaterialBridge, SceneBuilderBridge, SDFGridBridge, TriangleMesh, makeTransform } from "../../Scene/SceneBuilder.js";
+import { CameraBridge, GridVolumeBridge, LightBridge, MaterialBridge, SceneBuilderBridge, SceneBuilderFlags, SDFGridBridge, TriangleMesh, kSceneBuilderFlagsPython, makeTransform } from "../../Scene/SceneBuilder.js";
 import type { Scene } from "../../Scene/Scene.js";
 import { LightType, type StaticVertex } from "../../Scene/SceneData.js";
 import { MaterialType } from "../../Scene/Material/MaterialData.js";
@@ -84,6 +84,7 @@ export async function runGraphScript(device: Device, source: string): Promise<Re
         float2: (x = 0, y = 0) => new float2(x, y),
         float3: (x = 0, y = 0, z = 0) => new float3(x, y, z),
         float4: (x = 0, y = 0, z = 0, w = 0) => new float4(x, y, z, w),
+        SceneBuilderFlags: kSceneBuilderFlagsPython,
         ...AssetResolver.pythonBindings,
     };
     pyodide.registerJsModule("falcor", falcorModule);
@@ -134,6 +135,7 @@ export function runConsoleCommand(
         float2: (x = 0, y = 0) => new float2(x, y),
         float3: (x = 0, y = 0, z = 0) => new float3(x, y, z),
         float4: (x = 0, y = 0, z = 0, w = 0) => new float4(x, y, z, w),
+        SceneBuilderFlags: kSceneBuilderFlagsPython,
         ...AssetResolver.pythonBindings,
     });
     pyodide.globals.set("m", {
@@ -165,7 +167,7 @@ export function runConsoleCommand(
 const kScenePrelude = `
 import sys
 sys.modules.pop('webfalcor_scene', None)  # registerJsModule per call; defeat import caching
-from webfalcor_scene import (sceneBuilder, _TriangleMesh,
+from webfalcor_scene import (sceneBuilder, SceneBuilderFlags, _TriangleMesh,
     PointLight, DirectionalLight, DistantLight, RectLight, DiscLight, SphereLight,
     StandardMaterial, ClothMaterial, HairMaterial,
     PBRTDiffuseMaterial, PBRTConductorMaterial, Camera, _makeTransform, _makeAABB, _makeEnvMap, _GridVolume, _Grid, _SDFGridCreate)
@@ -250,7 +252,7 @@ _matProps = {'baseColor', 'specularParams', 'transmissionColor', 'emissiveColor'
              'displacementScale', 'displacementOffset'}
 _lightProps = {'position', 'intensity', 'direction', 'angle',
                'openingAngle', 'penumbraAngle', 'scaling', 'rotation'}
-_camProps = {'position', 'target', 'up', 'focalLength', 'focalDistance', 'apertureRadius'}
+_camProps = {'position', 'target', 'up', 'focalLength', 'focalDistance', 'apertureRadius', 'shutterSpeed', 'ISOSpeed'}
 StandardMaterial = _guarded(StandardMaterial, _matProps)
 Material = StandardMaterial  # PYTHONDEPRECATED alias (upstream SDF/legacy pyscenes)
 ClothMaterial = _guarded(ClothMaterial, _matProps)
@@ -341,24 +343,34 @@ export function wasSceneLoadedFromCache(): boolean {
     return sceneLoadedFromCache;
 }
 
-export async function runSceneScript(device: Device, source: string, baseUrl: string, options?: { cache?: boolean }): Promise<Scene> {
+/** Scene load options: `cache` (or Flags::UseCache) enables the OPFS scene cache; `flags` mirrors SceneBuilder::Flags. */
+export interface SceneScriptOptions {
+    cache?: boolean;
+    flags?: SceneBuilderFlags | number;
+}
+
+export async function runSceneScript(device: Device, source: string, baseUrl: string, options?: SceneScriptOptions): Promise<Scene> {
     if (!pyodide) throw new RuntimeError("Call initScripting() first");
     sceneLoadedFromCache = false;
     return withScriptSearchPath(baseUrl, () => runSceneScriptInternal(device, source, baseUrl, options));
 }
 
-async function runSceneScriptInternal(device: Device, source: string, baseUrl: string, options?: { cache?: boolean }): Promise<Scene> {
+async function runSceneScriptInternal(device: Device, source: string, baseUrl: string, options?: SceneScriptOptions): Promise<Scene> {
     if (!pyodide) throw new RuntimeError("Call initScripting() first");
+    const flags = (options?.flags ?? SceneBuilderFlags.Default) as number;
+    const useCache = options?.cache || (flags & SceneBuilderFlags.UseCache) !== 0 || (flags & SceneBuilderFlags.RebuildCache) !== 0;
+    const rebuildCache = (flags & SceneBuilderFlags.RebuildCache) !== 0;
     let cacheKey: string | null = null;
-    if (options?.cache) {
-        cacheKey = await sceneCacheKey(source);
-        const cached = await loadSceneCache(cacheKey);
+    if (useCache) {
+        // Native keys the cache on the build flags too (cache/rebuild bits excluded).
+        cacheKey = await sceneCacheKey(`${source}\n#flags=${flags & ~(SceneBuilderFlags.UseCache | SceneBuilderFlags.RebuildCache)}`);
+        const cached = rebuildCache ? null : await loadSceneCache(cacheKey);
         if (cached) {
             sceneLoadedFromCache = true;
             return await buildSceneFromCache(device, cached);
         }
     }
-    const builder = new SceneBuilderBridge();
+    const builder = new SceneBuilderBridge(flags);
 
     type VecLike = { x: number; y: number; z: number };
     const sceneModule = {
@@ -415,6 +427,7 @@ async function runSceneScriptInternal(device: Device, source: string, baseUrl: s
             createBox: (width: number, height: number, depth: number, voxelSize: number) => ({ _proceduralGrid: buildBoxGrid(width, height, depth, voxelSize) }),
         },
         _SDFGridCreate: (type: string, narrowBandThickness = 5.0, brickWidth = 7) => new SDFGridBridge(type as "ndsdf" | "sbs", narrowBandThickness, brickWidth),
+        SceneBuilderFlags: kSceneBuilderFlagsPython,
         ...AssetResolver.pythonBindings,
     };
     pyodide.registerJsModule("webfalcor_scene", sceneModule);
@@ -425,7 +438,7 @@ async function runSceneScriptInternal(device: Device, source: string, baseUrl: s
     const env = scene.getEnvMap();
     // Programmatic env maps without retained source bytes can't be restored.
     if (cacheKey && builder.lastSceneArgs?.cacheable && (!env || env.sourceBytes)) {
-        const { meshes, materials, lights, nodes, cameraNodeID, textureManager, curves } = builder.lastSceneArgs;
+        const { meshes, materials, lights, nodes, cameraNodeID, textureManager, curves, animations, weightTracks, sdfGrids } = builder.lastSceneArgs;
         const textures = await encodeTextureSources(textureManager);
         await storeSceneCache(cacheKey, {
             meshes,
@@ -439,6 +452,10 @@ async function runSceneScriptInternal(device: Device, source: string, baseUrl: s
             envMap: env?.sourceBytes
                 ? { bytes: env.sourceBytes, isExr: env.sourceIsExr, intensity: env.intensity, tint: env.tint, rotationDeg: env.rotationDeg }
                 : undefined,
+            animations,
+            weightTracks,
+            sdfGrids,
+            gridVolumes: snapshotGridVolumes(scene),
         });
     }
     return scene;

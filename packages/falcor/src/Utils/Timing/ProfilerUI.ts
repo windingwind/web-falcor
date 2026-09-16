@@ -161,7 +161,7 @@ export class ProfilerUI {
         if (!same) {
             this.tbody.textContent = "";
             this.eventData = events.map((event, i) => {
-                const row = this.tbody.ownerDocument.createElement("tr");
+                const row = this.tbody.insertRow();
                 const nameCell = row.insertCell();
                 nameCell.textContent = event.shortName;
                 const cpuCell = row.insertCell();

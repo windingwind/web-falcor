@@ -61,6 +61,19 @@ gpuTest("Profiler.perPassTimings", async ({ device }) => {
         const capture = profiler.endCapture()!;
         expectEq(capture.frameCount >= 2, true, `captured frames (${capture.frameCount})`);
         expectEq(capture.lanes.some((l) => l.name === "/RenderGraphExe::execute()/ToneMapping/gpu_time"), true, "gpu_time lane per event");
+
+        // Compute passes (ComputePass.execute) must carry timestamps too.
+        const [cg] = await runGraphScript(device, "from falcor import *\ng = RenderGraph('C')\ng.addPass(createPass('ImageLoader', {'filename': 'test_images/smoke_puff.png'}), 'Img')\ng.addPass(createPass('AccumulatePass', {}), 'Acc')\ng.addEdge('Img.dst', 'Acc.input')\ng.markOutput('Acc.output')\nm.addGraph(g)\n");
+        await cg!.init();
+        cg!.onResize(256, 256);
+        let acc = profiler.findEvent("/RenderGraphExe::execute()/Acc");
+        for (let i = 0; i < 40 && !(acc && acc.gpuTime > 0); i++) {
+            cg!.execute(ctx);
+            ctx.submit();
+            await new Promise((r) => setTimeout(r, 30));
+            acc = profiler.findEvent("/RenderGraphExe::execute()/Acc");
+        }
+        expectEq(acc !== undefined && acc.gpuTime > 0, true, `compute pass has GPU time (${acc?.gpuTime})`);
     } finally {
         device.profilerHook = null;
     }

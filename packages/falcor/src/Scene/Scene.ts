@@ -555,6 +555,11 @@ export class Scene {
         this.envMap = envMap;
     }
 
+    /** Mirrors Scene::getLightCount. */
+    getLightCount(): number {
+        return this.analyticLights.length;
+    }
+
     /** Mirrors Scene::getLight / getLightByName (live object; call updateLights() after edits). */
     getLight(ref: number | string): AnalyticLight {
         const light = typeof ref === "number" ? this.analyticLights[ref] : this.analyticLights.find((l) => l.name === ref);
@@ -1159,6 +1164,8 @@ export class Scene {
         c["jitterY"] = cam.jitterY;
         c["focalDistance"] = cam.focalDistance;
         c["apertureRadius"] = cam.apertureRadius;
+        c["shutterSpeed"] = cam.shutterSpeed;
+        c["ISOSpeed"] = cam.ISOSpeed;
 
         // Geometry.
         scene["worldMatrices"] = this.buffers["worldMatrices"]!;

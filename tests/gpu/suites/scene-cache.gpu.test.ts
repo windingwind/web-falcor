@@ -129,3 +129,59 @@ gpuTest("SceneCache.curvesAndEnvMapClasses", async ({ device }) => {
 
     await clearSceneCache();
 });
+
+gpuTest("SceneCache.animationSdfVolumeClasses", async ({ device }) => {
+    await initScripting("/node_modules/pyodide");
+    await clearSceneCache();
+    const ctx = device.renderContext;
+    const graphSource = await (await fetch("/Falcor/tests/image_tests/renderpasses/graphs/MinimalPathTracer.py")).text();
+
+    const render = async (scene: Awaited<ReturnType<typeof runSceneScript>>, time?: number) => {
+        if (time !== undefined) scene.animate(time);
+        const [graph] = await runGraphScript(device, graphSource);
+        scene.camera.setAspectRatio(1.0);
+        graph!.onResize(size, size);
+        graph!.setScene(scene);
+        graph!.execute(ctx);
+        return new Uint8Array((await ctx.readTextureSubresource(graph!.getOutput("ToneMapper.dst")!)).buffer);
+    };
+
+    // v4 classes: FBX node animation (animated_cubes at t=3), procedural NDSDF grid (recipe), .vdb grid volume + env map (smoke).
+    for (const [label, dir, file, time, check] of [
+        ["animation", "/Falcor/media/test_scenes/animated_cubes", "animated_cubes.pyscene", 3.0, (s: Awaited<ReturnType<typeof runSceneScript>>) => s.isAnimated()],
+        ["sdf", "/tests/oracle/assets", "ndsdf-mesh.pyscene", undefined, (s: Awaited<ReturnType<typeof runSceneScript>>) => s.sdfGrids.length === 1],
+        ["volume", "/Falcor/media/test_scenes", "smoke.pyscene", undefined, (s: Awaited<ReturnType<typeof runSceneScript>>) => s.gridVolumes.length === 1 && s.gridVolumes[0]!.densityGrid!.voxelCount > 0 && s.useEnvLight],
+    ] as const) {
+        const source = await (await fetch(`${dir}/${file}`)).text();
+        const s1 = await runSceneScript(device, source, dir, { cache: true });
+        expectEq(wasSceneLoadedFromCache(), false, `${label} first load imports`);
+        const img1 = await render(s1, time);
+        const t0 = performance.now();
+        const s2 = await runSceneScript(device, source, dir, { cache: true });
+        const cachedMs = performance.now() - t0;
+        expectEq(wasSceneLoadedFromCache(), true, `${label} second load hits the cache`);
+        expectEq(check(s2), true, `${label} class restored from the cache`);
+        const img2 = await render(s2, time);
+        let diff = 0;
+        let nonzero = 0;
+        for (let i = 0; i < img1.length; i++) {
+            if (img1[i] !== img2[i]) diff++;
+            if (img1[i] !== 0) nonzero++;
+        }
+        console.error(`# scene-cache ${label}: cached load ${cachedMs.toFixed(1)}ms, ${diff} differing bytes of ${img1.length} (${nonzero} nonzero)`);
+        expectEq(nonzero > 1000, true, `${label} renders content (${nonzero} nonzero bytes)`);
+        expectEq(diff, 0, `${label} cached scene renders byte-identically`);
+    }
+
+    // Animated scenes keep animating from the cache (a later time renders differently).
+    const source = await (await fetch("/Falcor/media/test_scenes/animated_cubes/animated_cubes.pyscene")).text();
+    const cached = await runSceneScript(device, source, "/Falcor/media/test_scenes/animated_cubes", { cache: true });
+    expectEq(wasSceneLoadedFromCache(), true, "animated scene served from cache");
+    const a = await render(cached, 3.0);
+    const b = await render(cached, 8.0);
+    let moved = 0;
+    for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) moved++;
+    expectEq(moved > 100, true, `cached animation advances between t=3 and t=8 (${moved} bytes changed)`);
+
+    await clearSceneCache();
+});

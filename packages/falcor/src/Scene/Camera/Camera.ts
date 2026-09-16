@@ -47,6 +47,8 @@ export interface CameraData {
     frameWidth: number;
     focalDistance: number;
     apertureRadius: number;
+    shutterSpeed: number;
+    ISOSpeed: number;
 }
 
 export class Camera {
@@ -57,6 +59,8 @@ export class Camera {
     private focalLength = 21.0; // Falcor default
     private focalDistance = 10000.0;
     private apertureRadius = 0.0;
+    private shutterSpeed = 0.004;
+    private ISOSpeed = 100.0;
     private frameHeight = 24.0;
     private aspectRatio = 1.7777;
     private nearZ = 0.1;
@@ -110,6 +114,12 @@ export class Camera {
     getFocalDistance(): number { return this.focalDistance; }
     setApertureRadius(r: number): void { this.apertureRadius = r; this.dirty = true; }
     getApertureRadius(): number { return this.apertureRadius; }
+    /** Mirrors Camera::setShutterSpeed (seconds; physical-exposure metadata). */
+    setShutterSpeed(s: number): void { this.shutterSpeed = s; this.dirty = true; }
+    getShutterSpeed(): number { return this.shutterSpeed; }
+    /** Mirrors Camera::setISOSpeed. */
+    setISOSpeed(iso: number): void { this.ISOSpeed = iso; this.dirty = true; }
+    getISOSpeed(): number { return this.ISOSpeed; }
     setAspectRatio(ratio: number): void { this.aspectRatio = ratio; this.dirty = true; }
     getAspectRatio(): number { return this.aspectRatio; }
     setDepthRange(nearZ: number, farZ: number): void { this.nearZ = nearZ; this.farZ = farZ; this.dirty = true; }
@@ -168,6 +178,8 @@ export class Camera {
                 frameWidth: this.frameHeight * this.aspectRatio,
                 focalDistance: this.focalDistance,
                 apertureRadius: this.apertureRadius,
+                shutterSpeed: this.shutterSpeed,
+                ISOSpeed: this.ISOSpeed,
             };
             this.dirty = false;
         }

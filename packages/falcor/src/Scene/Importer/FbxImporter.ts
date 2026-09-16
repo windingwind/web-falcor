@@ -150,6 +150,7 @@ export class FbxImporter {
         bytes: Uint8Array,
         baseUrl: string,
         textureManager: TextureManager,
+        options: { assumeLinearSpaceTextures?: boolean } = {},
     ): Promise<{ meshes: SceneMeshDesc[]; materials: SceneMaterialDesc[]; materialNames: string[]; nodes: SceneNode[]; animations: AnimationChannel[]; lights: AnalyticLight[] }> {
         const ajs = await getAssimp();
         const files = new ajs.FileList();
@@ -161,7 +162,8 @@ export class FbxImporter {
         // Textures (loaded per unique path; slot decides sRGB like loadMaterialTexture).
         const textureIDs = new Map<string, number>();
         const skippedFormats = new Set<string>();
-        const loadTexture = async (path: string, srgb: boolean): Promise<number | undefined> => {
+        const loadTexture = async (path: string, slotSrgb: boolean): Promise<number | undefined> => {
+            const srgb = slotSrgb && !options.assumeLinearSpaceTextures;
             const norm = path.replace(/\\/g, "/");
             const key = `${norm}|${srgb}`;
             if (textureIDs.has(key)) return textureIDs.get(key);

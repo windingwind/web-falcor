@@ -70,7 +70,8 @@ export class ComputePass {
         const [gx, gy, gz] = this.getThreadGroupSize();
         const groups: [number, number, number] = [Math.ceil(threadsX / gx), Math.ceil(threadsY / gy), Math.ceil(threadsZ / gz)];
         const bindGroups = this.vars.getGroupIndices().map((g) => ({ index: g, group: this.vars.getBindGroup(g) }));
-        const pass = ctx.getEncoder().beginComputePass();
+        const tw = ctx.device.profilerHook?.passTimestampWrites();
+        const pass = ctx.getEncoder().beginComputePass(tw ? { timestampWrites: tw } : undefined);
         pass.setPipeline(this.pipeline);
         for (const { index, group } of bindGroups) pass.setBindGroup(index, group);
         pass.dispatchWorkgroups(...groups);

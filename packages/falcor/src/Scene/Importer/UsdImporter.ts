@@ -125,6 +125,7 @@ export class UsdImporter {
         textureManager?: TextureManager,
         baseUrl = "",
         excludePrims?: Set<string>,
+        options: { assumeLinearSpaceTextures?: boolean } = {},
     ): Promise<{ meshes: SceneMeshDesc[]; materials: SceneMaterialDesc[]; materialNames: string[] }> {
         const native = await loadTinyUsdz();
         const usd = new native.TinyUSDZLoaderNative();
@@ -212,7 +213,7 @@ export class UsdImporter {
         // Resolve UsdUVTexture images (URI, embedded-encoded, or pre-decoded).
         if (textureManager) {
             for (const { desc, material: m } of textureJobs) {
-                await resolveMaterialTextures(usd, m, desc, textureManager, baseUrl);
+                await resolveMaterialTextures(usd, m, desc, textureManager, baseUrl, !!options.assumeLinearSpaceTextures);
             }
         }
         return { meshes, materials, materialNames };
@@ -229,11 +230,12 @@ async function resolveMaterialTextures(
     desc: SceneMaterialDesc,
     textureManager: TextureManager,
     baseUrl: string,
+    assumeLinear = false,
 ): Promise<void> {
     const valid = (id: number | undefined): id is number => id !== undefined && id >= 0;
-    const load = async (id: number, srgb: boolean): Promise<number | undefined> => {
+    const load = async (id: number, slotSrgb: boolean): Promise<number | undefined> => {
         try {
-            return textureManager.addTexture({ bitmap: await resolveImageBitmap(usd, id, baseUrl), srgb });
+            return textureManager.addTexture({ bitmap: await resolveImageBitmap(usd, id, baseUrl), srgb: slotSrgb && !assumeLinear });
         } catch (err) {
             Logger.warning(`UsdImporter: failed to load texture ${id} (${String(err)})`);
             return undefined;

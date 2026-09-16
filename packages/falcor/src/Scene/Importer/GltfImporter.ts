@@ -117,6 +117,7 @@ export class GltfImporter {
         bytes: Uint8Array,
         baseUrl = "",
         textureManager = new TextureManager(),
+        options: { assumeLinearSpaceTextures?: boolean } = {},
     ): Promise<{ meshes: SceneMeshDesc[]; materials: SceneMaterialDesc[]; nodes: SceneNode[]; animations: AnimationChannel[]; lights: AnalyticLight[]; cameraNodeID?: number; camera?: GltfCameraPose; weightTracks: WeightTrack[] }> {
         let json: GltfJson;
         let binChunk: Uint8Array | null = null;
@@ -211,7 +212,7 @@ export class GltfImporter {
                 blob = await (await fetch(imgUrl)).blob();
             }
             const bitmap = await createImageBitmap(blob, { colorSpaceConversion: "none" });
-            textureIDs.set(t, textureManager.addTexture({ bitmap, srgb: true }));
+            textureIDs.set(t, textureManager.addTexture({ bitmap, srgb: !options.assumeLinearSpaceTextures }));
         }
 
         // Materials (pbrMetallicRoughness factors; MetalRough encoding: specular = (occlusion, roughness, metallic)).

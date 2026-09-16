@@ -76,6 +76,14 @@ export abstract class RenderPass {
     /** Mirrors RenderPass::compile (called when graph recompiles). */
     compile(_ctx: RenderContext, _compileData: CompileData): void {}
 
+    /** Set by requestRecompile; the owning RenderGraph consumes it at the next execute. */
+    recompileRequested = false;
+
+    /** Mirrors RenderPass::requestRecompile: the graph recompiles before its next execute. */
+    requestRecompile(): void {
+        this.recompileRequested = true;
+    }
+
     /**
      * Async initialization (asset loading etc.) — web divergence (docs §9):
      * native Falcor blocks on file IO in constructors. Awaited by RenderGraph.init().

@@ -65,6 +65,7 @@ export * from "./Scene/Camera/Camera.js";
 export * from "./Scene/Camera/CameraController.js";
 export * from "./Utils/Math/Vector.js";
 export * from "./Utils/Math/Float16.js";
+export * from "./Utils/Math/CubicSpline.js";
 export * from "./Utils/Math/Matrix.js";
 export * from "./Utils/Math/Quaternion.js";
 export * from "./Utils/SampleGenerators/CPUSampleGenerator.js";

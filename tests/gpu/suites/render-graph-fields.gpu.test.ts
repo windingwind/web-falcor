@@ -176,3 +176,18 @@ gpuTest("RenderGraphFields.mergeMismatchThrowsAndConnectedShapesPropagate", asyn
         expectEq([f.width, f.height, f.format_], [12, 6, ResourceFormat.RG32Float], "external input reflected into connectedResources");
     }
 });
+
+gpuTest("RenderGraphFields.requestRecompileRecompilesNextFrame", async ({ device }) => {
+    const ctx = device.renderContext;
+    const graph = new RenderGraph(device, "Recompile");
+    const zoo = graph.addPass(new FieldZoo(device, new Properties()), "Zoo") as FieldZoo;
+    graph.onResize(16, 16);
+    graph.execute(ctx);
+    const scratch0 = zoo.seen.get("scratch");
+    graph.execute(ctx);
+    expectEq(zoo.seen.get("scratch") === scratch0, true, "no recompile without a request");
+    zoo.requestRecompile();
+    graph.execute(ctx);
+    expectEq(zoo.seen.get("scratch") !== scratch0, true, "requestRecompile() recompiles before the next execute");
+    expectEq(zoo.recompileRequested, false, "request flag consumed");
+});

@@ -367,6 +367,13 @@ export class RenderGraph {
 
     /** Mirrors RenderGraphExe::execute (plus Mogwai's per-frame scene tick). */
     execute(ctx: RenderContext): void {
+        // Mirrors RenderGraph::execute's mRecompile check (passes call requestRecompile).
+        for (const pass of this.passes.values()) {
+            if (pass.recompileRequested) {
+                pass.recompileRequested = false;
+                this.compiled = null;
+            }
+        }
         if (!this.compiled) this.compile(ctx);
         // Native Mogwai calls Scene::update() (camera beginFrame: jitter pattern
         // advance) before executing the graph each frame; web folds it in here.

@@ -7,10 +7,7 @@ import type { Device } from "../Core/API/Device.js";
 import { Grid } from "./Volume/Grid.js";
 import { GridVolume, type GridSlot } from "./Volume/GridVolume.js";
 import { buildNanoVDBGrid, type ParsedFloatGrid } from "./Volume/VDBLoader.js";
-import { NDSDFGrid } from "./SDFs/NDSDFGrid.js";
-import { SDFSBS } from "./SDFs/SDFSBS.js";
-import { SDFSVS } from "./SDFs/SDFSVS.js";
-import { SDFSVO } from "./SDFs/SDFSVO.js";
+import { buildSDFGridFromRecipe, type SDFGridRecipe, type SDFGridType } from "./SDFs/SDFGridRecipe.js";
 import type { SceneSDFGridDesc } from "./Scene.js";
 import { Scene, type SceneMaterialDesc, type SceneMeshDesc } from "./Scene.js";
 import type { SceneNode, AnimationChannel, WeightTrack } from "./Animation/SceneAnimation.js";
@@ -190,6 +187,8 @@ export class CameraBridge {
     focalLength = 21;
     focalDistance = 10000;
     apertureRadius = 0;
+    shutterSpeed = 0.004;
+    ISOSpeed = 100;
 
     set position(v: { x: number; y: number; z: number }) {
         this._position = toF3(v);
@@ -251,14 +250,14 @@ export class MaterialBridge {
         this._textures.push({ slot: String(slot), path: String(path) });
     }
 
-    /** Fetches + decodes this material's deferred textures into the TextureManager. */
-    async resolveTextures(baseUrl: string, tm: TextureManager, resolver = AssetResolver.getDefaultResolver()): Promise<void> {
+    /** Fetches + decodes this material's deferred textures into the TextureManager (MaterialTextureLoader: sRGB for colour slots unless AssumeLinearSpaceTextures). */
+    async resolveTextures(baseUrl: string, tm: TextureManager, resolver = AssetResolver.getDefaultResolver(), assumeLinearSpaceTextures = false): Promise<void> {
         for (const t of this._textures) {
             const url = await resolveAssetUrl(t.path, baseUrl, AssetCategory.Any, resolver);
             try {
                 const res = await fetch(url);
                 if (!res.ok) continue;
-                const srgb = t.slot === "BaseColor" || t.slot === "Emissive";
+                const srgb = (t.slot === "BaseColor" || t.slot === "Emissive") && !assumeLinearSpaceTextures;
                 const blob = await res.blob();
                 const bitmap = await createImageBitmap(blob, { colorSpaceConversion: "none" });
                 const bytes = new Uint8Array(await blob.arrayBuffer());
@@ -416,7 +415,43 @@ export function makeTransform(
     return m;
 }
 
-export type SDFGridType = "ndsdf" | "sbs" | "svs" | "svo";
+export type { SDFGridType, SDFGridRecipe };
+
+/** Mirrors SceneBuilder::Flags (values identical to native; see docs §8.4 for which ones change web behaviour). */
+export enum SceneBuilderFlags {
+    None = 0x0,
+    DontMergeMaterials = 0x1,
+    UseOriginalTangentSpace = 0x2,
+    AssumeLinearSpaceTextures = 0x4,
+    DontMergeMeshes = 0x8,
+    UseSpecGlossMaterials = 0x10,
+    UseMetalRoughMaterials = 0x20,
+    NonIndexedVertices = 0x40,
+    Force32BitIndices = 0x80,
+    RTDontMergeStatic = 0x100,
+    RTDontMergeDynamic = 0x200,
+    RTDontMergeInstanced = 0x400,
+    FlattenStaticMeshInstances = 0x800,
+    DontOptimizeGraph = 0x1000,
+    DontOptimizeMaterials = 0x2000,
+    DontUseDisplacement = 0x4000,
+    UseCompressedHitInfo = 0x8000,
+    TessellateCurvesIntoPolyTubes = 0x10000,
+    UseCache = 0x10000000,
+    RebuildCache = 0x20000000,
+    Default = None,
+}
+
+/** Python enum surface (`SceneBuilderFlags.NonIndexedVertices | ...`). */
+export const kSceneBuilderFlagsPython: Record<string, number> = Object.fromEntries(
+    Object.entries(SceneBuilderFlags).filter(([, v]) => typeof v === "number") as [string, number][],
+);
+
+/** Importer options derived from the build flags. */
+export interface ImportOptions {
+    /** Flags::AssumeLinearSpaceTextures: colour textures are not sRGB-decoded. */
+    assumeLinearSpaceTextures?: boolean;
+}
 
 /** Recorded SDF grid state (mirrors SDFGrid python bindings; ND + SBS types). */
 export class SDFGridBridge {
@@ -428,6 +463,9 @@ export class SDFGridBridge {
     ) {}
     generateCheeseValues(gridWidth: number, seed: number): void {
         this.ops.push({ kind: "cheese", gridWidth: Number(gridWidth), seed: Number(seed) });
+    }
+    toRecipe(): SDFGridRecipe {
+        return { type: this.type, narrowBandThickness: this.narrowBandThickness, brickWidth: this.brickWidth, ops: [...this.ops] };
     }
 }
 
@@ -470,6 +508,17 @@ type Command =
 export class SceneBuilderBridge {
     /** Copy of the default resolver at construction (native SceneBuilder::mAssetResolver). */
     readonly assetResolver = AssetResolver.getDefaultResolver().clone();
+
+    constructor(readonly flags: SceneBuilderFlags = SceneBuilderFlags.Default) {}
+    getFlags(): SceneBuilderFlags {
+        return this.flags;
+    }
+    private hasFlag(flag: SceneBuilderFlags): boolean {
+        return (this.flags & flag) !== 0;
+    }
+    private get importOptions(): ImportOptions {
+        return { assumeLinearSpaceTextures: this.hasFlag(SceneBuilderFlags.AssumeLinearSpaceTextures) };
+    }
     getAssetResolver(): AssetResolver {
         return this.assetResolver;
     }
@@ -685,6 +734,10 @@ export class SceneBuilderBridge {
         cameraNodeID?: number;
         textureManager: TextureManager;
         curves: import("./Scene.js").SceneCurveDesc[];
+        animations: AnimationChannel[];
+        weightTracks: WeightTrack[];
+        /** SDF grids as rebuildable recipes + their instances (SceneCache v4). */
+        sdfGrids: { recipes: SDFGridRecipe[]; instances: { gridIndex: number; materialID: number; transform?: float4x4 }[] };
         cacheable: boolean;
     } | null = null;
 
@@ -714,7 +767,7 @@ export class SceneBuilderBridge {
                     const curvePrims = cmd.path.toLowerCase().endsWith(".usda")
                         ? extractBasisCurvesFromUsda(new TextDecoder().decode(bytes))
                         : [];
-                    const parsed = await UsdImporter.parseToDescs(bytes, textureManager, dir, new Set(curvePrims.map((c) => c.name)));
+                    const parsed = await UsdImporter.parseToDescs(bytes, textureManager, dir, new Set(curvePrims.map((c) => c.name)), this.importOptions);
                     materials.push(...parsed.materials);
                     importedMaterialNames.push(...parsed.materialNames);
                     for (const m of parsed.meshes) meshes.push({ ...m, materialID: m.materialID + materialOffset });
@@ -742,7 +795,7 @@ export class SceneBuilderBridge {
                     }
                 } else if (cmd.path.toLowerCase().endsWith(".fbx")) {
                     const dir = url.slice(0, url.lastIndexOf("/"));
-                    const parsed = await FbxImporter.parseToDescs(bytes, dir, textureManager);
+                    const parsed = await FbxImporter.parseToDescs(bytes, dir, textureManager, this.importOptions);
                     parsed.materials.forEach((m, i) => (m.name ??= parsed.materialNames[i]));
                     materials.push(...parsed.materials);
                     importedMaterialNames.push(...parsed.materialNames);
@@ -760,7 +813,7 @@ export class SceneBuilderBridge {
                             skin: m.skin ? { ...m.skin, boneNodeIDs: m.skin.boneNodeIDs.map((n) => n + nodeOffset) } : undefined,
                         });
                 } else {
-                    const parsed = await GltfImporter.parseToDescs(bytes, url, textureManager);
+                    const parsed = await GltfImporter.parseToDescs(bytes, url, textureManager, this.importOptions);
                     materials.push(...parsed.materials);
                     importedMaterialNames.push(...parsed.materials.map(() => ""));
                     // Offset the imported node graph so multiple imports don't collide.
@@ -827,7 +880,7 @@ export class SceneBuilderBridge {
         }
 
         // Load deferred material textures (material.loadTexture()).
-        for (const mat of new Set(this.meshMaterials)) await mat.resolveTextures(baseUrl, textureManager, this.assetResolver);
+        for (const mat of new Set(this.meshMaterials)) await mat.resolveTextures(baseUrl, textureManager, this.assetResolver, this.hasFlag(SceneBuilderFlags.AssumeLinearSpaceTextures));
 
         // Builder-added meshes (instanced via nodes).
         const materialIDs = new Map<MaterialBridge, number>();
@@ -841,9 +894,11 @@ export class SceneBuilderBridge {
                 materials.push(mat.toDesc());
                 materialIDs.set(mat, materialID);
             }
-            // Local-space tangents when the asset provides none (native MikkTSpace).
+            // Local-space tangents when the asset provides none (native MikkTSpace);
+            // UseOriginalTangentSpace keeps supplied tangents.
             const vertices = geo.vertices.map((v) => ({ ...v }));
-            generateTangents(vertices, geo.indices);
+            const hasTangents = vertices.some((v) => v.tangent.x !== 0 || v.tangent.y !== 0 || v.tangent.z !== 0);
+            if (!(this.hasFlag(SceneBuilderFlags.UseOriginalTangentSpace) && hasTangents)) generateTangents(vertices, geo.indices);
             for (const transform of transforms) {
                 meshes.push({ vertices, indices: geo.indices, materialID, transform });
             }
@@ -867,14 +922,9 @@ export class SceneBuilderBridge {
 
         // SDF grids (ND + SBS implementations; instances reference builder nodes).
         const sdfGrids: SceneSDFGridDesc[] = [];
-        const builtSdfGrids = this.sdfGridsList.map(({ grid, material }) => {
-            const built: NDSDFGrid | SDFSBS | SDFSVS | SDFSVO =
-                grid.type === "sbs" ? new SDFSBS(grid.brickWidth) : grid.type === "svs" ? new SDFSVS() : grid.type === "svo" ? new SDFSVO() : new NDSDFGrid(grid.narrowBandThickness);
-            for (const op of grid.ops) {
-                if (op.kind === "cheese") built.generateCheeseValues(op.gridWidth, op.seed);
-            }
-            const built_ok = built instanceof SDFSBS ? built.brickCount > 0 : built instanceof SDFSVS || built instanceof SDFSVO ? built.voxelCount > 0 : built.lodCount > 0;
-            if (!built_ok) throw new RuntimeError("SDFGrid: no values set (only generateCheeseValues is supported so far)");
+        const sdfRecipes = this.sdfGridsList.map(({ grid }) => grid.toRecipe());
+        const builtSdfGrids = this.sdfGridsList.map(({ material }, i) => {
+            const built = buildSDFGridFromRecipe(sdfRecipes[i]!);
             let materialID = materialIDs.get(material);
             if (materialID === undefined) {
                 materialID = materials.length;
@@ -889,12 +939,15 @@ export class SceneBuilderBridge {
             sdfGrids.push({ grid: built.grid, materialID: built.materialID, transform: this.nodes[inst.nodeID]! });
         }
 
+        // Flags::DontUseDisplacement: drop displacement maps (meshes stay plain triangles).
+        if (this.hasFlag(SceneBuilderFlags.DontUseDisplacement)) for (const m of materials) delete m.basic.texDisplacement;
+
         // Only bind the camera to an imported node when the pyscene doesn't define
         // its own camera (an explicit pyscene camera wins and stays static).
         const cameraNodeID = this.camera ? undefined : this.importedCameraNodeID;
         const scene = new Scene(device, meshes, materials, lights, textureManager, sdfGrids, nodes, animations, cameraNodeID, weightTracks, curves);
-        // Snapshot for the scene cache (phase 3: static geometry incl. curves,
-        // textures, env map; animation/skin/morph/SDF/volume scenes reimport).
+        // Snapshot for the scene cache (v4: every scene class; grid volumes are
+        // read off scene.gridVolumes after finalize, env map off the scene).
         this.lastSceneArgs = {
             meshes,
             materials,
@@ -903,12 +956,13 @@ export class SceneBuilderBridge {
             cameraNodeID,
             textureManager,
             curves,
-            cacheable:
-                animations.length === 0 &&
-                weightTracks.length === 0 &&
-                sdfGrids.length === 0 &&
-                this.gridVolumesList.length === 0 &&
-                meshes.every((m) => !m.skin && !m.morph),
+            animations,
+            weightTracks,
+            sdfGrids: {
+                recipes: sdfRecipes,
+                instances: this.sdfInstances.map((inst) => ({ gridIndex: inst.sdfGridID, materialID: builtSdfGrids[inst.sdfGridID]!.materialID, transform: this.nodes[inst.nodeID] })),
+            },
+            cacheable: true,
         };
         if (this.camera) {
             scene.camera.setPosition(this.camera.getPosition());
@@ -917,6 +971,8 @@ export class SceneBuilderBridge {
             scene.camera.setFocalLength(this.camera.focalLength);
             scene.camera.setFocalDistance(this.camera.focalDistance);
             scene.camera.setApertureRadius(this.camera.apertureRadius);
+            scene.camera.setShutterSpeed(this.camera.shutterSpeed);
+            scene.camera.setISOSpeed(this.camera.ISOSpeed);
         } else if (this.importedCameraPose) {
             scene.camera.setPosition(this.importedCameraPose.position);
             scene.camera.setTarget(this.importedCameraPose.target);
