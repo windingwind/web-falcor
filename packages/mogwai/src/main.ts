@@ -239,6 +239,8 @@ async function main() {
         if ((ev.key === "p" || ev.key === "P") && !(ev.target instanceof HTMLInputElement)) profilerPanel.hidden = !profilerPanel.hidden;
     });
     (window as unknown as { mogwaiProfiler: { profiler: Profiler; ui: ProfilerUI } }).mogwaiProfiler = { profiler, ui: profilerUI };
+    const pixelZoom = wirePixelZoom();
+    (window as unknown as { mogwaiPixelZoom: PixelZoom }).mogwaiPixelZoom = pixelZoom;
     (window as unknown as { mogwai: ViewerState }).mogwai = state; // debug/test handle
     (window as unknown as { mogwaiCamControl: CameraController }).mogwaiCamControl = camControl;
 
@@ -265,6 +267,7 @@ async function main() {
             }
             const tex = state.graph.getOutput(state.output);
             if (tex) presentToCanvas(device, tex, context!.getCurrentTexture(), format);
+            pixelZoom.render();
             if (videoRecorder.recording) videoRecorder.captureFrame();
             state.frame++;
             const gpu = profiler.available && state.frame % 30 === 0
@@ -385,6 +388,72 @@ function wirePixelPicking(state: ViewerState, rebuildUI: () => void): void {
         }
         if (any) setTimeout(rebuildUI, 250); // async pixel-data readback lands ~1 frame later
     });
+}
+
+/** Mirrors Utils/UI/PixelZoom: hold Z to magnify the pixels under the cursor (wheel = zoom). */
+interface PixelZoom {
+    render(): void;
+    active: boolean;
+    srcZoomSize: number;
+}
+
+/**
+ * Native PixelZoom copies an mSrcZoomSize² block around the cursor into a 200² point-
+ * filtered window centred on the cursor (clamped to the edges) while Z is held; the
+ * wheel grows/shrinks the source block by 4 px (min 3). Web: a 2D overlay canvas drawn
+ * from the WebGPU canvas after each present.
+ */
+function wirePixelZoom(): PixelZoom {
+    const kDstZoomSize = 200;
+    const kZoomCoefficient = 4;
+    const overlay = document.getElementById("zoom") as HTMLCanvasElement;
+    overlay.width = kDstZoomSize;
+    overlay.height = kDstZoomSize;
+    const c2d = overlay.getContext("2d")!;
+    c2d.imageSmoothingEnabled = false;
+    const zoom: PixelZoom = { active: false, srcZoomSize: 5, render: () => {} };
+    let mouse: [number, number] = [0.5, 0.5]; // normalized canvas position
+    window.addEventListener("keydown", (ev) => {
+        if ((ev.key === "z" || ev.key === "Z") && !(ev.target instanceof HTMLInputElement) && !(ev.target instanceof HTMLTextAreaElement)) zoom.active = true;
+    });
+    window.addEventListener("keyup", (ev) => {
+        if (ev.key === "z" || ev.key === "Z") zoom.active = false;
+    });
+    window.addEventListener("blur", () => (zoom.active = false));
+    canvas.addEventListener("mousemove", (ev) => {
+        const rect = canvas.getBoundingClientRect();
+        mouse = [(ev.clientX - rect.left) / rect.width, (ev.clientY - rect.top) / rect.height];
+    });
+    canvas.addEventListener(
+        "wheel",
+        (ev) => {
+            if (!zoom.active) return;
+            zoom.srcZoomSize = Math.max(zoom.srcZoomSize + kZoomCoefficient * Math.sign(ev.deltaY), 3);
+            ev.preventDefault();
+            ev.stopImmediatePropagation();
+        },
+        { capture: true, passive: false },
+    );
+    zoom.render = () => {
+        overlay.hidden = !zoom.active;
+        if (!zoom.active) return;
+        const rect = canvas.getBoundingClientRect();
+        const offset = Math.floor(zoom.srcZoomSize / 2);
+        // Source block in canvas pixels, clamped so it stays inside the framebuffer.
+        const clampEdge = (v: number, size: number, off: number) => Math.min(Math.max(v, off), size - off);
+        const sx = clampEdge(mouse[0] * canvas.width, canvas.width, offset);
+        const sy = clampEdge(mouse[1] * canvas.height, canvas.height, offset);
+        c2d.clearRect(0, 0, kDstZoomSize, kDstZoomSize);
+        c2d.imageSmoothingEnabled = false;
+        c2d.drawImage(canvas, sx - offset, sy - offset, 2 * offset, 2 * offset, 0, 0, kDstZoomSize, kDstZoomSize);
+        // Window centred on the cursor (CSS px), clamped to the canvas rectangle like native.
+        const half = kDstZoomSize / 2;
+        const cx = clampEdge(mouse[0] * rect.width, rect.width, half);
+        const cy = clampEdge(mouse[1] * rect.height, rect.height, half);
+        overlay.style.left = `${rect.left + cx - half}px`;
+        overlay.style.top = `${rect.top + cy - half}px`;
+    };
+    return zoom;
 }
 
 /**
