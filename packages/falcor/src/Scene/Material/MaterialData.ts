@@ -57,6 +57,8 @@ export interface MaterialHeaderDesc {
     lightProfileEnabled?: boolean;
     deltaSpecular?: boolean;
     ior?: number;
+    /** Packed TextureHandle sampled by the alpha test (native: the base color texture's handle). */
+    alphaTextureHandle?: number;
 }
 
 /** Packs MaterialHeader's uint4 (bit layout from MaterialData.slang). */
@@ -81,8 +83,8 @@ export function packMaterialHeader(desc: MaterialHeaderDesc): Uint32Array {
 
     // packedData.z: IoR f16[16]
     const z = f32tof16(desc.ior ?? 1.5);
-    // packedData.w: alpha texture handle
-    const w = 0;
+    // packedData.w: alpha texture handle (Uniform mode = 0 -> alpha test reads 1, like native)
+    const w = desc.alphaTextureHandle ?? 0;
     return new Uint32Array([x >>> 0, y >>> 0, z >>> 0, w >>> 0]);
 }
 
@@ -116,7 +118,8 @@ export function packBasicMaterialBlob(header: MaterialHeaderDesc, mat: BasicMate
     const u32 = new Uint32Array(blob);
     const dv = new DataView(blob);
 
-    u32.set(packMaterialHeader({ ...header, isBasicMaterial: true }), 0);
+    // Mirrors Material::updateTextureHandle: the base color handle doubles as the alpha texture handle.
+    u32.set(packMaterialHeader({ ...header, isBasicMaterial: true, alphaTextureHandle: header.alphaTextureHandle ?? mat.texBaseColor ?? 0 }), 0);
 
     // Payload starts at byte 16 (BasicMaterialData layout).
     let off = 16;

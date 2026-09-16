@@ -10,6 +10,7 @@
  */
 
 import {
+    PixelDebug,
     PixelStats,
     Buffer,
     ComputePass,
@@ -67,6 +68,8 @@ export class PathTracer extends RenderPass {
     private statsBuffer: Buffer | null = null;
     private statsResolvePass: ComputePass | null = null;
     private pixelStats: PixelStats | null = null;
+    /** Mirrors mpPixelDebug (shader print()/assert() for one selected pixel; UI in "Debugging"). */
+    readonly pixelDebug = new PixelDebug(this.device);
     private tracePass: ComputePass | null = null;
     private frameCount = 0;
     private sampleGenerator: SampleGenerator;
@@ -96,6 +99,8 @@ export class PathTracer extends RenderPass {
     private emissiveSampler = "LightBVH"; // native default (PathTracer.h)
     private powerSampler: EmissivePowerSampler | null = null;
     private lightBVHSampler: LightBVHSampler | null = null;
+    /** Scene.emissiveVersion the LightBVH was built/refit for (native LightCollection update flags). */
+    private lightBVHVersion = -1;
     private lightBVHOptions = kDefaultLightBVHSamplerOptions;
     private primaryLodMode = 0; // TexLODMode::Mip0
     private useRTXDI = false;
@@ -281,6 +286,12 @@ export class PathTracer extends RenderPass {
         ui.checkbox("Alpha test", this.useAlphaTest, rebuild((v) => (this.useAlphaTest = v)));
         ui.checkbox("Adjust shading normals on secondary hits", this.adjustShadingNormals, rebuild((v) => (this.adjustShadingNormals = v)));
         ui.dropdown("Primary LOD Mode", ["Mip0", "RayDiffs"], this.primaryLodMode === 2 ? "RayDiffs" : "Mip0", rebuild((v: string) => (this.primaryLodMode = v === "RayDiffs" ? 2 : 0)));
+        this.pixelDebug.renderUI(ui.group("Debugging"), () => this.recreatePrograms());
+    }
+
+    /** Mirrors PathTracer::onMouseEvent (pixel debug selection). */
+    onMouseEvent(ev: { type: "buttonDown" | "buttonUp" | "move"; button?: "left" | "right" | "middle"; pos: [number, number] }): boolean {
+        return this.pixelDebug.onMouseEvent(ev);
     }
 
     /** Mirrors PathTracer::StaticParams::getDefines. */
@@ -328,6 +339,7 @@ export class PathTracer extends RenderPass {
             OUTPUT_NRD_DATA: 0,
             OUTPUT_NRD_ADDITIONAL_DATA: 0,
             ...(this.statsEnabled ? { _PIXEL_STATS_ENABLED: 1 } : {}),
+            ...(this.pixelDebug.enabled ? PixelDebug.getDefines() : {}),
         })
             .addAll(this.sampleGenerator.getDefines())
             .addAll(this.rtxdi ? this.rtxdi.getDefines() : {});
@@ -398,6 +410,7 @@ export class PathTracer extends RenderPass {
         const vbuffer = renderData.getTexture("vbuffer")!;
         const frameDim: [number, number] = [color.width, color.height];
         const tiles = [Math.ceil(frameDim[0] / kScreenTileDim), Math.ceil(frameDim[1] / kScreenTileDim)];
+        this.pixelDebug.beginFrame(ctx, frameDim);
 
         // Mirrors PathTracer::beginFrame: guide data is produced when any of
         // the guide outputs is connected (drives OUTPUT_GUIDE_DATA).
@@ -420,6 +433,21 @@ export class PathTracer extends RenderPass {
             this.generatePass = null;
         }
 
+        // Mirrors LightBVHSampler::update on LightCollection MatrixChanged: refit the
+        // tree in place (allowRefitting), rebuilding only if the triangle set changed.
+        if (this.lightBVHSampler && this.scene.emissiveVersion !== this.lightBVHVersion) {
+            const tris = this.scene.getEmissiveTriangles();
+            if (!(this.lightBVHOptions.buildOptions.allowRefitting && this.lightBVHSampler.refit(tris))) {
+                this.lightBVHSampler = new LightBVHSampler(this.device, tris, this.lightBVHOptions);
+                this.generatePass = null; // defines may change with the tree size
+            }
+            this.lightBVHVersion = this.scene.emissiveVersion;
+            this.rtxdi?.notifyLightsChanged();
+        } else if (this.rtxdi && this.scene.emissiveVersion !== this.lightBVHVersion) {
+            this.lightBVHVersion = this.scene.emissiveVersion;
+            this.rtxdi.notifyLightsChanged();
+        }
+
         // Mirrors prepareRTXDI: create before the programs so USE_RTXDI + the
         // RTXDI defines land in the kernels.
         if (this.useRTXDI && !this.rtxdi) {
@@ -433,6 +461,7 @@ export class PathTracer extends RenderPass {
         if (!this.generatePass) {
             if (this.emissiveSampler === "LightBVH" && this.scene.useEmissiveLights && !this.lightBVHSampler) {
                 this.lightBVHSampler = new LightBVHSampler(this.device, this.scene.getEmissiveTriangles(), this.lightBVHOptions);
+                this.lightBVHVersion = this.scene.emissiveVersion;
             }
             const defines = this.getStaticDefines();
             this.generatePass = ComputePass.create(this.device, { path: kGeneratePathsFile, defines });
@@ -539,6 +568,7 @@ export class PathTracer extends RenderPass {
             this.bindStats(root, frameDim);
             const block = root["gPathTracer"] as ShaderVar;
             this.bindPathTracerData(block, vbuffer, color, frameDim);
+            this.pixelDebug.prepareProgram(root);
             if (this.emissiveSampler === "Power" && this.scene.useEmissiveLights) {
                 if (!this.powerSampler) this.powerSampler = new EmissivePowerSampler(this.device, this.scene.getEmissiveFluxes());
                 this.powerSampler.bindShaderData(block["emissiveSampler"] as ShaderVar);
@@ -644,6 +674,7 @@ export class PathTracer extends RenderPass {
         }
 
         if (this.rtxdi) this.rtxdi.endFrame(ctx);
+        this.pixelDebug.endFrame();
         this.frameCount++;
     }
 }

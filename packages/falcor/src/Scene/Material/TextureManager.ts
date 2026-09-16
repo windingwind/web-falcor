@@ -23,6 +23,7 @@ export interface TextureSource {
 
 export class TextureManager {
     private sources: TextureSource[] = [];
+    private alphaRanges = new Map<number, [number, number]>();
 
     /** Registers a texture; returns its textureID (array layer). */
     addTexture(source: TextureSource): number {
@@ -62,6 +63,32 @@ export class TextureManager {
             rgb[i * 3 + 2] = decode(bytes[i * 4 + 2]!);
         }
         return { width: bitmap.width, height: bitmap.height, rgb };
+    }
+
+    /**
+     * Min/max of the alpha channel (mirrors the TextureAnalyzer result used by
+     * BasicMaterial::optimizeTexture to decide the alpha mode). Cached per texture.
+     */
+    getAlphaRange(textureID: number): [number, number] | null {
+        const cached = this.alphaRanges.get(textureID);
+        if (cached) return cached;
+        const source = this.sources[textureID];
+        if (!source) return null;
+        const { bitmap } = source;
+        const canvas = new OffscreenCanvas(bitmap.width, bitmap.height);
+        const c2d = canvas.getContext("2d", { willReadFrequently: true })!;
+        c2d.drawImage(bitmap, 0, 0);
+        const bytes = c2d.getImageData(0, 0, bitmap.width, bitmap.height).data;
+        let min = 255;
+        let max = 0;
+        for (let i = 3; i < bytes.length; i += 4) {
+            const a = bytes[i]!;
+            if (a < min) min = a;
+            if (a > max) max = a;
+        }
+        const range: [number, number] = [min / 255, max / 255];
+        this.alphaRanges.set(textureID, range);
+        return range;
     }
 
     /**

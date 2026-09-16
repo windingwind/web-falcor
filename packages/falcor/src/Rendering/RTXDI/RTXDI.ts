@@ -18,6 +18,7 @@ import type { Scene } from "../../Scene/Scene.js";
 import type { CameraData } from "../../Scene/Camera/Camera.js";
 import { LightType } from "../../Scene/SceneData.js";
 import { DefineList } from "../../Core/Program/DefineList.js";
+import { PixelDebug } from "../../Utils/Debug/PixelDebug.js";
 
 const kRTXDIShadersFile = "Rendering/RTXDI/RTXDISetup.cs.slang";
 const kLightUpdaterShaderFile = "Rendering/RTXDI/LightUpdater.cs.slang";
@@ -134,6 +135,9 @@ function fillNeighborOffsets(count: number): Float32Array {
 export class RTXDI {
     readonly options: RTXDIOptions;
 
+    /** Mirrors mpPixelDebug (candidate generation + spatial resampling kernels; UI under "Debugging"). */
+    readonly pixelDebug: PixelDebug;
+    private pixelDebugCompiled = false;
     private frameDim: [number, number] = [0, 0];
     private frameIndex = 0;
     private currentSurfaceBufferIndex = 0;
@@ -183,6 +187,7 @@ export class RTXDI {
         options: Partial<RTXDIOptions> = {},
     ) {
         this.options = { ...kDefaultRTXDIOptions, ...options };
+        this.pixelDebug = new PixelDebug(device);
     }
 
     getDefines(): DefineList {
@@ -195,14 +200,23 @@ export class RTXDI {
             this.frameDim = [frameDim[0], frameDim[1]];
             this.contextValid = false;
         }
+        // Toggling pixel debug changes the kernel defines (native: mpProgram->addDefines).
+        if (this.pixelDebugCompiled !== this.pixelDebug.enabled) this.updateLightsPass = null;
         if (!this.updateLightsPass) this.loadShaders();
         if (!this.contextValid) this.prepareResources(ctx);
+        this.pixelDebug.beginFrame(ctx, this.frameDim);
     }
 
     endFrame(_ctx: RenderContext): void {
+        this.pixelDebug.endFrame();
         this.frameIndex++;
         this.currentSurfaceBufferIndex = 1 - this.currentSurfaceBufferIndex;
         this.prevCameraData = this.scene.camera.getData();
+    }
+
+    /** Emissive geometry moved (LightCollection rebuilt): re-run the light updater next frame. */
+    notifyLightsChanged(): void {
+        this.needsLightUpdate = true;
     }
 
     /** Mirrors RTXDI::update: light prep, presampling and resampling. */
@@ -267,8 +281,10 @@ export class RTXDI {
     }
 
     private loadShaders(): void {
+        this.pixelDebugCompiled = this.pixelDebug.enabled;
         const create = (path: string, entry: string) => {
             const defines = this.scene.getSceneDefines().addAll(this.getDefines());
+            if (this.pixelDebugCompiled) defines.addAll(PixelDebug.getDefines());
             return ComputePass.create(this.device, { path, defines, csEntry: entry });
         };
         this.updateLightsPass = create(kLightUpdaterShaderFile, "main");
@@ -518,6 +534,8 @@ export class RTXDI {
         const cbVar = root["CB"] as ShaderVar;
         for (const [k, val] of Object.entries(cb)) (cbVar as Record<string, unknown>)[k] = val;
         this.bindShaderDataInternal(root, motionVectors);
+        // Native prepares the debug resources on the candidate-generation and spatial-resampling programs.
+        if (pass === this.generateCandidatesPass || pass === this.spatialResamplingPass) this.pixelDebug.prepareProgram(root);
         pass.execute(ctx, this.frameDim[0], this.frameDim[1]);
     }
 

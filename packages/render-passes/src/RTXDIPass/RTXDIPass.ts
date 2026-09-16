@@ -50,6 +50,7 @@ const kOutputChannels: { name: string; texname: string; desc: string }[] = [
 
 export class RTXDIPass extends RenderPass {
     private rtxdi: RTXDI | null = null;
+    private emissiveVersion = -1;
     private options: Partial<RTXDIOptions> = {};
     private prepareSurfaceDataPass: ComputePass | null = null;
     private finalShadingPass: ComputePass | null = null;
@@ -91,6 +92,11 @@ export class RTXDIPass extends RenderPass {
         return new Properties({ options: this.options as Record<string, never> });
     }
 
+    /** Mirrors RTXDIPass::onMouseEvent -> RTXDI::onMouseEvent (pixel debug selection). */
+    onMouseEvent(ev: { type: "buttonDown" | "buttonUp" | "move"; button?: "left" | "right" | "middle"; pos: [number, number] }): boolean {
+        return this.rtxdi?.pixelDebug.onMouseEvent(ev) ?? false;
+    }
+
     /**
      * Mirrors RTXDIPass::renderUI -> RTXDI::renderUI: edits the RTXDI options; a change
      * recreates the RTXDI context (native setOptions re-creates its resources/programs).
@@ -108,6 +114,8 @@ export class RTXDIPass extends RenderPass {
         const int = <K extends keyof RTXDIOptions>(key: K) => (v: number) => set(key)(Math.round(v) as RTXDIOptions[K]);
         const modes: RTXDIMode[] = ["NoResampling", "SpatialResampling", "TemporalResampling", "SpatiotemporalResampling"];
         ui.dropdown("Mode", modes, o.mode, (v) => set("mode")(v as RTXDIMode));
+        // Mirrors RTXDI::renderUI "Debugging" group (kernels reload on toggle inside RTXDI.beginFrame).
+        if (this.rtxdi) this.rtxdi.pixelDebug.renderUI(ui.group("Debugging"));
         const presample = ui.group("Light presampling");
         presample.slider("Tile count", o.presampledTileCount, 1, 1024, 1, int("presampledTileCount"));
         presample.slider("Tile size", o.presampledTileSize, 256, 8192, 128, int("presampledTileSize"));
@@ -168,6 +176,11 @@ export class RTXDIPass extends RenderPass {
         const mvec = renderData.getTexture("mvec") ?? this.rg32Dummy;
         const texGrads = renderData.getTexture("texGrads") ?? this.rg32Dummy;
 
+        const emissiveVersion = this.scene?.emissiveVersion ?? 0;
+        if (emissiveVersion !== this.emissiveVersion) {
+            this.emissiveVersion = emissiveVersion;
+            this.rtxdi.notifyLightsChanged();
+        }
         this.rtxdi.beginFrame(ctx, this.frameDim);
 
         this.prepareSurfaceData(ctx, vbuffer, texGrads, mvec);

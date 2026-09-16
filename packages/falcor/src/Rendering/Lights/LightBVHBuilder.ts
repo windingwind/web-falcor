@@ -232,6 +232,8 @@ export interface LightBVHOptions {
     createLeavesASAP: boolean;
     usePreintegration: boolean;
     useLightingCones: boolean;
+    /** Refit (keep the tree) instead of rebuilding when emissive geometry moves. */
+    allowRefitting: boolean;
 }
 
 export const kDefaultLightBVHOptions: LightBVHOptions = {
@@ -245,6 +247,7 @@ export const kDefaultLightBVHOptions: LightBVHOptions = {
     createLeavesASAP: true,
     usePreintegration: true,
     useLightingCones: true,
+    allowRefitting: true,
 };
 
 export interface EmissiveTriangleInput {

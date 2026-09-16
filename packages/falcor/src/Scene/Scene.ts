@@ -36,7 +36,7 @@ import {
     type MeshDescData,
     type StaticVertex,
 } from "./SceneData.js";
-import { packBasicMaterialBlob, MaterialType, type BasicMaterialDesc, type MaterialHeaderDesc } from "./Material/MaterialData.js";
+import { packBasicMaterialBlob, AlphaMode, MaterialType, TextureHandleMode, type BasicMaterialDesc, type MaterialHeaderDesc } from "./Material/MaterialData.js";
 import { assert, RuntimeError } from "../Core/Error.js";
 import type { NDSDFGrid } from "./SDFs/NDSDFGrid.js";
 import { SDFSBS } from "./SDFs/SDFSBS.js";
@@ -158,6 +158,10 @@ export class Scene {
     private lcTextureManager: TextureManager = new TextureManager();
     private emissiveTriangleCount = 0;
     private emissiveMeshCount = 0;
+    /** Bumped whenever the LightCollection buffers are rebuilt (native ILightCollection::UpdateFlags). */
+    emissiveVersion = 0;
+    /** Emissive-mesh world matrices of the last animate() (change detection, mirrors isMatrixChanged). */
+    private lastEmissiveMats = new Map<number, Float32Array>();
     private emissiveFluxes = new Float32Array(0);
     private emissiveTriangles: EmissiveTriangleInput[] = [];
 
@@ -471,7 +475,7 @@ export class Scene {
         const blobBytes = new Uint8Array(materials.length * 128);
         materials.forEach((m, i) => {
             this.materialTypes.add(m.header?.materialType ?? MaterialType.Standard);
-            blobBytes.set(packBasicMaterialBlob({ materialType: MaterialType.Standard, ...m.header }, m.basic), i * 128);
+            blobBytes.set(this.packMaterial(m), i * 128);
         });
         make("materialData", blobBytes, 128);
         make("materialBuffer0", new Uint32Array(4), 4);
@@ -586,11 +590,36 @@ export class Scene {
         const index = typeof ref === "object" ? this.materialDescs.indexOf(ref) : typeof ref === "number" ? ref : this.materialDescs.findIndex((m) => m.name === ref);
         const m = this.materialDescs[index];
         if (!m) throw new RuntimeError(`Scene.updateMaterial: no material '${String(ref)}'`);
-        this.buffers["materialData"]!.setBlob(packBasicMaterialBlob({ materialType: MaterialType.Standard, ...m.header }, m.basic), index * 128);
+        this.buffers["materialData"]!.setBlob(this.packMaterial(m), index * 128);
         // Emissive edits change the NEE flux distribution (mirrors native
         // MaterialsChanged handling). Presence toggles that flip scene defines
         // still require pass recreation by the caller.
         if (m.header?.emissive) this.rebuildLightCollection();
+    }
+
+    /** Packs one material blob; the alpha mode follows native updateAlphaMode unless given explicitly. */
+    private packMaterial(m: SceneMaterialDesc): Uint8Array {
+        const header: MaterialHeaderDesc = { materialType: MaterialType.Standard, ...m.header };
+        if (header.alphaMode === undefined) header.alphaMode = this.deriveAlphaMode(header, m.basic);
+        return packBasicMaterialBlob(header, m.basic);
+    }
+
+    /**
+     * Mirrors BasicMaterial::updateAlphaMode: alpha testing is enabled only when the
+     * base color alpha can fall below the threshold — the texture's alpha range
+     * (TextureAnalyzer parity via a CPU scan) when textured, else the constant alpha.
+     * Only StandardMaterial has an alpha channel in its base color slot.
+     */
+    private deriveAlphaMode(header: MaterialHeaderDesc, basic: BasicMaterialDesc): AlphaMode {
+        if (header.materialType !== MaterialType.Standard) return AlphaMode.Opaque;
+        const threshold = header.alphaThreshold ?? 0.5;
+        let minAlpha = basic.baseColor?.w ?? 1;
+        const tex = basic.texBaseColor;
+        if (tex !== undefined && ((tex >>> 29) & 0x3) === TextureHandleMode.Texture) {
+            // Native assumes the full [0,1] range until the texture is analyzed.
+            minAlpha = this.lcTextureManager.getAlphaRange(tex & 0x1fffffff)?.[0] ?? 0;
+        }
+        return minAlpha < threshold ? AlphaMode.Mask : AlphaMode.Opaque;
     }
 
     /** (Re)builds the LightCollection buffers (mirrors Scene::updateLights on
@@ -647,6 +676,7 @@ export class Scene {
         remake("emissiveTriToActive", lc.triToActiveMapping, 4);
         remake("emissiveMeshData", lc.meshData, 16);
         remake("emissivePerMeshInstanceOffset", lc.perMeshInstanceOffset, 4);
+        this.emissiveVersion++;
     }
 
     /** True if the scene has keyframe animations (and thus responds to animate()). */
@@ -682,28 +712,50 @@ export class Scene {
         // node's global matrix (object-space verts unchanged, matrix updated).
         const worldMats: float4x4[] = [];
         const worldPos: float3[][] = [];
+        // LightCollection inputs for this frame: deformed verts ride an identity matrix.
+        const lcInputs: SceneMeshDesc[] = [];
+        let emissiveChanged = false;
         let vbOffset = 0;
         for (const [meshID, mesh] of meshes.entries()) {
             // Morph (blend shapes) deform the bind pose first (glTF applies morph
             // before skinning); the morphed object-space verts feed skin or matrix.
             const base = mesh.morph ? applyMorph(mesh.vertices, mesh.morph, sampleMorphWeights(mesh.morph, this.animData.weightTracks, sampleTime)) : mesh.vertices;
+            const isEmissive = this.materialDescs[mesh.materialID]?.header?.emissive === true;
             if (mesh.skin) {
                 const skinned = skinVertices(base, mesh.skin, computeSkinMatrices(mesh.skin, globals));
                 this.rollPrevVertices(meshID, vbOffset, skinned);
                 this.buffers["vertices"]!.setBlob(packStaticVertices(skinned), vbOffset * 48);
                 worldMats.push(float4x4.identity());
                 worldPos.push(skinned.map((v) => v.position));
+                lcInputs.push({ ...mesh, vertices: skinned, transform: undefined });
+                if (isEmissive) emissiveChanged = true; // deformed every frame
             } else {
                 const m = mesh.nodeID !== undefined && globals[mesh.nodeID] ? globals[mesh.nodeID]! : (mesh.transform ?? float4x4.identity());
                 // Morphed non-skinned meshes: re-upload deformed object-space verts.
                 if (mesh.morph) {
                     this.rollPrevVertices(meshID, vbOffset, base);
                     this.buffers["vertices"]!.setBlob(packStaticVertices(base), vbOffset * 48);
+                    if (isEmissive) emissiveChanged = true;
                 }
                 worldMats.push(m);
                 worldPos.push(base.map((v) => transformPoint(m, v.position)));
+                lcInputs.push({ ...mesh, vertices: base, transform: m });
+                if (isEmissive) {
+                    // Mirrors LightCollection::update's isMatrixChanged check per mesh light.
+                    const cur = Float32Array.from(m.toArray());
+                    // First frame compares against the build-time transform (the LightCollection's state).
+                    const prev = this.lastEmissiveMats.get(meshID) ?? (mesh.transform ?? float4x4.identity()).toArray();
+                    if (prev.some((v, i) => v !== cur[i])) emissiveChanged = true;
+                    this.lastEmissiveMats.set(meshID, cur);
+                }
             }
             vbOffset += mesh.vertices.length;
+        }
+        // Mirrors LightCollection::update (UpdateTriangleVertices): emissive triangles follow
+        // their animated instances; samplers refit/rebuild off emissiveVersion.
+        if (emissiveChanged && this.hasEmissiveMaterials) {
+            this.lcMeshes = lcInputs;
+            this.rebuildLightCollection();
         }
 
         // Rebuild the worldMatrices buffer (world + inverse-transpose halves) in place.
