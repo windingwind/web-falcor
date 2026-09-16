@@ -5,12 +5,17 @@
  * header-only NanoVDB loader).
  *
  * Scope mirrors what Falcor's volume assets need: FloatGrid with 5-4-3 tree,
- * file version >= 222, COMPRESS_ACTIVE_MASK (optionally half floats),
- * UniformScaleTranslateMap. The builder emits the exact in-memory buffer
- * PNanoVDB.h traverses (breadth-first layout, subtree stats, EMPTY checksum).
+ * file version >= 222, optionally half floats, and any combination of the
+ * COMPRESS_ACTIVE_MASK / COMPRESS_ZIP / COMPRESS_BLOSC codecs (openvdb.org's
+ * sample volumes are blosc+LZ4). Linear maps are supported where they reduce
+ * to a uniform scale plus a translation, which is what NanoVDB stores.
+ * The builder emits the exact in-memory buffer PNanoVDB.h traverses
+ * (breadth-first layout, subtree stats, EMPTY checksum).
  */
 
 import { RuntimeError } from "../../Core/Error.js";
+import { bloscDecompress } from "../../Utils/Compression/Blosc.js";
+import { inflate } from "../../Utils/Compression/Inflate.js";
 
 export interface ParsedFloatGrid {
     translation: [number, number, number];
@@ -116,28 +121,109 @@ function popcount(mask: Uint8Array): number {
     return c;
 }
 
-/** io::readCompressedValues with COMPRESS_ACTIVE_MASK (no ZIP/BLOSC). */
-function readCompressed(r: Reader, count: number, valueMask: Uint8Array, half: boolean, background: number): Float32Array {
+/** Value codecs a grid's data may use (io::Compression flags). */
+interface ValueCodec {
+    /** COMPRESS_ACTIVE_MASK: only active voxels are stored, inactive ones are implied. */
+    maskCompressed: boolean;
+    /** Stream codec wrapping the value bytes. */
+    stream: "none" | "zip" | "blosc";
+}
+
+/**
+ * Mirrors io::readData: raw bytes, or a codec chunk prefixed by its int64 size.
+ * A size <= 0 means the writer stored the data uncompressed after all, and its
+ * magnitude is the uncompressed byte count.
+ */
+function readValueBytes(r: Reader, byteCount: number, codec: ValueCodec): Uint8Array {
+    if (codec.stream === "none") return r.raw(byteCount);
+    const size = r.i64();
+    if (size <= 0) return r.raw(-size);
+    const payload = r.raw(size);
+    return codec.stream === "blosc" ? bloscDecompress(payload) : inflate(payload, byteCount);
+}
+
+/** Decodes `count` values from raw bytes (half or single precision). */
+function decodeValues(bytes: Uint8Array, count: number, half: boolean): Float32Array {
+    const out = new Float32Array(count);
+    const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+    for (let i = 0; i < count; i++) out[i] = half ? halfToFloat(view.getUint16(i * 2, true)) : view.getFloat32(i * 4, true);
+    return out;
+}
+
+/** Mirrors io::readCompressedValues (all metadata cases, all codecs). */
+function readCompressed(r: Reader, count: number, valueMask: Uint8Array, half: boolean, background: number, codec: ValueCodec): Float32Array {
     const meta = r.byte();
     if (meta >= 7) throw new RuntimeError(`OpenVDB: bad compression metadata byte ${meta}`);
-    const rd = () => (half ? r.half() : r.f32());
-    let inactive0: number | null = null;
-    if (meta === 2 || meta === 4) inactive0 = rd();
-    else if (meta === 5) { inactive0 = rd(); rd(); }
-    let selMask: Uint8Array | null = null;
-    if (meta === 3 || meta === 4 || meta === 5) selMask = r.raw(count / 8);
-    const out = new Float32Array(count).fill(background);
-    if (meta === 6) {
-        for (let i = 0; i < count; i++) out[i] = rd();
-        return out;
+
+    // Inactive values: implied by the metadata, or stored at FULL precision
+    // (sizeof(ValueType)) even in half grids — only the buffer is halved.
+    let inactive0 = meta === 0 ? background : -background;
+    let inactive1 = background;
+    if (meta === 2 || meta === 4 || meta === 5) {
+        inactive0 = r.f32();
+        if (meta === 5) inactive1 = r.f32();
     }
+    const selectionMask = meta === 3 || meta === 4 || meta === 5 ? r.raw(count / 8) : null;
+
+    // With mask compression only the active voxels are stored (NO_MASK_AND_ALL_VALS excepted).
+    const storedCount = codec.maskCompressed && meta !== 6 ? popcount(valueMask) : count;
+    // HalfReader::read returns early on an empty buffer, so nothing at all is
+    // written — the plain path still emits the codec's size prefix. Verified
+    // against openvdb.org's own half (cube) and float (torus) samples.
+    const bytes = half && storedCount === 0 ? new Uint8Array(0) : readValueBytes(r, storedCount * (half ? 2 : 4), codec);
+    const values = decodeValues(bytes, storedCount, half);
+    if (storedCount === count) return values;
+
+    const out = new Float32Array(count);
+    let n = 0;
     for (let i = 0; i < count; i++) {
-        const active = bit(valueMask, i);
-        const selected = selMask !== null && bit(selMask, i);
-        if (active && !selected) out[i] = rd();
-        else if (active && selected && inactive0 !== null) out[i] = inactive0;
+        out[i] = bit(valueMask, i) ? values[n++]! : selectionMask !== null && bit(selectionMask, i) ? inactive1 : inactive0;
     }
     return out;
+}
+
+/**
+ * Doubles each linear map type writes (math::MapRegistry) and how to reduce it
+ * to NanoVDB's uniform scale + translation.
+ */
+const kMapLayouts: Record<string, { doubles: number; translationAt: number | null; scaleAt: number | null }> = {
+    // ScaleMap: scale, voxelSize, scaleInverse, invScaleSqr, invTwiceScale.
+    UniformScaleMap: { doubles: 15, translationAt: null, scaleAt: 0 },
+    ScaleMap: { doubles: 15, translationAt: null, scaleAt: 0 },
+    // ScaleTranslateMap: translation first, then the ScaleMap block.
+    UniformScaleTranslateMap: { doubles: 18, translationAt: 0, scaleAt: 3 },
+    ScaleTranslateMap: { doubles: 18, translationAt: 0, scaleAt: 3 },
+    TranslationMap: { doubles: 3, translationAt: 0, scaleAt: null },
+};
+
+/** Reads the grid's transform; throws for maps NanoVDB's uniform-scale grid can't express. */
+function readMap(g: Reader): { translation: [number, number, number]; scale: number } {
+    const mapType = g.str();
+    if (mapType === "AffineMap") {
+        // Row-major 4x4; supported when it is a uniform scale with translation.
+        const m: number[] = [];
+        for (let i = 0; i < 16; i++) m.push(g.f64());
+        const offDiagonal = [m[1], m[2], m[4], m[6], m[8], m[9]].some((v) => Math.abs(v!) > 1e-12);
+        if (offDiagonal || Math.abs(m[0]! - m[5]!) > 1e-12 || Math.abs(m[0]! - m[10]!) > 1e-12) {
+            throw new RuntimeError("OpenVDB: AffineMap with rotation/shear or non-uniform scale is unsupported");
+        }
+        return { translation: [m[12]!, m[13]!, m[14]!], scale: m[0]! };
+    }
+    const layout = kMapLayouts[mapType];
+    if (!layout) throw new RuntimeError(`OpenVDB: unsupported map ${mapType}`);
+    const d: number[] = [];
+    for (let i = 0; i < layout.doubles; i++) d.push(g.f64());
+    const translation: [number, number, number] = layout.translationAt === null ? [0, 0, 0] : [d[layout.translationAt]!, d[layout.translationAt + 1]!, d[layout.translationAt + 2]!];
+    let scale = 1;
+    if (layout.scaleAt !== null) {
+        scale = d[layout.scaleAt]!;
+        const sy = d[layout.scaleAt + 1]!;
+        const sz = d[layout.scaleAt + 2]!;
+        if (Math.abs(scale - sy) > 1e-12 || Math.abs(scale - sz) > 1e-12) {
+            throw new RuntimeError(`OpenVDB: non-uniform voxel size (${scale}, ${sy}, ${sz}) is unsupported`);
+        }
+    }
+    return { translation, scale };
 }
 
 /** Parses a FloatGrid (5-4-3 tree) from an OpenVDB .vdb file. */
@@ -166,21 +252,24 @@ export function parseOpenVDBFloatGrid(buffer: ArrayBuffer, gridname = "density")
     if (base !== "Tree_float_5_4_3") throw new RuntimeError(`OpenVDB: unsupported grid type ${found.type}`);
 
     const g = new Reader(data, found.gridPos);
+    // io::Compression flags: 0x1 ZIP, 0x2 ACTIVE_MASK, 0x4 BLOSC.
     const compression = g.u32();
-    if (compression !== 2) throw new RuntimeError(`OpenVDB: only ACTIVE_MASK compression supported (flags ${compression})`);
+    if (compression & ~0x7) throw new RuntimeError(`OpenVDB: unknown compression flags ${compression}`);
+    if ((compression & 0x1) && (compression & 0x4)) throw new RuntimeError("OpenVDB: both ZIP and BLOSC set");
+    const codec: ValueCodec = {
+        maskCompressed: (compression & 0x2) !== 0,
+        stream: compression & 0x4 ? "blosc" : compression & 0x1 ? "zip" : "none",
+    };
     for (let i = g.u32(); i > 0; i--) { g.str(); g.str(); g.raw(g.u32()); }
-    const mapType = g.str();
-    if (mapType !== "UniformScaleTranslateMap") throw new RuntimeError(`OpenVDB: unsupported map ${mapType}`);
-    const doubles: number[] = [];
-    for (let i = 0; i < 18; i++) doubles.push(g.f64());
-    const translation: [number, number, number] = [doubles[0]!, doubles[1]!, doubles[2]!];
-    const scale = doubles[3]!;
+    const { translation, scale } = readMap(g);
 
     if (g.u32() !== 1) throw new RuntimeError("OpenVDB: unexpected tree buffer count");
     const background = g.f32();
     const numTiles = g.u32();
     const numChildren = g.u32();
-    if (numTiles !== 0) throw new RuntimeError("OpenVDB: root tiles unsupported");
+    // Root tiles are constant regions at the top level; NanoVDB's builder here
+    // emits leaf nodes only, so a file that uses them would lose data.
+    if (numTiles !== 0) throw new RuntimeError(`OpenVDB: root tiles are unsupported (${numTiles} in this grid)`);
 
     const leafOrigins: [number, number, number][] = [];
     const leafMasks: Uint8Array[] = [];
@@ -188,7 +277,7 @@ export function parseOpenVDBFloatGrid(buffer: ArrayBuffer, gridname = "density")
         const org5 = g.coord();
         const cm5 = g.raw(4096).slice();
         const vm5 = g.raw(4096).slice();
-        readCompressed(g, 32768, vm5, false, background);
+        readCompressed(g, 32768, vm5, half, background, codec);
         for (let i5 = 0; i5 < 32768; i5++) {
             if (!bit(cm5, i5)) continue;
             const org4: [number, number, number] = [
@@ -198,7 +287,7 @@ export function parseOpenVDBFloatGrid(buffer: ArrayBuffer, gridname = "density")
             ];
             const cm4 = g.raw(512).slice();
             const vm4 = g.raw(512).slice();
-            readCompressed(g, 4096, vm4, false, background);
+            readCompressed(g, 4096, vm4, half, background, codec);
             for (let i4 = 0; i4 < 4096; i4++) {
                 if (!bit(cm4, i4)) continue;
                 leafOrigins.push([
@@ -218,7 +307,7 @@ export function parseOpenVDBFloatGrid(buffer: ArrayBuffer, gridname = "density")
         for (let b = 0; b < 64; b++) {
             if (vm[b] !== leafMasks[i]![b]) throw new RuntimeError("OpenVDB: buffer mask mismatch");
         }
-        leafValues.push(readCompressed(g, 512, leafMasks[i]!, half, background));
+        leafValues.push(readCompressed(g, 512, leafMasks[i]!, half, background, codec));
     }
     if (g.o !== found.endPos && g.o !== data.length) throw new RuntimeError(`OpenVDB: buffers ended at ${g.o}`);
 
@@ -399,8 +488,8 @@ export function buildNanoVDBGrid(grid: ParsedFloatGrid, gridname = "density"): U
         const to = offRoot + ROOT_DATA_SIZE + i * ROOT_TILE_SIZE;
         view.setBigUint64(to, key, true);
         view.setBigInt64(to + 8, BigInt(upperOff.get(keyOf(u.origin))! - offRoot), true);
-        view.setUint32(to + 16, 0, true);
-        view.setFloat32(to + 20, 0, true);
+        view.setUint32(to + 16, 0, true); // state: inactive (this tile has a child)
+        view.setFloat32(to + 20, background, true);
     });
 
     // Internal nodes.
@@ -408,6 +497,11 @@ export function buildNanoVDBGrid(grid: ParsedFloatGrid, gridname = "density"): U
         base: number, st: SubtreeStats, maskBytes: number, childBits: number[],
         tableOff: number, childOffsets: Map<number, number>,
     ) => {
+        // Each table slot is a union: a child offset where the child mask is set,
+        // otherwise the region's tile value. Slots without a child cover empty
+        // space, which reads back as the grid background (zero only happens to be
+        // right for fog volumes; a level set's background is its narrow-band width).
+        for (let b = 0; b < maskBytes * 8; b++) view.setFloat32(base + tableOff + b * 8, background, true);
         for (let k = 0; k < 3; k++) view.setInt32(base + k * 4, st.bbmin[k]!, true);
         for (let k = 0; k < 3; k++) view.setInt32(base + 12 + k * 4, st.bbmax[k]!, true);
         view.setBigUint64(base + 24, 0n, true);

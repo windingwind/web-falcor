@@ -1,0 +1,15 @@
+# Level-set sphere from openvdb.org's sample models — a blosc+LZ4 compressed
+# .vdb with a UniformScaleMap transform (the codecs real-world volumes use).
+# Resolved through the default media search path (Falcor/media).
+# Fetch it with: npm run download:assets -- openvdb
+sphere = GridVolume('sphere')
+sphere.loadGrid(GridVolume.GridSlot.Density, 'openvdb/sphere.vdb', 'ls_sphere')
+sphere.densityScale = 1.0
+sphere.albedo = float3(0.8, 0.8, 0.8)
+sceneBuilder.addGridVolume(sphere)
+
+camera = Camera()
+camera.position = float3(0, 0, 12)
+camera.target = float3(0, 0, 0)
+camera.up = float3(0, 1, 0)
+sceneBuilder.addCamera(camera)

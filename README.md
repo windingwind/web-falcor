@@ -61,6 +61,16 @@ Scenes land under `Falcor/media/<Scene>/`, which the dev server serves at
 `/Falcor/media/…`. The Mogwai viewer loads `test_scenes/cornell_box.pyscene` by
 default.
 
+Single-file assets that no scene bundle ships — compressed OpenVDB volumes,
+measured BRDF data — come from a second catalog:
+
+```sh
+npm run download:assets                 # the default set (~14 MB)
+npm run download:assets -- --list       # list the catalog
+npm run download:assets -- openvdb      # just one group
+npm run download:assets -- --all        # everything, incl. the large volumes
+```
+
 Three kinds of scene are covered by the one command:
 
 - **Bundled scenes** (`Arcade`, `test_scenes`, `inv_rendering_scenes`,
