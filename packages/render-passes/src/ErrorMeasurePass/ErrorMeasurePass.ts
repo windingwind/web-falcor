@@ -43,6 +43,8 @@ export class ErrorMeasurePass extends RenderPass {
     private reduction: ParallelReduction | null = null;
     private differenceTexture: Texture | null = null;
     private referenceTexture: Texture | null = null;
+    /** Native mUseLoadedReference: prefer the loaded reference file over the connected input (set on load). */
+    private useLoadedReference = false;
     private dummyWorldPos: Texture | null = null;
     private readbackInFlight = false;
 
@@ -65,6 +67,7 @@ export class ErrorMeasurePass extends RenderPass {
         this.computeAverage = props.get("ComputeAverage", false);
         this.selectedOutput = props.get("SelectedOutputId", "Source");
         this.reportRunningError = props.get("ReportRunningError", true);
+        this.useLoadedReference = props.get("UseLoadedReference", false);
         this.runningErrorSigma = props.get("RunningErrorSigma", 0.995);
         // 'MeasurementsFilePath' accepted: no file IO on the web (docs §9).
     }
@@ -89,6 +92,20 @@ export class ErrorMeasurePass extends RenderPass {
             this.device.gpuDevice.queue.copyExternalImageToTexture({ source: bitmap }, { texture: tex.gpuTexture }, [bitmap.width, bitmap.height]);
             this.referenceTexture = tex;
         }
+        this.useLoadedReference = this.referenceTexture !== null; // native loadReference
+    }
+
+    /** Mirrors ErrorMeasurePass::getProperties (native key spellings). */
+    override getProperties(): Properties {
+        return new Properties({
+            ReferenceImagePath: this.referenceImagePath,
+            IgnoreBackground: this.ignoreBackground,
+            ComputeSquaredDifference: this.computeSquaredDifference,
+            ComputeAverage: this.computeAverage,
+            UseLoadedReference: this.useLoadedReference,
+            ReportRunningError: this.reportRunningError,
+            SelectedOutputId: this.selectedOutput,
+        });
     }
 
     override reflect(compileData: CompileData): RenderPassReflection {
@@ -107,7 +124,8 @@ export class ErrorMeasurePass extends RenderPass {
     override execute(ctx: RenderContext, renderData: RenderData): void {
         const source = renderData.getTexture("Source")!;
         const output = renderData.getTexture("Output")!;
-        const reference = renderData.getTexture("Reference") ?? this.referenceTexture;
+        // Native getReference(): the loaded file when UseLoadedReference, else the connected input.
+        const reference = (this.useLoadedReference && this.referenceTexture) || renderData.getTexture("Reference") || this.referenceTexture;
         if (!reference) {
             this.measurements.valid = false;
             ctx.blit(source, output);
@@ -189,6 +207,8 @@ export class ErrorMeasurePass extends RenderPass {
         ui.checkbox("Ignore background", this.ignoreBackground, (v) => (this.ignoreBackground = v));
         ui.checkbox("Compute squared difference", this.computeSquaredDifference, (v) => (this.computeSquaredDifference = v));
         ui.checkbox("Compute average", this.computeAverage, (v) => (this.computeAverage = v));
+        ui.checkbox("Use loaded reference image", this.useLoadedReference, (v) => (this.useLoadedReference = v));
+        ui.text(`Reference: ${this.referenceTexture ? this.referenceImagePath : "(connected input)"}`);
         ui.checkbox("Report running error", this.reportRunningError, (v) => {
             this.reportRunningError = v;
             if (v) this.runningAvgError = -1; // native resets the average on enable

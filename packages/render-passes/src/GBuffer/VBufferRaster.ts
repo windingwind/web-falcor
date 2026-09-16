@@ -60,6 +60,9 @@ export class VBufferRaster extends RenderPass {
     private sampleGenerator: CPUSampleGenerator | null = null;
     private useAlphaTest = true;
     private samplePattern = "Center";
+    /** Native GBufferBase forceCullMode/cull; web default without forcing is None (raster == software-RT coverage). */
+    private forceCullMode = false;
+    private cullMode = CullMode.Back;
 
     constructor(device: Device, props: Properties) {
         super(device);
@@ -69,6 +72,9 @@ export class VBufferRaster extends RenderPass {
         this.sampleCount = props.get("sampleCount", 16);
         this.useAlphaTest = props.get("useAlphaTest", true);
         this.samplePattern = props.get<string>("samplePattern", "Center");
+        this.forceCullMode = props.get("forceCullMode", false);
+        const cull = props.getOpt<string | number>("cull");
+        if (cull !== undefined) this.cullMode = (typeof cull === "string" ? CullMode[cull as keyof typeof CullMode] : cull) ?? CullMode.Back;
         this.updateSamplePattern();
     }
 
@@ -84,7 +90,7 @@ export class VBufferRaster extends RenderPass {
     }
 
     override getProperties(): Properties {
-        return new Properties({ outputSize: IOSize[this.outputSize]!, fixedOutputSize: this.fixedOutputSize, samplePattern: this.samplePattern, sampleCount: this.sampleCount, useAlphaTest: this.useAlphaTest });
+        return new Properties({ outputSize: IOSize[this.outputSize]!, fixedOutputSize: this.fixedOutputSize, samplePattern: this.samplePattern, sampleCount: this.sampleCount, useAlphaTest: this.useAlphaTest, forceCullMode: this.forceCullMode, cull: CullMode[this.cullMode]! });
     }
 
     /** Mirrors GBufferBase::renderUI (alpha test is a define -> program rebuild; output size ⏳). */
@@ -101,6 +107,14 @@ export class VBufferRaster extends RenderPass {
         ui.slider("Size in pixels (height)", this.fixedOutputSize[1], 32, 4096, 1, (v) => {
             this.fixedOutputSize = [this.fixedOutputSize[0], Math.round(v)];
             this.requestRecompile();
+        });
+        ui.checkbox("Force cull mode", this.forceCullMode, (v) => {
+            this.forceCullMode = v;
+            this.version = null;
+        });
+        ui.dropdown("Cull mode", ["None", "Front", "Back"], CullMode[this.cullMode]!, (v) => {
+            this.cullMode = CullMode[v as keyof typeof CullMode];
+            this.version = null;
         });
         ui.dropdown("Sample pattern", ["Center", "DirectX", "Halton", "Stratified"], this.samplePattern, (v) => {
             this.samplePattern = v;
@@ -165,7 +179,7 @@ export class VBufferRaster extends RenderPass {
 
         this.state = new GraphicsState(this.device).setKernels(vs, ps);
         this.state.setVao(vao);
-        this.state.setRasterizerState(RasterizerState.create(new RasterizerStateDesc().setCullMode(CullMode.None)));
+        this.state.setRasterizerState(RasterizerState.create(new RasterizerStateDesc().setCullMode(this.forceCullMode ? this.cullMode : CullMode.None)));
         this.state.setDepthStencilState(DepthStencilState.create(new DepthStencilStateDesc()));
 
         const groupIndices = this.vars.getGroupIndices();

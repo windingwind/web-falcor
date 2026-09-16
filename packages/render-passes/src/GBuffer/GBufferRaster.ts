@@ -75,6 +75,9 @@ export class GBufferRaster extends RenderPass {
     private sampleCount = 16;
     private sampleGenerator: CPUSampleGenerator | null = null;
     private samplePattern = "Center";
+    /** Native GBufferBase forceCullMode/cull; web default without forcing is None (raster == software-RT coverage). */
+    private forceCullMode = false;
+    private cullMode = CullMode.Back;
 
     constructor(device: Device, props: Properties) {
         super(device);
@@ -83,6 +86,9 @@ export class GBufferRaster extends RenderPass {
         if (fixed) this.fixedOutputSize = Array.isArray(fixed) ? [fixed[0]!, fixed[1]!] : [fixed.x, fixed.y];
         this.sampleCount = props.get("sampleCount", 16);
         this.samplePattern = props.get<string>("samplePattern", "Center");
+        this.forceCullMode = props.get("forceCullMode", false);
+        const cull = props.getOpt<string | number>("cull");
+        if (cull !== undefined) this.cullMode = (typeof cull === "string" ? CullMode[cull as keyof typeof CullMode] : cull) ?? CullMode.Back;
         this.updateSamplePattern();
     }
 
@@ -98,7 +104,7 @@ export class GBufferRaster extends RenderPass {
     }
 
     override getProperties(): Properties {
-        return new Properties({ outputSize: IOSize[this.outputSize]!, fixedOutputSize: this.fixedOutputSize, samplePattern: this.samplePattern, sampleCount: this.sampleCount });
+        return new Properties({ outputSize: IOSize[this.outputSize]!, fixedOutputSize: this.fixedOutputSize, samplePattern: this.samplePattern, sampleCount: this.sampleCount, forceCullMode: this.forceCullMode, cull: CullMode[this.cullMode]! });
     }
 
     /** Mirrors GBufferBase::renderUI (sample pattern controls; output size needs a graph recompile ⏳). */
@@ -115,6 +121,14 @@ export class GBufferRaster extends RenderPass {
         ui.slider("Size in pixels (height)", this.fixedOutputSize[1], 32, 4096, 1, (v) => {
             this.fixedOutputSize = [this.fixedOutputSize[0], Math.round(v)];
             this.requestRecompile();
+        });
+        ui.checkbox("Force cull mode", this.forceCullMode, (v) => {
+            this.forceCullMode = v;
+            this.version = null;
+        });
+        ui.dropdown("Cull mode", ["None", "Front", "Back"], CullMode[this.cullMode]!, (v) => {
+            this.cullMode = CullMode[v as keyof typeof CullMode];
+            this.version = null;
         });
         ui.dropdown("Sample pattern", ["Center", "DirectX", "Halton", "Stratified"], this.samplePattern, (v) => {
             this.samplePattern = v;
@@ -185,8 +199,8 @@ export class GBufferRaster extends RenderPass {
 
         this.state = new GraphicsState(this.device).setKernels(vs, ps);
         this.state.setVao(vao);
-        // v1: no culling (asset winding conventions handled with SceneBuilder flags later).
-        this.state.setRasterizerState(RasterizerState.create(new RasterizerStateDesc().setCullMode(CullMode.None)));
+        // Web default = no culling so raster coverage equals the software-RT passes (native default: Back); forceCullMode overrides.
+        this.state.setRasterizerState(RasterizerState.create(new RasterizerStateDesc().setCullMode(this.forceCullMode ? this.cullMode : CullMode.None)));
         this.state.setDepthStencilState(DepthStencilState.create(new DepthStencilStateDesc()));
 
         const groupIndices = this.vars.getGroupIndices();

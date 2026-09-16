@@ -63,7 +63,18 @@ export class GraphEditor {
                 this.render();
             }
         };
-        this.toolbar.append(typeSel, nameInput, addBtn);
+        const saveBtn = doc.createElement("button");
+        saveBtn.textContent = "Save graph .py";
+        saveBtn.title = "Download the graph as an upstream-style python script (RenderGraphExporter)";
+        saveBtn.onclick = () => {
+            if (!this.graph) return;
+            const a = doc.createElement("a");
+            a.href = URL.createObjectURL(new Blob([this.graph.exportScript()], { type: "text/x-python" }));
+            a.download = `${this.graph.name.replace(/\W+/g, "_") || "graph"}.py`;
+            a.click();
+            URL.revokeObjectURL(a.href);
+        };
+        this.toolbar.append(typeSel, nameInput, addBtn, saveBtn);
         const hint = doc.createElement("span");
         hint.className = "ui-text";
         hint.textContent = "click an output port then an input port to connect · click an edge to remove it · ★ marks a graph output · × removes a pass";
