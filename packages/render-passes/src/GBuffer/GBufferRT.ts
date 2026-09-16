@@ -36,6 +36,7 @@ import {
     type CPUSampleGenerator,
     type Device,
     type RenderContext,
+    type UIWidgets,
 } from "@web-falcor/falcor";
 
 const kShaderFile = "RenderPasses/GBuffer/GBuffer/GBufferRT.cs.slang";
@@ -69,6 +70,9 @@ const kChannels: [string, string, ResourceFormat][] = [
 /** Mirrors TexLODMode (TexLODTypes.slang). */
 const kLODModes: Record<string, number> = { Mip0: 0, RayCones: 1, RayDiffs: 2 };
 
+/** GBufferBase::SamplePattern spellings. */
+const kSamplePatterns = ["Center", "DirectX", "Halton", "Stratified"];
+
 export class GBufferRT extends RenderPass {
     private passes = new Map<string, ComputePass>();
     private frameCount = 0;
@@ -78,8 +82,12 @@ export class GBufferRT extends RenderPass {
     private computeDOF = false;
     private lodMode = 0;
     private outputSize = IOSize.Default;
+    /** Native kFixedOutputSize default (used when outputSize == Fixed). */
+    private fixedOutputSize: [number, number] = [512, 512];
     private sampleGenerator: SampleGenerator;
     private cameraJitterGenerator: CPUSampleGenerator | null = null;
+    private samplePattern = "Center";
+    private sampleCount = 16;
 
     constructor(device: Device, props: Properties) {
         super(device);
@@ -88,19 +96,75 @@ export class GBufferRT extends RenderPass {
         const lod = props.getOpt<string | number>("texLOD");
         if (lod !== undefined) this.lodMode = (typeof lod === "string" ? kLODModes[lod] : lod) ?? 0;
         this.outputSize = parseIOSize(props.getOpt("outputSize"));
+        const fixed = props.getOpt<number[] | { x: number; y: number }>("fixedOutputSize");
+        if (fixed) this.fixedOutputSize = Array.isArray(fixed) ? [fixed[0]!, fixed[1]!] : [fixed.x, fixed.y];
         // 'useTraceRayInline' accepted: inline queries are the only web path.
         this.useDOF = props.get("useDOF", true);
         this.sampleGenerator = SampleGenerator.create(device, SAMPLE_GENERATOR_DEFAULT);
-        const pattern = props.get<string>("samplePattern", "Center");
-        const count = props.get("sampleCount", 16);
-        if (pattern === "Stratified") this.cameraJitterGenerator = new StratifiedSamplePattern(count);
-        else if (pattern === "Halton") this.cameraJitterGenerator = new HaltonSamplePattern(count);
-        else if (pattern === "DirectX") this.cameraJitterGenerator = new DxSamplePattern(count);
+        this.samplePattern = props.get<string>("samplePattern", "Center");
+        this.sampleCount = props.get("sampleCount", 16);
+        this.updateSamplePattern();
+    }
+
+    /** Mirrors GBufferBase::updateSamplePattern (Center -> no generator). */
+    private updateSamplePattern(): void {
+        const c = this.sampleCount;
+        this.cameraJitterGenerator =
+            this.samplePattern === "Stratified" ? new StratifiedSamplePattern(c)
+            : this.samplePattern === "Halton" ? new HaltonSamplePattern(c)
+            : this.samplePattern === "DirectX" ? new DxSamplePattern(c)
+            : null;
+    }
+
+    override getProperties(): Properties {
+        return new Properties({
+            outputSize: IOSize[this.outputSize]!,
+            fixedOutputSize: this.fixedOutputSize,
+            samplePattern: this.samplePattern,
+            sampleCount: this.sampleCount,
+            useAlphaTest: this.useAlphaTest,
+            adjustShadingNormals: this.adjustShadingNormals,
+            texLOD: Object.keys(kLODModes).find((k) => kLODModes[k] === this.lodMode) ?? this.lodMode,
+            useDOF: this.useDOF,
+        });
+    }
+
+    /** Mirrors GBufferBase::renderUI + GBufferRT::renderUI (define changes drop the kernels). */
+    override renderUI(ui: UIWidgets): void {
+        const rebuild = <T>(set: (v: T) => void) => (v: T) => {
+            set(v);
+            this.passes.clear();
+        };
+        // Native GBufferBase/ImageLoader/ToneMapper/... "Output size" controls: I/O size changes recompile the graph.
+        ui.dropdown("Output size", ["Default", "Fixed", "Full", "Half", "Quarter", "Double"], IOSize[this.outputSize]!, (v) => {
+            this.outputSize = IOSize[v as keyof typeof IOSize];
+            this.requestRecompile();
+        });
+        ui.slider("Size in pixels (width)", this.fixedOutputSize[0], 32, 4096, 1, (v) => {
+            this.fixedOutputSize = [Math.round(v), this.fixedOutputSize[1]];
+            this.requestRecompile();
+        });
+        ui.slider("Size in pixels (height)", this.fixedOutputSize[1], 32, 4096, 1, (v) => {
+            this.fixedOutputSize = [this.fixedOutputSize[0], Math.round(v)];
+            this.requestRecompile();
+        });
+        ui.dropdown("Sample pattern", kSamplePatterns, this.samplePattern, (v) => {
+            this.samplePattern = v;
+            this.updateSamplePattern();
+        });
+        ui.slider("Sample count", this.sampleCount, 1, 1024, 1, (v) => {
+            this.sampleCount = Math.max(1, Math.round(v));
+            this.updateSamplePattern();
+        });
+        ui.checkbox("Alpha Test", this.useAlphaTest, rebuild((v) => (this.useAlphaTest = v)));
+        ui.checkbox("Adjust shading normals", this.adjustShadingNormals, rebuild((v) => (this.adjustShadingNormals = v)));
+        ui.dropdown("Texture LOD mode", Object.keys(kLODModes), Object.keys(kLODModes).find((k) => kLODModes[k] === this.lodMode) ?? "Mip0", rebuild((v: string) => (this.lodMode = kLODModes[v]!)));
+        ui.checkbox("Depth-of-field", this.useDOF, rebuild((v) => (this.useDOF = v)));
     }
 
     override reflect(compileData: CompileData): RenderPassReflection {
         const r = new RenderPassReflection();
-        const [w, h] = calculateIOSize(this.outputSize, [512, 512], compileData.defaultTexDims);
+        const [w, h] = calculateIOSize(this.outputSize, this.fixedOutputSize, compileData.defaultTexDims);
         for (const [name, , format] of kChannels) {
             r.addOutput(name, `G-buffer ${name}`)
                 .texture2D(w, h)

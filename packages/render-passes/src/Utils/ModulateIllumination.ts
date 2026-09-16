@@ -17,6 +17,7 @@ import {
     type CompileData,
     type Device,
     type RenderContext,
+    type UIWidgets,
 } from "@web-falcor/falcor";
 
 const kShaderFile = "RenderPasses/ModulateIllumination/ModulateIllumination.cs.slang";
@@ -51,6 +52,14 @@ export class ModulateIllumination extends RenderPass {
         const props = new Properties();
         for (const [, , flag] of kChannels) props.set(flag, this.use.get(flag)!);
         return props;
+    }
+
+    /** Mirrors ModulateIllumination::renderUI: one toggle per input term (defines; the pass key rebuilds). */
+    override renderUI(ui: UIWidgets): void {
+        for (const [, , flag] of kChannels) {
+            const label = flag.slice(3).replace(/([a-z])([A-Z])/g, "$1 $2");
+            ui.checkbox(label, this.use.get(flag)!, (v) => this.use.set(flag, v));
+        }
     }
 
     override reflect(compileData: CompileData): RenderPassReflection {

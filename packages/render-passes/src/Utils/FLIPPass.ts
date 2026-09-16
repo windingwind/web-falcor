@@ -29,6 +29,7 @@ import {
     type CompileData,
     type Device,
     type RenderContext,
+    type UIWidgets,
 } from "@web-falcor/falcor";
 
 const kShaderFile = "RenderPasses/FLIPPass/FLIPPass.cs.slang";
@@ -108,6 +109,32 @@ export class FLIPPass extends RenderPass {
         // 'useRealMonitorInfo' accepted; headless defaults used (see header).
 
         this.pass = ComputePass.create(device, { path: kShaderFile, defines: { TONE_MAPPER: this.toneMapper } });
+    }
+
+    /** Mirrors FLIPPass::renderUI (tone mapper is a shader define -> kernel rebuild). */
+    override renderUI(ui: UIWidgets): void {
+        ui.checkbox("Enabled", this.enabled, (v) => (this.enabled = v));
+        ui.text("FLIP Settings:");
+        ui.checkbox("Use Magma", this.useMagma, (v) => (this.useMagma = v));
+        ui.checkbox("Clamp input", this.clampInput, (v) => (this.clampInput = v));
+        ui.checkbox("Input is HDR", this.isHDR, (v) => (this.isHDR = v));
+        const tms = Object.keys(FLIPToneMapperType).filter((k) => isNaN(Number(k)));
+        ui.dropdown("Tone mapper", tms, FLIPToneMapperType[this.toneMapper]!, (v) => {
+            this.toneMapper = FLIPToneMapperType[v as keyof typeof FLIPToneMapperType];
+            this.pass = ComputePass.create(this.device, { path: kShaderFile, defines: { TONE_MAPPER: this.toneMapper } });
+        });
+        ui.checkbox("Use custom exposure parameters", this.useCustomExposureParameters, (v) => (this.useCustomExposureParameters = v));
+        const custom = (set: (v: number) => void) => (v: number) => {
+            set(v);
+            this.exposureDelta = (this.stopExposure - this.startExposure) / (this.numExposures - 1);
+        };
+        ui.slider("Start exposure", this.startExposure, -20, 20, 0.01, custom((v) => (this.startExposure = v)));
+        ui.slider("Stop exposure", this.stopExposure, -20, 20, 0.01, custom((v) => (this.stopExposure = v)));
+        ui.slider("Number of exposures", this.numExposures, 2, 20, 1, custom((v) => (this.numExposures = Math.round(v))));
+        ui.checkbox("Per-frame metrics", this.computePooledFLIPValues, (v) => (this.computePooledFLIPValues = v));
+        if (this.computePooledFLIPValues && Number.isFinite(this.averageFLIP)) {
+            ui.text(`Average: ${this.averageFLIP.toFixed(4)}  Min: ${this.minFLIP.toFixed(4)}  Max: ${this.maxFLIP.toFixed(4)}`);
+        }
     }
 
     override getProperties(): Properties {

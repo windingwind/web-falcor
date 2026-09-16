@@ -22,6 +22,7 @@ import {
     type CompileData,
     type Device,
     type RenderContext,
+    type UIWidgets,
 } from "@web-falcor/falcor";
 
 const kShaderFile = "RenderPasses/DebugPasses/ColorMapPass/ColorMapPass.ps.slang";
@@ -94,6 +95,16 @@ export class ColorMapPass extends RenderPass {
         this.autoRange = props.get("autoRange", true);
         this.minValue = props.get("minValue", 0);
         this.maxValue = props.get("maxValue", 1);
+    }
+
+    /** Mirrors ColorMapPass::renderUI (color map / channel are shader defines; the pass key rebuilds). */
+    override renderUI(ui: UIWidgets): void {
+        const maps = Object.keys(ColorMap).filter((k) => isNaN(Number(k)));
+        ui.dropdown("Color Map", maps, ColorMap[this.colorMap]!, (v) => (this.colorMap = ColorMap[v as keyof typeof ColorMap]));
+        ui.slider("Channel", this.channel, 0, 3, 1, (v) => (this.channel = Math.round(v)));
+        ui.checkbox("Auto Range", this.autoRange, (v) => (this.autoRange = v));
+        ui.slider("Min Value", this.minValue, -100, 100, 0.01, (v) => (this.minValue = v));
+        ui.slider("Max Value", this.maxValue, -100, 100, 0.01, (v) => (this.maxValue = v));
     }
 
     override getProperties(): Properties {

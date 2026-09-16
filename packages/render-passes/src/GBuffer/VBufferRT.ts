@@ -25,6 +25,7 @@ import {
     type CompileData,
     type Device,
     type RenderContext,
+    type UIWidgets,
 } from "@web-falcor/falcor";
 
 const kShaderFile = "RenderPasses/GBuffer/VBuffer/VBufferRT.cs.slang";
@@ -37,18 +38,51 @@ export class VBufferRT extends RenderPass {
     private computeDOF = false;
     private sampleGenerator: SampleGenerator;
     private cameraJitterGenerator: CPUSampleGenerator | null = null;
+    private samplePattern = "Center";
+    private sampleCount = 16;
 
     constructor(device: Device, props: Properties) {
         super(device);
         this.useAlphaTest = props.get("useAlphaTest", false);
         this.useDOF = props.get("useDOF", true);
         this.sampleGenerator = SampleGenerator.create(device, SAMPLE_GENERATOR_DEFAULT);
-        // Mirrors GBufferBase::updateSamplePattern (Center -> no generator).
-        const pattern = props.get<string>("samplePattern", "Center");
-        const count = props.get("sampleCount", 16);
-        if (pattern === "Stratified") this.cameraJitterGenerator = new StratifiedSamplePattern(count);
-        else if (pattern === "Halton") this.cameraJitterGenerator = new HaltonSamplePattern(count);
-        else if (pattern === "DirectX") this.cameraJitterGenerator = new DxSamplePattern(count);
+        this.samplePattern = props.get<string>("samplePattern", "Center");
+        this.sampleCount = props.get("sampleCount", 16);
+        this.updateSamplePattern();
+    }
+
+    /** Mirrors GBufferBase::updateSamplePattern (Center -> no generator). */
+    private updateSamplePattern(): void {
+        const c = this.sampleCount;
+        this.cameraJitterGenerator =
+            this.samplePattern === "Stratified" ? new StratifiedSamplePattern(c)
+            : this.samplePattern === "Halton" ? new HaltonSamplePattern(c)
+            : this.samplePattern === "DirectX" ? new DxSamplePattern(c)
+            : null;
+    }
+
+    override getProperties(): Properties {
+        return new Properties({ samplePattern: this.samplePattern, sampleCount: this.sampleCount, useAlphaTest: this.useAlphaTest, useDOF: this.useDOF });
+    }
+
+    /** Mirrors GBufferBase::renderUI + VBufferRT::renderUI (define changes drop the kernel). */
+    override renderUI(ui: UIWidgets): void {
+        ui.dropdown("Sample pattern", ["Center", "DirectX", "Halton", "Stratified"], this.samplePattern, (v) => {
+            this.samplePattern = v;
+            this.updateSamplePattern();
+        });
+        ui.slider("Sample count", this.sampleCount, 1, 1024, 1, (v) => {
+            this.sampleCount = Math.max(1, Math.round(v));
+            this.updateSamplePattern();
+        });
+        ui.checkbox("Alpha Test", this.useAlphaTest, (v) => {
+            this.useAlphaTest = v;
+            this.pass = null;
+        });
+        ui.checkbox("Depth-of-field", this.useDOF, (v) => {
+            this.useDOF = v;
+            this.pass = null;
+        });
     }
 
     override reflect(compileData: CompileData): RenderPassReflection {

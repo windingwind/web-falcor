@@ -24,6 +24,7 @@ import {
     type CompileData,
     type Device,
     type RenderContext,
+    type UIWidgets,
 } from "@web-falcor/falcor";
 
 const kShaderFile = "RenderPasses/SimplePostFX/SimplePostFX.cs.slang";
@@ -86,6 +87,65 @@ export class SimplePostFX extends RenderPass {
         this.downsamplePass = ComputePass.create(device, { path: kShaderFile, csEntry: "downsample" });
         this.upsamplePass = ComputePass.create(device, { path: kShaderFile, csEntry: "upsample" });
         this.postFXPass = ComputePass.create(device, { path: kShaderFile, csEntry: "runPostFX" });
+    }
+
+    /** Mirrors SimplePostFX::renderUI. */
+    override renderUI(ui: UIWidgets): void {
+        // Native GBufferBase/ImageLoader/ToneMapper/... "Output size" controls: I/O size changes recompile the graph.
+        ui.dropdown("Output size", ["Default", "Fixed", "Full", "Half", "Quarter", "Double"], IOSize[this.outputSize]!, (v) => {
+            this.outputSize = IOSize[v as keyof typeof IOSize];
+            this.requestRecompile();
+        });
+        ui.slider("Size in pixels (width)", this.fixedOutputSize[0], 32, 4096, 1, (v) => {
+            this.fixedOutputSize = [Math.round(v), this.fixedOutputSize[1]];
+            this.requestRecompile();
+        });
+        ui.slider("Size in pixels (height)", this.fixedOutputSize[1], 32, 4096, 1, (v) => {
+            this.fixedOutputSize = [this.fixedOutputSize[0], Math.round(v)];
+            this.requestRecompile();
+        });
+        ui.checkbox("Enable post fx", this.enabled, (v) => (this.enabled = v));
+        ui.slider("Wipe", this.wipe, 0, 1, 0.001, (v) => (this.wipe = v));
+        const lens = ui.group("Lens FX");
+        lens.slider("Bloom", this.bloomAmount, 0, 1, 0.001, (v) => (this.bloomAmount = v));
+        lens.slider("Bloom Star", this.starAmount, 0, 1, 0.001, (v) => (this.starAmount = v));
+        lens.slider("Star Angle", this.starAngle, 0, 1, 0.001, (v) => (this.starAngle = v));
+        lens.slider("Vignette", this.vignetteAmount, 0, 1, 0.001, (v) => (this.vignetteAmount = v));
+        lens.slider("Chromatic Aberration", this.chromaticAberrationAmount, 0, 1, 0.001, (v) => (this.chromaticAberrationAmount = v));
+        lens.slider("Barrel Distortion", this.barrelDistortAmount, 0, 1, 0.001, (v) => (this.barrelDistortAmount = v));
+        lens.button("reset this group", () => {
+            this.bloomAmount = 0;
+            this.starAmount = 0;
+            this.starAngle = 0.1;
+            this.vignetteAmount = 0;
+            this.chromaticAberrationAmount = 0;
+            this.barrelDistortAmount = 0;
+        });
+        const sat = ui.group("Saturation");
+        const satNames = ["Shadow Saturation", "Midtone Saturation", "Hilight Saturation"];
+        satNames.forEach((label, i) => sat.slider(label, this.saturationCurve[i]!, 0, 2, 0.001, (v) => (this.saturationCurve[i] = v)));
+        sat.button("reset this group", () => (this.saturationCurve = [1, 1, 1]));
+        const luma = ui.group("Offset/Power/Scale (luma)");
+        luma.slider("Luma Offset (Shadows)", this.colorOffsetScalar, -1, 1, 0.001, (v) => (this.colorOffsetScalar = v));
+        luma.slider("Luma Power (Midtones)", this.colorPowerScalar, -1, 1, 0.001, (v) => (this.colorPowerScalar = v));
+        luma.slider("Luma Scale (Hilights)", this.colorScaleScalar, -1, 1, 0.001, (v) => (this.colorScaleScalar = v));
+        luma.button("reset this group", () => {
+            this.colorOffsetScalar = 0;
+            this.colorPowerScalar = 0;
+            this.colorScaleScalar = 0;
+        });
+        const color = ui.group("Offset/Power/Scale (color)");
+        const rgb = (label: string, get: () => [number, number, number]) => {
+            ["R", "G", "B"].forEach((c, i) => color.slider(`${label} ${c}`, get()[i]!, 0, 1, 0.001, (v) => (get()[i] = v)));
+        };
+        rgb("Color Offset (Shadows)", () => this.colorOffset);
+        rgb("Color Power (Midtones)", () => this.colorPower);
+        rgb("Color Scale (Hilights)", () => this.colorScale);
+        color.button("reset this group", () => {
+            this.colorOffset = [0.5, 0.5, 0.5];
+            this.colorPower = [0.5, 0.5, 0.5];
+            this.colorScale = [0.5, 0.5, 0.5];
+        });
     }
 
     override getProperties(): Properties {

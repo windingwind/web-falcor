@@ -25,6 +25,7 @@ import {
     type Device,
     type RenderContext,
     type Sampler,
+    type UIWidgets,
 } from "@web-falcor/falcor";
 
 const kShaderFile = "RenderPasses/Utils/GaussianBlur/GaussianBlur.ps.slang";
@@ -79,10 +80,26 @@ export class GaussianBlur extends RenderPass {
 
     override compile(_ctx: RenderContext, _compileData: CompileData): void {
         if (!this.ready) throw new RuntimeError("GaussianBlur: Missing incoming reflection information");
+        this.createPrograms();
+    }
+
+    private createPrograms(): void {
         const defines: Record<string, string | number> = { _KERNEL_WIDTH: this.kernelWidth };
         this.horizontal = FullScreenPass.create(this.device, { path: kShaderFile, defines: { ...defines, _HORIZONTAL_BLUR: 1 } });
         this.vertical = FullScreenPass.create(this.device, { path: kShaderFile, defines: { ...defines, _VERTICAL_BLUR: 1 } });
         this.updateKernel();
+    }
+
+    /** Mirrors GaussianBlur::renderUI (setKernelWidth/setSigma rebuild the kernels; native recompiles the graph). */
+    override renderUI(ui: UIWidgets): void {
+        ui.slider("Kernel Width", this.kernelWidth, 1, 15, 2, (v) => {
+            this.kernelWidth = Math.round(v) | 1; // odd width like native setKernelWidth
+            if (this.horizontal) this.createPrograms();
+        });
+        ui.slider("Sigma", this.sigma, 0.001, this.kernelWidth / 2, 0.001, (v) => {
+            this.sigma = v;
+            if (this.horizontal) this.createPrograms();
+        });
     }
 
     /** Mirrors GaussianBlur::updateKernel + getCoefficient with C float semantics. */

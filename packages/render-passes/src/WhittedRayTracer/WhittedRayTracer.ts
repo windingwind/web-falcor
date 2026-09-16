@@ -22,6 +22,7 @@ import {
     type CompileData,
     type Device,
     type RenderContext,
+    type UIWidgets,
 } from "@web-falcor/falcor";
 
 const kShaderFile = "RenderPasses/WhittedRayTracer/WhittedRayTracer.rt.slang";
@@ -68,6 +69,34 @@ export class WhittedRayTracer extends RenderPass {
         this.rayDiffFilterMode = parse("rayDiffFilterMode", kFilterModes, 0);
         this.useRoughnessToVariance = props.get("useRoughnessToVariance", false);
         this.sampleGenerator = SampleGenerator.create(device, SAMPLE_GENERATOR_DEFAULT);
+    }
+
+    override getProperties(): Properties {
+        const name = (table: Record<string, number>, v: number) => Object.keys(table).find((k) => table[k] === v) ?? v;
+        return new Properties({
+            maxBounces: this.maxBounces,
+            texLODMode: name(kTexLODModes, this.texLODMode),
+            rayConeMode: name(kRayConeModes, this.rayConeMode),
+            rayConeFilterMode: name(kFilterModes, this.rayConeFilterMode),
+            rayDiffFilterMode: name(kFilterModes, this.rayDiffFilterMode),
+            useRoughnessToVariance: this.useRoughnessToVariance,
+        });
+    }
+
+    /** Mirrors WhittedRayTracer::renderUI (options are shader defines -> kernel rebuild). */
+    override renderUI(ui: UIWidgets): void {
+        const rebuild = <T>(set: (v: T) => void) => (v: T) => {
+            set(v);
+            this.pass = null;
+        };
+        const pick = (label: string, table: Record<string, number>, value: number, set: (v: number) => void) =>
+            ui.dropdown(label, Object.keys(table), Object.keys(table).find((k) => table[k] === value) ?? Object.keys(table)[0]!, rebuild((v: string) => set(table[v]!)));
+        ui.slider("Max bounces", this.maxBounces, 0, 10, 1, rebuild((v) => (this.maxBounces = Math.round(v))));
+        pick("Texture LOD mode", kTexLODModes, this.texLODMode, (v) => (this.texLODMode = v));
+        pick("Ray cone mode", kRayConeModes, this.rayConeMode, (v) => (this.rayConeMode = v));
+        pick("Ray cone filter mode", kFilterModes, this.rayConeFilterMode, (v) => (this.rayConeFilterMode = v));
+        pick("Ray diff filter mode", kFilterModes, this.rayDiffFilterMode, (v) => (this.rayDiffFilterMode = v));
+        ui.checkbox("Use BSDF roughness", this.useRoughnessToVariance, rebuild((v) => (this.useRoughnessToVariance = v)));
     }
 
     override reflect(_compileData: CompileData): RenderPassReflection {

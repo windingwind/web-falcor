@@ -20,14 +20,25 @@ import {
     type CompileData,
     type Device,
     type RenderContext,
+    type UIWidgets,
 } from "@web-falcor/falcor";
+
+/** Mouse event forwarded by the host (native MouseEvent): `pos` is normalized to the pass output. */
+export interface PassMouseEvent {
+    type: "buttonDown" | "buttonUp" | "move";
+    button?: "left" | "right" | "middle";
+    pos: [number, number];
+}
 
 export abstract class ComparisonPass extends RenderPass {
     protected splitShader: FullScreenPass | null = null;
+    /** Output size of the last execute (native pDstFbo dims, for mouse handling). */
+    protected outputDims: [number, number] = [0, 0];
     protected swapSides = false;
     protected splitLoc = -1;
     protected dividerSize = 2;
     protected showLabels = false;
+    private warnedLabels = false;
     protected leftLabel = "Left side";
     protected rightLabel = "Right side";
     /** SplitScreen assigns the real arrow sprite; others get a 1x1 dummy. */
@@ -52,6 +63,12 @@ export abstract class ComparisonPass extends RenderPass {
         });
     }
 
+    /** Mirrors ComparisonPass::renderUI (labels need the TextRenderer, ⏳). */
+    override renderUI(ui: UIWidgets): void {
+        ui.checkbox("Swap Sides", this.swapSides, (v) => (this.swapSides = v));
+        ui.checkbox("Show Labels", this.showLabels, (v) => (this.showLabels = v));
+    }
+
     override reflect(_compileData: CompileData): RenderPassReflection {
         const r = new RenderPassReflection();
         r.addInput("leftInput", "Left side image").bindFlags(ResourceBindFlags.ShaderResource).texture2D(0, 0);
@@ -65,9 +82,13 @@ export abstract class ComparisonPass extends RenderPass {
         const left = renderData.getTexture("leftInput")!;
         const right = renderData.getTexture("rightInput")!;
         const output = renderData.getTexture("output")!;
+        this.outputDims = [output.width, output.height];
 
         if (this.splitLoc < 0) this.splitLoc = 0.5;
-        if (this.showLabels) Logger.warning("ComparisonPass: text labels are not ported (Mogwai UI, M8)");
+        if (this.showLabels && !this.warnedLabels) {
+            this.warnedLabels = true;
+            Logger.warning("ComparisonPass: text labels are not ported (Mogwai UI, M8)");
+        }
 
         const root = this.splitShader!.getRootVar();
         root["GlobalCB"]["gSplitLocation"] = Math.trunc(this.splitLoc * renderData.defaultTexDims[0]);
@@ -108,6 +129,12 @@ export class SideBySidePass extends ComparisonPass {
         this.splitShader!.getRootVar()["GlobalCB"]["gLeftBound"] = this.imageLeftBound;
         super.execute(ctx, renderData);
     }
+
+    /** Mirrors SideBySidePass::renderUI (range = half of a 1920-wide output; native uses the live width). */
+    override renderUI(ui: UIWidgets): void {
+        ui.slider("View Slider", this.imageLeftBound, 0, 960, 1, (v) => (this.imageLeftBound = Math.round(v)));
+        super.renderUI(ui);
+    }
 }
 
 /**
@@ -116,6 +143,12 @@ export class SideBySidePass extends ComparisonPass {
  * parity covers the no-mouse state (black divider, no arrows).
  */
 export class SplitScreenPass extends ComparisonPass {
+    private mouseOverDivider = false;
+    private dividerGrabbed = false;
+    private mousePos: [number, number] = [0, 0];
+    private drawArrows = false;
+    private timeOfLastClick = -Infinity;
+
     constructor(device: Device, props: Properties) {
         super(device);
         for (const [key] of props.entries()) {
@@ -154,13 +187,52 @@ export class SplitScreenPass extends ComparisonPass {
         this.arrowTex = arrow;
     }
 
+    /** Mirrors SplitScreenPass::renderUI. */
+    override renderUI(ui: UIWidgets): void {
+        ui.slider("Split location", this.splitLoc < 0 ? 0.5 : this.splitLoc, 0, 1, 0.001, (v) => (this.splitLoc = v));
+        ui.checkbox("Show Arrows", this.drawArrows, (v) => (this.drawArrows = v));
+        super.renderUI(ui);
+    }
+
+    /**
+     * Mirrors SplitScreenPass::onMouseEvent: hovering within max(6, dividerSize) px
+     * highlights the divider, left-drag moves it, a double click (<100 ms) recenters.
+     * Returns true when the event was consumed (the host then skips camera control).
+     */
+    onMouseEvent(ev: PassMouseEvent): boolean {
+        const [w, h] = this.outputDims;
+        if (w === 0 || h === 0) return false;
+        let handled = this.dividerGrabbed;
+        this.mousePos = [
+            Math.min(w - 1, Math.max(0, Math.trunc(ev.pos[0] * w))),
+            Math.min(h - 1, Math.max(0, Math.trunc(ev.pos[1] * h))),
+        ];
+        if (this.mouseOverDivider && ev.type === "buttonDown" && ev.button === "left") {
+            this.dividerGrabbed = true;
+            handled = true;
+            const now = performance.now();
+            if (now - this.timeOfLastClick < 100) this.splitLoc = 0.5;
+            else this.timeOfLastClick = now;
+        } else if (this.dividerGrabbed) {
+            if (ev.type === "buttonUp" && ev.button === "left") {
+                this.dividerGrabbed = false;
+                handled = true;
+            } else if (ev.type === "move") {
+                this.splitLoc = this.mousePos[0] / w;
+                handled = true;
+            }
+        }
+        const split = this.splitLoc < 0 ? 0.5 : this.splitLoc;
+        this.mouseOverDivider = Math.abs(Math.trunc(split * w) - this.mousePos[0]) < Math.max(6, Math.trunc(this.dividerSize));
+        return handled;
+    }
+
     override execute(ctx: RenderContext, renderData: RenderData): void {
         const root = this.splitShader!.getRootVar();
-        // No mouse over the divider in headless runs: unselected black divider,
-        // no arrows (kColorUnselected / mDrawArrows && mMouseOverDivider).
-        root["GlobalCB"]["gDividerColor"] = [0, 0, 0, 1];
-        root["GlobalCB"]["gMousePosition"] = [0, 0];
-        root["GlobalCB"]["gDrawArrows"] = 0;
+        // kColorSelected while the mouse hovers the divider, kColorUnselected otherwise.
+        root["GlobalCB"]["gDividerColor"] = this.mouseOverDivider ? [1, 1, 1, 1] : [0, 0, 0, 1];
+        root["GlobalCB"]["gMousePosition"] = this.mousePos;
+        root["GlobalCB"]["gDrawArrows"] = this.drawArrows && this.mouseOverDivider ? 1 : 0;
         super.execute(ctx, renderData);
     }
 }

@@ -20,6 +20,7 @@ import {
     type CompileData,
     type Device,
     type RenderContext,
+    type UIWidgets,
 } from "@web-falcor/falcor";
 
 const kShaderFile = "RenderPasses/MinimalPathTracer/MinimalPathTracer.rt.slang";
@@ -56,6 +57,21 @@ export class MinimalPathTracer extends RenderPass {
         super.setScene(scene);
         this.pass = null;
         this.frameCount = 0;
+    }
+
+    override getProperties(): Properties {
+        return new Properties({ maxBounces: this.maxBounces, computeDirect: this.computeDirect, useImportanceSampling: this.useImportanceSampling });
+    }
+
+    /** Mirrors MinimalPathTracer::renderUI (all three are shader defines -> kernel rebuild). */
+    override renderUI(ui: UIWidgets): void {
+        const rebuild = <T>(set: (v: T) => void) => (v: T) => {
+            set(v);
+            this.pass = null;
+        };
+        ui.slider("Max bounces", this.maxBounces, 0, 16, 1, rebuild((v) => (this.maxBounces = Math.round(v))));
+        ui.checkbox("Evaluate direct illumination", this.computeDirect, rebuild((v) => (this.computeDirect = v)));
+        ui.checkbox("Use importance sampling", this.useImportanceSampling, rebuild((v) => (this.useImportanceSampling = v)));
     }
 
     override execute(ctx: RenderContext, renderData: RenderData): void {

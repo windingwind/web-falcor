@@ -20,6 +20,7 @@ import {
     type Device,
     type RenderContext,
     type Sampler,
+    type UIWidgets,
 } from "@web-falcor/falcor";
 
 const kShaderFile = "RenderPasses/TAA/TAA.ps.slang";
@@ -47,6 +48,13 @@ export class TAA extends RenderPass {
 
     override getProperties(): Properties {
         return new Properties({ alpha: this.alpha, colorBoxSigma: this.colorBoxSigma, antiFlicker: this.antiFlicker });
+    }
+
+    /** Mirrors TAA::renderUI. */
+    override renderUI(ui: UIWidgets): void {
+        ui.slider("Alpha", this.alpha, 0, 1, 0.001, (v) => (this.alpha = v));
+        ui.slider("Color-Box Sigma", this.colorBoxSigma, 0, 15, 0.001, (v) => (this.colorBoxSigma = v));
+        ui.checkbox("Anti Flicker", this.antiFlicker, (v) => (this.antiFlicker = v));
     }
 
     override reflect(_compileData: CompileData): RenderPassReflection {

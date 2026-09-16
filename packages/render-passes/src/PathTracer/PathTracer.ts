@@ -38,6 +38,7 @@ import {
     type Device,
     type RenderContext,
     type ShaderVar,
+    type UIWidgets,
 } from "@web-falcor/falcor";
 
 const kGeneratePathsFile = "RenderPasses/PathTracer/GeneratePaths.cs.slang";
@@ -48,6 +49,8 @@ const kResolvePassFile = "RenderPasses/PathTracer/ResolvePass.cs.slang";
 const kEmissiveSamplerTypes: Record<string, number> = { Uniform: 0, LightBVH: 1, Power: 2 };
 
 const kScreenTileDim = 16;
+/** UI range for the bounce sliders (Params.slang kMaxBounces). */
+const kMaxBounces = 254;
 
 export class PathTracer extends RenderPass {
     private generatePass: ComputePass | null = null;
@@ -210,6 +213,74 @@ export class PathTracer extends RenderPass {
         this.tracePass = null;
         this.rtxdi = null;
         this.frameCount = 0;
+    }
+
+    /** Mirrors PathTracer::getProperties (StaticParams + sampler options). */
+    override getProperties(): Properties {
+        const lodNames = ["Mip0", "RayCones", "RayDiffs"];
+        return new Properties({
+            samplesPerPixel: this.samplesPerPixel,
+            maxSurfaceBounces: this.maxSurfaceBounces,
+            maxDiffuseBounces: this.maxDiffuseBounces,
+            maxSpecularBounces: this.maxSpecularBounces,
+            maxTransmissionBounces: this.maxTransmissionBounces,
+            useBSDFSampling: this.useBSDFSampling,
+            useRussianRoulette: this.useRussianRoulette,
+            useNEE: this.useNEE,
+            useMIS: this.useMIS,
+            misHeuristic: this.misHeuristic,
+            emissiveSampler: this.emissiveSampler,
+            ...(this.emissiveSampler === "LightBVH" ? { lightBVHOptions: this.lightBVHOptions as unknown as Record<string, never> } : {}),
+            useRTXDI: this.useRTXDI,
+            RTXDIOptions: this.rtxdiOptions as Record<string, never>,
+            useAlphaTest: this.useAlphaTest,
+            adjustShadingNormals: this.adjustShadingNormals,
+            primaryLodMode: lodNames[this.primaryLodMode] ?? this.primaryLodMode,
+        });
+    }
+
+    /** Static params are shader defines: drop the kernels so execute() rebuilds them (native mRecompile). */
+    private recreatePrograms(): void {
+        this.generatePass = null;
+        this.tracePass = null;
+        this.resolvePass = null;
+    }
+
+    /** Mirrors PathTracer::renderUI (rendering options; stats live in getPixelStats()). */
+    override renderUI(ui: UIWidgets): void {
+        const rebuild = <T>(set: (v: T) => void) => (v: T) => {
+            set(v);
+            this.recreatePrograms();
+        };
+        if (this.fixedSampleCount) ui.slider("Samples/pixel", this.samplesPerPixel, 1, 16, 1, rebuild((v) => (this.samplesPerPixel = Math.round(v))));
+        else ui.text("Samples/pixel: Variable");
+        ui.slider("Max surface bounces", this.maxSurfaceBounces, 0, kMaxBounces, 1, rebuild((v) => {
+            // Clamps the per-lobe limits like native.
+            this.maxSurfaceBounces = Math.round(v);
+            this.maxDiffuseBounces = Math.min(this.maxDiffuseBounces, this.maxSurfaceBounces);
+            this.maxSpecularBounces = Math.min(this.maxSpecularBounces, this.maxSurfaceBounces);
+            this.maxTransmissionBounces = Math.min(this.maxTransmissionBounces, this.maxSurfaceBounces);
+        }));
+        ui.slider("Max diffuse bounces", this.maxDiffuseBounces, 0, kMaxBounces, 1, rebuild((v) => (this.maxDiffuseBounces = Math.round(v))));
+        ui.slider("Max specular bounces", this.maxSpecularBounces, 0, kMaxBounces, 1, rebuild((v) => (this.maxSpecularBounces = Math.round(v))));
+        ui.slider("Max transmission bounces", this.maxTransmissionBounces, 0, kMaxBounces, 1, rebuild((v) => (this.maxTransmissionBounces = Math.round(v))));
+        ui.checkbox("BSDF importance sampling", this.useBSDFSampling, rebuild((v) => (this.useBSDFSampling = v)));
+        ui.checkbox("Russian roulette", this.useRussianRoulette, rebuild((v) => (this.useRussianRoulette = v)));
+        ui.checkbox("Next-event estimation (NEE)", this.useNEE, rebuild((v) => (this.useNEE = v)));
+        ui.checkbox("Multiple importance sampling (MIS)", this.useMIS, rebuild((v) => (this.useMIS = v)));
+        ui.dropdown("MIS heuristic", ["Balance", "PowerTwo", "PowerExp"], ["Balance", "PowerTwo", "PowerExp"][this.misHeuristic] ?? "Balance", rebuild((v: string) => (this.misHeuristic = ["Balance", "PowerTwo", "PowerExp"].indexOf(v))));
+        ui.dropdown("Emissive sampler", Object.keys(kEmissiveSamplerTypes), this.emissiveSampler, rebuild((v: string) => {
+            this.emissiveSampler = v;
+            this.lightBVHSampler = null;
+            this.powerSampler = null;
+        }));
+        ui.checkbox("Use RTXDI", this.useRTXDI, rebuild((v) => {
+            this.useRTXDI = v;
+            if (!v) this.rtxdi = null;
+        }));
+        ui.checkbox("Alpha test", this.useAlphaTest, rebuild((v) => (this.useAlphaTest = v)));
+        ui.checkbox("Adjust shading normals on secondary hits", this.adjustShadingNormals, rebuild((v) => (this.adjustShadingNormals = v)));
+        ui.dropdown("Primary LOD Mode", ["Mip0", "RayDiffs"], this.primaryLodMode === 2 ? "RayDiffs" : "Mip0", rebuild((v: string) => (this.primaryLodMode = v === "RayDiffs" ? 2 : 0)));
     }
 
     /** Mirrors PathTracer::StaticParams::getDefines. */

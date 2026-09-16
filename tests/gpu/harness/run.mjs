@@ -54,7 +54,8 @@ page.on("console", (msg) => {
 page.on("pageerror", (err) => console.error("[pageerror]", err.message));
 
 await page.goto(url);
-await page.waitForFunction(() => window.__done === true, undefined, { timeout: 10 * 60 * 1000 });
+// Wall clock for the whole suite (grew past 10 min with ~170 tests; the per-test page keeps streaming results).
+await page.waitForFunction(() => window.__done === true, undefined, { timeout: 30 * 60 * 1000 });
 
 const fatal = await page.evaluate(() => window.__fatal);
 const results = (await page.evaluate(() => window.__results)) ?? [];

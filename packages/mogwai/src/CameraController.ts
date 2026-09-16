@@ -1,22 +1,35 @@
-// First-person controller (mirrors Falcor's FirstPersonCameraController): left-drag
-// looks, WASD/QE move, Shift/Ctrl scale speed, wheel dollies. update() returns true
-// when the camera moved so the caller can reset path-tracer accumulation.
-import { type Camera, float3, add3, sub3, mul3, cross, dot3, normalize3, length3, quatFromAngleAxis, rotateVector } from "@web-falcor/falcor";
+// Viewer camera input: translates DOM mouse/keyboard/gamepad events into the
+// native controller events and drives the ported Scene/Camera controllers
+// (First Person / Orbiter / 6-DoF, mirrors Scene::setCameraController).
+// update() returns true when the camera moved so the caller resets accumulation.
+import {
+    FirstPersonCameraController,
+    OrbiterCameraController,
+    SixDoFCameraController,
+    UpDirection,
+    float2,
+    add3,
+    mul3,
+    normalize3,
+    sub3,
+    length3,
+    type Camera,
+    type CameraController as NativeController,
+    type ControllerMouseEvent,
+} from "@web-falcor/falcor";
 
-const WORLD_UP = new float3(0, 1, 0);
-const LOOK_SENSITIVITY = 0.0042; // radians per pixel
-const MAX_UP_DOT = 0.99; // keep the view direction ~8° off the poles (no gimbal flip)
+/** Mirrors Scene::CameraControllerType (dropdown spellings from Scene.cpp). */
+export const kCameraControllerTypes = ["First Person", "Orbiter", "6-DOF"] as const;
+export type CameraControllerType = (typeof kCameraControllerTypes)[number];
+export const kUpDirectionNames = ["X+", "X-", "Y+", "Y-", "Z+", "Z-"] as const;
 
 export class CameraController {
-    private readonly keys = new Set<string>();
-    private dragging = false;
-    private lastX = 0;
-    private lastY = 0;
-    private yawAccum = 0; // pending mouse look, radians
-    private pitchAccum = 0;
-    private dollyAccum = 0; // pending wheel dolly, world units
-    private speed = 2; // movement speed, world units/second
-    private lastTime = -1;
+    private camera: Camera | null = null;
+    private controller: NativeController | null = null;
+    private type: CameraControllerType = "First Person";
+    private upDirection = UpDirection.YPos;
+    private speed = 1; // native Scene::mCameraSpeed default
+    private dollyAccum = 0; // wheel dolly for the first-person controllers (web extra; native ignores the wheel there)
 
     constructor(private readonly canvas: HTMLCanvasElement) {
         canvas.addEventListener("mousedown", this.onMouseDown);
@@ -24,105 +37,114 @@ export class CameraController {
         window.addEventListener("mousemove", this.onMouseMove);
         canvas.addEventListener("wheel", this.onWheel, { passive: false });
         canvas.addEventListener("contextmenu", (e) => e.preventDefault());
-        window.addEventListener("keydown", this.onKeyDown);
-        window.addEventListener("keyup", this.onKeyUp);
+        window.addEventListener("keydown", this.onKey);
+        window.addEventListener("keyup", this.onKey);
     }
 
-    /** Movement speed in world units/second. */
+    getControllerType(): CameraControllerType {
+        return this.type;
+    }
+    /** Mirrors Scene::setCameraController; Orbiter keeps the current view (no scene AABB on the web). */
+    setControllerType(type: CameraControllerType): void {
+        this.type = type;
+        this.controller = null;
+        if (this.camera) this.createController(this.camera);
+    }
+    getUpDirection(): UpDirection {
+        return this.upDirection;
+    }
+    setUpDirection(up: UpDirection): void {
+        this.upDirection = up;
+        this.controller?.setUpDirection(up);
+    }
+    /** Movement speed in world units/second (Scene::setCameraSpeed). */
     setSpeed(s: number): void {
         this.speed = Math.max(0.01, s);
+        this.controller?.setCameraSpeed(this.speed);
     }
     getSpeed(): number {
         return this.speed;
     }
 
+    private createController(camera: Camera): void {
+        this.camera = camera;
+        switch (this.type) {
+            case "Orbiter": {
+                const c = new OrbiterCameraController(camera);
+                // Native: scene AABB center/radius with distance 3.5 radii; here the current target/distance so the view is kept.
+                const center = camera.getTarget();
+                const distance = Math.max(1e-3, length3(sub3(camera.getPosition(), center)));
+                c.setModelParams(center, distance / 3.5, 3.5);
+                this.controller = c;
+                break;
+            }
+            case "6-DOF":
+                this.controller = new SixDoFCameraController(camera);
+                break;
+            default:
+                this.controller = new FirstPersonCameraController(camera);
+        }
+        this.controller.setUpDirection(this.upDirection);
+        this.controller.setCameraSpeed(this.speed);
+    }
+
+    private pos(e: MouseEvent): float2 {
+        const r = this.canvas.getBoundingClientRect();
+        return new float2((e.clientX - r.left) / r.width, (e.clientY - r.top) / r.height);
+    }
+    private button(e: MouseEvent): ControllerMouseEvent["button"] {
+        return e.button === 0 ? "left" : e.button === 2 ? "right" : e.button === 1 ? "middle" : undefined;
+    }
     private isTypingTarget(t: EventTarget | null): boolean {
         const el = t as HTMLElement | null;
         return !!el && /^(INPUT|SELECT|TEXTAREA|BUTTON)$/.test(el.tagName);
     }
-
     private onMouseDown = (e: MouseEvent) => {
-        if (e.button !== 0) return;
-        this.dragging = true;
-        this.lastX = e.clientX;
-        this.lastY = e.clientY;
+        const button = this.button(e);
+        if (button) this.controller?.onMouseEvent({ type: "buttonDown", button, pos: this.pos(e) });
     };
-    private onMouseUp = () => {
-        this.dragging = false;
+    private onMouseUp = (e: MouseEvent) => {
+        const button = this.button(e);
+        if (button) this.controller?.onMouseEvent({ type: "buttonUp", button, pos: this.pos(e) });
     };
     private onMouseMove = (e: MouseEvent) => {
-        if (!this.dragging) return;
-        this.yawAccum -= (e.clientX - this.lastX) * LOOK_SENSITIVITY;
-        this.pitchAccum -= (e.clientY - this.lastY) * LOOK_SENSITIVITY;
-        this.lastX = e.clientX;
-        this.lastY = e.clientY;
+        this.controller?.onMouseEvent({ type: "move", pos: this.pos(e) });
     };
     private onWheel = (e: WheelEvent) => {
         e.preventDefault();
-        this.dollyAccum += -Math.sign(e.deltaY) * this.speed * 0.5;
+        const up = -Math.sign(e.deltaY); // native wheelDelta.y: +1 = scroll up
+        const handled = this.controller?.onMouseEvent({ type: "wheel", pos: this.pos(e), wheelDelta: new float2(0, up) }) ?? false;
+        if (!handled) this.dollyAccum += up * this.speed * 0.5;
     };
-    private onKeyDown = (e: KeyboardEvent) => {
+    private onKey = (e: KeyboardEvent) => {
         if (this.isTypingTarget(e.target)) return;
-        this.keys.add(e.code);
+        this.controller?.onKeyEvent({ type: e.type === "keydown" ? "keyPressed" : "keyReleased", key: e.key.toLowerCase(), shift: e.shiftKey, ctrl: e.ctrlKey });
     };
-    private onKeyUp = (e: KeyboardEvent) => {
-        this.keys.delete(e.code);
-    };
+    private pollGamepad(): void {
+        const pad = typeof navigator.getGamepads === "function" ? navigator.getGamepads().find((g) => g && g.connected) : null;
+        if (!pad) return;
+        const a = pad.axes;
+        this.controller?.onGamepadState({
+            leftX: a[0] ?? 0,
+            leftY: -(a[1] ?? 0),
+            rightX: a[2] ?? 0,
+            rightY: -(a[3] ?? 0),
+            leftTrigger: pad.buttons[6]?.value ?? 0,
+            rightTrigger: pad.buttons[7]?.value ?? 0,
+        });
+    }
 
     /** Applies pending input to `camera`. `now` is the rAF timestamp (ms). */
     update(camera: Camera, now: number): boolean {
-        const dt = this.lastTime < 0 ? 0 : Math.min(0.1, (now - this.lastTime) / 1000);
-        this.lastTime = now;
-
-        let pos = camera.getPosition();
-        const target = camera.getTarget();
-        let viewDir = normalize3(sub3(target, pos));
-        let changed = false;
-
-        // Mouse look.
-        if (this.yawAccum !== 0 || this.pitchAccum !== 0) {
-            const right = normalize3(cross(viewDir, WORLD_UP));
-            if (this.yawAccum !== 0) viewDir = rotateVector(quatFromAngleAxis(this.yawAccum, WORLD_UP), viewDir);
-            if (this.pitchAccum !== 0) {
-                const pitched = normalize3(rotateVector(quatFromAngleAxis(this.pitchAccum, right), viewDir));
-                if (Math.abs(dot3(pitched, WORLD_UP)) < MAX_UP_DOT) viewDir = pitched;
-            }
-            viewDir = normalize3(viewDir);
-            this.yawAccum = 0;
-            this.pitchAccum = 0;
-            changed = true;
-        }
-
-        // Keyboard movement, frame-rate independent.
-        const right = normalize3(cross(viewDir, WORLD_UP));
-        let move = new float3(0, 0, 0);
-        const k = this.keys;
-        if (k.has("KeyW")) move = add3(move, viewDir);
-        if (k.has("KeyS")) move = sub3(move, viewDir);
-        if (k.has("KeyD")) move = add3(move, right);
-        if (k.has("KeyA")) move = sub3(move, right);
-        if (k.has("KeyE")) move = add3(move, WORLD_UP);
-        if (k.has("KeyQ")) move = sub3(move, WORLD_UP);
-        const mag = length3(move);
-        if (mag > 0 && dt > 0) {
-            const fast = k.has("ShiftLeft") || k.has("ShiftRight");
-            const slow = k.has("ControlLeft") || k.has("ControlRight");
-            const speedMod = fast ? 5 : slow ? 0.2 : 1;
-            pos = add3(pos, mul3(move, (this.speed * speedMod * dt) / mag));
-            changed = true;
-        }
-
-        // Wheel dolly.
+        if (camera !== this.camera || !this.controller) this.createController(camera);
+        this.pollGamepad();
+        let changed = this.controller!.update(now / 1000);
         if (this.dollyAccum !== 0) {
-            pos = add3(pos, mul3(viewDir, this.dollyAccum));
+            const viewDir = normalize3(sub3(camera.getTarget(), camera.getPosition()));
+            camera.setPosition(add3(camera.getPosition(), mul3(viewDir, this.dollyAccum)));
+            camera.setTarget(add3(camera.getPosition(), viewDir));
             this.dollyAccum = 0;
             changed = true;
-        }
-
-        if (changed) {
-            camera.setPosition(pos);
-            camera.setTarget(add3(pos, viewDir));
-            camera.setUpVector(WORLD_UP);
         }
         return changed;
     }

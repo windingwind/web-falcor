@@ -19,6 +19,7 @@ import {
     type CompileData,
     type Device,
     type RenderContext,
+    type UIWidgets,
 } from "@web-falcor/falcor";
 
 const kShaderFile = "RenderPasses/Utils/CrossFade/CrossFade.cs.slang";
@@ -51,6 +52,15 @@ export class CrossFade extends RenderPass {
             fadeFrameCount: this.fadeFrameCount,
             fadeFactor: this.fadeFactor,
         });
+    }
+
+    /** Mirrors CrossFade::renderUI. */
+    override renderUI(ui: UIWidgets): void {
+        ui.text("This pass fades between inputs A and B");
+        ui.checkbox("Enable Auto Fade", this.enableAutoFade, (v) => (this.enableAutoFade = v));
+        ui.slider("Wait Frame Count", this.waitFrameCount, 0, 1000, 1, (v) => (this.waitFrameCount = Math.round(v)));
+        ui.slider("Fade Frame Count", this.fadeFrameCount, 1, 1000, 1, (v) => (this.fadeFrameCount = Math.round(v)));
+        ui.slider("Fade Factor", this.fadeFactor, 0, 1, 0.001, (v) => (this.fadeFactor = v));
     }
 
     override reflect(_compileData: CompileData): RenderPassReflection {

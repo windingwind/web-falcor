@@ -12,6 +12,7 @@ import {
     type CompileData,
     type Device,
     type RenderContext,
+    type UIWidgets,
 } from "@web-falcor/falcor";
 
 export class BlitPass extends RenderPass {
@@ -24,6 +25,15 @@ export class BlitPass extends RenderPass {
 
     override setProperties(props: Properties): void {
         this.filter = props.get<string>("filter", "Linear") === "Point" ? "nearest" : "linear";
+    }
+
+    override getProperties(): Properties {
+        return new Properties({ filter: this.filter === "nearest" ? "Point" : "Linear" });
+    }
+
+    /** Mirrors BlitPass::renderUI. */
+    override renderUI(ui: UIWidgets): void {
+        ui.dropdown("Filter", ["Linear", "Point"], this.filter === "nearest" ? "Point" : "Linear", (v) => (this.filter = v === "Point" ? "nearest" : "linear"));
     }
 
     override reflect(_compileData: CompileData): RenderPassReflection {

@@ -19,6 +19,7 @@ import {
     type CompileData,
     type Device,
     type RenderContext,
+    type UIWidgets,
 } from "@web-falcor/falcor";
 
 const kShaderFile = "RenderPasses/Utils/Composite/Composite.cs.slang";
@@ -58,6 +59,14 @@ export class Composite extends RenderPass {
 
     override getProperties(): Properties {
         return new Properties({ mode: CompositeMode[this.mode]!, scaleA: this.scaleA, scaleB: this.scaleB });
+    }
+
+    /** Mirrors Composite::renderUI (mode is a shader define; the pass key rebuilds). */
+    override renderUI(ui: UIWidgets): void {
+        ui.text("This pass scales and composites inputs A and B together");
+        ui.dropdown("Mode", ["Add", "Multiply"], CompositeMode[this.mode]!, (v) => (this.mode = CompositeMode[v as keyof typeof CompositeMode]));
+        ui.slider("Scale A", this.scaleA, -100, 100, 0.01, (v) => (this.scaleA = v));
+        ui.slider("Scale B", this.scaleB, -100, 100, 0.01, (v) => (this.scaleB = v));
     }
 
     override reflect(_compileData: CompileData): RenderPassReflection {

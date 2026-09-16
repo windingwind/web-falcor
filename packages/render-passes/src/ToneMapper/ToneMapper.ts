@@ -47,6 +47,8 @@ export class ToneMapper extends RenderPass {
     private clamp = true;
     private outputFormat = ResourceFormat.RGBA8UnormSrgb;
     private outputSize = IOSize.Default;
+    /** Native kFixedOutputSize default (used when outputSize == Fixed). */
+    private fixedOutputSize: [number, number] = [512, 512];
     private pass: FullScreenPass | null = null;
     private fbo = new Fbo();
     private luminancePass: FullScreenPass | null = null;
@@ -60,6 +62,8 @@ export class ToneMapper extends RenderPass {
 
     override setProperties(props: Properties): void {
         this.outputSize = parseIOSize(props.getOpt("outputSize"), this.outputSize);
+        const fixed = props.getOpt<number[] | { x: number; y: number }>("fixedOutputSize");
+        if (fixed) this.fixedOutputSize = Array.isArray(fixed) ? [fixed[0]!, fixed[1]!] : [fixed.x, fixed.y];
         const op = props.getOpt<string | number>("operator");
         if (op !== undefined) {
             this.operator = (typeof op === "string" ? ToneMapOperator[op as keyof typeof ToneMapOperator] : op) ?? ToneMapOperator.Aces;
@@ -83,6 +87,8 @@ export class ToneMapper extends RenderPass {
 
     override getProperties(): Properties {
         return new Properties({
+            outputSize: IOSize[this.outputSize]!,
+            fixedOutputSize: this.fixedOutputSize,
             operator: ToneMapOperator[this.operator]!,
             exposureCompensation: this.exposureCompensation,
             autoExposure: this.autoExposure,
@@ -94,6 +100,19 @@ export class ToneMapper extends RenderPass {
     }
 
     override renderUI(ui: UIWidgets): void {
+        // Native GBufferBase/ImageLoader/ToneMapper/... "Output size" controls: I/O size changes recompile the graph.
+        ui.dropdown("Output size", ["Default", "Fixed", "Full", "Half", "Quarter", "Double"], IOSize[this.outputSize]!, (v) => {
+            this.outputSize = IOSize[v as keyof typeof IOSize];
+            this.requestRecompile();
+        });
+        ui.slider("Size in pixels (width)", this.fixedOutputSize[0], 32, 4096, 1, (v) => {
+            this.fixedOutputSize = [Math.round(v), this.fixedOutputSize[1]];
+            this.requestRecompile();
+        });
+        ui.slider("Size in pixels (height)", this.fixedOutputSize[1], 32, 4096, 1, (v) => {
+            this.fixedOutputSize = [this.fixedOutputSize[0], Math.round(v)];
+            this.requestRecompile();
+        });
         ui.slider("Exposure Compensation", this.exposureCompensation, -8, 8, 0.1, (v) => (this.exposureCompensation = v));
         ui.checkbox("Auto Exposure", this.autoExposure, (v) => {
             this.autoExposure = v;
@@ -112,7 +131,7 @@ export class ToneMapper extends RenderPass {
 
     override reflect(compileData: CompileData): RenderPassReflection {
         const r = new RenderPassReflection();
-        const [w, h] = calculateIOSize(this.outputSize, [512, 512], compileData.defaultTexDims);
+        const [w, h] = calculateIOSize(this.outputSize, this.fixedOutputSize, compileData.defaultTexDims);
         r.addInput("src", "Source texture").bindFlags(ResourceBindFlags.ShaderResource);
         r.addOutput("dst", "Tone-mapped output")
             .texture2D(w, h)

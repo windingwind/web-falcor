@@ -20,6 +20,7 @@ import {
     type Device,
     type RenderContext,
     type ShaderVar,
+    type UIWidgets,
 } from "@web-falcor/falcor";
 
 const kPackLinearZAndNormalShader = "RenderPasses/SVGFPass/SVGFPackLinearZAndNormal.ps.slang";
@@ -73,6 +74,24 @@ export class SVGFPass extends RenderPass {
         this.phiNormal = props.get("PhiNormal", 128.0);
         this.alpha = props.get("Alpha", 0.05);
         this.momentsAlpha = props.get("MomentsAlpha", 0.2);
+    }
+
+    /** Mirrors SVGFPass::renderUI (any change clears the temporal buffers). */
+    override renderUI(ui: UIWidgets): void {
+        const dirty = <T>(set: (v: T) => void) => (v: T) => {
+            set(v);
+            this.buffersNeedClear = true;
+        };
+        ui.checkbox("Enable SVGF", this.filterEnabled, dirty((v) => (this.filterEnabled = v)));
+        ui.text("Number of filter iterations. Which iteration feeds into future frames?");
+        ui.slider("Iterations", this.filterIterations, 2, 10, 1, dirty((v) => (this.filterIterations = Math.round(v))));
+        ui.slider("Feedback", this.feedbackTap, -1, 8, 1, dirty((v) => (this.feedbackTap = Math.round(v))));
+        ui.text("Control edge stopping on bilateral filter");
+        ui.slider("For Color", this.phiColor, 0, 10000, 0.01, dirty((v) => (this.phiColor = v)));
+        ui.slider("For Normal", this.phiNormal, 0.001, 1000, 0.2, dirty((v) => (this.phiNormal = v)));
+        ui.text("How much history should be used? (alpha; 0 = full reuse; 1 = no reuse)");
+        ui.slider("Alpha", this.alpha, 0, 1, 0.001, dirty((v) => (this.alpha = v)));
+        ui.slider("Moments Alpha", this.momentsAlpha, 0, 1, 0.001, dirty((v) => (this.momentsAlpha = v)));
     }
 
     override getProperties(): Properties {

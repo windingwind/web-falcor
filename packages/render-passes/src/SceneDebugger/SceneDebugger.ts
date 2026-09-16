@@ -26,6 +26,7 @@ import {
     type Device,
     type RenderContext,
     type ShaderVar,
+    type UIWidgets,
 } from "@web-falcor/falcor";
 
 const kShaderFile = "RenderPasses/SceneDebugger/SceneDebugger.cs.slang";
@@ -44,11 +45,42 @@ const kBSDFProps: Record<string, number> = {
     SpecularReflectionAlbedo: 5, SpecularTransmissionAlbedo: 6, SpecularReflectance: 7, IsTransmissive: 8,
 };
 
+/** Mirrors getModeDesc. */
+const kModeDesc: Record<string, string> = {
+    FlatShaded: "Flat shaded",
+    TriangleDensity: "Triangle density",
+    HitType: "Hit type in pseudocolor",
+    InstanceID: "Instance ID in pseudocolor",
+    MaterialID: "Material ID in pseudocolor",
+    PrimitiveID: "Primitive ID in pseudocolor",
+    GeometryID: "Geometry ID in pseudocolor",
+    BlasID: "Raytracing bottom-level acceleration structure (BLAS) ID in pseudocolor",
+    InstancedGeometry: "Green = instanced geometry, red = non-instanced geometry",
+    MaterialType: "Material type in pseudocolor",
+    FaceNormal: "Face normal in RGB color",
+    ShadingNormal: "Shading normal in RGB color",
+    ShadingTangent: "Shading tangent in RGB color",
+    ShadingBitangent: "Shading bitangent in RGB color",
+    FrontFacingFlag: "Green = front-facing, red = back-facing",
+    BackfacingShadingNormal: "Pixels where the shading normal is back-facing with respect to view vector are highlighted",
+    TexCoords: "Texture coordinates in RG color wrapped to [0,1]",
+    BSDFProperties: "BSDF properties",
+};
+
 export class SceneDebugger extends RenderPass {
     private pass: ComputePass | null = null;
     private frameCount = 0;
     private mode = kModes["FaceNormal"]!;
     private bsdfProperty = 0;
+    // Remaining SceneDebuggerParams (native defaults).
+    private bsdfIndex = 0;
+    private clamp = true;
+    private flipSign = false;
+    private remapRange = true;
+    private showVolumes = true;
+    private volumeDensityScale = 1;
+    private triangleDensityLogRange: [number, number] = [-16, 16];
+    private selectedPixel: [number, number] = [0, 0];
     private pixelData: Buffer | null = null;
     private dummyVbuffer: Texture | null = null;
     private meshToBlasID: Buffer | null = null;
@@ -62,6 +94,27 @@ export class SceneDebugger extends RenderPass {
         // 0 Emission, 1 Roughness, 2 GuideNormal, 3 DiffuseReflectionAlbedo, ...).
         const bp = props.getOpt<string | number>("bsdfProperty");
         if (bp !== undefined) this.bsdfProperty = (typeof bp === "string" ? kBSDFProps[bp] : bp) ?? this.bsdfProperty;
+    }
+
+    override getProperties(): Properties {
+        const name = (table: Record<string, number>, v: number) => Object.keys(table).find((k) => table[k] === v) ?? v;
+        return new Properties({ mode: name(kModes, this.mode), bsdfProperty: name(kBSDFProps, this.bsdfProperty) });
+    }
+
+    /** Mirrors SceneDebugger::renderUI (all runtime parameters; pixel-data readout lives in the viewer's picking). */
+    override renderUI(ui: UIWidgets): void {
+        const name = (table: Record<string, number>, v: number) => Object.keys(table).find((k) => table[k] === v) ?? Object.keys(table)[0]!;
+        ui.dropdown("Mode", Object.keys(kModes), name(kModes, this.mode), (v) => (this.mode = kModes[v]!));
+        ui.slider("Triangle density range min (log2)", this.triangleDensityLogRange[0], -32, 32, 1, (v) => (this.triangleDensityLogRange = [Math.round(v), this.triangleDensityLogRange[1]]));
+        ui.slider("Triangle density range max (log2)", this.triangleDensityLogRange[1], -32, 32, 1, (v) => (this.triangleDensityLogRange = [this.triangleDensityLogRange[0], Math.round(v)]));
+        ui.dropdown("BSDF property", Object.keys(kBSDFProps), name(kBSDFProps, this.bsdfProperty), (v) => (this.bsdfProperty = kBSDFProps[v]!));
+        ui.slider("BSDF index", this.bsdfIndex, 0, 15, 1, (v) => (this.bsdfIndex = Math.round(v)));
+        ui.checkbox("Clamp to [0,1]", this.clamp, (v) => (this.clamp = v));
+        ui.checkbox("Flip sign", this.flipSign, (v) => (this.flipSign = v));
+        ui.checkbox("Remap to [0,1]", this.remapRange, (v) => (this.remapRange = v));
+        ui.checkbox("Show volumes", this.showVolumes, (v) => (this.showVolumes = v));
+        ui.slider("Volume density scale", this.volumeDensityScale, 0, 1000, 0.1, (v) => (this.volumeDensityScale = v));
+        ui.text(`Description: ${kModeDesc[name(kModes, this.mode)] ?? ""}`);
     }
 
     override reflect(compileData: CompileData): RenderPassReflection {
@@ -128,18 +181,18 @@ export class SceneDebugger extends RenderPass {
         p["frameDim"] = [w, h];
         p["frameCount"] = this.frameCount;
         p["bsdfProperty"] = this.bsdfProperty;
-        p["bsdfIndex"] = 0;
-        p["selectedPixel"] = [0, 0];
-        p["flipSign"] = 0;
-        p["remapRange"] = 1;
-        p["clamp"] = 1;
-        p["showVolumes"] = 1;
-        p["volumeDensityScale"] = 1;
+        p["bsdfIndex"] = this.bsdfIndex;
+        p["selectedPixel"] = this.selectedPixel;
+        p["flipSign"] = this.flipSign ? 1 : 0;
+        p["remapRange"] = this.remapRange ? 1 : 0;
+        p["clamp"] = this.clamp ? 1 : 0;
+        p["showVolumes"] = this.showVolumes ? 1 : 0;
+        p["volumeDensityScale"] = this.volumeDensityScale;
         p["useVBuffer"] = renderData.getTexture("vbuffer") ? 1 : 0;
         p["profileSecondaryRays"] = 0;
         p["profileSecondaryLoadHit"] = 0;
         p["profileSecondaryConeAngle"] = 90;
-        p["triangleDensityLogRange"] = [-16, 16];
+        p["triangleDensityLogRange"] = this.triangleDensityLogRange;
         sd["meshToBlasID"] = this.meshToBlasID!;
         sd["instanceInfo"] = this.instanceInfo!;
         // vbuffer is gated by a runtime flag, so the binding survives DCE.

@@ -5,7 +5,7 @@
 
 import { AssetCategory, AssetResolver, isAbsoluteUrl, kProjectMediaUrl, Clock, Device, Logger, Profiler, ProfilerUI, VideoRecorder, ProgramManager, RenderGraph, ResourceFormat, createPass, encodeExr, initScripting, initSlang, runConsoleCommand, runGraphScript, runSceneScript, runPbrtScene, presentToCanvas, type Scene } from "@web-falcor/falcor";
 import "@web-falcor/render-passes";
-import { CameraController } from "./CameraController.js";
+import { CameraController, kCameraControllerTypes, kUpDirectionNames } from "./CameraController.js";
 import { buildUIPanel } from "./UIPanel.js";
 
 const canvas = document.getElementById("canvas") as HTMLCanvasElement;
@@ -23,6 +23,8 @@ interface ViewerState {
     /** Global time control (mirrors m.clock; drives scene animation). */
     clock: Clock;
     timingCapture: TimingCapture;
+    /** Scene panel "Animate Scene" (mirrors AnimationController::setEnabled). */
+    animateScene: boolean;
 }
 
 /** Mirrors the Mogwai TimingCapture extension. Web divergence (docs §9):
@@ -58,6 +60,7 @@ class TimingCapture {
 async function loadGraph(state: ViewerState, url: string): Promise<void> {
     const source = await (await fetch(url)).text();
     const [graph] = await runGraphScript(state.device, source);
+    await graph!.init(); // async pass initialization (ImageLoader etc.; docs §9)
     graph!.onResize(canvas.width, canvas.height);
     if (state.scene) graph!.setScene(state.scene);
     state.graph = graph!;
@@ -187,7 +190,7 @@ async function main() {
     await initProgramSystem(device);
     await initScripting("/node_modules/pyodide");
 
-    const state: ViewerState = { device, context, format, graph: null, scene: null, output: null, frame: 0, playing: true, clock: new Clock(), timingCapture: new TimingCapture() };
+    const state: ViewerState = { device, context, format, graph: null, scene: null, output: null, frame: 0, playing: true, clock: new Clock(), timingCapture: new TimingCapture(), animateScene: true };
 
     // Initial content from URL params (?scene=/?graph=/?output=), or the default
     // cornell-box path tracer when none are given.
@@ -202,10 +205,27 @@ async function main() {
         (state.graph?.getPass("Accumulate") as { reset?: () => void } | undefined)?.reset?.();
         state.frame = 0;
     };
-    const rebuildUI = () => buildUIPanel(passesEl, state.graph, resetAccum);
+    const camControl = new CameraController(canvas);
+    const rebuildUI = () =>
+        buildUIPanel(passesEl, state.graph, resetAccum, state.scene, {
+            notify: resetAccum,
+            getAnimate: () => state.animateScene,
+            setAnimate: (v) => (state.animateScene = v),
+            cameraControl: {
+                types: kCameraControllerTypes,
+                getType: () => camControl.getControllerType(),
+                setType: (v) => camControl.setControllerType(v as (typeof kCameraControllerTypes)[number]),
+                upNames: kUpDirectionNames,
+                getUp: () => camControl.getUpDirection() as number,
+                setUp: (i) => camControl.setUpDirection(i),
+                getSpeed: () => camControl.getSpeed(),
+                setSpeed: (v) => camControl.setSpeed(v),
+            },
+        });
 
     wireControls(state, rebuildUI);
     wireConsole(state, resetAccum, rebuildUI, profiler);
+    wireMouseForwarding(state);
     wirePixelPicking(state, rebuildUI);
     rebuildUI();
     // Profiler panel (native: P toggles the profiler window).
@@ -215,8 +235,8 @@ async function main() {
         if ((ev.key === "p" || ev.key === "P") && !(ev.target instanceof HTMLInputElement)) profilerPanel.hidden = !profilerPanel.hidden;
     });
     (window as unknown as { mogwaiProfiler: { profiler: Profiler; ui: ProfilerUI } }).mogwaiProfiler = { profiler, ui: profilerUI };
-    const camControl = new CameraController(canvas);
     (window as unknown as { mogwai: ViewerState }).mogwai = state; // debug/test handle
+    (window as unknown as { mogwaiCamControl: CameraController }).mogwaiCamControl = camControl;
 
     let lastGpuLine = "";
     let lastNow = -1;
@@ -227,7 +247,7 @@ async function main() {
         if (state.playing) {
             state.clock.tick();
             // Scene animation follows clock time (rebuilds geometry/BVH; no-op if static).
-            if (state.scene?.isAnimated() && state.scene.animate(state.clock.getTime())) dirty = true;
+            if (state.animateScene && state.scene?.isAnimated() && state.scene.animate(state.clock.getTime())) dirty = true;
         }
         if (dirty && state.graph) resetAccum(); // camera or geometry moved: restart accumulation
         if (state.playing && state.graph && state.output) {
@@ -358,6 +378,31 @@ function wirePixelPicking(state: ViewerState, rebuildUI: () => void): void {
     });
 }
 
+/**
+ * Mirrors Renderer::onMouseEvent: passes see canvas mouse events first (e.g. the
+ * SplitScreen divider); a pass that handles one stops it reaching the camera controller.
+ */
+function wireMouseForwarding(state: ViewerState): void {
+    type PassMouseEvent = { type: "buttonDown" | "buttonUp" | "move"; button?: "left" | "right" | "middle"; pos: [number, number] };
+    const buttons = ["left", "middle", "right"] as const;
+    const forward = (ev: MouseEvent, type: PassMouseEvent["type"]) => {
+        if (!state.graph) return;
+        if (type === "buttonDown" && ev.target !== canvas) return; // presses on the panels are theirs
+        const rect = canvas.getBoundingClientRect();
+        const pos: [number, number] = [(ev.clientX - rect.left) / rect.width, (ev.clientY - rect.top) / rect.height];
+        let handled = false;
+        for (const { pass } of state.graph.getPasses()) {
+            const p = pass as { onMouseEvent?: (e: PassMouseEvent) => boolean };
+            if (typeof p.onMouseEvent === "function") handled = p.onMouseEvent({ type, button: buttons[ev.button], pos }) || handled;
+        }
+        if (handled) ev.stopImmediatePropagation();
+    };
+    // Capture phase: runs before the camera controller's and the pixel picker's listeners.
+    window.addEventListener("mousedown", (ev) => forward(ev, "buttonDown"), true);
+    window.addEventListener("mousemove", (ev) => forward(ev, "move"), true);
+    window.addEventListener("mouseup", (ev) => forward(ev, "buttonUp"), true);
+}
+
 /** Wires the plain-DOM control bar (created in index.html). */
 function wireControls(state: ViewerState, rebuildUI: () => void): void {
     const $ = (id: string) => document.getElementById(id);
@@ -388,6 +433,7 @@ function wireControls(state: ViewerState, rebuildUI: () => void): void {
         const file = (ev.target as HTMLInputElement).files?.[0];
         if (file) {
             const [graph] = await runGraphScript(state.device, await file.text());
+            await graph!.init();
             graph!.onResize(canvas.width, canvas.height);
             if (state.scene) graph!.setScene(state.scene);
             state.graph = graph!;

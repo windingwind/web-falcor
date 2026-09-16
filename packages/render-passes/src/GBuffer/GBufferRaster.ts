@@ -45,6 +45,7 @@ import {
     type ProgramVersion,
     type RenderContext,
     type ShaderVar,
+    type UIWidgets,
 } from "@web-falcor/falcor";
 
 const kShaderFile = "RenderPasses/GBuffer/GBuffer/GBufferRaster.3d.slang";
@@ -69,24 +70,65 @@ export class GBufferRaster extends RenderPass {
     private pipelineLayout: GPUPipelineLayout | null = null;
     private depthTex: Texture | null = null;
     private outputSize = IOSize.Default;
+    /** Native kFixedOutputSize default (used when outputSize == Fixed). */
+    private fixedOutputSize: [number, number] = [512, 512];
     private sampleCount = 16;
     private sampleGenerator: CPUSampleGenerator | null = null;
+    private samplePattern = "Center";
 
     constructor(device: Device, props: Properties) {
         super(device);
         this.outputSize = parseIOSize(props.getOpt("outputSize"));
+        const fixed = props.getOpt<number[] | { x: number; y: number }>("fixedOutputSize");
+        if (fixed) this.fixedOutputSize = Array.isArray(fixed) ? [fixed[0]!, fixed[1]!] : [fixed.x, fixed.y];
         this.sampleCount = props.get("sampleCount", 16);
-        // Mirrors GBufferBase::updateSamplePattern (Center -> no generator).
-        const pattern = props.get<string>("samplePattern", "Center");
-        if (pattern === "Stratified") this.sampleGenerator = new StratifiedSamplePattern(this.sampleCount);
-        else if (pattern === "Halton") this.sampleGenerator = new HaltonSamplePattern(this.sampleCount);
-        else if (pattern === "DirectX") this.sampleGenerator = new DxSamplePattern(this.sampleCount);
+        this.samplePattern = props.get<string>("samplePattern", "Center");
+        this.updateSamplePattern();
+    }
+
+    /** Mirrors GBufferBase::updateSamplePattern (Center -> no generator). */
+    private updateSamplePattern(): void {
+        const c = this.sampleCount;
+        this.sampleGenerator =
+            this.samplePattern === "Stratified" ? new StratifiedSamplePattern(c)
+            : this.samplePattern === "Halton" ? new HaltonSamplePattern(c)
+            : this.samplePattern === "DirectX" ? new DxSamplePattern(c)
+            : null;
         if (this.sampleGenerator) this.sampleCount = this.sampleGenerator.getSampleCount();
+    }
+
+    override getProperties(): Properties {
+        return new Properties({ outputSize: IOSize[this.outputSize]!, fixedOutputSize: this.fixedOutputSize, samplePattern: this.samplePattern, sampleCount: this.sampleCount });
+    }
+
+    /** Mirrors GBufferBase::renderUI (sample pattern controls; output size needs a graph recompile ⏳). */
+    override renderUI(ui: UIWidgets): void {
+        // Native GBufferBase/ImageLoader/ToneMapper/... "Output size" controls: I/O size changes recompile the graph.
+        ui.dropdown("Output size", ["Default", "Fixed", "Full", "Half", "Quarter", "Double"], IOSize[this.outputSize]!, (v) => {
+            this.outputSize = IOSize[v as keyof typeof IOSize];
+            this.requestRecompile();
+        });
+        ui.slider("Size in pixels (width)", this.fixedOutputSize[0], 32, 4096, 1, (v) => {
+            this.fixedOutputSize = [Math.round(v), this.fixedOutputSize[1]];
+            this.requestRecompile();
+        });
+        ui.slider("Size in pixels (height)", this.fixedOutputSize[1], 32, 4096, 1, (v) => {
+            this.fixedOutputSize = [this.fixedOutputSize[0], Math.round(v)];
+            this.requestRecompile();
+        });
+        ui.dropdown("Sample pattern", ["Center", "DirectX", "Halton", "Stratified"], this.samplePattern, (v) => {
+            this.samplePattern = v;
+            this.updateSamplePattern();
+        });
+        ui.slider("Sample count", this.sampleCount, 1, 1024, 1, (v) => {
+            this.sampleCount = Math.max(1, Math.round(v));
+            this.updateSamplePattern();
+        });
     }
 
     override reflect(compileData: CompileData): RenderPassReflection {
         const r = new RenderPassReflection();
-        const [w, h] = calculateIOSize(this.outputSize, [512, 512], compileData.defaultTexDims);
+        const [w, h] = calculateIOSize(this.outputSize, this.fixedOutputSize, compileData.defaultTexDims);
         for (const ch of kChannels) {
             r.addOutput(ch.name, `G-buffer ${ch.name}`)
                 .texture2D(w, h)

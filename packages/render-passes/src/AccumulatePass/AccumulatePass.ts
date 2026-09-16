@@ -37,6 +37,8 @@ export enum AccumulatePrecision {
 export class AccumulatePass extends RenderPass {
     private enabled = true;
     private outputSize = IOSize.Default;
+    /** Native kFixedOutputSize default (used when outputSize == Fixed). */
+    private fixedOutputSize: [number, number] = [512, 512];
     private precision = AccumulatePrecision.Single;
     private autoReset = true;
     private frameCount = 0;
@@ -53,6 +55,8 @@ export class AccumulatePass extends RenderPass {
     override setProperties(props: Properties): void {
         this.enabled = props.get("enabled", true);
         this.outputSize = parseIOSize(props.getOpt("outputSize"));
+        const fixed = props.getOpt<number[] | { x: number; y: number }>("fixedOutputSize");
+        if (fixed) this.fixedOutputSize = Array.isArray(fixed) ? [fixed[0]!, fixed[1]!] : [fixed.x, fixed.y];
         const mode = props.getOpt<string | number>("precisionMode");
         if (mode !== undefined) {
             const parsed = typeof mode === "string" ? AccumulatePrecision[mode as keyof typeof AccumulatePrecision] : mode;
@@ -66,7 +70,7 @@ export class AccumulatePass extends RenderPass {
     }
 
     override getProperties(): Properties {
-        return new Properties({ enabled: this.enabled, precisionMode: AccumulatePrecision[this.precision]!, autoReset: this.autoReset });
+        return new Properties({ enabled: this.enabled, precisionMode: AccumulatePrecision[this.precision]!, autoReset: this.autoReset, outputSize: IOSize[this.outputSize]!, fixedOutputSize: this.fixedOutputSize });
     }
 
     reset(): void {
@@ -74,6 +78,19 @@ export class AccumulatePass extends RenderPass {
     }
 
     override renderUI(ui: UIWidgets): void {
+        // Native GBufferBase/ImageLoader/ToneMapper/... "Output size" controls: I/O size changes recompile the graph.
+        ui.dropdown("Output size", ["Default", "Fixed", "Full", "Half", "Quarter", "Double"], IOSize[this.outputSize]!, (v) => {
+            this.outputSize = IOSize[v as keyof typeof IOSize];
+            this.requestRecompile();
+        });
+        ui.slider("Size in pixels (width)", this.fixedOutputSize[0], 32, 4096, 1, (v) => {
+            this.fixedOutputSize = [Math.round(v), this.fixedOutputSize[1]];
+            this.requestRecompile();
+        });
+        ui.slider("Size in pixels (height)", this.fixedOutputSize[1], 32, 4096, 1, (v) => {
+            this.fixedOutputSize = [this.fixedOutputSize[0], Math.round(v)];
+            this.requestRecompile();
+        });
         ui.checkbox("Enabled", this.enabled, (v) => (this.enabled = v));
         ui.button("Reset", () => this.reset());
         ui.checkbox("Auto Reset", this.autoReset, (v) => (this.autoReset = v));
@@ -86,7 +103,7 @@ export class AccumulatePass extends RenderPass {
 
     override reflect(compileData: CompileData): RenderPassReflection {
         const r = new RenderPassReflection();
-        const [w, h] = calculateIOSize(this.outputSize, [512, 512], compileData.defaultTexDims);
+        const [w, h] = calculateIOSize(this.outputSize, this.fixedOutputSize, compileData.defaultTexDims);
         r.addInput("input", "Input data to be temporally accumulated").bindFlags(ResourceBindFlags.ShaderResource);
         r.addOutput("output", "Accumulated output")
             .texture2D(w, h)
