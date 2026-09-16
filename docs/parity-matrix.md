@@ -148,7 +148,7 @@ Tallies today: 21 pass classes fully implemented, 4 partial, 13 not implemented
 | Feature | Status | Notes |
 |---|---|---|
 | RenderGraph core (compile, alloc, I/O merge, `.py` load) | ✅ | verified across all feature graphs |
-| RenderPassReflection completeness | ⏳ gaps | `Persistent` flag, resolve-size callbacks, non-texture2D field builders missing |
+| RenderPassReflection completeness | ✅ | full `Field` API (`rawBuffer`/`texture1D`/`texture2D`/`texture3D`/`textureCube`/`resourceType`, `kMaxMipLevels`, `name`/`desc`, `isValid`, native `merge` conflict errors + `operator==`); allocation mirrors `ResourceCache::createResourceForPass` (raw buffers, 1D/3D/cube/MSAA textures, size-0 → graph dims, Unknown → graph default format, `None` bind flags resolved from the format's WebGPU capabilities via `Device.getFormatBindFlags`); external inputs surface in `connectedResources`; `Persistent` fields keep their resource across recompiles while unchanged (§9). Web rules: 1D outputs never get render-target usage; UAV-bound r8/r16uint promote to r32uint |
 | PixelDebug host (shader `print()` readback/console) | ✅ | `Utils/Debug/PixelDebug.ts` + portable override (Atomic counters + flat record buffer replace the ParameterBlock/UAV-counter layout): print/assert records captured per selected pixel, typed decode verified end-to-end; §9: async readback, message strings surface as hashes (slang-wasm lacks hashed-string reflection); pass UI wiring ⏳ |
 | PixelStats | ✅ | packed-atomic-buffer collection (verified vs native rayCount/pathLength dumps) + `Rendering/Utils/PixelStats.ts` `getStats()` aggregate (GPU region sums, async readback ~1 frame late, docs §9); PathTracer exposes `getPixelStats()` |
 | WarpProfiler | ⏳ | subgroup-dependent; portable where `subgroups` exists |
@@ -193,7 +193,14 @@ Tallies today: 21 pass classes fully implemented, 4 partial, 13 not implemented
    behind buffer-style `__subscript` wrappers. The PathTracer+RTXDI megakernel
    sits exactly at 16; combining USE_RTXDI with pixel stats or curve scenes
    would exceed it (not currently co-usable).
-11. **Animation clip behaviors match native** (Constant default; per-clip
+11. **`Persistent` reflection fields outlive recompiles.** Native only promises
+   the resource is stable between `execute()` calls; the web graph recompiles far
+   more often (resize, scene change, pass edits), so a `Persistent` field also
+   keeps its resource and contents across recompiles while its resolved
+   description (type, dims, format, flags) is unchanged. Graph default format
+   for `Unknown` outputs stays `RGBA32Float` (native: swapchain format) unless
+   `onResize(w, h, format)` supplies one.
+12. **Animation clip behaviors match native** (Constant default; per-clip
    Linear/Cycle/Oscillate honored, §8.4); the Linear edge-slope extrapolation
    quantizes at f32 keyframe precision on both sides, so it is
    tolerance-compared like all float outputs.

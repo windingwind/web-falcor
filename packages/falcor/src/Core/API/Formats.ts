@@ -6,6 +6,8 @@
  * and are documented in the parity matrix (docs §Formats).
  */
 
+import { ResourceBindFlags } from "./Types.js";
+
 export enum ResourceFormat {
     Unknown,
 
@@ -186,4 +188,44 @@ export function isDepthFormat(format: ResourceFormat): boolean {
 
 export function isCompressedFormat(format: ResourceFormat): boolean {
     return format >= ResourceFormat.BC1Unorm && format <= ResourceFormat.BC7UnormSrgb;
+}
+
+/** Core WebGPU storage-texture formats ("bgra8unorm-storage" adds BGRA8Unorm). */
+const kStorageFormats = new Set<ResourceFormat>([
+    ResourceFormat.R32Float, ResourceFormat.R32Int, ResourceFormat.R32Uint,
+    ResourceFormat.RG32Float, ResourceFormat.RG32Int, ResourceFormat.RG32Uint,
+    ResourceFormat.RGBA8Unorm, ResourceFormat.RGBA8Snorm, ResourceFormat.RGBA8Int, ResourceFormat.RGBA8Uint,
+    ResourceFormat.RGBA16Float, ResourceFormat.RGBA16Int, ResourceFormat.RGBA16Uint,
+    ResourceFormat.RGBA32Float, ResourceFormat.RGBA32Int, ResourceFormat.RGBA32Uint,
+]);
+
+/** Color formats WebGPU cannot render to without an optional feature. */
+const kNonRenderable = new Set<ResourceFormat>([
+    ResourceFormat.RGB9E5Float,
+    ResourceFormat.R8Snorm, ResourceFormat.RG8Snorm, ResourceFormat.RGBA8Snorm,
+]);
+
+/** Formats outside core WebGPU (need "texture-formats-tier1" to be renderable). */
+const kTier1Formats = new Set<ResourceFormat>([
+    ResourceFormat.R16Unorm, ResourceFormat.R16Snorm, ResourceFormat.RG16Unorm, ResourceFormat.RG16Snorm, ResourceFormat.RGBA16Unorm,
+]);
+
+/**
+ * Mirrors Device::getFormatBindFlags: the bind flags a texture of this format
+ * supports (WebGPU capability tables; `hasFeature` gates optional features).
+ */
+export function getFormatBindFlags(format: ResourceFormat, hasFeature: (feature: string) => boolean = () => false): ResourceBindFlags {
+    if (format === ResourceFormat.Unknown || !toGpuTextureFormat(format)) return ResourceBindFlags.None;
+    if (isCompressedFormat(format)) return ResourceBindFlags.ShaderResource;
+    if (isDepthFormat(format)) return ResourceBindFlags.ShaderResource | ResourceBindFlags.DepthStencil;
+    let flags = ResourceBindFlags.ShaderResource;
+    const renderable =
+        format === ResourceFormat.R11G11B10Float ? hasFeature("rg11b10ufloat-renderable")
+        : kTier1Formats.has(format) ? hasFeature("texture-formats-tier1")
+        : !kNonRenderable.has(format);
+    if (renderable) flags |= ResourceBindFlags.RenderTarget;
+    if (kStorageFormats.has(format) || (format === ResourceFormat.BGRA8Unorm && hasFeature("bgra8unorm-storage"))) {
+        flags |= ResourceBindFlags.UnorderedAccess;
+    }
+    return flags;
 }

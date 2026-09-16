@@ -65,16 +65,8 @@ export class GaussianBlur extends RenderPass {
         this.ready = false;
         const edge = compileData.connectedResources?.getField("src");
         if (edge) {
-            const shape = (field: ReturnType<RenderPassReflection["addInput"]>) => {
-                field.format(edge.format_);
-                field.resourceType = edge.resourceType;
-                field.width = edge.width;
-                field.height = edge.height;
-                field.depth = edge.depth;
-                field.sampleCount = edge.sampleCount;
-                field.mipCount = edge.mipCount;
-                field.arraySize = edge.arraySize;
-            };
+            const shape = (field: ReturnType<RenderPassReflection["addInput"]>) =>
+                field.format(edge.format_).resourceType(edge.type_, edge.width, edge.height, edge.depth, edge.sampleCount, edge.mipCount, edge.arraySize);
             shape(r.addInput("src", "input image to be blurred"));
             shape(r.addOutput("dst", "output blurred image"));
             this.ready = true;

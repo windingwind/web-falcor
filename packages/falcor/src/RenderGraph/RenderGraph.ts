@@ -10,10 +10,12 @@
 import type { Device } from "../Core/API/Device.js";
 import type { RenderContext } from "../Core/API/RenderContext.js";
 import { Texture } from "../Core/API/Texture.js";
-import { ResourceBindFlags, ResourceType } from "../Core/API/Types.js";
+import { Buffer } from "../Core/API/Buffer.js";
+import type { Resource } from "../Core/API/Resource.js";
+import { MemoryType, ResourceBindFlags } from "../Core/API/Types.js";
 import { ResourceFormat } from "../Core/API/Formats.js";
 import { RenderPass, RenderData, type CompileData } from "./RenderPass.js";
-import { Field, FieldVisibility, RenderPassReflection } from "./RenderPassReflection.js";
+import { Field, FieldType, RenderPassReflection, resourceTypeToFieldType } from "./RenderPassReflection.js";
 import { ArgumentError, RuntimeError } from "../Core/Error.js";
 import { Logger } from "../Utils/Logger.js";
 
@@ -27,18 +29,22 @@ interface Edge {
 interface CompiledPass {
     name: string;
     pass: RenderPass;
-    /** field name -> allocated or externally-bound texture */
-    resources: Map<string, Texture>;
+    /** field name -> allocated or externally-bound resource */
+    resources: Map<string, Resource>;
 }
 
 export class RenderGraph {
     private passes = new Map<string, RenderPass>();
     private edges: Edge[] = [];
     private outputs: { pass: string; field: string }[] = [];
-    private externalInputs = new Map<string, Texture>();
+    private externalInputs = new Map<string, Resource>();
     private compiled: CompiledPass[] | null = null;
-    private allocated = new Map<string, Texture>(); // "pass.field" -> texture
+    private allocated = new Map<string, Resource>(); // "pass.field" -> resource
+    /** Persistent fields keep their resource across recompiles while the field is unchanged. */
+    private persistent = new Map<string, { field: Field; resolved: string; resource: Resource }>();
     private defaultDims: [number, number] = [1920, 1080];
+    /** Format for Unknown-format outputs (native: swapchain format; web keeps float for oracle parity). */
+    private defaultFormat = ResourceFormat.RGBA32Float;
 
     constructor(
         public readonly device: Device,
@@ -127,8 +133,8 @@ export class RenderGraph {
     }
 
     /** Mirrors RenderGraph::setInput: binds an external resource to an unconnected input. */
-    setInput(ref: string, texture: Texture): void {
-        this.externalInputs.set(ref, texture);
+    setInput(ref: string, resource: Resource): void {
+        this.externalInputs.set(ref, resource);
         this.compiled = null;
     }
 
@@ -141,14 +147,20 @@ export class RenderGraph {
         this.compiled = null;
     }
 
-    /** Mirrors RenderGraph::onResize (graph output dimensions drive size-0 fields). */
-    onResize(width: number, height: number): void {
+    /** Mirrors RenderGraph::onResize(targetFbo): size-0 fields and Unknown formats follow the target. */
+    onResize(width: number, height: number, format?: ResourceFormat): void {
         this.defaultDims = [width, height];
+        if (format !== undefined && format !== ResourceFormat.Unknown) this.defaultFormat = format;
         this.compiled = null;
     }
 
-    /** Mirrors RenderGraph::getOutput. */
+    /** Mirrors RenderGraph::getOutput (texture outputs; see getOutputResource for buffers). */
     getOutput(ref: string): Texture | undefined {
+        const r = this.allocated.get(ref);
+        return r instanceof Texture ? r : undefined;
+    }
+
+    getOutputResource(ref: string): Resource | undefined {
         return this.allocated.get(ref);
     }
 
@@ -192,8 +204,8 @@ export class RenderGraph {
 
         // Per-pass CompileData carrying connectedResources: the already-reflected
         // source fields feeding this pass's inputs, renamed to the input field
-        // (mirrors RenderGraphCompiler::compilePasses). Topological order
-        // guarantees sources reflect before consumers.
+        // (mirrors RenderGraphCompiler::prepPassCompilationData). Topological
+        // order guarantees sources reflect before consumers.
         const reflections = new Map<string, ReturnType<RenderPass["reflect"]>>();
         const compileDatas = new Map<string, CompileData>();
         for (const name of order) {
@@ -203,16 +215,26 @@ export class RenderGraph {
                 const srcField = reflections.get(e.srcPass)?.getField(e.srcField);
                 if (srcField) connected.addConnectedField(e.dstField, srcField);
             }
-            const compileData: CompileData = { defaultTexDims: this.defaultDims, connectedResources: connected };
+            for (const [ref, res] of this.externalInputs) {
+                if (!ref.startsWith(`${name}.`)) continue;
+                const f = connected.addInput(ref.slice(name.length + 1), "External input resource");
+                if (res instanceof Texture) {
+                    f.format(res.format).resourceType(resourceTypeToFieldType(res.type), res.width, res.height, res.depth, res.sampleCount, res.mipCount, res.arraySize);
+                } else if (res instanceof Buffer) {
+                    f.rawBuffer(res.size);
+                }
+            }
+            const compileData: CompileData = { defaultTexDims: this.defaultDims, defaultTexFormat: this.defaultFormat, connectedResources: connected };
             compileDatas.set(name, compileData);
             reflections.set(name, this.passes.get(name)!.reflect(compileData));
         }
 
         const compiled: CompiledPass[] = [];
+        const livePersistent = new Set<string>();
         for (const name of order) {
             const pass = this.passes.get(name)!;
             const reflection = reflections.get(name)!;
-            const resources = new Map<string, Texture>();
+            const resources = new Map<string, Resource>();
 
             for (const field of reflection.fields) {
                 const key = `${name}.${field.name_}`;
@@ -237,29 +259,24 @@ export class RenderGraph {
                 }
 
                 // Optional outputs are only allocated when consumed: connected to an
-                // edge or marked as a graph output (native ResourceCache behavior —
+                // edge or marked as a graph output (RenderGraphCompiler::isResourceUsed —
                 // unallocated optional outputs read back as null in RenderData, which
                 // passes use to drive their is_valid_* defines).
+                const isGraphOutput = this.outputs.some((o) => o.pass === name && o.field === field.name_);
                 if (field.isOptional() && field.isOutput() && !field.isInput()) {
-                    const consumed =
-                        this.outputs.some((o) => o.pass === name && o.field === field.name_) ||
-                        this.edges.some((e) => e.srcPass === name && e.srcField === field.name_);
+                    const consumed = isGraphOutput || this.edges.some((e) => e.srcPass === name && e.srcField === field.name_);
                     if (!consumed) continue;
                 }
 
-                // Output / internal / input-output: allocate (merging connected inputs' requirements).
-                const merged = new Field(field.name_, field.desc_, field.visibility_).merge(field);
-                merged.resourceType = field.resourceType;
-                merged.width = field.width;
-                merged.height = field.height;
-                merged.depth = field.depth;
-                merged.mipCount = field.mipCount;
-                merged.arraySize = field.arraySize;
-                merged.sampleCount = field.sampleCount;
+                // Output / internal / input-output: allocate, merging the connected inputs'
+                // requirements (ResourceCache::registerField alias path).
+                const merged = field.clone();
+                if (isGraphOutput && merged.bindFlags_ !== ResourceBindFlags.None) merged.bindFlags_ |= ResourceBindFlags.ShaderResource;
                 for (const e of this.edges.filter((e) => e.srcPass === name && e.srcField === field.name_)) {
                     const dstField = reflections.get(e.dstPass)?.getField(e.dstField);
                     if (dstField) merged.merge(dstField);
                 }
+                if (!merged.isValid()) throw new RuntimeError(`RenderGraph: field '${key}' is invalid`);
                 // Input-output passthrough: bind the connected source instead of allocating.
                 if (field.isInput() && field.isOutput()) {
                     const edge = this.edges.find((e) => e.dstPass === name && e.dstField === field.name_);
@@ -271,38 +288,65 @@ export class RenderGraph {
                     }
                 }
 
-                const texture = this.allocateField(merged);
-                resources.set(field.name_, texture);
-                this.allocated.set(key, texture);
+                let resource: Resource;
+                const kept = merged.isPersistent() ? this.persistent.get(key) : undefined;
+                const resolved = this.resolvedKey(merged);
+                if (kept && kept.field.equals(merged) && kept.resolved === resolved) {
+                    resource = kept.resource;
+                } else {
+                    resource = this.allocateResource(merged);
+                    if (merged.isPersistent()) this.persistent.set(key, { field: merged, resolved, resource });
+                }
+                if (merged.isPersistent()) livePersistent.add(key);
+                resources.set(field.name_, resource);
+                this.allocated.set(key, resource);
             }
 
             pass.compile(ctx, compileDatas.get(name)!);
             compiled.push({ name, pass, resources });
         }
+        for (const key of this.persistent.keys()) if (!livePersistent.has(key)) this.persistent.delete(key);
         this.compiled = compiled;
         Logger.info(`RenderGraph '${this.name}' compiled: ${order.join(" -> ")}`);
     }
 
-    private allocateField(field: Field): Texture {
-        let format = field.format_ === ResourceFormat.Unknown ? ResourceFormat.RGBA32Float : field.format_;
+    /** Graph-default-dependent part of a field's allocation (size-0 dims, Unknown format). */
+    private resolvedKey(field: Field): string {
+        const format = field.format_ === ResourceFormat.Unknown ? this.defaultFormat : field.format_;
+        return `${field.width || this.defaultDims[0]}x${field.height || this.defaultDims[1]}|${format}`;
+    }
+
+    /** Mirrors ResourceCache::createResourceForPass. */
+    private allocateResource(field: Field): Resource {
+        const resolveBindFlags = field.bindFlags_ === ResourceBindFlags.None;
+        let bindFlags = field.bindFlags_;
+
+        if (field.type_ === FieldType.RawBuffer) {
+            if (resolveBindFlags) bindFlags = ResourceBindFlags.UnorderedAccess | ResourceBindFlags.ShaderResource;
+            return new Buffer(this.device, { size: field.width, bindFlags, memoryType: MemoryType.DeviceLocal, name: field.name_ });
+        }
+
+        let format = field.format_ === ResourceFormat.Unknown ? this.defaultFormat : field.format_;
         // WebGPU has no r8uint/r16uint storage textures: promote UAV-bound
         // narrow uint formats to r32uint (uint reads are value-identical).
-        const wantsUav = field.bindFlags_ === ResourceBindFlags.None || (field.bindFlags_ & ResourceBindFlags.UnorderedAccess) !== 0;
+        const wantsUav = resolveBindFlags || (bindFlags & ResourceBindFlags.UnorderedAccess) !== 0;
         if (wantsUav && (format === ResourceFormat.R8Uint || format === ResourceFormat.R16Uint)) {
             format = ResourceFormat.R32Uint;
         }
-        const bindFlags =
-            field.bindFlags_ === ResourceBindFlags.None
-                ? ResourceBindFlags.ShaderResource | ResourceBindFlags.UnorderedAccess | ResourceBindFlags.RenderTarget
-                : field.bindFlags_;
+        if (resolveBindFlags) {
+            let mask = ResourceBindFlags.UnorderedAccess | ResourceBindFlags.ShaderResource;
+            // WebGPU cannot render to 1D textures.
+            if ((field.isOutput() || field.isInternal()) && field.type_ !== FieldType.Texture1D) mask |= ResourceBindFlags.DepthStencil | ResourceBindFlags.RenderTarget;
+            bindFlags |= mask & this.device.getFormatBindFlags(format);
+        }
         return new Texture(this.device, {
-            type: field.resourceType === ResourceType.Texture3D ? ResourceType.Texture3D : ResourceType.Texture2D,
+            type: field.getResourceType(),
             width: field.width || this.defaultDims[0],
             height: field.height || this.defaultDims[1],
             depth: field.depth || 1,
-            arraySize: field.arraySize,
-            mipLevels: field.mipCount,
-            sampleCount: field.sampleCount,
+            arraySize: field.arraySize || 1,
+            mipLevels: field.mipCount || 1,
+            sampleCount: field.sampleCount || 1,
             format,
             bindFlags,
             name: field.name_,

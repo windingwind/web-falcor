@@ -5,7 +5,10 @@
 
 import type { Device } from "../Core/API/Device.js";
 import type { RenderContext } from "../Core/API/RenderContext.js";
-import type { Texture } from "../Core/API/Texture.js";
+import { Texture } from "../Core/API/Texture.js";
+import { Buffer } from "../Core/API/Buffer.js";
+import type { Resource } from "../Core/API/Resource.js";
+import type { ResourceFormat } from "../Core/API/Formats.js";
 import { Properties } from "../Utils/Properties.js";
 import { RenderPassReflection } from "./RenderPassReflection.js";
 import type { Scene } from "../Scene/Scene.js";
@@ -15,6 +18,8 @@ import { RuntimeError } from "../Core/Error.js";
 export interface CompileData {
     /** Default output dimensions (mirrors RenderPassHelpers::IOSize default). */
     defaultTexDims: [number, number];
+    /** Format given to Unknown-format outputs (mirrors CompileData::defaultTexFormat). */
+    defaultTexFormat?: ResourceFormat;
     /**
      * Reflection of the resources connected to this pass's inputs, keyed by the
      * input field name (mirrors CompileData::connectedResources). Passes like
@@ -26,14 +31,27 @@ export interface CompileData {
 /** Resource dictionary passed to execute (mirrors Falcor::RenderData). */
 export class RenderData {
     constructor(
-        private readonly resources: Map<string, Texture>,
+        private readonly resources: Map<string, Resource>,
         public readonly defaultTexDims: [number, number],
         /** Graph-wide key/value store (mirrors InternalDictionary; e.g. PRNG dimension). */
         public readonly dictionary: Map<string, unknown> = new Map(),
     ) {}
 
-    getTexture(name: string): Texture | undefined {
+    /** Mirrors RenderData::getResource (textures and raw buffers). */
+    getResource(name: string): Resource | undefined {
         return this.resources.get(name);
+    }
+
+    /** Mirrors RenderData::getTexture; undefined when unbound or a buffer field. */
+    getTexture(name: string): Texture | undefined {
+        const r = this.resources.get(name);
+        return r instanceof Texture ? r : undefined;
+    }
+
+    /** Raw-buffer fields (Field.rawBuffer). */
+    getBuffer(name: string): Buffer | undefined {
+        const r = this.resources.get(name);
+        return r instanceof Buffer ? r : undefined;
     }
 }
 

@@ -58,7 +58,8 @@ export class Texture extends Resource {
 
         const maxMips = 1 + Math.floor(Math.log2(Math.max(this.width, this.height, this.depth)));
         const requested = desc.mipLevels ?? kMaxPossible;
-        this.mipCount = this.sampleCount > 1 ? 1 : Math.min(requested, maxMips);
+        // WebGPU: multisampled and 1D textures are single-mip.
+        this.mipCount = this.sampleCount > 1 || desc.type === ResourceType.Texture1D ? 1 : Math.min(requested, maxMips);
 
         const is3D = desc.type === ResourceType.Texture3D;
         const isCube = desc.type === ResourceType.TextureCube;

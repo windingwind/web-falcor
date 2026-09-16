@@ -11,7 +11,7 @@ import { Sampler, type SamplerDesc } from "./Sampler.js";
 import { Fence } from "./Fence.js";
 import { GpuTimer } from "./GpuTimer.js";
 import { MemoryType, ResourceBindFlags, ResourceType } from "./Types.js";
-import { ResourceFormat, getFormatBytesPerBlock } from "./Formats.js";
+import { ResourceFormat, getFormatBindFlags, getFormatBytesPerBlock } from "./Formats.js";
 
 declare module "./Device.js" {
     interface Device {
@@ -28,6 +28,8 @@ declare module "./Device.js" {
             createCounter?: boolean,
         ): Buffer;
         createBufferFromDesc(desc: BufferDesc): Buffer;
+        /** Mirrors Device::getFormatBindFlags: bind flags supported by a texture format. */
+        getFormatBindFlags(format: ResourceFormat): ResourceBindFlags;
         /** Mirrors Device::createTexture1D/2D/3D/Cube. */
         createTexture2D(
             width: number,
@@ -70,6 +72,10 @@ Device.prototype.createStructuredBuffer = function (structSize, elementCount, bi
 
 Device.prototype.createBufferFromDesc = function (desc) {
     return new Buffer(this, desc);
+};
+
+Device.prototype.getFormatBindFlags = function (format) {
+    return getFormatBindFlags(format, (f) => this.hasFeature(f as GPUFeatureName));
 };
 
 Device.prototype.createTexture2D = function (width, height, format, arraySize = 1, mipLevels = kMaxPossible, initData, bindFlags = ResourceBindFlags.ShaderResource) {
