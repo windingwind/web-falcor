@@ -191,3 +191,34 @@ gpuTest("RenderGraphFields.requestRecompileRecompilesNextFrame", async ({ device
     expectEq(zoo.seen.get("scratch") !== scratch0, true, "requestRecompile() recompiles before the next execute");
     expectEq(zoo.recompileRequested, false, "request flag consumed");
 });
+
+/** Output with caller-chosen bind flags plus an optional input that only asks for ShaderResource. */
+class FlagPair extends RenderPass {
+    constructor(device: Device, private readonly outFlags: ResourceBindFlags) {
+        super(device);
+    }
+    override reflect(): RenderPassReflection {
+        const r = new RenderPassReflection();
+        r.addOutput("out", "producer").format(ResourceFormat.RGBA32Float).bindFlags(this.outFlags);
+        r.addInput("src", "SR-only consumer").bindFlags(SR).flags(FieldFlags.Optional);
+        return r;
+    }
+    override execute(): void {}
+}
+
+gpuTest("RenderGraphFields.srOnlyConsumerKeepsProducerWritable", async ({ device }) => {
+    const ctx = device.renderContext;
+    const flagsFor = (outFlags: ResourceBindFlags) => {
+        const graph = new RenderGraph(device, "SrOnly");
+        graph.addPass(new FlagPair(device, outFlags), "P");
+        graph.addPass(new FlagPair(device, outFlags), "C");
+        graph.addEdge("P.out", "C.src");
+        graph.onResize(8, 8);
+        graph.compile(ctx);
+        return graph.getOutput("P.out")!.bindFlags;
+    };
+    // ResourceCache::registerField decides resolution per alias before merging, so a None
+    // output stays writable even when every consumer only asks for ShaderResource.
+    expectEq(flagsFor(ResourceBindFlags.None), SR | UAV | RT, "None output + SR-only consumer resolves SR|UAV|RT");
+    expectEq(flagsFor(UAV), UAV | SR, "explicit UAV output + SR consumer merges to UAV|SR, nothing resolved");
+});

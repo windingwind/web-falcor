@@ -41,7 +41,7 @@ export class RenderGraph {
     private compiled: CompiledPass[] | null = null;
     private allocated = new Map<string, Resource>(); // "pass.field" -> resource
     /** Persistent fields keep their resource across recompiles while the field is unchanged. */
-    private persistent = new Map<string, { field: Field; resolved: string; resource: Resource }>();
+    private persistent = new Map<string, { field: Field; resolved: string; resolve: boolean; resource: Resource }>();
     private defaultDims: [number, number] = [1920, 1080];
     /** Format for Unknown-format outputs (native: swapchain format; web keeps float for oracle parity). */
     private defaultFormat = ResourceFormat.RGBA32Float;
@@ -272,9 +272,14 @@ export class RenderGraph {
                 // requirements (ResourceCache::registerField alias path).
                 const merged = field.clone();
                 if (isGraphOutput && merged.bindFlags_ !== ResourceBindFlags.None) merged.bindFlags_ |= ResourceBindFlags.ShaderResource;
+                // Resolve bind flags if the output or any connected input left them None
+                // (native computes this per alias before merge; merge ORs the flags).
+                let resolve = field.bindFlags_ === ResourceBindFlags.None;
                 for (const e of this.edges.filter((e) => e.srcPass === name && e.srcField === field.name_)) {
                     const dstField = reflections.get(e.dstPass)?.getField(e.dstField);
-                    if (dstField) merged.merge(dstField);
+                    if (!dstField) continue;
+                    resolve ||= dstField.bindFlags_ === ResourceBindFlags.None;
+                    merged.merge(dstField);
                 }
                 if (!merged.isValid()) throw new RuntimeError(`RenderGraph: field '${key}' is invalid`);
                 // Input-output passthrough: bind the connected source instead of allocating.
@@ -291,11 +296,11 @@ export class RenderGraph {
                 let resource: Resource;
                 const kept = merged.isPersistent() ? this.persistent.get(key) : undefined;
                 const resolved = this.resolvedKey(merged);
-                if (kept && kept.field.equals(merged) && kept.resolved === resolved) {
+                if (kept && kept.field.equals(merged) && kept.resolved === resolved && kept.resolve === resolve) {
                     resource = kept.resource;
                 } else {
-                    resource = this.allocateResource(merged);
-                    if (merged.isPersistent()) this.persistent.set(key, { field: merged, resolved, resource });
+                    resource = this.allocateResource(merged, resolve);
+                    if (merged.isPersistent()) this.persistent.set(key, { field: merged, resolved, resolve, resource });
                 }
                 if (merged.isPersistent()) livePersistent.add(key);
                 resources.set(field.name_, resource);
@@ -316,9 +321,8 @@ export class RenderGraph {
         return `${field.width || this.defaultDims[0]}x${field.height || this.defaultDims[1]}|${format}`;
     }
 
-    /** Mirrors ResourceCache::createResourceForPass. */
-    private allocateResource(field: Field): Resource {
-        const resolveBindFlags = field.bindFlags_ === ResourceBindFlags.None;
+    /** Mirrors ResourceCache::createResourceForPass (resolveBindFlags comes from registerField, see compile). */
+    private allocateResource(field: Field, resolveBindFlags: boolean): Resource {
         let bindFlags = field.bindFlags_;
 
         if (field.type_ === FieldType.RawBuffer) {
