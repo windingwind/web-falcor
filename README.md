@@ -30,14 +30,18 @@ GitHub at pinned versions — **no Falcor clone and no native build required**:
 
 ```sh
 npm install
-npm run setup:web   # fetch Falcor shader sources + slang-wasm (~30 MB, no clone)
+npm run setup:web   # fetch Falcor shader sources, SDK headers + slang-wasm (~30 MB, no clone)
 npm run typecheck
 npm run dev         # Mogwai dev server (needs a WebGPU browser)
 ```
 
-`setup:web` does not fetch media/test scenes or the RTXDI/NanoVDB SDK headers.
-The common passes (path tracer, tone mapper, accumulate, scene debugger, …)
-build and run without them; RTXDI and GridVolume passes need the full setup.
+`setup:web` also fetches the SDK shader headers the upstream shaders include:
+NanoVDB's `PNanoVDB.h` (pulled in by `Scene.slang`, so **every** scene-bound
+pass needs it) and the RTXDI SDK headers. They come from the public OpenVDB and
+RTXDI GitHub repos at the versions Falcor pins (byte-identical to its packman
+packages); the RTXDI headers are under NVIDIA's RTX SDKs license (see
+[THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md)). Media/test scenes are not
+fetched — see below.
 
 ### Example scenes
 

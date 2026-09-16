@@ -276,6 +276,7 @@
     "RenderPasses/FLIPPass/ComputeLuminance.cs.slang",
     "RenderPasses/FLIPPass/FLIPPass.cs.slang",
     "RenderPasses/FLIPPass/ToneMappers.slang",
+    "RenderPasses/FLIPPass/flip.hlsli",
     "RenderPasses/GBuffer/GBuffer/DepthPass.3d.slang",
     "RenderPasses/GBuffer/GBuffer/GBufferHelpers.slang",
     "RenderPasses/GBuffer/GBuffer/GBufferRT.cs.slang",
@@ -340,8 +341,7 @@
     "RenderPasses/WARDiffPathTracer/WARDiffPathTracer.rt.slang",
     "RenderPasses/WARDiffPathTracer/WarpedAreaReparam.slang",
     "RenderPasses/WhittedRayTracer/WhittedRayTracer.rt.slang",
-    "RenderPasses/WhittedRayTracer/WhittedRayTracerTypes.slang",
-    "RenderPasses/FLIPPass/flip.hlsli"
+    "RenderPasses/WhittedRayTracer/WhittedRayTracerTypes.slang"
   ],
   "localFiles": [
     "DefineTest.cs.slang",
@@ -432,35 +432,43 @@
   "externalFiles": [
     {
       "path": "nanovdb/PNanoVDB.h",
-      "url": "/Falcor/external/packman/nanovdb/include/nanovdb/PNanoVDB.h"
+      "url": "/Falcor/external/packman/nanovdb/include/nanovdb/PNanoVDB.h",
+      "upstream": "https://raw.githubusercontent.com/AcademySoftwareFoundation/openvdb/v9.1.0/nanovdb/nanovdb/PNanoVDB.h"
     },
     {
       "path": "rtxdi/RTXDI.h",
-      "url": "/Falcor/external/packman/rtxdi/rtxdi-sdk/include/rtxdi/RTXDI.h"
+      "url": "/Falcor/external/packman/rtxdi/rtxdi-sdk/include/rtxdi/RTXDI.h",
+      "upstream": "https://raw.githubusercontent.com/NVIDIAGameWorks/RTXDI/v1.3.0/rtxdi-sdk/include/rtxdi/RTXDI.h"
     },
     {
       "path": "rtxdi/ResamplingFunctions.hlsli",
-      "url": "/Falcor/external/packman/rtxdi/rtxdi-sdk/include/rtxdi/ResamplingFunctions.hlsli"
+      "url": "/Falcor/external/packman/rtxdi/rtxdi-sdk/include/rtxdi/ResamplingFunctions.hlsli",
+      "upstream": "https://raw.githubusercontent.com/NVIDIAGameWorks/RTXDI/v1.3.0/rtxdi-sdk/include/rtxdi/ResamplingFunctions.hlsli"
     },
     {
       "path": "rtxdi/Reservoir.hlsli",
-      "url": "/Falcor/external/packman/rtxdi/rtxdi-sdk/include/rtxdi/Reservoir.hlsli"
+      "url": "/Falcor/external/packman/rtxdi/rtxdi-sdk/include/rtxdi/Reservoir.hlsli",
+      "upstream": "https://raw.githubusercontent.com/NVIDIAGameWorks/RTXDI/v1.3.0/rtxdi-sdk/include/rtxdi/Reservoir.hlsli"
     },
     {
       "path": "rtxdi/RtxdiHelpers.hlsli",
-      "url": "/Falcor/external/packman/rtxdi/rtxdi-sdk/include/rtxdi/RtxdiHelpers.hlsli"
+      "url": "/Falcor/external/packman/rtxdi/rtxdi-sdk/include/rtxdi/RtxdiHelpers.hlsli",
+      "upstream": "https://raw.githubusercontent.com/NVIDIAGameWorks/RTXDI/v1.3.0/rtxdi-sdk/include/rtxdi/RtxdiHelpers.hlsli"
     },
     {
       "path": "rtxdi/RtxdiMath.hlsli",
-      "url": "/Falcor/external/packman/rtxdi/rtxdi-sdk/include/rtxdi/RtxdiMath.hlsli"
+      "url": "/Falcor/external/packman/rtxdi/rtxdi-sdk/include/rtxdi/RtxdiMath.hlsli",
+      "upstream": "https://raw.githubusercontent.com/NVIDIAGameWorks/RTXDI/v1.3.0/rtxdi-sdk/include/rtxdi/RtxdiMath.hlsli"
     },
     {
       "path": "rtxdi/RtxdiParameters.h",
-      "url": "/Falcor/external/packman/rtxdi/rtxdi-sdk/include/rtxdi/RtxdiParameters.h"
+      "url": "/Falcor/external/packman/rtxdi/rtxdi-sdk/include/rtxdi/RtxdiParameters.h",
+      "upstream": "https://raw.githubusercontent.com/NVIDIAGameWorks/RTXDI/v1.3.0/rtxdi-sdk/include/rtxdi/RtxdiParameters.h"
     },
     {
       "path": "rtxdi/RtxdiTypes.h",
-      "url": "/Falcor/external/packman/rtxdi/rtxdi-sdk/include/rtxdi/RtxdiTypes.h"
+      "url": "/Falcor/external/packman/rtxdi/rtxdi-sdk/include/rtxdi/RtxdiTypes.h",
+      "upstream": "https://raw.githubusercontent.com/NVIDIAGameWorks/RTXDI/v1.3.0/rtxdi-sdk/include/rtxdi/RtxdiTypes.h"
     }
   ]
 }

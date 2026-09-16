@@ -4,8 +4,8 @@
  * WITHOUT cloning or building upstream Falcor.
  *
  * The runtime compiles Slang -> WGSL in the browser (shaders are specialized
- * per-scene, so a build-time-only pipeline can't cover them), which needs two
- * things a fresh checkout doesn't have (both are .gitignored — see README):
+ * per-scene, so a build-time-only pipeline can't cover them), which needs three
+ * things a fresh checkout doesn't have (all .gitignored — see README):
  *
  *   1. The upstream Falcor shader *sources* (~340 .slang/.slangh text files).
  *      Fetched from GitHub at the pinned commit into Falcor/Source/** — the
@@ -14,11 +14,12 @@
  *      CMake build (that is only for the test oracles — see scripts below).
  *   2. The slang-wasm compiler (the official per-release build) into
  *      tools/slang-wasm/.
+ *   3. The SDK shader headers those sources include — nanovdb/PNanoVDB.h (pulled
+ *      in by Scene.slang, i.e. by EVERY scene-bound pass) and the RTXDI SDK
+ *      headers — from their public repos at Falcor's pinned versions, into the
+ *      packman link paths the dev server serves (manifest `externalFiles`).
  *
- * What this does NOT fetch: media/test scenes and the RTXDI/NanoVDB SDK headers
- * (obtained via Falcor's `setup.sh` for the full dev/test setup). The common
- * passes (path tracer, tone mapper, accumulate, scene debugger, ...) build and
- * run without them; RTXDI and GridVolume passes need the full setup.
+ * What this does NOT fetch: media/test scenes (see scripts/download-scenes.mjs).
  *
  * Usage: node scripts/setup-web.mjs [--skip-slang] [--skip-shaders]
  */
@@ -74,10 +75,14 @@ async function fetchWithRetry(url, read, attempts = 4) {
 const fetchText = (url) => fetchWithRetry(url, (res) => res.text());
 const fetchBuffer = (url) => fetchWithRetry(url, async (res) => Buffer.from(await res.arrayBuffer()));
 
-async function fetchShaders() {
-    const manifestPath = join(repoRoot, "packages/falcor/shaders/generated/shader-file-list.json");
+const manifestPath = join(repoRoot, "packages/falcor/shaders/generated/shader-file-list.json");
+function readManifest() {
     if (!existsSync(manifestPath)) throw new Error(`missing shader manifest: ${manifestPath}`);
-    const manifest = JSON.parse(readFileSync(manifestPath, "utf8"));
+    return JSON.parse(readFileSync(manifestPath, "utf8"));
+}
+
+async function fetchShaders() {
+    const manifest = readManifest();
 
     // (repo-relative dest, upstream URL) for every fetchable shader source.
     const jobs = [
@@ -104,7 +109,35 @@ async function fetchShaders() {
         throw new Error("shader fetch incomplete — see errors above");
     }
     console.log("  Falcor shader sources ready under Falcor/Source/");
-    console.log("  Note: RTXDI + GridVolume passes also need the RTXDI/NanoVDB headers (full Falcor setup.sh).");
+}
+
+/** SDK headers the shaders include (manifest externalFiles), fetched from their public
+ *  upstream copies into the packman link paths; paths a full setup already links are kept. */
+async function fetchExternalHeaders() {
+    const entries = (readManifest().externalFiles ?? []).filter((e) => e.upstream);
+    const jobs = entries.filter((e) => !existsSync(join(repoRoot, e.url)));
+    if (jobs.length === 0) {
+        console.log("SDK shader headers (NanoVDB, RTXDI) already present — skipping");
+        return;
+    }
+    console.log(`Fetching ${jobs.length} SDK shader headers (NanoVDB: MPL-2.0; RTXDI SDK: NVIDIA RTX SDKs license)`);
+    const failures = [];
+    await pool(jobs, async ({ url, upstream }) => {
+        try {
+            const text = await fetchText(upstream);
+            const dest = join(repoRoot, url);
+            mkdirSync(dirname(dest), { recursive: true });
+            writeFileSync(dest, text);
+        } catch (err) {
+            failures.push(`${upstream}: ${err.message}`);
+        }
+    });
+    if (failures.length > 0) {
+        console.error(`\n${failures.length} SDK header(s) failed to fetch:`);
+        for (const f of failures) console.error(`  ${f}`);
+        throw new Error("SDK header fetch incomplete — see errors above");
+    }
+    console.log("  SDK shader headers ready under Falcor/external/packman/");
 }
 
 async function fetchSlangWasm() {
@@ -144,6 +177,9 @@ async function fetchSlangWasm() {
 }
 
 const t0 = Date.now();
-if (!args.has("--skip-shaders")) await fetchShaders();
+if (!args.has("--skip-shaders")) {
+    await fetchShaders();
+    await fetchExternalHeaders();
+}
 if (!args.has("--skip-slang")) await fetchSlangWasm();
 console.log(`\nWeb setup complete in ${((Date.now() - t0) / 1000).toFixed(1)}s. Next: npm run typecheck && npm run dev`);

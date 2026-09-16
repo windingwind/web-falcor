@@ -44,3 +44,11 @@ feature (e.g. RTXDI), consult the upstream license before redistributing:
 - RTXGI: https://github.com/NVIDIAGameWorks/RTXGI/blob/main/License.txt
 - RTXDI: https://github.com/NVIDIAGameWorks/RTXDI/blob/main/LICENSE.txt
 - NRD: https://github.com/NVIDIAGameWorks/RayTracingDenoiser/blob/master/LICENSE.txt
+
+`npm run setup:web` downloads the SDK shader headers Falcor's shaders include
+into the untracked `Falcor/external/` tree of your checkout. They are fetched
+from the vendors' public repositories at the versions Falcor pins and are not
+committed to or redistributed by this repository:
+
+- NanoVDB `PNanoVDB.h` from [OpenVDB v9.1.0](https://github.com/AcademySoftwareFoundation/openvdb/tree/v9.1.0) — MPL-2.0
+- [RTXDI SDK v1.3.0](https://github.com/NVIDIAGameWorks/RTXDI/tree/v1.3.0) `rtxdi-sdk/include/rtxdi/` headers — NVIDIA RTX SDKs license (link above)
