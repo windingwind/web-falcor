@@ -134,7 +134,7 @@ gpuTest("MERLMaterial.lambertEvaluatesAndIntegratesToItsAlbedo", async ({ device
     console.error(`# MERL lambert integrated albedo: ${integrated.map((v) => v.x.toFixed(4)).join(", ")} (expect 0.6)`);
 
     // Once computed, the LUT drives BSDFProperties.diffuseReflectionAlbedo.
-    await scene.computeMERLAlbedoLUTs(device.renderContext);
+    await scene.computeMeasuredAlbedoLUTs(device.renderContext);
     const withLut = await evalBSDF(device, scene, [[[0, 0, 1], [0, 0, 1]]]);
     expectClose(withLut[3]!, albedo[1]!, 5e-3, "albedo LUT reported through BSDFProperties");
 });

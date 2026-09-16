@@ -15,6 +15,9 @@ export const kShaderOverrides: Readonly<Record<string, string>> = {
     "Utils/UI/TextRenderer.3d.slang": "WebFalcor/Overrides/Utils/UI/TextRenderer.3d.slang",
     "Rendering/Materials/MERLMaterial.slang": "WebFalcor/Overrides/Rendering/Materials/MERLMaterial.slang",
     "Rendering/Materials/MERLMaterialInstance.slang": "WebFalcor/Overrides/Rendering/Materials/MERLMaterialInstance.slang",
+    "Scene/Material/RGLMaterialData.slang": "WebFalcor/Overrides/Scene/Material/RGLMaterialData.slang",
+    "Rendering/Materials/RGLCommon.slang": "WebFalcor/Overrides/Rendering/Materials/RGLCommon.slang",
+    "Rendering/Materials/RGLMaterial.slang": "WebFalcor/Overrides/Rendering/Materials/RGLMaterial.slang",
     "Utils/Algorithm/BitonicSort.cs.slang": "WebFalcor/Overrides/Utils/Algorithm/BitonicSort.cs.slang",
     "Utils/Algorithm/ParallelReduction.cs.slang": "WebFalcor/Overrides/Utils/Algorithm/ParallelReduction.cs.slang",
     // ByteAddressBuffer atomics -> structured buffers with Atomic<uint> elements.

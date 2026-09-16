@@ -170,7 +170,8 @@ sys.modules.pop('webfalcor_scene', None)  # registerJsModule per call; defeat im
 from webfalcor_scene import (sceneBuilder, SceneBuilderFlags, _TriangleMesh,
     PointLight, DirectionalLight, DistantLight, RectLight, DiscLight, SphereLight,
     StandardMaterial, ClothMaterial, HairMaterial,
-    PBRTDiffuseMaterial, PBRTConductorMaterial, Camera, _makeTransform, _makeAABB, _makeEnvMap, _GridVolume, _Grid, _SDFGridCreate)
+    PBRTDiffuseMaterial, PBRTConductorMaterial, _MERLMaterial, _RGLMaterial,
+    Camera, _makeTransform, _makeAABB, _makeEnvMap, _GridVolume, _Grid, _SDFGridCreate)
 
 # Python-side vector types with arithmetic (upstream pyscenes do e.g. size / 2);
 # the JS bridge reads .x/.y/.z/.w off any object.
@@ -258,6 +259,18 @@ Material = StandardMaterial  # PYTHONDEPRECATED alias (upstream SDF/legacy pysce
 ClothMaterial = _guarded(ClothMaterial, _matProps)
 HairMaterial = _guarded(HairMaterial, _matProps)
 PBRTDiffuseMaterial = _guarded(PBRTDiffuseMaterial, _matProps)
+
+class MERLMaterial:
+    """Measured MERL BRDF (Scene/Material/MERLMaterial): MERLMaterial(name, path)."""
+    def __init__(self, name='', path=''):
+        self._o = _MERLMaterial(name, path)
+    def __getattr__(self, k): return getattr(object.__getattribute__(self, '_o'), k)
+
+class RGLMaterial:
+    """Measured RGL BSDF (Scene/Material/RGLMaterial): RGLMaterial(name, path) or .load(path)."""
+    def __init__(self, name='', path=''):
+        self._o = _RGLMaterial(name, path)
+    def __getattr__(self, k): return getattr(object.__getattribute__(self, '_o'), k)
 PBRTConductorMaterial = _guarded(PBRTConductorMaterial, _matProps)
 PointLight = _guarded(PointLight, _lightProps)
 DirectionalLight = _guarded(DirectionalLight, _lightProps)
@@ -418,6 +431,16 @@ async function runSceneScriptInternal(device: Device, source: string, baseUrl: s
         HairMaterial: (name = "") => new MaterialBridge(MaterialType.Hair, name),
         PBRTDiffuseMaterial: (name = "") => new MaterialBridge(MaterialType.PBRTDiffuse, name),
         PBRTConductorMaterial: (name = "") => new MaterialBridge(MaterialType.PBRTConductor, name),
+        _MERLMaterial: (name = "", path = "") => {
+            const m = new MaterialBridge(MaterialType.MERL, name);
+            if (path) m.load(path);
+            return m;
+        },
+        _RGLMaterial: (name = "", path = "") => {
+            const m = new MaterialBridge(MaterialType.RGL, name);
+            if (path) m.load(path);
+            return m;
+        },
         _makeTransform: makeTransform,
         _makeAABB: (min: VecLike, max: VecLike) => ({ min: { x: min.x, y: min.y, z: min.z }, max: { x: max.x, y: max.y, z: max.z } }),
         _makeEnvMap: (path: string) => ({ path, intensity: 1 }),

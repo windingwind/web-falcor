@@ -244,6 +244,10 @@ export class MaterialBridge {
 
     // Deferred texture loads (material.loadTexture(slot, path)); resolved in resolve().
     private _textures: { slot: string; path: string }[] = [];
+    /** Measured BRDF file (MERL `.binary` / RGL `.bsdf`), resolved with the textures. */
+    private _measured: { kind: "merl" | "rgl"; path: string } | null = null;
+    private _merl: import("./Material/MERLFile.js").MERLBRDF | null = null;
+    private _rgl: import("./Material/RGLFile.js").RGLMeasurement | null = null;
     private _texHandles: { texBaseColor?: number; texSpecular?: number; texEmissive?: number; texNormalMap?: number; texDisplacement?: number } = {};
 
     loadTexture(slot: string, path: string): void {
@@ -301,8 +305,28 @@ export class MaterialBridge {
         this._specularParams = new float4(this._specularParams.x, this._specularParams.y, m, this._specularParams.w);
     }
 
+    /** Mirrors RGLMaterial::loadBRDF / the MERLMaterial(path) constructor. */
+    load(path: unknown): void {
+        this._measured = { kind: this.materialType === MaterialType.RGL ? "rgl" : "merl", path: String(path) };
+    }
+
+    /** Fetches the measured BRDF, alongside resolveTextures (docs §9: async asset IO). */
+    async resolveMeasured(baseUrl: string, resolver = AssetResolver.getDefaultResolver()): Promise<void> {
+        if (!this._measured) return;
+        const url = await resolveAssetUrl(this._measured.path, baseUrl, AssetCategory.Any, resolver);
+        if (this._measured.kind === "rgl") {
+            const { loadRGLFile } = await import("./Material/RGLFile.js");
+            this._rgl = await loadRGLFile(url);
+        } else {
+            const { loadMERLBinary } = await import("./Material/MERLFile.js");
+            this._merl = await loadMERLBinary(url);
+        }
+    }
+
     toDesc(): SceneMaterialDesc {
         const emissive = this._emissiveColor.x !== 0 || this._emissiveColor.y !== 0 || this._emissiveColor.z !== 0;
+        if (this._merl) return { name: this.name, header: { materialType: MaterialType.MERL }, basic: {}, merl: this._merl };
+        if (this._rgl) return { name: this.name, header: { materialType: MaterialType.RGL }, basic: {}, rgl: this._rgl };
         return {
             name: this.name,
             header: {
@@ -880,7 +904,10 @@ export class SceneBuilderBridge {
         }
 
         // Load deferred material textures (material.loadTexture()).
-        for (const mat of new Set(this.meshMaterials)) await mat.resolveTextures(baseUrl, textureManager, this.assetResolver, this.hasFlag(SceneBuilderFlags.AssumeLinearSpaceTextures));
+        for (const mat of new Set(this.meshMaterials)) {
+            await mat.resolveTextures(baseUrl, textureManager, this.assetResolver, this.hasFlag(SceneBuilderFlags.AssumeLinearSpaceTextures));
+            await mat.resolveMeasured(baseUrl, this.assetResolver);
+        }
 
         // Builder-added meshes (instanced via nodes).
         const materialIDs = new Map<MaterialBridge, number>();

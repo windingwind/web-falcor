@@ -37,3 +37,50 @@ void main(uint3 tid: SV_DispatchThreadID)
     // Also report the reported albedo so the LUT path is observable.
     gResults[tid.x] = float4(f, mi.getProperties(sd).diffuseReflectionAlbedo.g);
 }
+
+/// Importance-sampling probe: draws samples from the material's own sampling
+/// routine and accumulates the returned weights, whose mean estimates the
+/// directional albedo. Disagreement with a uniform-hemisphere integral means the
+/// sampling distribution and the evaluation disagree.
+cbuffer SampleCB
+{
+    uint gSampleCount;   ///< Samples per incident direction.
+    uint gSampleMtlID;
+    uint gDirCount;      ///< Number of incident directions.
+}
+
+StructuredBuffer<float4> gIncident;
+RWStructuredBuffer<float4> gSampleSums;
+
+[numthreads(64, 1, 1)]
+void mainSample(uint3 tid: SV_DispatchThreadID)
+{
+    if (tid.x >= gDirCount) return;
+
+    ShadingData sd;
+    sd.frame = ShadingFrame::createIdentity();
+    sd.faceN = sd.frame.N;
+    sd.frontFacing = true;
+    sd.mtl = gScene.materials.getMaterialHeader(gSampleMtlID);
+    sd.materialID = gSampleMtlID;
+    sd.IoR = 1.f;
+    sd.V = normalize(gIncident[tid.x].xyz);
+
+    let lod = ExplicitLodTextureSampler(0.f);
+    let mi = gScene.materials.getMaterialInstance(sd, lod);
+    UniformSampleGenerator sg = UniformSampleGenerator(uint2(tid.x, 0), 0);
+
+    float3 sum = float3(0.f);
+    uint valid = 0;
+    for (uint i = 0; i < gSampleCount; i++)
+    {
+        BSDFSample result;
+        if (mi.sample(sd, sg, result, true) && result.pdf > 0.f)
+        {
+            sum += result.weight;
+            valid++;
+        }
+    }
+    // Mean weight over all attempts: failed samples contribute zero, as in a path tracer.
+    gSampleSums[tid.x] = float4(sum / max(gSampleCount, 1u), float(valid));
+}

@@ -36,8 +36,9 @@ import {
     type MeshDescData,
     type StaticVertex,
 } from "./SceneData.js";
-import { packBasicMaterialBlob, packMERLMaterialBlob, AlphaMode, MaterialType, TextureHandleMode, type BasicMaterialDesc, type MaterialHeaderDesc } from "./Material/MaterialData.js";
+import { packBasicMaterialBlob, packMERLMaterialBlob, packRGLMaterialBlob, AlphaMode, MaterialType, TextureHandleMode, type BasicMaterialDesc, type MaterialHeaderDesc } from "./Material/MaterialData.js";
 import { kMERLAlbedoLUTSize, type MERLBRDF } from "./Material/MERLFile.js";
+import { kRGLAlbedoLUTSize, type RGLMeasurement } from "./Material/RGLFile.js";
 import type { RenderContext } from "../Core/API/RenderContext.js";
 import { assert, RuntimeError } from "../Core/Error.js";
 import type { NDSDFGrid } from "./SDFs/NDSDFGrid.js";
@@ -88,6 +89,8 @@ export interface SceneMaterialDesc {
     basic: BasicMaterialDesc;
     /** Measured MERL BRDF; its table and albedo LUT live in the shared material buffer. */
     merl?: MERLBRDF;
+    /** Measured RGL BSDF; its tables, CDFs and albedo LUT live in the shared material buffer. */
+    rgl?: RGLMeasurement;
 }
 
 export class Scene {
@@ -161,6 +164,8 @@ export class Scene {
     private materialDescs: SceneMaterialDesc[] = [];
     /** Byte offsets of each MERL material's table and albedo LUT in materialBuffer0. */
     private readonly merlOffsets = new Map<number, { data: number; lut: number }>();
+    /** Element offsets of each RGL material's tables in materialBuffer0. */
+    private readonly rglOffsets = new Map<number, Record<string, number>>();
     private lcMeshes: SceneMeshDesc[] = [];
     private lcTextureManager: TextureManager = new TextureManager();
     private emissiveTriangleCount = 0;
@@ -481,21 +486,49 @@ export class Scene {
         // material records its byte offsets (§9: no binding arrays in WGSL).
         this.materialCount = materials.length;
         this.materialDescs = materials;
+        // Every measured material appends its arrays; offsets are handed to the shader.
+        const regions: { at: number; data: Float32Array }[] = [];
         let bufferSize = 0;
+        const append = (data: Float32Array) => {
+            const at = bufferSize;
+            regions.push({ at, data });
+            bufferSize += data.byteLength;
+            return at;
+        };
+        const reserve = (floats: number) => {
+            const at = bufferSize;
+            bufferSize += floats * 4;
+            return at;
+        };
         materials.forEach((m, i) => {
-            if (!m.merl) return;
-            const dataBytes = m.merl.data.byteLength;
-            this.merlOffsets.set(i, { data: bufferSize, lut: bufferSize + dataBytes });
-            bufferSize += dataBytes + kMERLAlbedoLUTSize * 16;
+            if (m.merl) {
+                const data = append(m.merl.data);
+                this.merlOffsets.set(i, { data, lut: reserve(kMERLAlbedoLUTSize * 4) });
+            } else if (m.rgl) {
+                const r = m.rgl;
+                // RGL addresses its tables by element index (see packRGLMaterialBlob).
+                const offsets: Record<string, number> = {};
+                const put = (key: string, data: Float32Array) => (offsets[key] = append(data) / 4);
+                put("theta", r.thetaI);
+                put("phi", r.phiI);
+                put("sigma", r.sigma);
+                put("ndf", r.ndf);
+                put("vndf", r.vndf);
+                put("lumi", r.luminance);
+                put("rgb", r.rgb);
+                put("vndfMarginal", r.vndfMarginal);
+                put("lumiMarginal", r.lumiMarginal);
+                put("vndfConditional", r.vndfConditional);
+                put("lumiConditional", r.lumiConditional);
+                offsets["albedoLUT"] = reserve(kRGLAlbedoLUTSize * 4) / 4;
+                this.rglOffsets.set(i, offsets);
+            }
         });
         const materialBuffer = new Uint8Array(Math.max(bufferSize, 16));
-        materials.forEach((m, i) => {
-            if (!m.merl) return;
-            materialBuffer.set(new Uint8Array(m.merl.data.buffer, m.merl.data.byteOffset, m.merl.data.byteLength), this.merlOffsets.get(i)!.data);
-        });
+        for (const r of regions) materialBuffer.set(new Uint8Array(r.data.buffer, r.data.byteOffset, r.data.byteLength), r.at);
         const blobBytes = new Uint8Array(materials.length * 128);
         materials.forEach((m, i) => {
-            this.materialTypes.add(m.merl ? MaterialType.MERL : (m.header?.materialType ?? MaterialType.Standard));
+            this.materialTypes.add(m.merl ? MaterialType.MERL : m.rgl ? MaterialType.RGL : (m.header?.materialType ?? MaterialType.Standard));
             blobBytes.set(this.packMaterial(m, i), i * 128);
         });
         make("materialData", blobBytes, 128);
@@ -625,6 +658,18 @@ export class Scene {
             const offsets = this.merlOffsets.get(index)!;
             return packMERLMaterialBlob(header, { dataOffset: offsets.data, albedoLUTOffset: offsets.lut, extraData: m.merl.extraData });
         }
+        if (m.rgl) {
+            const o = this.rglOffsets.get(index)!;
+            return packRGLMaterialBlob(header, {
+                phiSize: m.rgl.phiI.length,
+                thetaSize: m.rgl.thetaI.length,
+                sigmaSize: m.rgl.sigmaSize,
+                ndfSize: m.rgl.ndfSize,
+                vndfSize: m.rgl.vndfSize,
+                lumiSize: m.rgl.lumiSize,
+                offsets: o as unknown as Parameters<typeof packRGLMaterialBlob>[1]["offsets"],
+            });
+        }
         if (header.alphaMode === undefined) header.alphaMode = this.deriveAlphaMode(header, m.basic);
         return packBasicMaterialBlob(header, m.basic);
     }
@@ -635,16 +680,21 @@ export class Scene {
      * buffer. Native precomputes this per material (and caches it as a `.dds`);
      * the web integrates the live scene, which is the same BSDFIntegrator run.
      */
-    async computeMERLAlbedoLUTs(ctx: RenderContext): Promise<void> {
-        if (this.merlOffsets.size === 0) return;
+    async computeMeasuredAlbedoLUTs(ctx: RenderContext): Promise<void> {
+        const targets: [number, number][] = [
+            ...[...this.merlOffsets].map(([id, o]) => [id, o.lut] as [number, number]),
+            ...[...this.rglOffsets].map(([id, o]) => [id, o["albedoLUT"]! * 4] as [number, number]),
+        ];
+        if (targets.length === 0) return;
         const { BSDFIntegrator } = await import("../Rendering/Materials/BSDFIntegrator.js");
         const integrator = new BSDFIntegrator(this.device, this);
-        const cosThetas = Array.from({ length: kMERLAlbedoLUTSize }, (_v, i) => (i + 1) / kMERLAlbedoLUTSize);
-        for (const [materialID, offsets] of this.merlOffsets) {
+        const size = kMERLAlbedoLUTSize; // MERL and RGL both use 256
+        const cosThetas = Array.from({ length: size }, (_v, i) => (i + 1) / size);
+        for (const [materialID, byteOffset] of targets) {
             const albedos = await integrator.integrateIsotropic(ctx, materialID, cosThetas);
-            const lut = new Float32Array(kMERLAlbedoLUTSize * 4);
+            const lut = new Float32Array(size * 4);
             albedos.forEach((a, i) => lut.set([a.x, a.y, a.z, 1], i * 4));
-            this.buffers["materialBuffer0"]!.setBlob(new Uint8Array(lut.buffer), offsets.lut);
+            this.buffers["materialBuffer0"]!.setBlob(new Uint8Array(lut.buffer), byteOffset);
         }
     }
 
@@ -1179,6 +1229,7 @@ export class Scene {
             WEBFALCOR_MTL_STANDARD: this.materialTypes.has(MaterialType.Standard) || this.materialTypes.size === 0 ? 1 : 0,
             WEBFALCOR_MTL_CLOTH: this.materialTypes.has(MaterialType.Cloth) ? 1 : 0,
             WEBFALCOR_MTL_MERL: this.materialTypes.has(MaterialType.MERL) ? 1 : 0,
+            WEBFALCOR_MTL_RGL: this.materialTypes.has(MaterialType.RGL) ? 1 : 0,
             WEBFALCOR_MTL_HAIR: this.materialTypes.has(MaterialType.Hair) ? 1 : 0,
             WEBFALCOR_MTL_PBRT_DIFFUSE: this.materialTypes.has(MaterialType.PBRTDiffuse) ? 1 : 0,
             WEBFALCOR_MTL_PBRT_DIFFUSE_TRANSMISSION: this.materialTypes.has(MaterialType.PBRTDiffuseTransmission) ? 1 : 0,

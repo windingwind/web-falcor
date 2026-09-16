@@ -134,6 +134,60 @@ export function packMERLMaterialBlob(header: MaterialHeaderDesc, merl: MERLMater
     return new Uint8Array(blob);
 }
 
+/**
+ * Mirrors RGLMaterialData.slang. Web divergence (docs §9): every `*BufID` is an
+ * *element* offset (float index) into the single shared material buffer rather
+ * than a buffer index, and `texAlbedoLUT` likewise addresses the LUT inside it.
+ */
+export interface RGLMaterialDesc {
+    phiSize: number;
+    thetaSize: number;
+    sigmaSize: [number, number];
+    ndfSize: [number, number];
+    vndfSize: [number, number];
+    lumiSize: [number, number];
+    /** Element offsets, in the order RGLMaterialData declares the buffers. */
+    offsets: {
+        theta: number;
+        phi: number;
+        sigma: number;
+        ndf: number;
+        vndf: number;
+        lumi: number;
+        rgb: number;
+        vndfMarginal: number;
+        lumiMarginal: number;
+        vndfConditional: number;
+        lumiConditional: number;
+        albedoLUT: number;
+    };
+}
+
+/** Packs a 128-byte MaterialDataBlob for an RGL material (RGLMaterialData layout). */
+export function packRGLMaterialBlob(header: MaterialHeaderDesc, rgl: RGLMaterialDesc): Uint8Array {
+    const blob = new ArrayBuffer(128);
+    const u32 = new Uint32Array(blob);
+    const dv = new DataView(blob);
+    u32.set(packMaterialHeader({ ...header, materialType: MaterialType.RGL, isBasicMaterial: false }), 0);
+
+    let off = 16;
+    const put = (v: number) => {
+        dv.setUint32(off, v, true);
+        off += 4;
+    };
+    put(rgl.phiSize);
+    put(rgl.thetaSize);
+    for (const size of [rgl.sigmaSize, rgl.ndfSize, rgl.vndfSize, rgl.lumiSize]) {
+        put(size[0]);
+        put(size[1]);
+    }
+    const o = rgl.offsets;
+    for (const v of [o.theta, o.phi, o.sigma, o.ndf, o.vndf, o.lumi, o.rgb, o.vndfMarginal, o.lumiMarginal, o.vndfConditional, o.lumiConditional]) put(v);
+    put(0); // samplerID
+    put(o.albedoLUT);
+    return new Uint8Array(blob);
+}
+
 export interface BasicMaterialDesc {
     baseColor?: float4;
     /** occlusion (R), roughness (G), metallic (B) in MetalRough mode. */

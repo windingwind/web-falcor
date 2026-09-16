@@ -1,0 +1,14 @@
+# RGL measured-BSDF oracle: unit quad with a measured material from the RGL
+# database (rgl.epfl.ch/materials, CC0), lit by one point light.
+# Fetch the measurement with: npm run download:assets -- rgl
+rglMat = RGLMaterial('rgl', 'rgl/acrylic_felt_green_rgb.bsdf')
+
+quadMesh = TriangleMesh.createQuad(float2(1.0, 1.0))
+meshID = sceneBuilder.addTriangleMesh(quadMesh, rglMat)
+nodeID = sceneBuilder.addNode('quad', Transform(translation=float3(0.5, 0.5, 0.0), rotationEulerDeg=float3(90.0, 0.0, 0.0)))
+sceneBuilder.addMeshInstance(nodeID, meshID)
+
+light = PointLight('oracleLight')
+light.position = float3(0.5, 0.5, 1.5)
+light.intensity = float3(3.0, 3.0, 3.0)
+sceneBuilder.addLight(light)
