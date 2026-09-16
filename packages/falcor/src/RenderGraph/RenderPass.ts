@@ -131,6 +131,19 @@ export function createPass(device: Device, type: string, props: Properties | Rec
     return pass;
 }
 
+/**
+ * Mirrors loadRenderPassLibrary / PluginManager::loadPlugin for the web: dynamically
+ * imports a JS module whose top level calls registerRenderPass(); returns the pass
+ * types it added. Native loads .dll/.so plugins from the plugins directory instead.
+ */
+export async function loadRenderPassLibrary(url: string): Promise<string[]> {
+    const before = new Set(registry.keys());
+    // Plugins may import the package or use this hook (blob:/data: modules can't resolve bare specifiers).
+    (globalThis as { webFalcorPlugins?: unknown }).webFalcorPlugins = { registerRenderPass };
+    await import(/* @vite-ignore */ url);
+    return [...registry.keys()].filter((type) => !before.has(type));
+}
+
 export function getRegisteredRenderPasses(): string[] {
     return [...registry.keys()];
 }
