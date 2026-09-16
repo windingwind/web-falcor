@@ -70,8 +70,9 @@ gpuTest("GBufferRaster.allChannelsMatchGBufferRT", async ({ device }) => {
     const ctx = device.renderContext;
     const size = 128;
 
-    // 16 raster channels -> 2 batches (8 + 8); pnFwidth is raster-only (native GBufferRT lacks it).
-    const shared = ["posW", "normW", "tangentW", "faceNormalW", "texC", "texGrads", "mvec", "mtlData", "guideNormalW", "diffuseOpacity", "specRough", "emissive", "viewW", "linearZ", "mask"];
+    // 17 raster channels -> 3 batches; pnFwidth is raster-only (native GBufferRT lacks it).
+    // vbuffer switches the raster pass to vertex pulling (triangle index + barycentrics).
+    const shared = ["posW", "normW", "tangentW", "faceNormalW", "texC", "texGrads", "mvec", "mtlData", "guideNormalW", "diffuseOpacity", "specRough", "emissive", "viewW", "linearZ", "mask", "vbuffer"];
     const render = async (passType: string) => {
         const channels = passType === "GBufferRaster" ? [...shared, "pnFwidth"] : shared;
         const g = new RenderGraph(device, passType);
@@ -154,6 +155,25 @@ gpuTest("GBufferRaster.allChannelsMatchGBufferRT", async ({ device }) => {
         for (let c = 0; c < 4; c++) if (rt["mtlData"]!.u32[i * 4 + c] !== raster["mtlData"]!.u32[i * 4 + c]) { mtlBad++; break; }
     }
     expectEq(mtlBad <= hits * 0.01, true, `mtlData mismatches ${mtlBad}`);
+    // vbuffer: packed hit header (instance/primitive) exact, barycentrics within raster precision.
+    {
+        const f32 = (u: number) => new Float32Array(new Uint32Array([u]).buffer)[0]!;
+        let headerBad = 0;
+        let baryBad = 0;
+        for (let i = 0; i < size * size; i++) {
+            if (rt["mask"]!.f32[i] !== 1 || raster["mask"]!.f32[i] !== 1) continue;
+            const a = rt["vbuffer"]!.u32;
+            const b = raster["vbuffer"]!.u32;
+            if (a[i * 4] !== b[i * 4] || a[i * 4 + 1] !== b[i * 4 + 1]) {
+                headerBad++;
+                continue;
+            }
+            if (Math.abs(f32(a[i * 4 + 2]!) - f32(b[i * 4 + 2]!)) > 2e-3 || Math.abs(f32(a[i * 4 + 3]!) - f32(b[i * 4 + 3]!)) > 2e-3) baryBad++;
+        }
+        console.error(`# gbuffer vbuffer: headerBad=${headerBad} baryBad=${baryBad}`);
+        expectEq(headerBad <= hits * 0.01, true, `vbuffer header mismatches ${headerBad}`);
+        expectEq(baryBad <= hits * 0.001, true, `vbuffer barycentric outliers ${baryBad}`);
+    }
     // Derivative-based channels: RT ray differentials vs. raster ddx/ddy — finite, same sign/scale.
     for (const ch of ["texGrads", "pnFwidth"]) {
         let finite = 0;

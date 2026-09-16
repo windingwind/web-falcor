@@ -5,7 +5,9 @@
  * upstream does in execute()). WebGPU has no rasterizer-ordered views, so the
  * upstream UAV "extra" channels are render targets here: connected channels are
  * batched into groups of <= 8 targets and the geometry is drawn once per batch
- * (docs §9). The vbuffer channel needs SV_PrimitiveID (see VBufferRaster).
+ * (docs §9). The vbuffer channel needs SV_PrimitiveID: when it is connected the
+ * pass switches to non-indexed vertex pulling (WEBFALCOR_VERTEX_PULLING), like
+ * VBufferRaster, so the triangle index and barycentrics are available.
  */
 
 import {
@@ -70,6 +72,7 @@ const kChannels: { name: string; texname: string; format: ResourceFormat; desc: 
     { name: "pnFwidth", texname: "gPosNormalFwidth", format: ResourceFormat.RG32Float, desc: "Position and guide normal filter width" },
     { name: "linearZ", texname: "gLinearZAndDeriv", format: ResourceFormat.RG32Float, desc: "Linear z (and derivative)" },
     { name: "mask", texname: "gMask", format: ResourceFormat.R32Float, desc: "Mask" },
+    { name: "vbuffer", texname: "gVBuffer", format: ResourceFormat.RGBA32Uint, desc: "Visibility buffer" },
 ];
 type Channel = (typeof kChannels)[number];
 
@@ -87,6 +90,7 @@ interface Variant {
 export class GBufferRaster extends RenderPass {
     private variants = new Map<string, Variant>();
     private vao: Vao | null = null;
+    private pullVao: Vao | null = null;
     /** Stand-in color target when only the depth output is consumed. */
     private scratchTarget: Texture | null = null;
     private outputSize = IOSize.Default;
@@ -192,8 +196,8 @@ export class GBufferRaster extends RenderPass {
     }
 
     /** Compiles the program for one batch of channels (is_valid_/LOC_ defines pick the targets). */
-    private getVariant(batch: Channel[]): Variant {
-        const key = `${batch.map((c) => c.texname).join(",")}|${this.useAlphaTest}|${this.adjustShadingNormals}|${this.forceCullMode ? this.cullMode : -1}`;
+    private getVariant(batch: Channel[], pulling: boolean): Variant {
+        const key = `${batch.map((c) => c.texname).join(",")}|${pulling}|${this.useAlphaTest}|${this.adjustShadingNormals}|${this.forceCullMode ? this.cullMode : -1}`;
         const cached = this.variants.get(key);
         if (cached) return cached;
 
@@ -204,7 +208,7 @@ export class GBufferRaster extends RenderPass {
             defines.add(`is_valid_${ch.texname}`, loc >= 0 ? 1 : 0);
             defines.add(`LOC_${ch.texname}`, Math.max(loc, 0));
         }
-        defines.add("is_valid_gVBuffer", 0);
+        defines.add("WEBFALCOR_VERTEX_PULLING", pulling ? 1 : 0);
         defines.add("USE_ALPHA_TEST", this.useAlphaTest ? 1 : 0);
         defines.add("ADJUST_SHADING_NORMALS", this.adjustShadingNormals ? 1 : 0);
 
@@ -225,7 +229,7 @@ export class GBufferRaster extends RenderPass {
         const root = makeRootVar(vars);
 
         const state = new GraphicsState(this.device).setKernels(vs, ps);
-        state.setVao(this.getVao());
+        state.setVao(pulling ? this.getPullVao() : this.getVao());
         // Web default = no culling so raster coverage equals the software-RT passes (native default: Back); forceCullMode overrides.
         state.setRasterizerState(RasterizerState.create(new RasterizerStateDesc().setCullMode(this.forceCullMode ? this.cullMode : CullMode.None)));
         state.setDepthStencilState(DepthStencilState.create(new DepthStencilStateDesc()));
@@ -261,10 +265,24 @@ export class GBufferRaster extends RenderPass {
         return this.vao;
     }
 
+    /** Vertex-pulling layout: only the per-instance draw-ID stream (geometry comes from scene buffers). */
+    private getPullVao(): Vao {
+        if (this.pullVao) return this.pullVao;
+        const vertexLayout = new VertexLayout();
+        const ib = new VertexBufferLayout();
+        ib.addElement("DRAW_ID", 0, ResourceFormat.R32Uint, 1, 0);
+        ib.stride = 4;
+        ib.setInputClass(InputClass.PerInstanceData, 1);
+        vertexLayout.addBufferLayout(0, ib);
+        this.pullVao = new Vao(Topology.TriangleList, vertexLayout, [this.scene!.getMeshDrawData().drawIDBuffer]);
+        return this.pullVao;
+    }
+
     override setScene(scene: typeof this.scene): void {
         super.setScene(scene);
         this.variants.clear(); // programs depend on scene defines
         this.vao = null;
+        this.pullVao = null;
     }
 
     override execute(ctx: RenderContext, renderData: RenderData): void {
@@ -297,12 +315,15 @@ export class GBufferRaster extends RenderPass {
             targets = [{ channel: kChannels[0]!, texture: this.scratchTarget }];
         }
 
+        // The vbuffer channel needs the triangle index: pull vertices (non-indexed) for every batch.
+        const pulling = targets.some((t) => t.channel.name === "vbuffer");
+
         // One geometry pass per batch of <= 8 targets. Each batch re-resolves
         // visibility itself (depth cleared, Less + write): identical draw order and
         // vertex math give identical depth, so the batches agree per pixel.
         for (let b = 0; b < targets.length; b += kMaxTargetsPerBatch) {
             const batch = targets.slice(b, b + kMaxTargetsPerBatch);
-            const variant = this.getVariant(batch.map((t) => t.channel));
+            const variant = this.getVariant(batch.map((t) => t.channel), pulling);
 
             const fbo = new Fbo();
             batch.forEach((t, i) => fbo.attachColorTarget(t.texture, i));
@@ -326,9 +347,14 @@ export class GBufferRaster extends RenderPass {
             pass.setViewport(0, 0, fbo.width, fbo.height, 0, 1);
             for (const { index, group } of bindGroups) pass.setBindGroup(index, group);
             vao.vertexBuffers.forEach((vb, i) => pass.setVertexBuffer(i, vb.gpuBuffer));
-            pass.setIndexBuffer(vao.indexBuffer!.gpuBuffer, vao.getGpuIndexFormat());
-            for (const draw of this.scene.getMeshDrawData().draws) {
-                pass.drawIndexed(draw.indexCount, 1, draw.firstIndex, draw.baseVertex, draw.firstInstance);
+            if (pulling) {
+                // Non-indexed: vertexID counts 0..3*triCount per draw (vertex pulling).
+                for (const draw of this.scene.getMeshDrawData().draws) pass.draw(draw.indexCount, 1, 0, draw.firstInstance);
+            } else {
+                pass.setIndexBuffer(vao.indexBuffer!.gpuBuffer, vao.getGpuIndexFormat());
+                for (const draw of this.scene.getMeshDrawData().draws) {
+                    pass.drawIndexed(draw.indexCount, 1, draw.firstIndex, draw.baseVertex, draw.firstInstance);
+                }
             }
             pass.end();
         }
