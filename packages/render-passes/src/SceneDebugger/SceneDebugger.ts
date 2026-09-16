@@ -13,6 +13,7 @@ import {
     ComputePass,
     FieldFlags,
     MemoryType,
+    PixelDebug,
     Properties,
     RenderData,
     RenderPass,
@@ -70,6 +71,9 @@ const kModeDesc: Record<string, string> = {
 export class SceneDebugger extends RenderPass {
     private pass: ComputePass | null = null;
     private frameCount = 0;
+    /** Mirrors mpPixelDebug (UI under "Debugging"; left click selects the pixel). */
+    readonly pixelDebug = new PixelDebug(this.device);
+    private frameDim: [number, number] = [0, 0];
     private mode = kModes["FaceNormal"]!;
     private bsdfProperty = 0;
     // Remaining SceneDebuggerParams (native defaults).
@@ -115,6 +119,16 @@ export class SceneDebugger extends RenderPass {
         ui.checkbox("Show volumes", this.showVolumes, (v) => (this.showVolumes = v));
         ui.slider("Volume density scale", this.volumeDensityScale, 0, 1000, 0.1, (v) => (this.volumeDensityScale = v));
         ui.text(`Description: ${kModeDesc[name(kModes, this.mode)] ?? ""}`);
+        this.pixelDebug.renderUI(ui.group("Debugging"), () => (this.pass = null));
+    }
+
+    /** Mirrors SceneDebugger::onMouseEvent: left click selects the inspected pixel (and the debug pixel). */
+    onMouseEvent(ev: { type: "buttonDown" | "buttonUp" | "move"; button?: "left" | "right" | "middle"; pos: [number, number] }): boolean {
+        if (ev.type === "buttonDown" && ev.button === "left") {
+            const [w, h] = this.frameDim;
+            this.selectedPixel = [Math.min(Math.max(Math.trunc(ev.pos[0] * w), 0), Math.max(w - 1, 0)), Math.min(Math.max(Math.trunc(ev.pos[1] * h), 0), Math.max(h - 1, 0))];
+        }
+        return this.pixelDebug.onMouseEvent(ev);
     }
 
     override reflect(compileData: CompileData): RenderPassReflection {
@@ -140,9 +154,12 @@ export class SceneDebugger extends RenderPass {
         if (!this.scene) return;
         const output = renderData.getTexture("output")!;
         const [w, h] = [output.width, output.height];
+        this.frameDim = [w, h];
+        this.pixelDebug.beginFrame(ctx, this.frameDim);
 
         if (!this.pass) {
             const defines = this.scene.getSceneDefines();
+            if (this.pixelDebug.enabled) defines.addAll(PixelDebug.getDefines());
             this.pass = ComputePass.create(this.device, { path: kShaderFile, defines });
         }
         if (!this.meshToBlasID) {
@@ -207,7 +224,9 @@ export class SceneDebugger extends RenderPass {
         sd["vbuffer"] = renderData.getTexture("vbuffer") ?? this.dummyVbuffer;
         sd["output"] = output;
         sd["pixelData"] = this.pixelData!;
+        this.pixelDebug.prepareProgram(root);
         this.pass.execute(ctx, w, h);
+        this.pixelDebug.endFrame();
         this.frameCount++;
     }
 }

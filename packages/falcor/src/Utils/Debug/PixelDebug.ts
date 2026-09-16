@@ -12,6 +12,14 @@ import type { ComputeContext } from "../../Core/API/ComputeContext.js";
 import type { Device } from "../../Core/API/Device.js";
 import { MemoryType, ResourceBindFlags } from "../../Core/API/Types.js";
 import type { ShaderVar } from "../../Core/Program/ParameterBlock.js";
+import type { UIWidgets } from "../../RenderGraph/UIWidgets.js";
+
+/** Minimal mouse event shape (the viewer forwards normalized canvas positions). */
+export interface PixelDebugMouseEvent {
+    type: "buttonDown" | "buttonUp" | "move";
+    button?: "left" | "right" | "middle";
+    pos: [number, number];
+}
 
 export enum PrintValueType { Bool = 0, Int, Uint, Float }
 
@@ -40,16 +48,55 @@ export class PixelDebug {
 
     enabled = false;
     selectedPixel: [number, number] = [0, 0];
+    private frameDim: [number, number] = [0, 0];
 
     constructor(private readonly device: Device) {}
+
+    /** Mirrors PixelDebug::onMouseEvent: left click selects the pixel under the cursor. */
+    onMouseEvent(ev: PixelDebugMouseEvent): boolean {
+        if (this.enabled && ev.type === "buttonDown" && ev.button === "left") {
+            this.selectedPixel = [Math.trunc(ev.pos[0] * this.frameDim[0]), Math.trunc(ev.pos[1] * this.frameDim[1])];
+            return true;
+        }
+        return false;
+    }
+
+    /**
+     * Mirrors PixelDebug::renderUI: enable toggle, selected pixel, and the log of the
+     * last resolved frame. Enabling changes the program defines — `onEnabledChanged`
+     * lets the owning pass drop its kernels (native: mpProgram->addDefines).
+     */
+    renderUI(ui: UIWidgets, onEnabledChanged?: () => void): void {
+        ui.checkbox("Pixel debug", this.enabled, (v) => {
+            this.enabled = v;
+            onEnabledChanged?.();
+        });
+        if (this.enabled) {
+            const max = Math.max(1, this.frameDim[0] - 1, this.frameDim[1] - 1, 4095);
+            ui.slider("Selected pixel X", this.selectedPixel[0], 0, max, 1, (v) => (this.selectedPixel = [Math.round(v), this.selectedPixel[1]]));
+            ui.slider("Selected pixel Y", this.selectedPixel[1], 0, max, 1, (v) => (this.selectedPixel = [this.selectedPixel[0], Math.round(v)]));
+        }
+        const prints = this.prints;
+        ui.text(`Pixel log:${prints.length === 0 ? " <empty>" : ""}`);
+        for (const p of prints) {
+            const values = p.values.map((v) => (typeof v === "number" && p.type === PrintValueType.Float ? v.toPrecision(6) : String(v)));
+            // §9: message strings surface as slang hashes (no hashed-string reflection in slang-wasm).
+            ui.text(`msg#${p.msgHash.toString(16)} ${values.length > 1 ? `(${values.join(", ")})` : values[0] ?? ""}`);
+        }
+        for (const a of this.asserts) ui.text(`assert failed at (${a.launchX}, ${a.launchY}) msg#${a.msgHash.toString(16)}`);
+    }
 
     /** Compile-time define a debugged program must include. */
     static getDefines(): Record<string, string> {
         return { _PIXEL_DEBUG_ENABLED: "1" };
     }
 
-    /** Mirrors PixelDebug::beginFrame: clears the per-frame counters. */
-    beginFrame(ctx: ComputeContext): void {
+    /** Mirrors PixelDebug::beginFrame: clears the per-frame counters (frameDim clamps the selection). */
+    beginFrame(ctx: ComputeContext, frameDim?: [number, number]): void {
+        if (frameDim) {
+            this.frameDim = frameDim;
+            this.selectedPixel = [Math.min(this.selectedPixel[0], Math.max(0, frameDim[0] - 1)), Math.min(this.selectedPixel[1], Math.max(0, frameDim[1] - 1))];
+        }
         if (!this.enabled) return;
         this.countersBuffer ??= new Buffer(this.device, {
             size: 2 * 4,

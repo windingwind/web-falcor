@@ -9,6 +9,7 @@ import {
     Buffer,
     ComputePass,
     MemoryType,
+    PixelDebug,
     Properties,
     RenderData,
     RenderPass,
@@ -35,6 +36,10 @@ const kIdentity3x4 = [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0];
 export class BSDFViewer extends RenderPass {
     private pass: ComputePass | null = null;
     private frameCount = 0;
+    /** Mirrors mpPixelDebug (UI under "Debugging"; left click selects the pixel). */
+    readonly pixelDebug = new PixelDebug(this.device);
+    private selectedPixel: [number, number] = [0, 0];
+    private frameDim: [number, number] = [0, 0];
     private materialID = 0;
     /** BSDFViewerMode: 0 = Material (shaded sphere), 1 = Slice (BSDF slice over theta_h / theta_d). */
     private viewerMode = 0;
@@ -130,6 +135,16 @@ export class BSDFViewer extends RenderPass {
         cam.checkbox("Orthographic", this.orthographicCamera, dirty((v) => (this.orthographicCamera = v)));
         cam.slider("Distance", this.cameraDistance, 1.01, 10, 0.01, dirty((v) => (this.cameraDistance = v)));
         cam.slider("FOV (y)", this.cameraFovY, 1, 179, 1, dirty((v) => (this.cameraFovY = v)));
+        this.pixelDebug.renderUI(ui.group("Debugging"), () => (this.pass = null));
+    }
+
+    /** Mirrors BSDFViewer::onMouseEvent: left click selects the readback pixel (and the debug pixel). */
+    onMouseEvent(ev: { type: "buttonDown" | "buttonUp" | "move"; button?: "left" | "right" | "middle"; pos: [number, number] }): boolean {
+        if (ev.type === "buttonDown" && ev.button === "left") {
+            const [w, h] = this.frameDim;
+            this.selectedPixel = [Math.min(Math.max(Math.trunc(ev.pos[0] * w), 0), Math.max(w - 1, 0)), Math.min(Math.max(Math.trunc(ev.pos[1] * h), 0), Math.max(h - 1, 0))];
+        }
+        return this.pixelDebug.onMouseEvent(ev);
     }
 
     override reflect(compileData: CompileData): RenderPassReflection {
@@ -152,10 +167,13 @@ export class BSDFViewer extends RenderPass {
         if (!this.scene) return;
         const output = renderData.getTexture("output")!;
         const [w, h] = [output.width, output.height];
+        this.frameDim = [w, h];
+        this.pixelDebug.beginFrame(ctx, this.frameDim);
 
         if (!this.pass) {
             const defines = this.scene.getSceneDefines();
             defines.addAll(this.sampleGenerator.getDefines());
+            if (this.pixelDebug.enabled) defines.addAll(PixelDebug.getDefines());
             this.pass = ComputePass.create(this.device, { path: kShaderFile, defines });
             // Oversized for WGSL std430 (float3 members pad to 16 B).
             this.pixelData = new Buffer(this.device, {
@@ -201,7 +219,7 @@ export class BSDFViewer extends RenderPass {
         p["cameraFovY"] = this.cameraFovY;
         // Mirrors native runtime computation: tan(fovY/2) * distance.
         p["cameraViewportScale"] = Math.fround(Math.tan((this.cameraFovY / 2) * (Math.PI / 180)) * this.cameraDistance);
-        p["selectedPixel"] = [0, 0];
+        p["selectedPixel"] = this.selectedPixel;
 
         // EnvMap struct member survives DCE; bind the scene envmap or dummies.
         const env = this.scene.getEnvMap();
@@ -229,7 +247,9 @@ export class BSDFViewer extends RenderPass {
 
         v["outputColor"] = output;
         v["pixelData"] = this.pixelData!;
+        this.pixelDebug.prepareProgram(root);
         this.pass.execute(ctx, w, h);
+        this.pixelDebug.endFrame();
         this.frameCount++;
     }
 }
