@@ -872,15 +872,33 @@ export class Scene {
         return this.curveDescs.length > 0;
     }
 
-    /** Mirrors Scene::useAnalyticLights() (render settings default to enabled). */
+    /**
+     * Mirrors Scene::RenderSettings (python `scene.renderSettings.useEnvLight = False`,
+     * Mogwai "Render Settings"): master switches ANDed with resource presence below.
+     * The RenderGraph recompiles passes when these change (native RenderSettingsChanged).
+     */
+    readonly renderSettings = { useEnvLight: true, useAnalyticLights: true, useEmissiveLights: true, useGridVolumes: true };
+
+    /** Snapshot key for change detection (native compares mRenderSettings != mPrevRenderSettings). */
+    getRenderSettingsKey(): string {
+        const r = this.renderSettings;
+        return `${+r.useEnvLight}${+r.useAnalyticLights}${+r.useEmissiveLights}${+r.useGridVolumes}`;
+    }
+
+    /** Mirrors Scene::useAnalyticLights(). */
     get useAnalyticLights(): boolean {
-        return this.lightCount > 0;
+        return this.renderSettings.useAnalyticLights && this.lightCount > 0;
+    }
+
+    /** Mirrors Scene::useGridVolumes(). */
+    get useGridVolumes(): boolean {
+        return this.renderSettings.useGridVolumes && this.gridCount > 0;
     }
 
     /** Mirrors Scene::useEmissiveLights(). v1 checks material flags; the
      *  LightCollection active-triangle count refines this when NEE lands. */
     get useEmissiveLights(): boolean {
-        return this.hasEmissiveMaterials;
+        return this.renderSettings.useEmissiveLights && this.hasEmissiveMaterials;
     }
 
     /** Mirrors Scene::useEnvBackground(). */
@@ -888,9 +906,9 @@ export class Scene {
         return this.envMap !== null;
     }
 
-    /** Mirrors Scene::useEnvLight() (render settings default to enabled). */
+    /** Mirrors Scene::useEnvLight(). */
     get useEnvLight(): boolean {
-        return this.envMap !== null && this.envMap.intensity > 0;
+        return this.renderSettings.useEnvLight && this.envMap !== null && this.envMap.intensity > 0;
     }
 
     /** Mirrors Scene::getSceneDefines(). */

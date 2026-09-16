@@ -184,6 +184,16 @@ export function buildScenePanel(container: HTMLElement, scene: Scene | null, hoo
         g.text(`Resolution: ${env.texture.width}x${env.texture.height}, mips: ${env.texture.mipCount}`);
     }
 
+    // Mirrors Scene::renderUI "Render Settings" (master light-usage switches; the graph recompiles passes).
+    {
+        const g = ui.group("Render Settings");
+        const rs = scene.renderSettings;
+        g.checkbox("Use environment light", rs.useEnvLight, (v) => (rs.useEnvLight = v));
+        g.checkbox("Use analytic lights", rs.useAnalyticLights, (v) => (rs.useAnalyticLights = v));
+        g.checkbox("Use emissive", rs.useEmissiveLights, (v) => (rs.useEmissiveLights = v));
+        g.checkbox("Use grid volumes", rs.useGridVolumes, (v) => (rs.useGridVolumes = v));
+    }
+
     // Lights (mirrors Light::renderUI + per-type controls). Color/intensity split like native getColorForUI/getIntensityForUI.
     {
         const g = ui.group("Lights");

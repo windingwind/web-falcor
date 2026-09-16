@@ -39,6 +39,7 @@ export class RenderGraph {
     private edges: RenderGraphEdge[] = [];
     private outputs: { pass: string; field: string }[] = [];
     private externalInputs = new Map<string, Resource>();
+    private renderSettingsKey: string | null = null;
     private compiled: CompiledPass[] | null = null;
     private allocated = new Map<string, Resource>(); // "pass.field" -> resource
     /** Persistent fields keep their resource across recompiles while the field is unchanged. */
@@ -383,6 +384,15 @@ export class RenderGraph {
                 pass.recompileRequested = false;
                 this.compiled = null;
             }
+        }
+        // Mirrors IScene::UpdateFlags::RenderSettingsChanged -> passes recreate their
+        // programs (scene light-usage defines changed); setScene drops cached kernels.
+        if (this.scene) {
+            const key = this.scene.getRenderSettingsKey();
+            if (this.renderSettingsKey !== null && key !== this.renderSettingsKey) {
+                for (const pass of this.passes.values()) pass.setScene(this.scene);
+            }
+            this.renderSettingsKey = key;
         }
         if (!this.compiled) this.compile(ctx);
         // Native Mogwai calls Scene::update() (camera beginFrame: jitter pattern
