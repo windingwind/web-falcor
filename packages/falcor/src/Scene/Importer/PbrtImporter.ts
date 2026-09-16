@@ -48,6 +48,7 @@ import {
 } from "../../Utils/Math/Matrix.js";
 import { fovYToFocalLength } from "../Camera/Camera.js";
 import { RuntimeError } from "../../Core/Error.js";
+import { AssetCategory, resolveAssetUrl, withScriptSearchPath } from "../../Core/AssetResolver.js";
 import { getGlobalSettings } from "../../Utils/Scripting/Scripting.js";
 import {
     SceneBuilderBridge,
@@ -589,7 +590,7 @@ class PbrtScene {
     }
 
     private async fetchText(rel: string): Promise<string> {
-        const url = this.baseUrl ? `${this.baseUrl}/${rel}` : rel;
+        const url = await resolveAssetUrl(rel, this.baseUrl, AssetCategory.Scene);
         const res = await fetch(url);
         if (!res.ok) throw new RuntimeError(`pbrt: failed to fetch '${url}' (${res.status})`);
         return res.text();
@@ -659,7 +660,7 @@ class PbrtScene {
             case "plymesh": {
                 const file = P.string(params, "filename", "");
                 if (!file) { this.warn("plymesh missing filename"); return; }
-                const url = this.baseUrl ? `${this.baseUrl}/${file}` : file;
+                const url = await resolveAssetUrl(file, this.baseUrl);
                 const res = await fetch(url);
                 if (!res.ok) { this.warn(`plymesh fetch failed '${url}' (${res.status})`); return; }
                 mesh = parsePly(await res.arrayBuffer());
@@ -858,5 +859,5 @@ function lookAtLH(eye: float3, center: float3, up: float3): float4x4 {
  * baseUrl). Parallels runSceneScript for .pyscene.
  */
 export async function runPbrtScene(device: Device, source: string, baseUrl: string): Promise<Scene> {
-    return new PbrtScene(device, baseUrl).load(source);
+    return withScriptSearchPath(baseUrl, () => new PbrtScene(device, baseUrl).load(source));
 }

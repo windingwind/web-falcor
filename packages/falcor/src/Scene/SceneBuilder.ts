@@ -26,6 +26,7 @@ import { MaterialType, packTextureHandle, TextureHandleMode } from "./Material/M
 import { float2, float3, float4 } from "../Utils/Math/Vector.js";
 import { float4x4, matrixFromTranslation, matrixFromScaling, mulMat } from "../Utils/Math/Matrix.js";
 import { RuntimeError } from "../Core/Error.js";
+import { AssetCategory, AssetResolver, resolveAssetUrl } from "../Core/AssetResolver.js";
 import { Logger } from "../Utils/Logger.js";
 
 /** The python prelude wraps bridge objects in a setattr guard; JS entry
@@ -251,9 +252,9 @@ export class MaterialBridge {
     }
 
     /** Fetches + decodes this material's deferred textures into the TextureManager. */
-    async resolveTextures(baseUrl: string, tm: TextureManager): Promise<void> {
+    async resolveTextures(baseUrl: string, tm: TextureManager, resolver = AssetResolver.getDefaultResolver()): Promise<void> {
         for (const t of this._textures) {
-            const url = baseUrl ? `${baseUrl}/${t.path}` : t.path;
+            const url = await resolveAssetUrl(t.path, baseUrl, AssetCategory.Any, resolver);
             try {
                 const res = await fetch(url);
                 if (!res.ok) continue;
@@ -467,6 +468,11 @@ type Command =
     | { kind: "mesh"; mesh: TriangleMeshDesc; material: MaterialBridge; nodeTransform: float4x4 };
 
 export class SceneBuilderBridge {
+    /** Copy of the default resolver at construction (native SceneBuilder::mAssetResolver). */
+    readonly assetResolver = AssetResolver.getDefaultResolver().clone();
+    getAssetResolver(): AssetResolver {
+        return this.assetResolver;
+    }
     private commands: Command[] = [];
     private meshMaterials: MaterialBridge[] = []; // by meshID
     private meshGeometry: TriangleMeshDesc[] = [];
@@ -696,9 +702,9 @@ export class SceneBuilderBridge {
         let clipOffset = 0; // clip ordinals accumulate across imports (native Animation list order)
         for (const cmd of this.commands) {
             if (cmd.kind === "import") {
-                const url = baseUrl ? `${baseUrl}/${cmd.path}` : cmd.path;
+                const url = await resolveAssetUrl(cmd.path, baseUrl, AssetCategory.Scene, this.assetResolver);
                 const res = await fetch(url);
-                if (!res.ok) throw new RuntimeError(`SceneBuilder: failed to fetch '${url}' (${res.status})`);
+                if (!res.ok) throw new RuntimeError(`SceneBuilder: Can't find scene file '${cmd.path}' (tried '${url}', ${res.status})`);
                 const bytes = new Uint8Array(await res.arrayBuffer());
                 const materialOffset = materials.length;
                 if (/\.usd[acz]?$/.test(cmd.path.toLowerCase())) {
@@ -811,7 +817,7 @@ export class SceneBuilderBridge {
         // Resolve TriangleMesh.createFromFile() geometry (deferred async asset load).
         for (const geo of this.meshGeometry) {
             if (!geo._fromFile) continue;
-            const url = baseUrl ? `${baseUrl}/${geo._fromFile.path}` : geo._fromFile.path;
+            const url = await resolveAssetUrl(geo._fromFile.path, baseUrl, AssetCategory.Any, this.assetResolver);
             const res = await fetch(url);
             if (!res.ok) throw new RuntimeError(`TriangleMesh.createFromFile: failed to fetch '${url}' (${res.status})`);
             const loaded = await FbxImporter.parseMeshOnly(new Uint8Array(await res.arrayBuffer()), geo._fromFile.path, geo._fromFile.smoothNormals);
@@ -821,7 +827,7 @@ export class SceneBuilderBridge {
         }
 
         // Load deferred material textures (material.loadTexture()).
-        for (const mat of new Set(this.meshMaterials)) await mat.resolveTextures(baseUrl, textureManager);
+        for (const mat of new Set(this.meshMaterials)) await mat.resolveTextures(baseUrl, textureManager, this.assetResolver);
 
         // Builder-added meshes (instanced via nodes).
         const materialIDs = new Map<MaterialBridge, number>();
@@ -918,7 +924,7 @@ export class SceneBuilderBridge {
             scene.camera.setFocalLength(this.importedCameraPose.focalLength);
         }
         if (this.envMap) {
-            const url = baseUrl ? `${baseUrl}/${this.envMap.path}` : this.envMap.path;
+            const url = await resolveAssetUrl(this.envMap.path, baseUrl, AssetCategory.Any, this.assetResolver);
             const envMap = await EnvMap.createFromUrl(device, url);
             envMap.intensity = this.envMap.intensity;
             if (this.envMap.rotation) envMap.setRotation([this.envMap.rotation.x, this.envMap.rotation.y, this.envMap.rotation.z]);
@@ -932,7 +938,7 @@ export class SceneBuilderBridge {
             vol.anisotropy = v.anisotropy;
             vol.emissionTemperature = v.emissionTemperature;
             for (const g of v.grids) {
-                const url = baseUrl ? `${baseUrl}/${g.path}` : g.path;
+                const url = await resolveAssetUrl(g.path, baseUrl, AssetCategory.Any, this.assetResolver);
                 vol.setGrid(g.slot as GridSlot, await Grid.createFromUrl(device, url, g.gridname));
             }
             for (const pg of v.proceduralGrids) {

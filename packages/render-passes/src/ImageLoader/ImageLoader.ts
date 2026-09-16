@@ -19,10 +19,12 @@ import {
     type CompileData,
     type Device,
     type RenderContext,
+    AssetResolver,
+    kProjectMediaUrl,
 } from "@web-falcor/falcor";
 
-/** Media search base (mirrors Falcor's data directories). */
-export const kMediaBaseUrl = "/Falcor/media/";
+/** @deprecated Use AssetResolver search paths (kProjectMediaUrl is the default one). */
+export const kMediaBaseUrl = `${kProjectMediaUrl}/`;
 
 export class ImageLoader extends RenderPass {
     private filename = "";
@@ -46,7 +48,8 @@ export class ImageLoader extends RenderPass {
 
     override async initAsync(): Promise<void> {
         if (!this.filename) throw new RuntimeError("ImageLoader: no filename specified");
-        const url = kMediaBaseUrl + this.filename;
+        const url = await AssetResolver.getDefaultResolver().resolvePath(this.filename);
+        if (!url) throw new RuntimeError(`ImageLoader: Can't find image file '${this.filename}'`);
         const response = await fetch(url);
         if (!response.ok) throw new RuntimeError(`ImageLoader: failed to fetch '${url}' (${response.status})`);
 

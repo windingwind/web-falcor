@@ -46,7 +46,7 @@ by a documented toolchain/asset gap, ❌ means the web platform cannot provide i
 | Shader hot reload (in-app `reloadShaders`) | ⏳ | Vite HMR 🔶 reloads the dev app; Falcor's F5-style in-session shader reload not built |
 | Multithreaded scene build (TaskManager) | ⏳ | scene build is single-threaded today; Web Workers (+ SharedArrayBuffer) possible |
 | Plugin system (dynamic pass/importer loading) | 🔶 static | native .dll/.so loading ❌; passes register via a static factory + side-effect import. A dynamic JS plugin registry ⏳ |
-| Settings system (global `Settings`, attribute filters) | ✅ | `Utils/Settings.ts`: colon-flattened options, ordered attribute filters (full-match regex, nested flatten, deprecated `.filter` + negation), `m.settings` python binding, `RenderPass.onOptionsChange` hook; §9: no settings.json autoload / search-directory categories |
+| Settings system (global `Settings`, attribute filters) | ✅ | `Utils/Settings.ts`: colon-flattened options, ordered attribute filters (full-match regex, nested flatten, deprecated `.filter` + negation), `searchpath:`/`standardsearchpath:` directory categories (Renderman `;`/`@`/`&` list semantics via `Utils/PathResolving.ts`; `searchpath:media` feeds the default AssetResolver like SampleApp), `m.settings` python binding, `RenderPass.onOptionsChange` hook; §9: no settings.json autoload, `${ENV}` expands to empty |
 
 ### 8.2 Render passes (29 upstream directories, 38 registered pass classes)
 
@@ -95,7 +95,7 @@ Tallies today: 21 pass classes fully implemented, 4 partial, 13 not implemented
 | Component | Status | Notes |
 |---|---|---|
 | Mogwai app (functional viewer) | ✅ core | loads graph `.py` + `.pyscene`/`.pbrt`, per-frame execute, presents marked output (swapchain blit), play/pause + graph/output pickers, first-person camera, per-pass DOM `renderUI` panel, URL params. FrameCapture ✅ (Capture button: float outputs download as EXR, 8-bit as PNG). VideoCapture ✅ (Record button; §9: MediaRecorder WebM, frames pushed per presented frame like native). Python console ✅ (`m.scene`/`m.activeGraph`/`m.settings` bound to live state, expression echo + print capture, history; Playwright-verified live camera/material edits); canvas click-to-pick wired to PixelInspectorPass. TimingCapture ✅ (`m.timingCapture.captureFrameTime` — collects per-frame CPU ms, downloads on stop, §9: no file IO). Missing ⏳: dedicated scene/material/light UI panel (console covers edits), profiler overlay |
-| Python scripting / console | 🔶 | Pyodide runs **unmodified** upstream `.py` graphs and `.pyscene` files via a curated `falcor` bridge (factories + SceneBuilderBridge). Interactive console ✅ (viewer panel; `m.scene`/`m.activeGraph`/`m.settings` on live state). No auto-generated ScriptBindings, no ScriptWriter ⏳ |
+| Python scripting / console | 🔶 | Pyodide runs **unmodified** upstream `.py` graphs and `.pyscene` files via a curated `falcor` bridge (factories + SceneBuilderBridge + `AssetResolver`/`AssetCategory`/`SearchPathPriority`). Interactive console ✅ (viewer panel; `m.scene`/`m.activeGraph`/`m.settings` on live state). No auto-generated ScriptBindings, no ScriptWriter ⏳ |
 | PyTorch interop (`falcor.pytorch`) | ❌ | no CUDA/torch in browser; ONNX-web-style substitute would be non-parity ⏳ |
 | FalcorTest | 🔶 | vitest (unit) + Playwright GPU harness w/ native-oracle image compares (§7); no slang-driven `GPU_TEST` framework ⏳ |
 | RenderGraphEditor (ImGui node UI) | ⏳ stretch | functional viewer done; node editor is dev tooling orthogonal to rendering parity |
@@ -157,7 +157,7 @@ Tallies today: 21 pass classes fully implemented, 4 partial, 13 not implemented
 | Utils/Math | ✅ core | Vector/Matrix/Quaternion ✅; CubicSpline host / SphericalHarmonics ⏳ |
 | Gui (Dear ImGui) | 🔶 | DOM `UIWidgets` (text/button/checkbox/slider/dropdown/group); `renderUI` implemented on 4 passes so far ⏳; TextRenderer/Font/PixelZoom ⏳ |
 | Video (FFmpeg encode/decode) | ❌ native / ⏳ substitute | WebCodecs route not built |
-| AssetResolver | 🔶 ad-hoc | URL resolution inline in the app; no search-path API |
+| AssetResolver | ✅ | `Core/AssetResolver.ts`: per-category search paths (Any/Scene/Texture, First/Last priority, category → Any fallback), `getDefaultResolver` seeded with `/Falcor/media` (SampleApp's project media dir); `.pyscene`/`.pbrt` loads push the script directory first and restore afterwards (Mogwai `loadScript`); SceneBuilder imports/`createFromFile`/`loadTexture`/EnvMap/Grid, ImageLoader and ErrorMeasure resolve through it; python `AssetResolver.default_resolver.add_search_path`/`resolve_path` + `AssetCategory`/`SearchPathPriority`. §9: async (HTTP HEAD existence probe), no cwd-relative lookup, `resolvePathPattern` (UDIM/`.vdb` sequence globbing) ❌ — no directory listing |
 
 ## 9. Known behavioral divergences (accepted, documented)
 
@@ -200,7 +200,13 @@ Tallies today: 21 pass classes fully implemented, 4 partial, 13 not implemented
    description (type, dims, format, flags) is unchanged. Graph default format
    for `Unknown` outputs stays `RGBA32Float` (native: swapchain format) unless
    `onResize(w, h, format)` supplies one.
-12. **Animation clip behaviors match native** (Constant default; per-clip
+12. **Asset resolution is asynchronous and URL-based.** `AssetResolver.resolvePath`
+   probes candidates with HTTP HEAD (GET-range fallback; a dev server's
+   `index.html` fallback does not count as a hit) and returns a Promise; native
+   returns synchronously from the filesystem. There is no working-directory
+   lookup step and no `resolvePathPattern` (browsers cannot list directories),
+   so `<UDIM>` texture sets and `.vdb` frame sequences stay unsupported.
+13. **Animation clip behaviors match native** (Constant default; per-clip
    Linear/Cycle/Oscillate honored, §8.4); the Linear edge-slope extrapolation
    quantizes at f32 keyframe precision on both sides, so it is
    tolerance-compared like all float outputs.

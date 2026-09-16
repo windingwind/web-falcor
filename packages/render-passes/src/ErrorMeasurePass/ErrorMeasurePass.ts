@@ -28,10 +28,10 @@ import {
     type Device,
     type RenderContext,
     type UIWidgets,
+    AssetResolver,
 } from "@web-falcor/falcor";
 
 const kShaderFile = "RenderPasses/ErrorMeasurePass/ErrorMeasurer.cs.slang";
-const kMediaBaseUrl = "/Falcor/media/";
 
 export class ErrorMeasurePass extends RenderPass {
     private referenceImagePath = "";
@@ -72,7 +72,8 @@ export class ErrorMeasurePass extends RenderPass {
     override async initAsync(): Promise<void> {
         this.runningAvgError = -1; // Mirrors loadReference: running error restarts with a new reference.
         if (!this.referenceImagePath) return;
-        const url = kMediaBaseUrl + this.referenceImagePath;
+        const url = await AssetResolver.getDefaultResolver().resolvePath(this.referenceImagePath);
+        if (!url) throw new RuntimeError(`ErrorMeasurePass: Can't find reference image '${this.referenceImagePath}'`);
         const res = await fetch(url);
         if (!res.ok) throw new RuntimeError(`ErrorMeasurePass: failed to fetch reference '${url}' (${res.status})`);
         const lower = this.referenceImagePath.toLowerCase();

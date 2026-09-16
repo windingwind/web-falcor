@@ -14,6 +14,7 @@ import { buildSceneFromCache, encodeTextureSources, loadSceneCache, sceneCacheKe
 import { createPass } from "../../RenderGraph/RenderPass.js";
 import { Properties } from "../Properties.js";
 import { RuntimeError } from "../../Core/Error.js";
+import { AssetResolver, withScriptSearchPath } from "../../Core/AssetResolver.js";
 import { CameraBridge, GridVolumeBridge, LightBridge, MaterialBridge, SceneBuilderBridge, SDFGridBridge, TriangleMesh, makeTransform } from "../../Scene/SceneBuilder.js";
 import type { Scene } from "../../Scene/Scene.js";
 import { LightType, type StaticVertex } from "../../Scene/SceneData.js";
@@ -50,6 +51,11 @@ export function isScriptingInitialized(): boolean {
     return pyodide !== null;
 }
 
+/** SampleApp analog: `searchpath:media` settings feed the default asset resolver. */
+function applyMediaSearchPaths(): void {
+    for (const p of globalSettings.getSearchDirectories("media")) AssetResolver.getDefaultResolver().addSearchPath(p);
+}
+
 /** Converts a PyProxy (dict/list) or primitive into plain JS. */
 function toJs(value: unknown): unknown {
     const proxy = value as { toJs?: (opts: object) => unknown };
@@ -78,6 +84,7 @@ export async function runGraphScript(device: Device, source: string): Promise<Re
         float2: (x = 0, y = 0) => new float2(x, y),
         float3: (x = 0, y = 0, z = 0) => new float3(x, y, z),
         float4: (x = 0, y = 0, z = 0, w = 0) => new float4(x, y, z, w),
+        ...AssetResolver.pythonBindings,
     };
     pyodide.registerJsModule("falcor", falcorModule);
 
@@ -89,6 +96,7 @@ export async function runGraphScript(device: Device, source: string): Promise<Re
         settings: {
             addOptions: (dict: unknown) => {
                 globalSettings.addOptions(toJs(dict) as Record<string, never>);
+                applyMediaSearchPaths();
                 for (const g of graphs) for (const { pass } of g.getPasses()) pass.onOptionsChange(globalSettings.getOptions());
             },
             addFilteredAttributes: (dictOrList: unknown) => globalSettings.addFilteredAttributes(toJs(dictOrList) as Record<string, never>),
@@ -124,6 +132,7 @@ export function runConsoleCommand(
         float2: (x = 0, y = 0) => new float2(x, y),
         float3: (x = 0, y = 0, z = 0) => new float3(x, y, z),
         float4: (x = 0, y = 0, z = 0, w = 0) => new float4(x, y, z, w),
+        ...AssetResolver.pythonBindings,
     });
     pyodide.globals.set("m", {
         scene: context.scene,
@@ -131,7 +140,10 @@ export function runConsoleCommand(
         clock: context.clock,
         timingCapture: context.timingCapture,
         settings: {
-            addOptions: (dict: unknown) => globalSettings.addOptions(toJs(dict) as Record<string, never>),
+            addOptions: (dict: unknown) => {
+                globalSettings.addOptions(toJs(dict) as Record<string, never>);
+                applyMediaSearchPaths();
+            },
         },
     });
     const py = pyodide as unknown as { setStdout(opts: { batched: (s: string) => void }): void; runPython(src: string): unknown };
@@ -329,6 +341,11 @@ export function wasSceneLoadedFromCache(): boolean {
 export async function runSceneScript(device: Device, source: string, baseUrl: string, options?: { cache?: boolean }): Promise<Scene> {
     if (!pyodide) throw new RuntimeError("Call initScripting() first");
     sceneLoadedFromCache = false;
+    return withScriptSearchPath(baseUrl, () => runSceneScriptInternal(device, source, baseUrl, options));
+}
+
+async function runSceneScriptInternal(device: Device, source: string, baseUrl: string, options?: { cache?: boolean }): Promise<Scene> {
+    if (!pyodide) throw new RuntimeError("Call initScripting() first");
     let cacheKey: string | null = null;
     if (options?.cache) {
         cacheKey = await sceneCacheKey(source);
@@ -395,6 +412,7 @@ export async function runSceneScript(device: Device, source: string, baseUrl: st
             createBox: (width: number, height: number, depth: number, voxelSize: number) => ({ _proceduralGrid: buildBoxGrid(width, height, depth, voxelSize) }),
         },
         _SDFGridCreate: (type: string, narrowBandThickness = 5.0, brickWidth = 7) => new SDFGridBridge(type as "ndsdf" | "sbs", narrowBandThickness, brickWidth),
+        ...AssetResolver.pythonBindings,
     };
     pyodide.registerJsModule("webfalcor_scene", sceneModule);
 

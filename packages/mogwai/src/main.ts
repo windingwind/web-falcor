@@ -3,7 +3,7 @@
  * execute the graph each frame, present the marked output to the canvas.
  */
 
-import { Clock, Device, Logger, Profiler, VideoRecorder, ProgramManager, RenderGraph, ResourceFormat, createPass, encodeExr, initScripting, initSlang, runConsoleCommand, runGraphScript, runSceneScript, runPbrtScene, presentToCanvas, type Scene } from "@web-falcor/falcor";
+import { AssetCategory, AssetResolver, isAbsoluteUrl, kProjectMediaUrl, Clock, Device, Logger, Profiler, VideoRecorder, ProgramManager, RenderGraph, ResourceFormat, createPass, encodeExr, initScripting, initSlang, runConsoleCommand, runGraphScript, runSceneScript, runPbrtScene, presentToCanvas, type Scene } from "@web-falcor/falcor";
 import "@web-falcor/render-passes";
 import { CameraController } from "./CameraController.js";
 import { buildUIPanel } from "./UIPanel.js";
@@ -137,8 +137,9 @@ async function initProgramSystem(device: Device): Promise<void> {
  * Resolves a `?scene=`/`?graph=` param to a fetchable URL: absolute/http(s) pass
  * through; a bare value resolves under /Falcor/media (so `?scene=Arcade/Arcade.pyscene` works).
  */
-function resolveAssetUrl(value: string): string {
-    return value.startsWith("/") || /^https?:/i.test(value) ? value : `/Falcor/media/${value}`;
+async function resolveAssetUrl(value: string): Promise<string> {
+    if (isAbsoluteUrl(value)) return value;
+    return (await AssetResolver.getDefaultResolver().resolvePath(value, AssetCategory.Scene)) || `${kProjectMediaUrl}/${value}`;
 }
 
 /**
@@ -152,11 +153,11 @@ async function loadInitialContent(state: ViewerState, device: Device): Promise<v
     const outputParam = params.get("output");
 
     if (sceneParam) {
-        const url = resolveAssetUrl(sceneParam);
+        const url = await resolveAssetUrl(sceneParam);
         await loadScene(state, url, url.slice(0, url.lastIndexOf("/")));
     }
     if (graphParam) {
-        await loadGraph(state, resolveAssetUrl(graphParam));
+        await loadGraph(state, await resolveAssetUrl(graphParam));
     } else if (!sceneParam) {
         // No URL content: default cornell box + the GPU-oracle-verified graph.
         await loadScene(state, "/Falcor/media/test_scenes/cornell_box.pyscene", "/Falcor/media/test_scenes");

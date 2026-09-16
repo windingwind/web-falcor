@@ -1,10 +1,12 @@
 /**
  * Global settings mirroring Utils/Settings/Settings.h + AttributeFilters:
- * colon-flattened option dictionaries and ordered attribute filters with
- * full-match regexes (deprecated `name.filter` syntax included). Web
- * divergence (docs §9): no settings.json autoload and no search-directory
- * categories (no filesystem).
+ * colon-flattened option dictionaries, ordered attribute filters with
+ * full-match regexes (deprecated `name.filter` syntax included) and
+ * `searchpath:`/`standardsearchpath:` directory categories (URLs). Web
+ * divergence (docs §9): no settings.json autoload.
  */
+
+import { resolveSearchPaths } from "./PathResolving.js";
 
 export type SettingsValue = boolean | number | string | null | SettingsValue[] | { [key: string]: SettingsValue };
 
@@ -34,10 +36,35 @@ function fullMatch(regex: RegExp, name: string): boolean {
 export class Settings {
     private options = new Map<string, SettingsValue>();
     private filters: FilterRecord[] = [];
+    private standardSearchDirectories = new Map<string, string[]>();
+    private searchDirectories = new Map<string, string[]>();
 
     /** Mirrors Settings::addOptions (nested dicts flatten with ':'). */
     addOptions(options: Record<string, SettingsValue>): void {
-        for (const [k, v] of Object.entries(flattenDictionary(options))) this.options.set(k, v);
+        const flattened = flattenDictionary(options);
+        for (const [k, v] of Object.entries(flattened)) this.options.set(k, v);
+        this.updateSearchPaths(flattened);
+    }
+
+    /** Mirrors Settings::getSearchDirectories: `searchpath:<category>`, else the standard search path. */
+    getSearchDirectories(category: string): readonly string[] {
+        return this.searchDirectories.get(category) ?? this.standardSearchDirectories.get(category) ?? [];
+    }
+
+    /** Mirrors Settings::updateSearchPaths over the flattened option keys. */
+    private updateSearchPaths(flattened: Record<string, SettingsValue>): void {
+        for (const [key, value] of Object.entries(flattened)) {
+            const kind = key.startsWith("standardsearchpath:") ? "standardsearchpath" : key.startsWith("searchpath:") ? "searchpath" : null;
+            if (!kind) continue;
+            const category = key.slice(kind.length + 1);
+            const updates = (Array.isArray(value) ? value : [value]).filter((v): v is string => typeof v === "string");
+            if (updates.length === 0) continue;
+            const standard = this.standardSearchDirectories.get(category) ?? [];
+            const target = kind === "standardsearchpath" ? this.standardSearchDirectories : this.searchDirectories;
+            const result = resolveSearchPaths(target.get(category) ?? [], updates, kind === "standardsearchpath" ? [] : standard);
+            if (result.invalid.length > 0) throw new Error(`While processing ${kind}:${category}, found invalid paths: ${result.invalid.join(", ")}`);
+            target.set(category, result.resolved);
+        }
     }
 
     clearOptions(): void {

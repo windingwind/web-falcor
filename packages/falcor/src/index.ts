@@ -4,6 +4,7 @@
  */
 
 export * from "./Core/Error.js";
+export * from "./Core/AssetResolver.js";
 export * from "./Core/API/Device.js";
 export * from "./Core/API/DeviceFactories.js";
 export * from "./Core/API/Formats.js";
@@ -41,6 +42,7 @@ export * from "./Core/State/ComputeState.js";
 export * from "./Core/Program/ShaderOverrides.js";
 export * from "./Scene/SceneCache.js";
 export * from "./Utils/Settings.js";
+export * from "./Utils/PathResolving.js";
 export * from "./Utils/Timing/Clock.js";
 export * from "./Utils/Video/VideoRecorder.js";
 export * from "./Utils/Debug/PixelDebug.js";

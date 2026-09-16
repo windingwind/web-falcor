@@ -13,7 +13,7 @@ stay valid.
 | `Object` (intrusive refcount, `ref<T>`) | GC + explicit `destroy()` for GPU objects | JS is GC'd; deterministic release only where WebGPU needs it (buffers/textures). `ref<T>` not reproduced — documented divergence, no observable API change. |
 | `Error` (exceptions) | `FalcorError` hierarchy + `UnsupportedFeatureError` | done (scaffold) |
 | `Plugin` (dynamic .so/.dll) | ES-module dynamic `import()` registry | render passes/importers self-register, same `PluginManager` API |
-| `AssetResolver` | URL/OPFS resolver with search paths | fetch()-backed; drag-&-drop and File System Access mounts |
+| `AssetResolver` | ✅ `Core/AssetResolver.ts`: category search paths over URLs, default seeded with `/Falcor/media` | existence = HTTP HEAD probe (async, §9); `resolvePathPattern` ❌ (no directory listing) |
 | `SampleApp` / `Testbed` | browser main-loop (rAF) / headless (OffscreenCanvas) | same lifecycle callbacks (onLoad/onFrameRender/onResize/…) |
 | `HotReloadFlags` | Vite HMR hooks → `ProgramManager.reloadAllPrograms()` | web is *better* here |
 | **API/** `Device` | `GPUAdapter/GPUDevice` wrapper | done (scaffold); async factory |
