@@ -1,7 +1,8 @@
 /**
- * Per-pass GPU profiler: timestampWrites on every GPU pass, labeled by the
- * RenderGraph, resolved per frame. Verifies labels + sane timings over the
- * upstream ToneMapping graph.
+ * Profiler: nested events around the graph (RenderGraphExe::execute() and one
+ * child per pass) with GPU times from pass timestampWrites; the parent's GPU
+ * time is the sum of its children (every pass is attributed to all active
+ * events), CPU times are finite, and the legacy per-pass map still works.
  */
 
 import { Profiler, initScripting, runGraphScript } from "@web-falcor/falcor";
@@ -23,25 +24,43 @@ gpuTest("Profiler.perPassTimings", async ({ device }) => {
         graph!.onResize(256, 256);
         const ctx = device.renderContext;
 
-        let stats = new Map<string, number>();
-        for (let i = 0; i < 20 && stats.size === 0; i++) {
+        // Frames until GPU times have landed for the graph event.
+        let root = profiler.findEvent("/RenderGraphExe::execute()");
+        for (let i = 0; i < 40 && !(root && root.gpuTime > 0); i++) {
             graph!.execute(ctx);
             ctx.submit();
             await new Promise((r) => setTimeout(r, 30));
-            stats = profiler.getStats();
+            root = profiler.findEvent("/RenderGraphExe::execute()");
         }
+        const events = profiler.getEvents();
+        console.error(`# profiler: ${events.map((e) => `${e.name} cpu=${e.cpuTime.toFixed(3)} gpu=${e.gpuTime.toFixed(3)}`).join(" | ")}`);
+        expectEq(root !== undefined && root.gpuTime > 0, true, "graph event has GPU time");
+        expectEq(events[0]?.name, "/RenderGraphExe::execute()", "graph event first (tree order)");
+        const children = events.filter((e) => e.level === 1);
+        expectEq(children.length >= 2, true, `one child per pass (${children.length})`);
+        expectEq(children.some((e) => e.shortName === "ToneMapping"), true, "ToneMapping event present");
+        const childSum = children.reduce((s, e) => s + e.gpuTime, 0);
+        expectEq(Math.abs(childSum - root!.gpuTime) < 1e-6, true, `parent GPU time (${root!.gpuTime}) == sum of children (${childSum})`);
+        expectEq(events.every((e) => Number.isFinite(e.cpuTime) && e.cpuTime >= 0 && e.cpuTimeAverage >= 0), true, "CPU times finite with EMA");
+        expectEq(root!.computeGpuTimeStats().max >= root!.gpuTime * 0.999, true, "history stats cover the landed frames");
 
-        console.error(`# profiler: ${[...stats].map(([k, v]) => `${k}=${v.toFixed(3)}ms`).join(" ")}`);
-        expectEq(stats.size >= 2, true, `labels present (${stats.size})`);
-        expectEq(stats.has("ToneMapping"), true, "ToneMapping labeled");
+        // Legacy per-pass map used by the viewer status line.
+        const stats = profiler.getStats();
+        expectEq(stats.has("ToneMapping"), true, "ToneMapping labeled in getStats");
         let total = 0;
-        let finite = true;
-        for (const v of stats.values()) {
-            total += v;
-            finite &&= Number.isFinite(v) && v >= 0 && v < 1000;
+        for (const v of stats.values()) total += v;
+        expectEq(total > 0 && total < 1000, true, `total GPU time ${total}ms sane`);
+
+        // Capture two frames and check the JSON lanes.
+        profiler.startCapture();
+        for (let i = 0; i < 6; i++) {
+            graph!.execute(ctx);
+            ctx.submit();
+            await new Promise((r) => setTimeout(r, 30));
         }
-        expectEq(finite, true, "timings finite and sane");
-        expectEq(total > 0, true, `total GPU time ${total}ms > 0`);
+        const capture = profiler.endCapture()!;
+        expectEq(capture.frameCount >= 2, true, `captured frames (${capture.frameCount})`);
+        expectEq(capture.lanes.some((l) => l.name === "/RenderGraphExe::execute()/ToneMapping/gpu_time"), true, "gpu_time lane per event");
     } finally {
         device.profilerHook = null;
     }

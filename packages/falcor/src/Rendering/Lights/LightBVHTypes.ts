@@ -1,10 +1,10 @@
 /**
  * LightBVH packed node types mirroring Rendering/Lights/LightBVHTypes.slang
  * (the default compressed 32-byte layout) plus the host-side conversion
- * helpers they depend on (Utils/Math/{FormatConversion.h,PackedFormats.h,
- * Float16.cpp} semantics — note the round-half-up f16 conversion differs from
- * the truncating f32tof16 used for vertex packing in MaterialData.ts).
+ * helpers they depend on (Utils/Math/{FormatConversion.h,PackedFormats.h} semantics).
  */
+
+import { float16ToFloat32, float32ToFloat16 } from "../../Utils/Math/Float16.js";
 
 export const kInvalidCosConeAngle = -1;
 export const kTriangleCountBits = 4;
@@ -15,37 +15,9 @@ export const kMaxBVHDepth = 64;
 
 export type Vec3 = [number, number, number];
 
-/** Float16.cpp float32ToFloat16: round-to-nearest, half away from zero. */
-export function f32tof16RoundHalfUp(value: number): number {
-    const f32 = new Float32Array(1);
-    const u32 = new Uint32Array(f32.buffer);
-    f32[0] = value;
-    const u = u32[0]!;
-    const sign = (u >>> 16) & 0x8000;
-    let exp = (u >>> 23) & 0xff;
-    let mant = u & 0x7fffff;
-    if (exp === 255) return sign | 0x7c00 | (mant ? 0x200 | (mant >>> 13) : 0); // inf/nan
-    if (exp > 142) return sign | 0x7c00; // overflow -> inf
-    if (exp < 103) return sign; // underflow -> 0 (below subnormal range)
-    if (exp <= 112) {
-        // Subnormal half: shift with round-half-up.
-        mant |= 0x800000;
-        const shift = 126 - exp;
-        const rounded = (mant >>> (shift - 1)) + 1;
-        return sign | (rounded >>> 1);
-    }
-    const rounded = ((mant >>> 12) + 1) >>> 1;
-    return (sign | (((exp - 112) << 10) + rounded)) >>> 0; // mantissa carry propagates into exponent correctly
-}
-
-export function f16tof32(bits: number): number {
-    const sign = bits & 0x8000 ? -1 : 1;
-    const exp = (bits >>> 10) & 0x1f;
-    const mant = bits & 0x3ff;
-    if (exp === 0) return sign * mant * 2 ** -24;
-    if (exp === 31) return mant ? NaN : sign * Infinity;
-    return sign * (1 + mant / 1024) * 2 ** (exp - 15);
-}
+/** Native float16_t cast (Float16.cpp): round to nearest, ties up. */
+export const f32tof16RoundHalfUp = float32ToFloat16;
+export const f16tof32 = float16ToFloat32;
 
 /** FormatConversion.h floatToSnorm16: NaN -> 0, clamp, trunc(v*32767 +- 0.5). */
 export function floatToSnorm16(v: number): number {

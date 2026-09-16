@@ -25,12 +25,22 @@
       #consoleLog .in { color: #8cf; }
       #consoleLog .err { color: #f88; }
       #consoleInput { width: calc(100% - 16px); margin: 0 8px 6px; background: #1e1e1e; color: #ddd; border: 1px solid #444; font-family: monospace; font-size: 12px; }
+      #profiler { position: absolute; top: 32px; left: 8px; width: 620px; max-height: calc(100% - 80px); overflow-y: auto; background: #2a2a2ad8; padding: 6px 8px; border-radius: 4px; font-size: 12px; }
+      #profiler .profiler-options { display: flex; gap: 12px; align-items: center; margin-bottom: 6px; border-bottom: 1px solid #444; padding-bottom: 6px; }
+      #profiler .profiler-options button, #profiler .profiler-options select { font-family: monospace; font-size: 11px; }
+      #profiler table { border-collapse: collapse; width: 100%; }
+      #profiler th { text-align: left; font-weight: normal; color: #8cf; padding: 0 8px 5px 0; }
+      #profiler td { padding: 1px 8px 1px 0; white-space: nowrap; }
+      #profiler td.profiler-bar { width: 50px; }
+      #profiler td.profiler-bar div { height: 8px; background: #fff; }
+      #profiler .profiler-graph { display: block; margin-top: 6px; }
+      #profiler .profiler-tooltip { position: absolute; background: #111; padding: 2px 6px; border-radius: 3px; pointer-events: none; }
     </style>
   </head>
   <body>
     <canvas id="canvas" width="1280" height="720"></canvas>
     <div id="status">initializing…</div>
-    <div id="help">drag: look · WASD: move · Q/E: down/up · wheel: dolly · Shift: fast · Ctrl: slow</div>
+    <div id="help">drag: look · WASD: move · Q/E: down/up · wheel: dolly · Shift: fast · Ctrl: slow · P: profiler</div>
     <div id="controls">
       <button id="play">Pause</button>
       <button id="capture">Capture</button>
@@ -44,6 +54,7 @@
       <input id="consoleInput" placeholder="python — m.scene / m.activeGraph / m.settings; Enter to run" />
     </div>
     <div id="passes"></div>
+    <div id="profiler" hidden></div>
     <script type="module" src="./src/main.ts"></script>
   </body>
 </html>

@@ -5,6 +5,7 @@
  */
 
 import { float3, float4 } from "../../Utils/Math/Vector.js";
+import { float32ToFloat16 } from "../../Utils/Math/Float16.js";
 
 /** Mirrors MaterialType (MaterialTypes.slang). */
 export enum MaterialType {
@@ -27,18 +28,9 @@ export enum AlphaMode {
     Mask = 1,
 }
 
-/** float32 -> float16 bit pattern. */
+/** float32 -> float16 bit pattern (native float16_t cast: round to nearest, ties up). */
 export function f32tof16(value: number): number {
-    const f32 = new Float32Array(1);
-    const u32 = new Uint32Array(f32.buffer);
-    f32[0] = value;
-    const x = u32[0]!;
-    const sign = (x >> 16) & 0x8000;
-    let exp = ((x >> 23) & 0xff) - 127 + 15;
-    let frac = (x >> 13) & 0x3ff;
-    if (exp <= 0) return sign; // flush denormals/underflow to signed zero
-    if (exp >= 31) return sign | 0x7c00; // overflow -> inf
-    return sign | (exp << 10) | frac;
+    return float32ToFloat16(value);
 }
 
 /** Mirrors TextureHandle packing (29-bit ID, 2-bit mode, 1-bit udim). */

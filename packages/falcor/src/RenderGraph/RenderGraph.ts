@@ -372,14 +372,16 @@ export class RenderGraph {
         // advance) before executing the graph each frame; web folds it in here.
         this.scene?.camera.beginFrame();
         const profiler = ctx.device.profilerHook;
+        profiler?.startEvent("RenderGraphExe::execute()");
         for (const { pass, resources } of this.compiled!) {
-            if (profiler) profiler.currentLabel = pass.name || pass.constructor.name;
+            const label = pass.name || pass.constructor.name;
+            profiler?.startEvent(label);
             pass.execute(ctx, new RenderData(resources, this.defaultDims, this.passDictionary));
+            profiler?.endEvent(label);
         }
-        if (profiler) {
-            profiler.currentLabel = "";
-            profiler.endFrame(ctx.getEncoder());
-        }
+        profiler?.endEvent("RenderGraphExe::execute()");
+        // Web: the graph closes the profiler frame (native SampleApp does it once per frame).
+        profiler?.endFrame(ctx.getEncoder());
     }
 }
 

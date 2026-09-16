@@ -92,6 +92,8 @@ export async function runGraphScript(device: Device, source: string): Promise<Re
         addGraph: (graph: RenderGraph) => {
             graphs.push(graph);
         },
+        // Mirrors the native Profiler script binding (m.profiler).
+        profiler: device.profilerHook?.pythonBindings((v) => pyodide!.toPy(v)) ?? null,
         // Mirrors the native Settings script binding (Mogwai getSettings()).
         settings: {
             addOptions: (dict: unknown) => {
@@ -123,7 +125,7 @@ export async function runGraphScript(device: Device, source: string): Promise<Re
 export function runConsoleCommand(
     device: Device,
     source: string,
-    context: { scene: Scene | null; graph: RenderGraph | null; clock?: unknown; timingCapture?: unknown },
+    context: { scene: Scene | null; graph: RenderGraph | null; clock?: unknown; timingCapture?: unknown; profiler?: import("../../Core/API/Profiler.js").Profiler | null },
 ): string {
     if (!pyodide) throw new RuntimeError("Call initScripting() first");
     const lines: string[] = [];
@@ -139,6 +141,7 @@ export function runConsoleCommand(
         activeGraph: context.graph,
         clock: context.clock,
         timingCapture: context.timingCapture,
+        profiler: (context.profiler ?? device.profilerHook)?.pythonBindings((v) => pyodide!.toPy(v)) ?? null,
         settings: {
             addOptions: (dict: unknown) => {
                 globalSettings.addOptions(toJs(dict) as Record<string, never>);

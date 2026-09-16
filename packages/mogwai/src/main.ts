@@ -3,7 +3,7 @@
  * execute the graph each frame, present the marked output to the canvas.
  */
 
-import { AssetCategory, AssetResolver, isAbsoluteUrl, kProjectMediaUrl, Clock, Device, Logger, Profiler, VideoRecorder, ProgramManager, RenderGraph, ResourceFormat, createPass, encodeExr, initScripting, initSlang, runConsoleCommand, runGraphScript, runSceneScript, runPbrtScene, presentToCanvas, type Scene } from "@web-falcor/falcor";
+import { AssetCategory, AssetResolver, isAbsoluteUrl, kProjectMediaUrl, Clock, Device, Logger, Profiler, ProfilerUI, VideoRecorder, ProgramManager, RenderGraph, ResourceFormat, createPass, encodeExr, initScripting, initSlang, runConsoleCommand, runGraphScript, runSceneScript, runPbrtScene, presentToCanvas, type Scene } from "@web-falcor/falcor";
 import "@web-falcor/render-passes";
 import { CameraController } from "./CameraController.js";
 import { buildUIPanel } from "./UIPanel.js";
@@ -205,9 +205,16 @@ async function main() {
     const rebuildUI = () => buildUIPanel(passesEl, state.graph, resetAccum);
 
     wireControls(state, rebuildUI);
-    wireConsole(state, resetAccum, rebuildUI);
+    wireConsole(state, resetAccum, rebuildUI, profiler);
     wirePixelPicking(state, rebuildUI);
     rebuildUI();
+    // Profiler panel (native: P toggles the profiler window).
+    const profilerPanel = document.getElementById("profiler") as HTMLDivElement;
+    const profilerUI = new ProfilerUI(profiler, profilerPanel);
+    window.addEventListener("keydown", (ev) => {
+        if ((ev.key === "p" || ev.key === "P") && !(ev.target instanceof HTMLInputElement)) profilerPanel.hidden = !profilerPanel.hidden;
+    });
+    (window as unknown as { mogwaiProfiler: { profiler: Profiler; ui: ProfilerUI } }).mogwaiProfiler = { profiler, ui: profilerUI };
     const camControl = new CameraController(canvas);
     (window as unknown as { mogwai: ViewerState }).mogwai = state; // debug/test handle
 
@@ -237,6 +244,7 @@ async function main() {
             if (gpu) lastGpuLine = gpu;
             status.textContent = `${state.output} · frame ${state.frame}${lastGpuLine ? " · " + lastGpuLine : ""}`;
         }
+        if (!profilerPanel.hidden) profilerUI.render();
         requestAnimationFrame(frame);
     }
     requestAnimationFrame(frame);
@@ -280,7 +288,7 @@ async function captureFrame(state: ViewerState): Promise<void> {
 }
 
 /** Interactive python console (mirrors Mogwai's console; Enter runs the line). */
-function wireConsole(state: ViewerState, resetAccum: () => void, rebuildUI: () => void): void {
+function wireConsole(state: ViewerState, resetAccum: () => void, rebuildUI: () => void, profiler: Profiler): void {
     const panel = document.getElementById("console") as HTMLDivElement | null;
     const log = document.getElementById("consoleLog") as HTMLDivElement | null;
     const input = document.getElementById("consoleInput") as HTMLInputElement | null;
@@ -314,7 +322,7 @@ function wireConsole(state: ViewerState, resetAccum: () => void, rebuildUI: () =
             input.value = "";
             append(`>>> ${src}`, "in");
             try {
-                const out = runConsoleCommand(state.device, src, { scene: state.scene, graph: state.graph, clock: state.clock, timingCapture: state.timingCapture });
+                const out = runConsoleCommand(state.device, src, { scene: state.scene, graph: state.graph, clock: state.clock, timingCapture: state.timingCapture, profiler });
                 if (out) append(out);
             } catch (e) {
                 append(String(e), "err");

@@ -107,6 +107,10 @@ export class Scene {
     private texture3D: Texture;
     private sampler: Sampler;
     private materialCount = 0;
+    /** Mirrors Scene::getMaterialCount. */
+    getMaterialCount(): number {
+        return this.materialCount;
+    }
     private instanceCount = 0;
     private textureCount = 1;
     private drawList: { indexCount: number; firstIndex: number; baseVertex: number; firstInstance: number }[] = [];

@@ -390,6 +390,7 @@
     "WebFalcor/Overrides/RenderPasses/WhittedRayTracer/WhittedRayTracer.rt.slang",
     "WebFalcor/Overrides/Rendering/Lights/EmissivePowerSampler.slang",
     "WebFalcor/Overrides/Rendering/Lights/LightBVHSampler.slang",
+    "WebFalcor/Overrides/Rendering/Materials/BSDFIntegrator.cs.slang",
     "WebFalcor/Overrides/Rendering/Materials/IMaterial.slang",
     "WebFalcor/Overrides/Rendering/Materials/PBRT/PBRTCoatedConductorMaterialInstance.slang",
     "WebFalcor/Overrides/Rendering/Materials/PBRT/PBRTConductorMaterial.slang",

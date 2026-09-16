@@ -94,6 +94,8 @@ export const kShaderOverrides: Readonly<Record<string, string>> = {
     "RenderPasses/BSDFViewer/BSDFViewer.cs.slang": "WebFalcor/Overrides/RenderPasses/BSDFViewer/BSDFViewer.cs.slang",
     // WGSL has no binding arrays / storage-texture atomics -> per-type atomic buffers.
     "Rendering/Utils/PixelStats.slang": "WebFalcor/Overrides/Rendering/Utils/PixelStats.slang",
+    // Warp-size-32 wave reduction -> portable shared-memory reduction; no `= {}` ShadingData init.
+    "Rendering/Materials/BSDFIntegrator.cs.slang": "WebFalcor/Overrides/Rendering/Materials/BSDFIntegrator.cs.slang",
     // bool in cbuffer is non-host-shareable in WGSL -> uint flag.
     "RenderPasses/TAA/TAA.ps.slang": "WebFalcor/Overrides/RenderPasses/TAA/TAA.ps.slang",
     // RTXDI: no texel buffers in WGSL (structured swap), boiling filter
