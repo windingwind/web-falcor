@@ -96,3 +96,4 @@ export * from "./Rendering/Lights/LightBVHBuilder.js";
 export * from "./Rendering/Lights/LightBVHSamplerHost.js";
 export * from "./Scene/SceneData.js";
 export * from "./Scene/Material/MaterialData.js";
+export * from "./Scene/Material/MERLFile.js";

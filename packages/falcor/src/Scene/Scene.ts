@@ -36,7 +36,9 @@ import {
     type MeshDescData,
     type StaticVertex,
 } from "./SceneData.js";
-import { packBasicMaterialBlob, AlphaMode, MaterialType, TextureHandleMode, type BasicMaterialDesc, type MaterialHeaderDesc } from "./Material/MaterialData.js";
+import { packBasicMaterialBlob, packMERLMaterialBlob, AlphaMode, MaterialType, TextureHandleMode, type BasicMaterialDesc, type MaterialHeaderDesc } from "./Material/MaterialData.js";
+import { kMERLAlbedoLUTSize, type MERLBRDF } from "./Material/MERLFile.js";
+import type { RenderContext } from "../Core/API/RenderContext.js";
 import { assert, RuntimeError } from "../Core/Error.js";
 import type { NDSDFGrid } from "./SDFs/NDSDFGrid.js";
 import { SDFSBS } from "./SDFs/SDFSBS.js";
@@ -82,7 +84,10 @@ export interface SceneMaterialDesc {
     /** Material name; used by Scene.getMaterial(name). */
     name?: string;
     header?: Partial<MaterialHeaderDesc>;
+    /** Parameters of a basic (standard/cloth/hair/PBRT) material. */
     basic: BasicMaterialDesc;
+    /** Measured MERL BRDF; its table and albedo LUT live in the shared material buffer. */
+    merl?: MERLBRDF;
 }
 
 export class Scene {
@@ -154,6 +159,8 @@ export class Scene {
     private hasEmissiveMaterials = false;
     private materialTypes = new Set<MaterialType>();
     private materialDescs: SceneMaterialDesc[] = [];
+    /** Byte offsets of each MERL material's table and albedo LUT in materialBuffer0. */
+    private readonly merlOffsets = new Map<number, { data: number; lut: number }>();
     private lcMeshes: SceneMeshDesc[] = [];
     private lcTextureManager: TextureManager = new TextureManager();
     private emissiveTriangleCount = 0;
@@ -469,16 +476,30 @@ export class Scene {
         this.materialDescs = materials;
         this.rebuildLightCollection();
 
-        // Materials.
+        // Materials. Measured BRDFs carry bulk data (the MERL table plus its
+        // albedo LUT); it all lands in the one shared material buffer, and each
+        // material records its byte offsets (§9: no binding arrays in WGSL).
         this.materialCount = materials.length;
         this.materialDescs = materials;
+        let bufferSize = 0;
+        materials.forEach((m, i) => {
+            if (!m.merl) return;
+            const dataBytes = m.merl.data.byteLength;
+            this.merlOffsets.set(i, { data: bufferSize, lut: bufferSize + dataBytes });
+            bufferSize += dataBytes + kMERLAlbedoLUTSize * 16;
+        });
+        const materialBuffer = new Uint8Array(Math.max(bufferSize, 16));
+        materials.forEach((m, i) => {
+            if (!m.merl) return;
+            materialBuffer.set(new Uint8Array(m.merl.data.buffer, m.merl.data.byteOffset, m.merl.data.byteLength), this.merlOffsets.get(i)!.data);
+        });
         const blobBytes = new Uint8Array(materials.length * 128);
         materials.forEach((m, i) => {
-            this.materialTypes.add(m.header?.materialType ?? MaterialType.Standard);
-            blobBytes.set(this.packMaterial(m), i * 128);
+            this.materialTypes.add(m.merl ? MaterialType.MERL : (m.header?.materialType ?? MaterialType.Standard));
+            blobBytes.set(this.packMaterial(m, i), i * 128);
         });
         make("materialData", blobBytes, 128);
-        make("materialBuffer0", new Uint32Array(4), 4);
+        make("materialBuffer0", materialBuffer, 4);
         make("curveDummy", new Uint32Array(16), 32); // StaticCurveVertexData-sized dummy
         if (curves.length > 0) {
             // StaticCurveVertexData WGSL layout: position@0, radius@12, texCrd@16, stride 32.
@@ -590,7 +611,7 @@ export class Scene {
         const index = typeof ref === "object" ? this.materialDescs.indexOf(ref) : typeof ref === "number" ? ref : this.materialDescs.findIndex((m) => m.name === ref);
         const m = this.materialDescs[index];
         if (!m) throw new RuntimeError(`Scene.updateMaterial: no material '${String(ref)}'`);
-        this.buffers["materialData"]!.setBlob(this.packMaterial(m), index * 128);
+        this.buffers["materialData"]!.setBlob(this.packMaterial(m, index), index * 128);
         // Emissive edits change the NEE flux distribution (mirrors native
         // MaterialsChanged handling). Presence toggles that flip scene defines
         // still require pass recreation by the caller.
@@ -598,10 +619,33 @@ export class Scene {
     }
 
     /** Packs one material blob; the alpha mode follows native updateAlphaMode unless given explicitly. */
-    private packMaterial(m: SceneMaterialDesc): Uint8Array {
+    private packMaterial(m: SceneMaterialDesc, index: number): Uint8Array {
         const header: MaterialHeaderDesc = { materialType: MaterialType.Standard, ...m.header };
+        if (m.merl) {
+            const offsets = this.merlOffsets.get(index)!;
+            return packMERLMaterialBlob(header, { dataOffset: offsets.data, albedoLUTOffset: offsets.lut, extraData: m.merl.extraData });
+        }
         if (header.alphaMode === undefined) header.alphaMode = this.deriveAlphaMode(header, m.basic);
         return packBasicMaterialBlob(header, m.basic);
+    }
+
+    /**
+     * Mirrors MERLFile::computeAlbedoLUT: integrates each measured BRDF over the
+     * hemisphere at cosTheta = (1..N)/N and writes the table into the material
+     * buffer. Native precomputes this per material (and caches it as a `.dds`);
+     * the web integrates the live scene, which is the same BSDFIntegrator run.
+     */
+    async computeMERLAlbedoLUTs(ctx: RenderContext): Promise<void> {
+        if (this.merlOffsets.size === 0) return;
+        const { BSDFIntegrator } = await import("../Rendering/Materials/BSDFIntegrator.js");
+        const integrator = new BSDFIntegrator(this.device, this);
+        const cosThetas = Array.from({ length: kMERLAlbedoLUTSize }, (_v, i) => (i + 1) / kMERLAlbedoLUTSize);
+        for (const [materialID, offsets] of this.merlOffsets) {
+            const albedos = await integrator.integrateIsotropic(ctx, materialID, cosThetas);
+            const lut = new Float32Array(kMERLAlbedoLUTSize * 4);
+            albedos.forEach((a, i) => lut.set([a.x, a.y, a.z, 1], i * 4));
+            this.buffers["materialBuffer0"]!.setBlob(new Uint8Array(lut.buffer), offsets.lut);
+        }
     }
 
     /**
@@ -1134,6 +1178,7 @@ export class Scene {
             // the factory's fallback return must exist for WGSL (E41009).
             WEBFALCOR_MTL_STANDARD: this.materialTypes.has(MaterialType.Standard) || this.materialTypes.size === 0 ? 1 : 0,
             WEBFALCOR_MTL_CLOTH: this.materialTypes.has(MaterialType.Cloth) ? 1 : 0,
+            WEBFALCOR_MTL_MERL: this.materialTypes.has(MaterialType.MERL) ? 1 : 0,
             WEBFALCOR_MTL_HAIR: this.materialTypes.has(MaterialType.Hair) ? 1 : 0,
             WEBFALCOR_MTL_PBRT_DIFFUSE: this.materialTypes.has(MaterialType.PBRTDiffuse) ? 1 : 0,
             WEBFALCOR_MTL_PBRT_DIFFUSE_TRANSMISSION: this.materialTypes.has(MaterialType.PBRTDiffuseTransmission) ? 1 : 0,

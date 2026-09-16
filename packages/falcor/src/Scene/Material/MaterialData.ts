@@ -88,6 +88,52 @@ export function packMaterialHeader(desc: MaterialHeaderDesc): Uint32Array {
     return new Uint32Array([x >>> 0, y >>> 0, z >>> 0, w >>> 0]);
 }
 
+/** Mirrors DiffuseSpecularData.slang: a best-fit diffuse/GGX approximation of a measured BRDF. */
+export interface DiffuseSpecularData {
+    /** Base color in linear space. */
+    baseColor: [number, number, number];
+    /** Linearly perceptual roughness (the specular lobe squares it). */
+    roughness: number;
+    specular: number;
+    metallic: number;
+    /** Loss when fitted to the target BRDF; not used for rendering. */
+    lossValue: number;
+}
+
+/**
+ * Mirrors MERLMaterialData.slang. Web divergence (docs §9): `bufferID` and
+ * `texAlbedoLUT` carry *byte offsets* into the single shared material buffer
+ * rather than a buffer index and a texture handle — WGSL has no binding arrays,
+ * and the albedo LUT is float data the packed RGBA8 texture array cannot hold.
+ */
+export interface MERLMaterialDesc {
+    /** Byte offset of the interleaved RGB BRDF table. */
+    dataOffset: number;
+    /** Byte offset of the 256-entry float4 albedo LUT. */
+    albedoLUTOffset: number;
+    extraData: DiffuseSpecularData;
+}
+
+/** Packs a 128-byte MaterialDataBlob for a MERL material (MERLMaterialData layout). */
+export function packMERLMaterialBlob(header: MaterialHeaderDesc, merl: MERLMaterialDesc): Uint8Array {
+    const blob = new ArrayBuffer(128);
+    const u32 = new Uint32Array(blob);
+    const dv = new DataView(blob);
+    u32.set(packMaterialHeader({ ...header, materialType: MaterialType.MERL, isBasicMaterial: false }), 0);
+
+    let off = 16;
+    dv.setUint32(off, merl.dataOffset, true); off += 4; // bufferID -> byte offset
+    dv.setUint32(off, 0, true); off += 4; // samplerID
+    // DiffuseSpecularData extraData
+    for (const c of merl.extraData.baseColor) { dv.setFloat32(off, c, true); off += 4; }
+    dv.setFloat32(off, merl.extraData.roughness, true); off += 4;
+    dv.setFloat32(off, merl.extraData.specular, true); off += 4;
+    dv.setFloat32(off, merl.extraData.metallic, true); off += 4;
+    dv.setFloat32(off, merl.extraData.lossValue, true); off += 4;
+    dv.setUint32(off, merl.albedoLUTOffset, true); off += 4; // texAlbedoLUT -> byte offset
+    return new Uint8Array(blob);
+}
+
 export interface BasicMaterialDesc {
     baseColor?: float4;
     /** occlusion (R), roughness (G), metallic (B) in MetalRough mode. */
