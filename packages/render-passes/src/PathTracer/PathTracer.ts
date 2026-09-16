@@ -17,6 +17,10 @@ import {
     EmissivePowerSampler,
     EnvMapSampler,
     LightBVHSampler,
+    RTXDI,
+    kDefaultLightBVHSamplerOptions,
+    kDefaultLightBVHOptions,
+    kSolidAngleBoundMethods,
     MemoryType,
     Properties,
     RenderData,
@@ -89,6 +93,12 @@ export class PathTracer extends RenderPass {
     private emissiveSampler = "LightBVH"; // native default (PathTracer.h)
     private powerSampler: EmissivePowerSampler | null = null;
     private lightBVHSampler: LightBVHSampler | null = null;
+    private lightBVHOptions = kDefaultLightBVHSamplerOptions;
+    private primaryLodMode = 0; // TexLODMode::Mip0
+    private useRTXDI = false;
+    private rtxdiOptions: Record<string, unknown> = {};
+    private rtxdi: RTXDI | null = null;
+    private dummyMvec: import("@web-falcor/falcor").Texture | null = null;
 
     constructor(device: Device, props: Properties) {
         super(device);
@@ -115,6 +125,39 @@ export class PathTracer extends RenderPass {
         if (!(this.emissiveSampler in kEmissiveSamplerTypes)) {
             throw new Error(`PathTracer: unknown emissiveSampler '${this.emissiveSampler}'`);
         }
+        // Mirrors kUseRTXDI / kRTXDIOptions.
+        this.useRTXDI = props.get("useRTXDI", false);
+        this.rtxdiOptions = (props.getOpt("RTXDIOptions") as Record<string, unknown> | undefined) ?? {};
+        // Mirrors kPrimaryLodMode (TexLODMode): Mip0 or RayDiffs; native also
+        // rejects RayCones here ("Unsupported tex lod mode. Defaulting to Mip0.").
+        const lodModes: Record<string, number> = { Mip0: 0, RayCones: 1, RayDiffs: 2 };
+        const lod = props.getOpt<string | number>("primaryLodMode");
+        if (lod !== undefined) {
+            this.primaryLodMode = (typeof lod === "string" ? lodModes[lod] : lod) ?? 0;
+            if (this.primaryLodMode === 1) {
+                console.warn("PathTracer: unsupported tex lod mode. Defaulting to Mip0.");
+                this.primaryLodMode = 0;
+            }
+        }
+        // Mirrors kLightBVHOptions: nested dict following the native serialization keys.
+        const bvhOpts = props.getOpt("lightBVHOptions") as Record<string, unknown> | undefined;
+        if (bvhOpts) {
+            const build = (bvhOpts["buildOptions"] ?? {}) as Record<string, unknown>;
+            const split = build["splitHeuristicSelection"];
+            const bound = bvhOpts["solidAngleBoundMethod"];
+            this.lightBVHOptions = {
+                ...kDefaultLightBVHSamplerOptions,
+                ...Object.fromEntries(Object.entries(bvhOpts).filter(([k]) => k in kDefaultLightBVHSamplerOptions && k !== "buildOptions" && k !== "solidAngleBoundMethod")),
+                solidAngleBoundMethod:
+                    typeof bound === "string" ? (kSolidAngleBoundMethods[bound] ?? kDefaultLightBVHSamplerOptions.solidAngleBoundMethod) : typeof bound === "number" ? bound : kDefaultLightBVHSamplerOptions.solidAngleBoundMethod,
+                buildOptions: {
+                    ...kDefaultLightBVHOptions,
+                    ...Object.fromEntries(Object.entries(build).filter(([k]) => k in kDefaultLightBVHOptions && k !== "splitHeuristicSelection")),
+                    splitHeuristicSelection:
+                        split === "Equal" || split === "BinnedSAH" || split === "BinnedSAOH" ? split : kDefaultLightBVHOptions.splitHeuristicSelection,
+                },
+            };
+        }
         // PathTracer defaults to TinyUniform (unlike MinimalPathTracer).
         this.sampleGenerator = SampleGenerator.create(device, SAMPLE_GENERATOR_TINY_UNIFORM);
         // Native asserts spp fits the 16-bit tile sample offsets (tile 16x16 x 16 spp).
@@ -126,6 +169,9 @@ export class PathTracer extends RenderPass {
         const [w, h] = compileData.defaultTexDims;
         r.addInput("vbuffer", "Fullscreen V-buffer for the primary hits").bindFlags(ResourceBindFlags.ShaderResource);
         r.addInput("viewW", "World-space view direction (xyz float format)")
+            .bindFlags(ResourceBindFlags.ShaderResource)
+            .flags(FieldFlags.Optional);
+        r.addInput("mvec", "Motion vector buffer (float format; RTXDI temporal resampling)")
             .bindFlags(ResourceBindFlags.ShaderResource)
             .flags(FieldFlags.Optional);
         r.addInput("sampleCount", "Sample count buffer (integer format)")
@@ -162,6 +208,7 @@ export class PathTracer extends RenderPass {
         super.setScene(scene);
         this.generatePass = null;
         this.tracePass = null;
+        this.rtxdi = null;
         this.frameCount = 0;
     }
 
@@ -179,11 +226,11 @@ export class PathTracer extends RenderPass {
             USE_NEE: this.useNEE ? 1 : 0,
             USE_MIS: this.useMIS ? 1 : 0,
             USE_RUSSIAN_ROULETTE: this.useRussianRoulette ? 1 : 0,
-            USE_RTXDI: 0,
+            USE_RTXDI: this.rtxdi ? 1 : 0,
             USE_ALPHA_TEST: this.useAlphaTest ? 1 : 0,
             USE_LIGHTS_IN_DIELECTRIC_VOLUMES: 0,
             DISABLE_CAUSTICS: 0,
-            PRIMARY_LOD_MODE: 0, // TexLODMode::Mip0
+            PRIMARY_LOD_MODE: this.primaryLodMode,
             USE_NRD_DEMODULATION: 1,
             USE_SER: 0,
             COLOR_FORMAT: 1, // ColorFormat::LogLuvHDR (native default; unused at spp==1)
@@ -210,7 +257,9 @@ export class PathTracer extends RenderPass {
             OUTPUT_NRD_DATA: 0,
             OUTPUT_NRD_ADDITIONAL_DATA: 0,
             ...(this.statsEnabled ? { _PIXEL_STATS_ENABLED: 1 } : {}),
-        }).addAll(this.sampleGenerator.getDefines());
+        })
+            .addAll(this.sampleGenerator.getDefines())
+            .addAll(this.rtxdi ? this.rtxdi.getDefines() : {});
     }
 
     /** Mirrors PathTracer::bindShaderData for the members live at spp == 1. */
@@ -300,9 +349,19 @@ export class PathTracer extends RenderPass {
             this.generatePass = null;
         }
 
+        // Mirrors prepareRTXDI: create before the programs so USE_RTXDI + the
+        // RTXDI defines land in the kernels.
+        if (this.useRTXDI && !this.rtxdi) {
+            this.rtxdi = new RTXDI(this.device, this.scene, this.rtxdiOptions);
+            this.generatePass = null;
+            if (!this.fixedSampleCount || this.samplesPerPixel !== 1) {
+                console.warn("Using RTXDI with samples/pixel != 1 will only generate one RTXDI sample reused for all pixel samples.");
+            }
+        }
+
         if (!this.generatePass) {
             if (this.emissiveSampler === "LightBVH" && this.scene.useEmissiveLights && !this.lightBVHSampler) {
-                this.lightBVHSampler = new LightBVHSampler(this.device, this.scene.getEmissiveTriangles());
+                this.lightBVHSampler = new LightBVHSampler(this.device, this.scene.getEmissiveTriangles(), this.lightBVHOptions);
             }
             const defines = this.getStaticDefines();
             this.generatePass = ComputePass.create(this.device, { path: kGeneratePathsFile, defines });
@@ -371,20 +430,41 @@ export class PathTracer extends RenderPass {
             }
         }
 
+        // RTXDI frame setup (mirrors beginFrame/update around the path generator,
+        // which writes the per-pixel surface data the resampling consumes).
+        let mvec: import("@web-falcor/falcor").Texture | null = null;
+        if (this.rtxdi) {
+            this.dummyMvec ??= new Texture(this.device, {
+                type: ResourceType.Texture2D,
+                width: 1,
+                height: 1,
+                format: ResourceFormat.RG32Float,
+                bindFlags: ResourceBindFlags.ShaderResource,
+                name: "PathTracer::dummyMvec",
+            });
+            mvec = renderData.getTexture("mvec") ?? this.dummyMvec;
+            this.rtxdi.beginFrame(ctx, frameDim);
+        }
+
         // Generate paths: primary hits from the V-buffer; misses write background.
         {
             const root = this.generatePass.getRootVar();
             this.scene.bindShaderData(root);
+            if (this.rtxdi) this.rtxdi.setShaderData(root, mvec);
             this.bindStats(root, frameDim);
             this.bindPathTracerData(root["CB"]["gPathGenerator"] as ShaderVar, vbuffer, color, frameDim);
             // One thread per pixel, padded to whole tiles (numthreads(256,1,1)).
             this.generatePass.execute(ctx, tiles[0]! * kScreenTileDim * kScreenTileDim, tiles[1]!);
         }
 
+        // RTXDI resampling over the surface data written by the path generator.
+        if (this.rtxdi) this.rtxdi.update(ctx, mvec!);
+
         // Trace paths (compute megakernel).
         {
             const root = this.tracePass!.getRootVar();
             this.scene.bindShaderData(root);
+            if (this.rtxdi) this.rtxdi.setShaderData(root, mvec);
             this.bindStats(root, frameDim);
             const block = root["gPathTracer"] as ShaderVar;
             this.bindPathTracerData(block, vbuffer, color, frameDim);
@@ -492,6 +572,7 @@ export class PathTracer extends RenderPass {
             this.pixelStats.resolve(ctx, this.statsBuffer!, frameDim);
         }
 
+        if (this.rtxdi) this.rtxdi.endFrame(ctx);
         this.frameCount++;
     }
 }

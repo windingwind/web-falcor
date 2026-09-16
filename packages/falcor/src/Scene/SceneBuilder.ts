@@ -510,10 +510,15 @@ export class SceneBuilderBridge {
         this.camera = unwrapGuard(camera);
     }
 
-    /** Deferred animation handles (imports resolve later; web animation loops the
-     *  whole clip, so pre/post-infinity behavior writes are accepted and ignored). */
+    /** Deferred animation handles: imports resolve later, so pyscene behavior
+     *  writes are recorded here and applied to the imported clips in resolve()
+     *  (index = native Animation creation order = assimp node-anim order). */
+    private animationHandles: { preInfinityBehavior: unknown; postInfinityBehavior: unknown }[] = [];
     get animations(): { preInfinityBehavior: unknown; postInfinityBehavior: unknown }[] {
-        return Array.from({ length: 16 }, () => ({ preInfinityBehavior: null, postInfinityBehavior: null }));
+        if (this.animationHandles.length === 0) {
+            this.animationHandles = Array.from({ length: 64 }, () => ({ preInfinityBehavior: null, postInfinityBehavior: null }));
+        }
+        return this.animationHandles;
     }
 
     importScene(path: string): void {
@@ -526,8 +531,12 @@ export class SceneBuilderBridge {
         return this.meshGeometry.length - 1;
     }
 
-    addNode(_name: string, transform: float4x4): number {
-        this.nodes.push(transform);
+    addNode(_name: string, transform: float4x4, parentID?: number): number {
+        // Nodes store WORLD matrices (static scenes): compose under the parent
+        // (native SceneBuilder::addNode's third argument was silently dropped
+        // before — parented pyscene nodes lost the parent transform).
+        const parent = parentID !== undefined && parentID >= 0 ? this.nodes[parentID] : undefined;
+        this.nodes.push(parent ? mulMat(parent, transform) : transform);
         return this.nodes.length - 1;
     }
 
@@ -669,6 +678,7 @@ export class SceneBuilderBridge {
         nodes: SceneNode[];
         cameraNodeID?: number;
         textureManager: TextureManager;
+        curves: import("./Scene.js").SceneCurveDesc[];
         cacheable: boolean;
     } | null = null;
 
@@ -683,6 +693,7 @@ export class SceneBuilderBridge {
 
         const importedMaterialNames: string[] = [];
         const curves: import("./Scene.js").SceneCurveDesc[] = [];
+        let clipOffset = 0; // clip ordinals accumulate across imports (native Animation list order)
         for (const cmd of this.commands) {
             if (cmd.kind === "import") {
                 const url = baseUrl ? `${baseUrl}/${cmd.path}` : cmd.path;
@@ -731,7 +742,9 @@ export class SceneBuilderBridge {
                     importedMaterialNames.push(...parsed.materialNames);
                     const nodeOffset = nodes.length;
                     for (const n of parsed.nodes) nodes.push({ ...n, parent: n.parent >= 0 ? n.parent + nodeOffset : -1 });
-                    for (const ch of parsed.animations) animations.push({ ...ch, nodeID: ch.nodeID + nodeOffset });
+                    for (const ch of parsed.animations)
+                        animations.push({ ...ch, nodeID: ch.nodeID + nodeOffset, clip: ch.clip !== undefined ? ch.clip + clipOffset : undefined });
+                    clipOffset += parsed.animations.reduce((mx, c) => Math.max(mx, (c.clip ?? -1) + 1), 0);
                     importedLights.push(...parsed.lights);
                     for (const m of parsed.meshes)
                         meshes.push({
@@ -766,6 +779,19 @@ export class SceneBuilderBridge {
             }
         }
 
+        // Apply the recorded pyscene pre/post-infinity behavior writes to the
+        // imported clips (mirrors sceneBuilder.animations[i].preInfinityBehavior).
+        for (const [i, h] of this.animationHandles.entries()) {
+            const pre = h.preInfinityBehavior;
+            const post = h.postInfinityBehavior;
+            if (pre == null && post == null) continue;
+            for (const ch of animations) {
+                if (ch.clip !== i) continue;
+                if (pre != null) ch.preInfinity = Number(pre);
+                if (post != null) ch.postInfinity = Number(post);
+            }
+        }
+
         // Apply deferred getMaterial() edits (mirrors pyscene mutations after importScene).
         for (const edit of this.materialEdits) {
             const idx = importedMaterialNames.indexOf(edit.name);
@@ -788,7 +814,7 @@ export class SceneBuilderBridge {
             const url = baseUrl ? `${baseUrl}/${geo._fromFile.path}` : geo._fromFile.path;
             const res = await fetch(url);
             if (!res.ok) throw new RuntimeError(`TriangleMesh.createFromFile: failed to fetch '${url}' (${res.status})`);
-            const loaded = await FbxImporter.parseMeshOnly(new Uint8Array(await res.arrayBuffer()), geo._fromFile.path);
+            const loaded = await FbxImporter.parseMeshOnly(new Uint8Array(await res.arrayBuffer()), geo._fromFile.path, geo._fromFile.smoothNormals);
             geo.vertices = loaded.vertices;
             geo.indices = loaded.indices;
             geo._fromFile = undefined;
@@ -861,7 +887,8 @@ export class SceneBuilderBridge {
         // its own camera (an explicit pyscene camera wins and stays static).
         const cameraNodeID = this.camera ? undefined : this.importedCameraNodeID;
         const scene = new Scene(device, meshes, materials, lights, textureManager, sdfGrids, nodes, animations, cameraNodeID, weightTracks, curves);
-        // Snapshot for the scene cache (phase 1: static texture-less scenes only).
+        // Snapshot for the scene cache (phase 3: static geometry incl. curves,
+        // textures, env map; animation/skin/morph/SDF/volume scenes reimport).
         this.lastSceneArgs = {
             meshes,
             materials,
@@ -869,12 +896,11 @@ export class SceneBuilderBridge {
             nodes,
             cameraNodeID,
             textureManager,
+            curves,
             cacheable:
                 animations.length === 0 &&
                 weightTracks.length === 0 &&
-                curves.length === 0 &&
                 sdfGrids.length === 0 &&
-                !this.envMap &&
                 this.gridVolumesList.length === 0 &&
                 meshes.every((m) => !m.skin && !m.morph),
         };

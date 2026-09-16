@@ -805,12 +805,22 @@ struct PathTracer
     */
     ITextureSampler createTextureSampler(const PathState path, bool isPrimaryHit)
     {
-        const bool isTriangleHit = (path.hit.getType() == HitType::Triangle);
-        if (kPrimaryLodMode == TexLODMode::RayDiffs && isPrimaryHit && isTriangleHit)
+        // WebFalcor diff vs upstream: returning ExplicitGradient OR ExplicitLod
+        // selected by a RUNTIME condition crashes the Slang 2026.12.2 WGSL
+        // backend (E99997 'Unhandled info type in analyzeExtractExistentialType'
+        // — a dynamic existential). Under RayDiffs the single concrete gradient
+        // sampler covers both cases: zero gradients sample LOD 0, which equals
+        // upstream's ExplicitLod(lodBias) at the web's fixed lodBias = 0.
+        if (kPrimaryLodMode == TexLODMode::RayDiffs)
         {
-            // Filtered lookups at primary hit on triangle.
-            float2 ddx, ddy;
-            computeDerivativesAtPrimaryTriangleHit(path.hit.getTriangleHit(), path.getPixel(), params.frameDim, ddx, ddy);
+            const bool isTriangleHit = (path.hit.getType() == HitType::Triangle);
+            float2 ddx = float2(0.f);
+            float2 ddy = float2(0.f);
+            if (isPrimaryHit && isTriangleHit)
+            {
+                // Filtered lookups at primary hit on triangle.
+                computeDerivativesAtPrimaryTriangleHit(path.hit.getTriangleHit(), path.getPixel(), params.frameDim, ddx, ddy);
+            }
             return ExplicitGradientTextureSampler(ddx, ddy);
         }
         else

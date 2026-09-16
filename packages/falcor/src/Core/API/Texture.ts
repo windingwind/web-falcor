@@ -120,10 +120,14 @@ export class Texture extends Resource {
     }
 
     /** Mirrors Texture::generateMips: box-filter downsample chain via blits
-     *  (linear sampling at destination texel centers == 2x2 average). */
-    generateMips(ctx: { blit(src: Texture, dst: Texture, filter?: GPUFilterMode, srcMip?: number, dstMip?: number): void }): void {
-        for (let mip = 1; mip < this.mipCount; mip++) {
-            ctx.blit(this, this, "linear", mip - 1, mip);
+     *  (linear sampling at destination texel centers == 2x2 average); array
+     *  textures generate every layer. */
+    generateMips(ctx: { blit(src: Texture, dst: Texture, filter?: GPUFilterMode, srcMip?: number, dstMip?: number, srcLayer?: number, dstLayer?: number): void }): void {
+        const layers = this.type === ResourceType.Texture3D ? 1 : this.gpuTexture.depthOrArrayLayers;
+        for (let layer = 0; layer < layers; layer++) {
+            for (let mip = 1; mip < this.mipCount; mip++) {
+                ctx.blit(this, this, "linear", mip - 1, mip, layer, layer);
+            }
         }
     }
 

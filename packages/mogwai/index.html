@@ -20,6 +20,11 @@
       #passes .ui-text { opacity: 0.7; margin: 2px 0 2px 8px; }
       #passes button, #passes select, #passes input { font-family: monospace; font-size: 11px; }
       #passes button { margin: 2px 0 2px 8px; }
+      #console { position: absolute; bottom: 28px; left: 8px; width: 560px; background: #2a2a2ad8; border-radius: 4px; font-size: 12px; }
+      #consoleLog { max-height: 180px; overflow-y: auto; padding: 4px 8px; white-space: pre-wrap; }
+      #consoleLog .in { color: #8cf; }
+      #consoleLog .err { color: #f88; }
+      #consoleInput { width: calc(100% - 16px); margin: 0 8px 6px; background: #1e1e1e; color: #ddd; border: 1px solid #444; font-family: monospace; font-size: 12px; }
     </style>
   </head>
   <body>
@@ -32,6 +37,11 @@
       <button id="record">Record</button>
       <label>graph <input id="graphFile" type="file" accept=".py" /></label>
       <label>output <select id="output"></select></label>
+      <button id="consoleToggle">Console</button>
+    </div>
+    <div id="console" hidden>
+      <div id="consoleLog"></div>
+      <input id="consoleInput" placeholder="python — m.scene / m.activeGraph / m.settings; Enter to run" />
     </div>
     <div id="passes"></div>
     <script type="module" src="./src/main.ts"></script>

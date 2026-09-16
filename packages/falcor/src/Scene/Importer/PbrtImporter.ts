@@ -21,9 +21,12 @@
  * (left-handed) coordinates verbatim; only the camera is z-flipped (kInvertZ)
  * to look correctly in Falcor's right-handed space.
  *
- * Documented divergences from native: the StandardMaterial mapping path is used
- * (usePBRTMaterials=false) for all materials; named-spectrum reflectance/eta/k
- * fall back to constants (default conductor uses an sRGB copper approximation);
+ * Materials map to StandardMaterial by default; with the Settings option
+ * `PBRTImporter:usePBRTMaterials` (same key as native) diffuse/coateddiffuse/
+ * conductor/coatedconductor/dielectric/diffusetransmission map to the
+ * dedicated PBRT material classes instead (area lights stay Standard, like
+ * native). Documented divergences: named-spectrum reflectance/eta/k fall back
+ * to constants (default conductor uses an sRGB copper approximation);
  * non-constant/anisotropic roughness and spectra are not supported.
  */
 
@@ -45,6 +48,7 @@ import {
 } from "../../Utils/Math/Matrix.js";
 import { fovYToFocalLength } from "../Camera/Camera.js";
 import { RuntimeError } from "../../Core/Error.js";
+import { getGlobalSettings } from "../../Utils/Scripting/Scripting.js";
 import {
     SceneBuilderBridge,
     CameraBridge,
@@ -191,9 +195,10 @@ function fresnelConductor(eta: float3, k: float3, cosTheta: number): float3 {
 }
 
 /** getRoughness -> NDF alpha (replicates upstream, incl. the u+v sum). */
-function scalarRoughnessAlpha(p: Params): number {
-    const uc = P.has(p, "uroughness") ? P.float(p, "uroughness", 0) : P.float(p, "roughness", 0);
-    const vc = P.has(p, "vroughness") ? P.float(p, "vroughness", 0) : P.float(p, "roughness", 0);
+function scalarRoughnessAlpha(p: Params, rName = "roughness", uName = "uroughness", vName = "vroughness"): number {
+    const uc = P.has(p, uName) ? P.float(p, uName, 0) : P.float(p, rName, 0);
+    const vc = P.has(p, vName) ? P.float(p, vName, 0) : P.float(p, rName, 0);
+    // Native quirk kept: getRoughness builds float2{u + v} (a broadcast of the sum).
     let alpha = uc + vc;
     if (P.bool(p, "remaproughness", true)) alpha = Math.sqrt(alpha);
     return alpha;
@@ -208,21 +213,27 @@ function scalarEta(p: Params, name = "eta"): number {
     return P.float(p, name, 1.5);
 }
 
-function conductorSpecularAlbedo(p: Params): float3 {
-    if (P.has(p, "reflectance")) {
-        const r = P.rgb(p, "reflectance", new float3(0.5, 0.5, 0.5));
+/** Mirrors getConductorEtaK: reflectance -> (eta=1, k from Fresnel inversion), else eta/k (copper default). */
+function conductorEtaK(p: Params, rName = "reflectance", etaName = "eta", kName = "k"): { eta: float3; k: float3 } {
+    if (P.has(p, rName)) {
+        const r = P.rgb(p, rName, new float3(0.5, 0.5, 0.5));
         const cl = (x: number) => Math.min(0.9999, Math.max(0, x));
         const rc = new float3(cl(r.x), cl(r.y), cl(r.z));
-        const eta = new float3(1, 1, 1);
         const k = new float3(
             (2 * Math.sqrt(rc.x)) / Math.sqrt(1 - rc.x),
             (2 * Math.sqrt(rc.y)) / Math.sqrt(1 - rc.y),
             (2 * Math.sqrt(rc.z)) / Math.sqrt(1 - rc.z),
         );
-        return fresnelConductor(eta, k, 1);
+        return { eta: new float3(1, 1, 1), k };
     }
-    const eta = P.has(p, "eta") ? P.rgb(p, "eta", kCopperEta) : kCopperEta;
-    const k = P.has(p, "k") ? P.rgb(p, "k", kCopperK) : kCopperK;
+    return {
+        eta: P.has(p, etaName) ? P.rgb(p, etaName, kCopperEta) : kCopperEta,
+        k: P.has(p, kName) ? P.rgb(p, kName, kCopperK) : kCopperK,
+    };
+}
+
+function conductorSpecularAlbedo(p: Params, rName = "reflectance", etaName = "eta", kName = "k"): float3 {
+    const { eta, k } = conductorEtaK(p, rName, etaName, kName);
     return fresnelConductor(eta, k, 1);
 }
 
@@ -672,7 +683,7 @@ class PbrtScene {
         const materialDef = this.state.material ?? { type: "diffuse", name: "", params: new Map() };
         let mb: MaterialBridge;
         if (this.state.areaLight) {
-            mb = this.translateMaterial(materialDef);
+            mb = this.translateMaterial(materialDef, true);
             const L = P.rgb(this.state.areaLight, "L", new float3(1, 1, 1));
             mb.emissiveColor = L;
             mb.emissiveFactor = P.float(this.state.areaLight, "scale", 1);
@@ -699,8 +710,11 @@ class PbrtScene {
         return assembleMesh(positions, indices, [], []);
     }
 
-    private translateMaterial(def: MaterialDef): MaterialBridge {
+    private translateMaterial(def: MaterialDef, isAreaLight = false): MaterialBridge {
         const p = def.params;
+        // Mirrors the native Settings option; area-light materials always take
+        // the StandardMaterial path (as in native createMaterial).
+        const usePBRT = !isAreaLight && getGlobalSettings().getOption<boolean>("PBRTImporter:usePBRTMaterials", false) === true;
         const m = new MaterialBridge(MaterialType.Standard, def.name);
         m.doubleSided = true;
         switch (def.type) {
@@ -709,6 +723,12 @@ class PbrtScene {
             case "interface":
             case "diffuse": {
                 const refl = P.rgb(p, "reflectance", new float3(0.5, 0.5, 0.5));
+                if (usePBRT && def.type === "diffuse") {
+                    const pm = new MaterialBridge(MaterialType.PBRTDiffuse, def.name);
+                    pm.baseColor = new float4(refl.x, refl.y, refl.z, 1);
+                    pm.doubleSided = true;
+                    return pm;
+                }
                 m.metallic = 0;
                 m.roughness = 1;
                 m.baseColor = new float4(refl.x, refl.y, refl.z, 1);
@@ -716,20 +736,64 @@ class PbrtScene {
             }
             case "coateddiffuse": {
                 const refl = P.rgb(p, "reflectance", new float3(0.5, 0.5, 0.5));
+                if (usePBRT) {
+                    const a = scalarRoughnessAlpha(p);
+                    const pm = new MaterialBridge(MaterialType.PBRTCoatedDiffuse, def.name);
+                    pm.roughness = { x: a, y: a }; // setRoughness(float2) -> specular.rg
+                    pm.baseColor = new float4(refl.x, refl.y, refl.z, 1);
+                    pm.doubleSided = true;
+                    return pm;
+                }
                 m.metallic = 0;
                 m.roughness = Math.sqrt(scalarRoughnessAlpha(p));
                 m.baseColor = new float4(refl.x, refl.y, refl.z, 1);
                 break;
             }
-            case "conductor":
-            case "coatedconductor": {
+            case "conductor": {
+                if (usePBRT) {
+                    const { eta, k } = conductorEtaK(p);
+                    const a = scalarRoughnessAlpha(p);
+                    const pm = new MaterialBridge(MaterialType.PBRTConductor, def.name);
+                    pm.baseColor = new float4(eta.x, eta.y, eta.z, 1);
+                    pm.transmissionColor = k;
+                    pm.roughness = { x: a, y: a };
+                    pm.doubleSided = true;
+                    return pm;
+                }
                 const albedo = conductorSpecularAlbedo(p);
                 m.baseColor = new float4(albedo.x, albedo.y, albedo.z, 1);
                 m.metallic = 1;
                 m.roughness = Math.sqrt(scalarRoughnessAlpha(p));
                 break;
             }
+            case "coatedconductor": {
+                // Native uses the conductor.*-prefixed parameter names for this type.
+                if (usePBRT) {
+                    const ia = scalarRoughnessAlpha(p, "interface.roughness", "interface.uroughness", "interface.vroughness");
+                    const ca = scalarRoughnessAlpha(p, "conductor.roughness", "conductor.uroughness", "conductor.vroughness");
+                    const { eta, k } = conductorEtaK(p, "conductor.reflectance", "conductor.eta", "conductor.k");
+                    const pm = new MaterialBridge(MaterialType.PBRTCoatedConductor, def.name);
+                    pm.baseColor = new float4(eta.x, eta.y, eta.z, 1);
+                    pm.transmissionColor = k;
+                    pm.specularParams = new float4(ia, ia, ca, ca); // (interfaceRoughness, conductorRoughness)
+                    pm.indexOfRefraction = scalarEta(p, "interface.eta");
+                    pm.doubleSided = true;
+                    return pm;
+                }
+                const albedo = conductorSpecularAlbedo(p, "conductor.reflectance", "conductor.eta", "conductor.k");
+                m.baseColor = new float4(albedo.x, albedo.y, albedo.z, 1);
+                m.metallic = 1;
+                m.roughness = Math.sqrt(scalarRoughnessAlpha(p, "conductor.roughness", "conductor.uroughness", "conductor.vroughness"));
+                break;
+            }
             case "dielectric": {
+                if (usePBRT) {
+                    const a = scalarRoughnessAlpha(p);
+                    const pm = new MaterialBridge(MaterialType.PBRTDielectric, def.name);
+                    pm.roughness = { x: a, y: a };
+                    pm.indexOfRefraction = scalarEta(p);
+                    return pm; // native leaves doubleSided false here
+                }
                 m.metallic = 0;
                 m.roughness = Math.sqrt(scalarRoughnessAlpha(p));
                 m.indexOfRefraction = scalarEta(p);
@@ -737,6 +801,7 @@ class PbrtScene {
                 break;
             }
             case "thindielectric": {
+                // No PBRT-material branch natively either.
                 m.metallic = 0;
                 m.roughness = 0;
                 m.indexOfRefraction = scalarEta(p);
@@ -747,6 +812,13 @@ class PbrtScene {
             case "diffusetransmission": {
                 const refl = P.rgb(p, "reflectance", new float3(0.25, 0.25, 0.25));
                 const trans = P.rgb(p, "transmittance", new float3(0.25, 0.25, 0.25));
+                if (usePBRT) {
+                    const pm = new MaterialBridge(MaterialType.PBRTDiffuseTransmission, def.name);
+                    pm.baseColor = new float4(refl.x, refl.y, refl.z, 1);
+                    pm.transmissionColor = trans;
+                    pm.doubleSided = true;
+                    return pm;
+                }
                 m.metallic = 0;
                 m.roughness = 1;
                 m.diffuseTransmission = 0.5;

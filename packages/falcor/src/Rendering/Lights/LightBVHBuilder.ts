@@ -221,6 +221,8 @@ export function nthElement<T>(arr: T[], first: number, nth: number, last: number
 // ---- builder ----------------------------------------------------------------
 
 export interface LightBVHOptions {
+    /** Native SplitHeuristic; BinnedSAH is not ported (falls back to BinnedSAOH with a warning). */
+    splitHeuristicSelection: "Equal" | "BinnedSAH" | "BinnedSAOH";
     maxTriangleCountPerLeaf: number;
     binCount: number;
     volumeEpsilon: number;
@@ -233,6 +235,7 @@ export interface LightBVHOptions {
 }
 
 export const kDefaultLightBVHOptions: LightBVHOptions = {
+    splitHeuristicSelection: "BinnedSAOH",
     maxTriangleCountPerLeaf: 10,
     binCount: 16,
     volumeEpsilon: 1e-3,
@@ -471,7 +474,11 @@ function buildInternal(
     data.currentNodeFlux = nodeFlux;
 
     const trySplitting = end - begin > (o.createLeavesASAP ? o.maxTriangleCountPerLeaf : 1);
-    const splitResult = trySplitting ? computeSplitWithBinnedSAOH(data, begin, end, nodeBounds, o) : null;
+    const splitResult = trySplitting
+        ? o.splitHeuristicSelection === "Equal"
+            ? computeSplitWithEqual(data, begin, end, nodeBounds)
+            : computeSplitWithBinnedSAOH(data, begin, end, nodeBounds, o)
+        : null;
 
     if (splitResult) {
         const dim = splitResult.axis;
@@ -549,6 +556,9 @@ function computeLightingConesInternal(nodeIndex: number, data: BuildingData): { 
 }
 
 export function buildLightBVH(triangles: EmissiveTriangleInput[], options: LightBVHOptions = kDefaultLightBVHOptions): LightBVHBuildResult {
+    if (options.splitHeuristicSelection === "BinnedSAH") {
+        console.warn("LightBVH: BinnedSAH split heuristic not ported; using BinnedSAOH.");
+    }
     const data: BuildingData = {
         trianglesData: [],
         nodes: [],

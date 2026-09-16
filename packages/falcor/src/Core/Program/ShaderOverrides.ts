@@ -23,6 +23,10 @@ export const kShaderOverrides: Readonly<Record<string, string>> = {
     "Utils/Math/PackedFormats.slang": "WebFalcor/Overrides/Utils/Math/PackedFormats.slang",
     "Utils/Geometry/IntersectionHelpers.slang": "WebFalcor/Overrides/Utils/Geometry/IntersectionHelpers.slang",
     "RenderPasses/ErrorMeasurePass/ErrorMeasurer.cs.slang": "WebFalcor/Overrides/RenderPasses/ErrorMeasurePass/ErrorMeasurer.cs.slang",
+    // 'ShadingData sd = {}' has no zero-arg initializer under Slang 2026.12.2 -> loadShadingData inlined;
+    // 'this = {};' in PixelData.__init aborts the WGSL backend -> explicit field init.
+    "RenderPasses/PixelInspectorPass/PixelInspector.cs.slang": "WebFalcor/Overrides/RenderPasses/PixelInspectorPass/PixelInspector.cs.slang",
+    "RenderPasses/PixelInspectorPass/PixelInspectorData.slang": "WebFalcor/Overrides/RenderPasses/PixelInspectorPass/PixelInspectorData.slang",
     "Scene/HitInfo.slang": "WebFalcor/Overrides/Scene/HitInfo.slang",
     // WGSL has no binding arrays (docs §6.2): packed Texture2DArray material
     // textures, single sampler/buffer/3D bindings, single grid/SDF instances,
@@ -77,6 +81,11 @@ export const kShaderOverrides: Readonly<Record<string, string>> = {
     "RenderPasses/SimplePostFX/SimplePostFX.cs.slang": "WebFalcor/Overrides/RenderPasses/SimplePostFX/SimplePostFX.cs.slang",
     // Write-only outputs + uniform bools -> uint.
     "RenderPasses/FLIPPass/FLIPPass.cs.slang": "WebFalcor/Overrides/RenderPasses/FLIPPass/FLIPPass.cs.slang",
+    // RWBuffer<float> texel buffer -> RWStructuredBuffer<float>.
+    "RenderPasses/FLIPPass/ComputeLuminance.cs.slang": "WebFalcor/Overrides/RenderPasses/FLIPPass/ComputeLuminance.cs.slang",
+    // Aggregate init of a struct with an explicit __init is rejected by Slang 2026.12.2 -> member-wise.
+    "Rendering/Materials/PBRT/PBRTCoatedConductorMaterialInstance.slang":
+        "WebFalcor/Overrides/Rendering/Materials/PBRT/PBRTCoatedConductorMaterialInstance.slang",
     // RT pipeline -> compute megakernel over SceneRayQuery; existential lod
     // samplers restructured into generic helpers.
     "RenderPasses/WhittedRayTracer/WhittedRayTracer.rt.slang": "WebFalcor/Overrides/RenderPasses/WhittedRayTracer/WhittedRayTracer.rt.slang",

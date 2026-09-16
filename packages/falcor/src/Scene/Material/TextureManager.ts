@@ -81,7 +81,9 @@ export class TextureManager {
                 width,
                 height,
                 arraySize: layers,
-                mipLevels: 1,
+                // Full chain: texture-LOD modes (ray cones/diffs, explicit
+                // grads) need real mips; the Scene generates them post-upload.
+                mipLevels: Math.floor(Math.log2(Math.max(width, height))) + 1,
                 format: srgb ? ResourceFormat.RGBA8UnormSrgb : ResourceFormat.RGBA8Unorm,
                 bindFlags: ResourceBindFlags.ShaderResource | ResourceBindFlags.RenderTarget,
                 name,

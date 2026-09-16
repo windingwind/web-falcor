@@ -1,18 +1,22 @@
 /**
- * FLIP error-metric pass mirroring Source/RenderPasses/FLIPPass. The LDR path
- * (default) is complete. HDR auto-exposure needs a synchronous luminance
- * readback natively; on the web it would land a frame late (like ColorMapPass
- * auto-range) — deferred until an HDR-FLIP graph needs it, as is pooled-value
- * reduction (UI-only). Monitor info uses the native headless defaults
- * (useRealMonitorInfo has no browser equivalent for physical size).
+ * FLIP error-metric pass mirroring Source/RenderPasses/FLIPPass: LDR + HDR.
+ * Web divergence (docs §9): the HDR auto-exposure parameters come from an
+ * async luminance readback (native blocks), so they land ~1 frame late —
+ * the first HDR frame renders with the previous (or default) exposure range.
+ * Pooled FLIP values (average/min/max) likewise land asynchronously on
+ * `averageFLIP`/`minFLIP`/`maxFLIP`. Monitor info uses the native headless
+ * defaults (useRealMonitorInfo has no browser equivalent for physical size).
  *
  * Note: native binds gClampInput from mUseMagma (upstream quirk) — replicated
  * for 1:1 output parity.
  */
 
 import {
+    Buffer,
     ComputePass,
-    Logger,
+    MemoryType,
+    ParallelReduction,
+    ParallelReductionType,
     Properties,
     RenderData,
     RenderPass,
@@ -28,6 +32,26 @@ import {
 } from "@web-falcor/falcor";
 
 const kShaderFile = "RenderPasses/FLIPPass/FLIPPass.cs.slang";
+const kLuminanceShaderFile = "RenderPasses/FLIPPass/ComputeLuminance.cs.slang";
+
+/** Mirrors solveSecondDegree (FLIPPass.cpp). */
+function solveSecondDegree(a: number, b: number, c: number): [number, number] {
+    if (a === 0) {
+        const x = -c / b;
+        return [x, x];
+    }
+    const d1 = -0.5 * (b / a);
+    const d2 = Math.sqrt(d1 * d1 - c / a);
+    return [d1 - d2, d1 + d2];
+}
+
+/** Mirrors computeMedianMax (FLIPPass.cpp): median + max of the luminance values. */
+export function computeMedianMax(values: Float32Array): [number, number] {
+    const sorted = values.slice().sort();
+    const n = sorted.length;
+    const median = n & 1 ? sorted[n >> 1]! : (sorted[n / 2 - 1]! + sorted[n / 2]!) * 0.5;
+    return [median, sorted[n - 1]!];
+}
 
 export enum FLIPToneMapperType {
     ACES = 0,
@@ -52,8 +76,18 @@ export class FLIPPass extends RenderPass {
     private computePooledFLIPValues = false;
 
     private pass: ComputePass;
+    private luminancePass: ComputePass | null = null;
+    private luminanceBuffer: Buffer | null = null;
+    private reduction: ParallelReduction | null = null;
     private errorMapDisplay: Texture | null = null;
     private exposureMapDisplay: Texture | null = null;
+    private exposureReadbackInFlight = false;
+    private pooledReadbackInFlight = false;
+
+    /** Mirrors mAverageFLIP/mMinFLIP/mMaxFLIP (async readback; NaN until the first landing). */
+    averageFLIP = NaN;
+    minFLIP = NaN;
+    maxFLIP = NaN;
 
     constructor(device: Device, props: Properties) {
         super(device);
@@ -136,8 +170,42 @@ export class FLIPPass extends RenderPass {
             this.exposureMapDisplay = make("FLIPPass::exposureMapDisplay");
         }
 
-        if (this.isHDR && !this.useCustomExposureParameters) {
-            Logger.warning("FLIPPass: HDR auto-exposure needs a synchronous readback; not ported yet (LDR path is 1:1).");
+        if (this.useCustomExposureParameters) {
+            // Mirrors the native UI path: delta derived from the custom start/stop range.
+            this.exposureDelta = (this.stopExposure - this.startExposure) / (this.numExposures - 1);
+        } else if (this.isHDR) {
+            // HDR auto-exposure from the reference luminance. Like native, the
+            // parameters computed from this frame's readback apply to the NEXT
+            // frame (native also copies the members into the cbuffer before
+            // recomputing them); the web readback is just async as well.
+            if (!this.luminanceBuffer || this.luminanceBuffer.size !== w * h * 4) {
+                this.luminanceBuffer = new Buffer(this.device, {
+                    size: w * h * 4,
+                    structSize: 4,
+                    bindFlags: ResourceBindFlags.ShaderResource | ResourceBindFlags.UnorderedAccess,
+                    memoryType: MemoryType.DeviceLocal,
+                    name: "FLIPPass::luminance",
+                });
+            }
+            this.luminancePass ??= ComputePass.create(this.device, { path: kLuminanceShaderFile, csEntry: "computeLuminance" });
+            const lroot = this.luminancePass.getRootVar();
+            lroot["gInputImage"] = reference;
+            lroot["gOutputLuminance"] = this.luminanceBuffer;
+            lroot["PerFrameCB"]["gResolution"] = [w, h];
+            this.luminancePass.execute(ctx, w, h);
+            if (!this.exposureReadbackInFlight) {
+                this.exposureReadbackInFlight = true;
+                const n = w * h;
+                void this.luminanceBuffer
+                    .getBlob()
+                    .then((bytes) => {
+                        const [median, max] = computeMedianMax(new Float32Array(bytes.buffer, bytes.byteOffset, n));
+                        this.computeExposureParameters(median, max);
+                    })
+                    .finally(() => {
+                        this.exposureReadbackInFlight = false;
+                    });
+            }
         }
 
         const root = this.pass.getRootVar();
@@ -162,9 +230,54 @@ export class FLIPPass extends RenderPass {
         ctx.blit(this.errorMapDisplay, errorMapDisplayOut);
         ctx.blit(this.exposureMapDisplay!, exposureMapDisplayOut);
 
-        if (this.computePooledFLIPValues) {
-            Logger.warning("FLIPPass: pooled FLIP values (UI-only) not ported yet.");
+        // Mean/min/max FLIP via parallel reduction (alpha channel holds the FLIP value).
+        if (this.computePooledFLIPValues && !this.pooledReadbackInFlight) {
+            this.reduction ??= new ParallelReduction(this.device);
+            this.pooledReadbackInFlight = true;
+            const n = w * h;
+            void Promise.all([
+                this.reduction.execute(ctx, errorMap, ParallelReductionType.Sum),
+                this.reduction.execute(ctx, errorMap, ParallelReductionType.MinMax),
+            ])
+                .then(([sum, minMax]) => {
+                    this.averageFLIP = sum[3]! / n;
+                    this.minFLIP = minMax[3]!;
+                    this.maxFLIP = minMax[7]!;
+                })
+                .finally(() => {
+                    this.pooledReadbackInFlight = false;
+                });
         }
+    }
+
+    /** Current HDR exposure parameters (auto-computed values land async). */
+    getExposureParameters(): { startExposure: number; stopExposure: number; exposureDelta: number; numExposures: number } {
+        return {
+            startExposure: this.startExposure,
+            stopExposure: this.stopExposure,
+            exposureDelta: this.exposureDelta,
+            numExposures: this.numExposures,
+        };
+    }
+
+    /** Mirrors FLIPPass::computeExposureParameters (tone-mapper-specific range solve). */
+    private computeExposureParameters(Ymedian: number, Ymax: number): void {
+        let tm: number[];
+        if (this.toneMapper === FLIPToneMapperType.Reinhard) {
+            tm = [0, 1, 0, 0, 1, 1];
+        } else if (this.toneMapper === FLIPToneMapperType.ACES) {
+            // 0.6 is pre-exposure cancellation.
+            tm = [0.6 * 0.6 * 2.51, 0.6 * 0.03, 0, 0.6 * 0.6 * 2.43, 0.6 * 0.59, 0.14];
+        } else {
+            tm = [0.231683, 0.013791, 0, 0.18, 0.3, 0.018];
+        }
+        const t = 0.85;
+        const [, xMax] = solveSecondDegree(tm[0]! - t * tm[3]!, tm[1]! - t * tm[4]!, tm[2]! - t * tm[5]!);
+
+        this.startExposure = Math.log2(xMax / Ymax);
+        this.stopExposure = Math.log2(xMax / Ymedian);
+        this.numExposures = Math.max(2, Math.ceil(this.stopExposure - this.startExposure));
+        this.exposureDelta = (this.stopExposure - this.startExposure) / (this.numExposures - 1);
     }
 }
 

@@ -268,6 +268,7 @@ export class SlangCompiler {
         // errors return an empty string with no diagnostics) — fail loudly.
         for (const code of entryPointCode) {
             if (!code || (!code.includes("@compute") && !code.includes("@fragment") && !code.includes("@vertex"))) {
+                console.error(`# slang-empty-emission DEFINES: ${JSON.stringify([...defines.entries()])}`);
                 throw new RuntimeError("Slang emitted no entry point (silent WGSL backend failure — check for fp64/unsupported constructs)");
             }
         }

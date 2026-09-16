@@ -35,7 +35,7 @@ by a documented toolchain/asset gap, ❌ means the web platform cannot provide i
 | Indirect draw / ExecuteIndirect | ✅ | `RasterPass.drawIndirect`/`drawIndexedIndirect` (GPU-driven args verified incl. zero-count command); §9: no GPU count buffer in WebGPU — multi-command loops over the arg stride |
 | UAV counters / append buffers | 🟡 | emulated with explicit atomic counter buffers (packed-region pattern, see PixelStats) |
 | GpuTimer / timestamp queries | ✅ | standard `timestampWrites` on every compute/render pass via `Core/API/Profiler.ts` (RenderGraph labels each pass); legacy `Core/API/GpuTimer.ts` (`writeTimestamp`) kept for ad-hoc use |
-| Profiler framework (FALCOR_PROFILE, Clock/FrameRate/TimeReport) | 🟡 partial | per-pass GPU ms via `Profiler.getStats()` (timestampWrites + async resolve, ~1 frame late), shown in the Mogwai status line; no CPU events/timing tree/TimeReport |
+| Profiler framework (FALCOR_PROFILE, Clock/FrameRate/TimeReport) | 🟡 partial | per-pass GPU ms via `Profiler.getStats()` (timestampWrites + async resolve, ~1 frame late), shown in the Mogwai status line; Clock ✅ (`Utils/Timing/Clock.ts`: realtime + fps-simulation on the native tick grid, `m.clock` in the console — the image-test stepping recipe runs verbatim); no CPU events/timing tree/TimeReport |
 | Occlusion queries | ✅ | `Core/API/QueryHeap.ts` (occlusion + timestamp types) + `RasterPass.setOcclusionQuery`; verified: depth-rejected draw reads 0 samples, visible draw counts all. Pipeline-statistics queries ❌ (not in WebGPU) |
 | Async compute / multiple queues | ❌ | WebGPU exposes a single queue; Falcor's LowLevelContextData queue selection becomes a no-op (correctness unaffected) |
 | CUDA interop (buffers, semaphores, PyTorch tensors) | ❌ | no CUDA in browsers, full stop. `CudaUtils`/`CudaInterop` throw `UnsupportedFeatureError` |
@@ -50,7 +50,7 @@ by a documented toolchain/asset gap, ❌ means the web platform cannot provide i
 
 ### 8.2 Render passes (29 upstream directories, 38 registered pass classes)
 
-Tallies today: 20 pass classes fully implemented, 4 partial, 14 not implemented
+Tallies today: 21 pass classes fully implemented, 4 partial, 13 not implemented
 (of which 4 ❌ NVIDIA-SDK-bound, 2 🟠 autodiff-blocked).
 
 | Pass | Status | Notes |
@@ -62,8 +62,8 @@ Tallies today: 20 pass classes fully implemented, 4 partial, 14 not implemented
 | DebugPasses: ColorMapPass / SideBySidePass / SplitScreenPass | ✅ | verified; TextRenderer overlay labels + interactive divider ⏳ |
 | DebugPasses: InvalidPixelDetectionPass | ✅ | unmodified upstream shader; functional GPU test (injected NaN→red, Inf→green, valid→black) |
 | DLSSPass | ❌ | NVIDIA NGX driver + hardware black box; nearest substitutes: TAA-upscale ✅ or FSR2-WGSL port 🔶 (separate pass, not DLSS parity) |
-| ErrorMeasurePass | ✅ core | difference kernel (WTexture2D override — rgba32float storage is write-only) + GPU-reduced mean error; reference from input or file (EXR/HDR/browser formats). Measurements surface on `measurements` via async readback — csv file output ❌ (no file IO), running-error smoothing ⏳ |
-| FLIPPass | ✅ core | LDR path verified (byte MSE 6.7e-5); HDR auto-exposure path + pooled UI values ⏳ |
+| ErrorMeasurePass | ✅ | difference kernel (WTexture2D override — rgba32float storage is write-only) + GPU-reduced mean error; reference from input or file (EXR/HDR/browser formats); running-error EMA (one step per landed measurement) + `renderUI`. Measurements surface on `measurements`/`runningError` via async readback — csv file output ❌ (no file IO) |
+| FLIPPass | ✅ | LDR path verified vs native (byte MSE 6.7e-5); HDR auto-exposure (reference-luminance median/max → exposure range, async readback §9 — same 1-frame latency as native's member-after-cbuffer-write order) + pooled avg/min/max FLIP via ParallelReduction, both pinned by GPU test vs CPU recomputation |
 | GBufferRaster | ✅ | native oracle impossible on this host (ROV), RT-cross-verified |
 | GBufferRT | 🟡 | SoftwareRT; verified incl. texGrads (byte-exact) |
 | VBufferRT | 🟡 | SoftwareRT; verified |
@@ -74,8 +74,8 @@ Tallies today: 20 pass classes fully implemented, 4 partial, 14 not implemented
 | NRDPass | 🟠 SDK absent | NRD SDK not bundled in this Falcor drop (no `external/packman/nrd/`) → denoiser shaders uncompilable here. Host portable; NRD's HLSL source is public, genuine port stays the plan (§11.4). SVGF ✅ meanwhile |
 | OptixDenoiser | ❌ | requires CUDA+OptiX. Same substitutes as NRD |
 | OverlaySamplePass | ❌ | demo draws via raw ImGui draw lists (no web ImGui); closest equivalent would be DOM overlays — not a 1:1 port target |
-| PathTracer | ✅ verified | full upstream loop: NEE+MIS, Uniform/Power/LightBVH emissive samplers, EnvMapSampler, dielectrics/nested priority, guide outputs, adaptive spp (`sampleCount` input), rayCount/pathLength stats. Fixed spp 1–16 + variable spp verified (spp=4 vs native: 10/65536 bad px); curve geometry (`USE_CURVES` + Hair BSDF) verified vs native. Remaining ⏳: `USE_RTXDI` in-tracer integration, NRD guide outputs; SER ❌ |
-| PixelInspectorPass | ⏳ | cursor pixel/material inspector; portable, not built |
+| PathTracer | ✅ verified | full upstream loop: NEE+MIS, Uniform/Power/LightBVH emissive samplers, EnvMapSampler, dielectrics/nested priority, guide outputs, adaptive spp (`sampleCount` input), rayCount/pathLength stats. Fixed spp 1–16 + variable spp verified (spp=4 vs native: 10/65536 bad px); curve geometry (`USE_CURVES` + Hair BSDF) verified vs native. `USE_RTXDI` in-tracer ReSTIR direct lighting verified vs native (16-frame temporal reservoir chain, meanAbs 8.9e-4, 42 bad px; needed two storage-buffer-budget moves — see §9). Remaining ⏳: NRD guide outputs; SER ❌ |
+| PixelInspectorPass | ✅ | pixel/material inspector: PixelData record via async readback (§9) + `renderUI` panel; two overrides (`ShadingData sd = {}` frontend error, `this = {};` WGSL abort); functional GPU test cross-checks the record against the G-buffer inputs; viewer click-to-select wiring ⏳ |
 | RenderPassTemplate | ✅ | authoring skeleton at `render-passes/src/RenderPassTemplate.ts` (registered; pass-through verified in a graph) |
 | RTXDIPass | ✅ verified vs native | Full port (PrepareSurfaceData + ReSTIR spatiotemporal resampling + FinalShading). Upstream RTXDI.py replica over Arcade at frames 1/16/64: bias <6e-4, ≤5/3600 bad 8x8 blocks. Overrides: texel buffers → structured, boiling filter compiled out (WaveActiveCountBits; native default off), bool cbuffer members → uint, outputs moved into the FinalShading block (4-bind-group cap), lightInfo+compactLightInfo merged (16-storage-buffer cap) |
 | SceneDebugger | ✅ | verified (1.0e-5) |
@@ -94,15 +94,15 @@ Tallies today: 20 pass classes fully implemented, 4 partial, 14 not implemented
 
 | Component | Status | Notes |
 |---|---|---|
-| Mogwai app (functional viewer) | ✅ core | loads graph `.py` + `.pyscene`/`.pbrt`, per-frame execute, presents marked output (swapchain blit), play/pause + graph/output pickers, first-person camera, per-pass DOM `renderUI` panel, URL params. FrameCapture ✅ (Capture button: float outputs download as EXR, 8-bit as PNG). VideoCapture ✅ (Record button; §9: MediaRecorder WebM, frames pushed per presented frame like native). Missing ⏳: TimingCapture extension, python console, scene/material/light UI, profiler overlay |
-| Python scripting / console | 🔶 | Pyodide runs **unmodified** upstream `.py` graphs and `.pyscene` files via a curated `falcor` bridge (factories + SceneBuilderBridge). No auto-generated ScriptBindings, no ScriptWriter, no interactive console ⏳ |
+| Mogwai app (functional viewer) | ✅ core | loads graph `.py` + `.pyscene`/`.pbrt`, per-frame execute, presents marked output (swapchain blit), play/pause + graph/output pickers, first-person camera, per-pass DOM `renderUI` panel, URL params. FrameCapture ✅ (Capture button: float outputs download as EXR, 8-bit as PNG). VideoCapture ✅ (Record button; §9: MediaRecorder WebM, frames pushed per presented frame like native). Python console ✅ (`m.scene`/`m.activeGraph`/`m.settings` bound to live state, expression echo + print capture, history; Playwright-verified live camera/material edits); canvas click-to-pick wired to PixelInspectorPass. TimingCapture ✅ (`m.timingCapture.captureFrameTime` — collects per-frame CPU ms, downloads on stop, §9: no file IO). Missing ⏳: dedicated scene/material/light UI panel (console covers edits), profiler overlay |
+| Python scripting / console | 🔶 | Pyodide runs **unmodified** upstream `.py` graphs and `.pyscene` files via a curated `falcor` bridge (factories + SceneBuilderBridge). Interactive console ✅ (viewer panel; `m.scene`/`m.activeGraph`/`m.settings` on live state). No auto-generated ScriptBindings, no ScriptWriter ⏳ |
 | PyTorch interop (`falcor.pytorch`) | ❌ | no CUDA/torch in browser; ONNX-web-style substitute would be non-parity ⏳ |
 | FalcorTest | 🔶 | vitest (unit) + Playwright GPU harness w/ native-oracle image compares (§7); no slang-driven `GPU_TEST` framework ⏳ |
 | RenderGraphEditor (ImGui node UI) | ⏳ stretch | functional viewer done; node editor is dev tooling orthogonal to rendering parity |
 | RenderGraph `.py` export / RenderGraphIR | ✅ | `exportScript()` emits the camelCase image-test dialect (round-trip fixpoint verified); `removeEdge`/`unmarkOutput` added; divergence (§9): no snake_case IR, markOutput channel masks untracked |
 | ImageCompare | 🔶 | native tool used on CI host for oracle diffing; its MSE/FLIP gate policy reimplemented inline in the GPU suites + FLIPPass. No standalone in-browser tool ⏳ |
-| Importers | see §8.4 | glTF ✅ (TS), FBX 🔶 (assimpjs, `.fbx` full scenes only), PBRT ✅ subset, `.pyscene` ✅, USD 🔶 subset (tinyusdz-wasm: meshes/xforms/UsdPreviewSurface incl. baseColor/ORM/normal/emissive textures, verified vs native — lights/cameras/skel/subdiv ⏳), Mitsuba ⏳ (no Mitsuba content in the media drop → no oracle) |
-| SceneCache | ✅ static | `Scene/SceneCache.ts`: OPFS binary cache keyed by SHA-256 of the scene source (§9: no file timestamps); static geometry + materials + textures (original compressed bytes) + analytic lights + camera; cache-hit renders byte-identical (cornell + textured tutorial verified); env maps/volumes/SDF/curves/animation fall back to import ⏳ |
+| Importers | see §8.4 | glTF ✅ (TS), FBX 🔶 (assimpjs, `.fbx` full scenes only), PBRT ✅ subset (materials → Standard, or the PBRT material classes via `PBRTImporter:usePBRTMaterials`), `.pyscene` ✅, USD 🔶 subset (tinyusdz-wasm: meshes/xforms/UsdPreviewSurface incl. baseColor/ORM/normal/emissive textures, verified vs native — lights/cameras/skel/subdiv ⏳), Mitsuba ⏳ (no Mitsuba content in the media drop → no oracle) |
+| SceneCache | ✅ static | `Scene/SceneCache.ts`: OPFS binary cache keyed by SHA-256 of the scene source (§9: no file timestamps); static geometry incl. curves + materials + textures (original compressed bytes) + env map (original .hdr/.exr bytes + intensity/tint/rotation) + analytic lights + camera; cache-hit renders byte-identical (cornell, textured tutorial, two_curves, sphere_array verified); volumes/SDF/animation/skin/morph fall back to import ⏳ |
 | Image IO (Bitmap/EXR read+write, image save) | 🟡 | `.hdr`/DDS-BC/`.exr` decode (EXR via parse-exr, wired into ImageLoader + EnvMap + ErrorMeasure); EXR write (uncompressed float scanlines, bit-exact round-trip) feeds the viewer capture; unified Bitmap class ⏳ |
 | NVTT texture compression | ❌ native / ⏳ substitute | decode side covered (DDS/BC parse + `texture-compression-bc` upload + CPU BC1/3/5 decode); a WASM BC *encoder* would be a substitute, not NVTT parity |
 
@@ -115,14 +115,14 @@ Tallies today: 20 pass classes fully implemented, 4 partial, 14 not implemented
 | Curve geometry (LSS) / hair | ✅ core | USD BasisCurves import (USDA text) → CurveTessellation port → linear-swept-sphere segments traversed via a segment-AABB BVH in the merged BVH buffer (zero extra bindings; verified footprint-invariant) → upstream CurveIntersector/Han19. two_curves.pyscene FaceNormals match native pixel-exactly (0/65536); shaded curves (native default HairMaterial, Chiang16) match native through MPT and the full PathTracer at 64spp (bias ≤1.1e-3). `.hair` files (no assets in the drop), CurveOTS/ribbon modes ⏳ |
 | SDF grids (NDSDF/SBS/SVS/SVO) | ✅ | all 4 representations GPU-verified. Content path limited to the procedural generator: `.sdf`/`.sdfg` file IO + runtime editing/`bake()` ⏳ (prereq for SDFEditor) |
 | Custom primitives (procedural AABBs) | 🟡 approximated | rendered as box meshes; app-supplied intersection shaders have no software-RT equivalent (true parity ❌, fixed-function intersectors ⏳) |
-| StandardMaterial | ✅ | verified across the oracle suite |
+| StandardMaterial | ✅ | verified across the oracle suite (incl. specular/normal-mapped pyscene materials — the tutorial G-buffer channel test pins normW/specRough/emissive vs native; a ~6% PT deficit found by the texLOD cross-oracle traced to the pyscene bridge dropping `addNode`'s parent argument, fixed) |
 | PBRTConductor | ✅ | override shader + bridge |
-| Cloth / Hair / PBRTDiffuse materials | 🟡 unverified | factory dispatch + bridge exist; upstream shaders un-vetted for WGSL, no oracle yet |
-| PBRTDielectric / CoatedConductor / CoatedDiffuse / DiffuseTransmission | ⏳ | factory cases exist but no host constructor reaches them (PBRT importer maps to Standard) |
+| Cloth / Hair / PBRTDiffuse materials | ✅ | oracle-verified vs native (cloth-pt / hair-pt / pbrt-diffuse-pt / pbrt-conductor-pt suites); Hair additionally exercised by the curve scenes (Chiang16) — the old "unverified" marker was stale |
+| PBRTDielectric / CoatedConductor / CoatedDiffuse / DiffuseTransmission | ✅ | instantiable via the native Settings key `PBRTImporter:usePBRTMaterials` (first web Settings consumer); one override (CoatedConductor instance aggregate-init vs explicit `__init`); verified vs native (`m.addOptions` oracle, 256-frame PT: per-material region means within 0.8%, bias 2.3e-3, 10/256 16×16 blocks) |
 | MERL / MERLMix / RGL measured materials | ⏳ | not instantiable: no factory case, no `.brdf`/`.bsdf` loaders, no data packers, no RGLAcquisition |
-| Texture LOD (ray cones / ray diffs) | 🟡 partial | explicit-gradient path verified (GBufferRT texGrads byte-exact); ray-cone mode not wired through the megakernels everywhere |
+| Texture LOD (ray cones / ray diffs) | ✅ core | material texture arrays carry full mip chains (layered blit-chain `generateMips`; material sampler = native trilinear + anisotropy 8) — previously every LOD mode silently sampled mip 0. GBufferRT `texLOD=RayCones` verified vs native (12× closer to the RayCones capture than Mip0; filtering detail is implementation-defined across APIs, §9); explicit-gradient path byte-exact; PathTracer `primaryLodMode` verified (Mip0/RayDiffs; RayCones warns → Mip0 like native): 2×2 cross-oracle — each web mode matches its native counterpart best and the web LOD-effect magnitude (3.13e-2) matches native's (3.0e-2); one override diff (runtime-selected ITextureSampler existential crashes the WGSL backend → single concrete gradient sampler under RayDiffs). Atlas caveat (§9): sub-layer textures (uvScale<1) get a small LOD bias — gradients are texture-space against array dims |
 | Analytic lights (Point/Directional/Distant/Rect/Disc/Sphere) | ✅ | verified incl. area-light sampling |
-| Emissive geometry (LightCollection) | ✅ | incl. textured-emissive flux integration; LightBVH sampler ✅ (GPU refit ⏳ — rebuild-only; options not plumbed ⏳) |
+| Emissive geometry (LightCollection) | ✅ | incl. textured-emissive flux integration; LightBVH sampler ✅ incl. `lightBVHOptions` plumbing (sampler + builder options via the native nested-dict keys; BinnedSAH heuristic not ported — warns and uses BinnedSAOH; unit-tested tree structure + defines, end-to-end options oracle vs native); GPU refit ⏳ — rebuild-only |
 | EnvMap | ✅ | rotation/intensity/tint; loads Radiance `.hdr` and OpenEXR `.exr` (decodeExr) |
 | LightProfile (IES) | ⏳ | dummy binding only; no IES loader/bake |
 | Camera (pinhole, jitter, motion vectors) | ✅ | verified (incl. prev-matrix roll) |
@@ -130,14 +130,14 @@ Tallies today: 20 pass classes fully implemented, 4 partial, 14 not implemented
 | Camera controllers | ✅ | `Scene/Camera/CameraController.ts` ports Orbiter / FirstPerson / SixDoF incl. gamepad (dead zone + power curve + rotation/movement mapping, native math verbatim, unit-tested); viewer keeps its own app-layer controller (§9: normalized input events, update(now) instead of CpuTimer) |
 | Node / skinned / morph animation | ✅ | CPU skinning + morph (upstream does GPU skinning 🟡); camera/light animation ✅; LINEAR/STEP/CUBICSPLINE |
 | Animated vertex caches (Alembic) | ⏳ | no `.abc`/AnimatedVertexCache support |
-| Per-clip loop behaviors / global time control | 🟡 partial | time loops `fmod(t, length)` and clamps before the first key — matches native defaults (AnimationController + Constant pre-behavior); per-clip pre/post-infinity behaviors (Linear/Cycle/Oscillate extrapolation, e.g. animated_cubes) and a global time-control API ⏳ |
+| Per-clip loop behaviors / global time control | ✅ core | time loops `fmod(t, length)` (AnimationController parity); per-clip pre/post-infinity behaviors (Constant/Linear/Cycle/Oscillate, set via `sceneBuilder.animations[i]` like native) verified vs native on animated_cubes — pre-infinity depth 0 bad px, hit coverage exactly equal; global time control ✅ via `m.clock` (Clock.ts) |
 | Motion vectors for animated geometry | ✅ | rigid (prev world matrices) native-exact (mean 1.2e-7); skinned/morphed (prev-position double buffer + IsDynamic) verified by reprojection — native itself writes zero skinned mvecs on this content (probed) |
 | Animated-scene BVH | 🟡 | full CPU rebuild per frame (correct, no refit path) |
 | GridVolumes (NanoVDB) | ✅ | `.vdb` parsed in-browser → NanoVDB, verified vs native; uncompressed codecs only ⏳ (zip/blosc), `.vdb` frame sequences ⏳, blackbody emission conversion ⏳ |
 | Runtime material/light property edits | ✅ | `Scene.getLight/getMaterial` + `updateLights/updateMaterial` re-pack GPU data post-build; verified vs native applying identical python edits (mean 7.1e-4). Emissive edits rebuild the NEE flux tables (dimmed-cornell PT vs native: bias 2.5e-4, 0/1024 blocks). Emissive-presence toggles that flip scene defines still need pass recreation |
 | Importer: glTF | ✅ | TS importer: meshes, skinning, morph targets, animations, cameras, lights; KTX2/Draco ⏳ |
 | Importer: Assimp | 🔶 partial | assimpjs: full scenes `.fbx` only (other formats mesh-only via `TriangleMesh.createFromFile`); >2 GB-heap FBX aborts (wasm32) — BistroExterior; DDS ✅ / TGA ⏳ textures |
-| Importer: PBRT (pbrt-v4) | ✅ subset | camera/lights/shapes/area lights verified; all materials → Standard (`usePBRTMaterials=true` path ⏳), textures/spectra/media/curves ⏳ |
+| Importer: PBRT (pbrt-v4) | ✅ subset | camera/lights/shapes/area lights verified; materials → Standard by default, or the dedicated PBRT classes via the `PBRTImporter:usePBRTMaterials` Settings option (native key; area lights stay Standard); textures/spectra/media/curves ⏳ |
 | Importer: `.pyscene` | ✅ | unmodified upstream scenes via Pyodide bridge |
 | Importer: USD | 🔶 subset | tinyusdz-wasm (1.9MB, reads usda/usdc/usdz): meshes + xform hierarchy + UsdPreviewSurface → Standard incl. UsdUVTexture baseColor (sRGB, V-flip) and roughness/metallic packed ORM like native's CreateSpecularTexture — verified vs native (mask/viewW exact; textured 64spp radiance bias ~1e-5, per-region ≤0.3%). Normal/emissive texture slots plumbed (same path, not separately oracled). ⏳: lights/cameras (not exposed by tinyusdz RenderScene), texture channel selectors (r assumed), UsdSkel, subdivision refinement, instancing |
 | Importer: Mitsuba | ⏳ | not started |
@@ -155,7 +155,7 @@ Tallies today: 20 pass classes fully implemented, 4 partial, 14 not implemented
 | BSDFIntegrator (white furnace) | ⏳ | BSDFViewer pass exists; integrator harness not built |
 | Algorithm library | ✅ | ParallelReduction ✅, PrefixSum ✅, BitonicSort ✅ (portable shared-memory override of the NVAPI warp-shuffle kernel, §9; exact vs CPU chunk sort incl. 2D dispatch + tail padding) |
 | Utils/Math | ✅ core | Vector/Matrix/Quaternion ✅; CubicSpline host / SphericalHarmonics ⏳ |
-| Gui (Dear ImGui) | 🔶 | DOM `UIWidgets` (text/button/checkbox/slider/dropdown/group); `renderUI` implemented on 2 passes so far ⏳; TextRenderer/Font/PixelZoom ⏳ |
+| Gui (Dear ImGui) | 🔶 | DOM `UIWidgets` (text/button/checkbox/slider/dropdown/group); `renderUI` implemented on 4 passes so far ⏳; TextRenderer/Font/PixelZoom ⏳ |
 | Video (FFmpeg encode/decode) | ❌ native / ⏳ substitute | WebCodecs route not built |
 | AssetResolver | 🔶 ad-hoc | URL resolution inline in the app; no search-path API |
 
@@ -187,6 +187,13 @@ Tallies today: 20 pass classes fully implemented, 4 partial, 14 not implemented
 9. **Custom primitives render as visible box meshes** (the 🟡 approximation in
    §8.4); native draws nothing for them unless an app supplies an intersection
    shader. Scene compares strip `addCustomPrimitive` calls.
-10. **Animation before the first keyframe clamps to it** (Constant behavior,
-   matching native defaults); scenes assigning per-clip pre/post-infinity
-   behaviors extrapolate natively but stay clamped on the web (§8.4).
+10. **The 16-storage-buffer-per-stage cap shapes bindings.** This Chromium's
+   per-stage limit is 16 even at the adapter maximum. Small read-only tables
+   (RTXDI neighbor offsets, per-texture uv-scale info) live in 1-row textures
+   behind buffer-style `__subscript` wrappers. The PathTracer+RTXDI megakernel
+   sits exactly at 16; combining USE_RTXDI with pixel stats or curve scenes
+   would exceed it (not currently co-usable).
+11. **Animation clip behaviors match native** (Constant default; per-clip
+   Linear/Cycle/Oscillate honored, §8.4); the Linear edge-slope extrapolation
+   quantizes at f32 keyframe precision on both sides, so it is
+   tolerance-compared like all float outputs.

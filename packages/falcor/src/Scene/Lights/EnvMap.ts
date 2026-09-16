@@ -32,9 +32,15 @@ export class EnvMap {
     tint: [number, number, number] = [1, 1, 1];
     private transform = float4x4.identity();
     private invTransform = float4x4.identity();
+    /** Original encoded file (retained by createFromUrl/Bytes for the scene cache). */
+    sourceBytes: Uint8Array | null = null;
+    sourceIsExr = false;
+    /** Last rotation set (degrees), for cache snapshots. */
+    rotationDeg: [number, number, number] = [0, 0, 0];
 
     /** Mirrors EnvMap::setRotation(degreesXYZ). */
     setRotation(degreesXYZ: [number, number, number]): void {
+        this.rotationDeg = [...degreesXYZ];
         const r = (d: number) => (d * Math.PI) / 180;
         this.transform = matrixFromRotationXYZ(r(degreesXYZ[0]), r(degreesXYZ[1]), r(degreesXYZ[2]));
         this.invTransform = inverse(this.transform);
@@ -71,8 +77,15 @@ export class EnvMap {
     static async createFromUrl(device: Device, url: string): Promise<EnvMap> {
         const res = await fetch(url);
         if (!res.ok) throw new RuntimeError(`Failed to fetch env map '${url}' (${res.status})`);
-        const buffer = await res.arrayBuffer();
-        return new EnvMap(device, url.toLowerCase().endsWith(".exr") ? decodeExr(buffer) : decodeHdr(new Uint8Array(buffer)));
+        return EnvMap.createFromBytes(device, new Uint8Array(await res.arrayBuffer()), url.toLowerCase().endsWith(".exr"));
+    }
+
+    /** Decodes an encoded .hdr/.exr file; retains the bytes for the scene cache. */
+    static createFromBytes(device: Device, bytes: Uint8Array, isExr: boolean): EnvMap {
+        const env = new EnvMap(device, isExr ? decodeExr(bytes.slice().buffer as ArrayBuffer) : decodeHdr(bytes));
+        env.sourceBytes = bytes;
+        env.sourceIsExr = isExr;
+        return env;
     }
 
     /** Binds to gScene.envMap. */

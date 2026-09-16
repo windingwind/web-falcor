@@ -13,13 +13,14 @@ import { RuntimeError } from "../Core/Error.js";
 import { float2, float3, float4 } from "../Utils/Math/Vector.js";
 import { float4x4 } from "../Utils/Math/Matrix.js";
 import { quatf } from "../Utils/Math/Quaternion.js";
-import { Scene, type SceneMeshDesc, type SceneMaterialDesc } from "./Scene.js";
+import { Scene, type SceneMeshDesc, type SceneMaterialDesc, type SceneCurveDesc } from "./Scene.js";
 import { TextureManager, type TextureSource } from "./Material/TextureManager.js";
+import { EnvMap } from "./Lights/EnvMap.js";
 import type { AnalyticLight, StaticVertex } from "./SceneData.js";
 import type { SceneNode } from "./Animation/SceneAnimation.js";
 
 const kMagic = 0x43534657; // 'WFSC'
-const kVersion = 2;
+const kVersion = 3; // v3: + curves, env map
 const kFloatsPerVertex = 13; // pos3 + normal3 + tangent4 + texCrd2 + curveRadius
 
 export interface SceneCameraPose {
@@ -40,6 +41,10 @@ export interface CacheableScene {
     camera: SceneCameraPose;
     /** Material textures as lossless PNG (phase 2). */
     textures: { png: Uint8Array; srgb: boolean }[];
+    /** Static curve geometry (phase 3). */
+    curves: SceneCurveDesc[];
+    /** Env map as the original encoded .hdr/.exr file (phase 3). */
+    envMap?: { bytes: Uint8Array; isExr: boolean; intensity: number; tint: [number, number, number]; rotationDeg: [number, number, number] };
 }
 
 /** Tags math types so plain JSON survives the round trip. */
@@ -92,14 +97,33 @@ export function serializeScene(cached: CacheableScene): Uint8Array {
         cameraNodeID: cached.cameraNodeID,
         camera: cached.camera,
         textures: cached.textures.map((t) => ({ srgb: t.srgb, byteLength: t.png.byteLength })),
+        curves: cached.curves.map((c) => ({
+            floatCount: c.positionsRadii.length,
+            texCrdCount: c.texCrds?.length ?? 0,
+            indexCount: c.indices.length,
+            materialID: c.materialID,
+            transform: c.transform ? { __m4: Array.from(c.transform.data) } : undefined,
+        })),
+        envMap: cached.envMap
+            ? {
+                  byteLength: cached.envMap.bytes.byteLength,
+                  isExr: cached.envMap.isExr,
+                  intensity: cached.envMap.intensity,
+                  tint: cached.envMap.tint,
+                  rotationDeg: cached.envMap.rotationDeg,
+              }
+            : undefined,
     };
     const json = new TextEncoder().encode(JSON.stringify(header));
     const jsonPadded = (json.length + 3) & ~3;
 
     let blobFloats = 0;
     for (const m of cached.meshes) blobFloats += m.vertices.length * kFloatsPerVertex + m.indices.length;
+    // Curve payloads are word-sized and precede the byte-granular texture/env blobs.
+    for (const c of cached.curves) blobFloats += c.positionsRadii.length + (c.texCrds?.length ?? 0) + c.indices.length;
     const textureBytes = cached.textures.reduce((acc, t) => acc + t.png.byteLength, 0);
-    const total = 12 + jsonPadded + blobFloats * 4 + textureBytes;
+    const envBytes = cached.envMap?.bytes.byteLength ?? 0;
+    const total = 12 + jsonPadded + blobFloats * 4 + textureBytes + envBytes;
     const out = new Uint8Array(total);
     const dv = new DataView(out.buffer);
     dv.setUint32(0, kMagic, true);
@@ -124,9 +148,23 @@ export function serializeScene(cached: CacheableScene): Uint8Array {
         u32.set(m.indices, off / 4);
         off += m.indices.length * 4;
     }
+    for (const c of cached.curves) {
+        f32.set(c.positionsRadii, off / 4);
+        off += c.positionsRadii.length * 4;
+        if (c.texCrds) {
+            f32.set(c.texCrds, off / 4);
+            off += c.texCrds.length * 4;
+        }
+        u32.set(c.indices, off / 4);
+        off += c.indices.length * 4;
+    }
     for (const t of cached.textures) {
         out.set(t.png, off);
         off += t.png.byteLength;
+    }
+    if (cached.envMap) {
+        out.set(cached.envMap.bytes, off);
+        off += cached.envMap.bytes.byteLength;
     }
     return out;
 }
@@ -143,6 +181,8 @@ export function deserializeScene(bytes: Uint8Array): CacheableScene {
         cameraNodeID?: number;
         camera: SceneCameraPose;
         textures?: { srgb: boolean; byteLength: number }[];
+        curves?: { floatCount: number; texCrdCount: number; indexCount: number; materialID: number; transform?: { __m4: number[] } }[];
+        envMap?: { byteLength: number; isExr: boolean; intensity: number; tint: [number, number, number]; rotationDeg: [number, number, number] };
     };
 
     let off = 12 + ((jsonLen + 3) & ~3);
@@ -174,11 +214,42 @@ export function deserializeScene(bytes: Uint8Array): CacheableScene {
         };
     });
 
+    const curves: SceneCurveDesc[] = (header.curves ?? []).map((meta) => {
+        const positionsRadii = new Float32Array(f32.subarray(off / 4, off / 4 + meta.floatCount));
+        off += meta.floatCount * 4;
+        let texCrds: Float32Array | null = null;
+        if (meta.texCrdCount > 0) {
+            texCrds = new Float32Array(f32.subarray(off / 4, off / 4 + meta.texCrdCount));
+            off += meta.texCrdCount * 4;
+        }
+        const indices = new Uint32Array(u32.subarray(off / 4, off / 4 + meta.indexCount));
+        off += meta.indexCount * 4;
+        return {
+            positionsRadii,
+            texCrds,
+            indices,
+            materialID: meta.materialID,
+            transform: meta.transform ? new float4x4(new Float32Array(meta.transform.__m4)) : undefined,
+        };
+    });
+
     const textures = (header.textures ?? []).map((meta) => {
         const png = bytes.slice(off, off + meta.byteLength);
         off += meta.byteLength;
         return { png, srgb: meta.srgb };
     });
+
+    let envMap: CacheableScene["envMap"];
+    if (header.envMap) {
+        envMap = {
+            bytes: bytes.slice(off, off + header.envMap.byteLength),
+            isExr: header.envMap.isExr,
+            intensity: header.envMap.intensity,
+            tint: header.envMap.tint,
+            rotationDeg: header.envMap.rotationDeg,
+        };
+        off += header.envMap.byteLength;
+    }
 
     return {
         meshes,
@@ -188,6 +259,8 @@ export function deserializeScene(bytes: Uint8Array): CacheableScene {
         cameraNodeID: header.cameraNodeID,
         camera: header.camera,
         textures,
+        curves,
+        envMap,
     };
 }
 
@@ -254,7 +327,14 @@ export async function clearSceneCache(): Promise<void> {
 /** Rebuilds a Scene from cached data (the fast-reload path). */
 export async function buildSceneFromCache(device: Device, cached: CacheableScene): Promise<Scene> {
     const textureManager = await decodeTextureSources(cached.textures);
-    const scene = new Scene(device, cached.meshes, cached.materials, cached.lights, textureManager, [], cached.nodes, [], cached.cameraNodeID, [], []);
+    const scene = new Scene(device, cached.meshes, cached.materials, cached.lights, textureManager, [], cached.nodes, [], cached.cameraNodeID, [], cached.curves);
+    if (cached.envMap) {
+        const env = EnvMap.createFromBytes(device, cached.envMap.bytes, cached.envMap.isExr);
+        env.intensity = cached.envMap.intensity;
+        env.tint = cached.envMap.tint;
+        env.setRotation(cached.envMap.rotationDeg);
+        scene.setEnvMap(env);
+    }
     const cam = cached.camera;
     scene.camera.setPosition(new float3(...cam.position));
     scene.camera.setTarget(new float3(...cam.target));
