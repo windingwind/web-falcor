@@ -71,6 +71,22 @@ npm run download:assets -- openvdb      # just one group
 npm run download:assets -- --all        # everything, incl. the large volumes
 ```
 
+Some formats have no reproducibly downloadable content at all: the MERL BRDF
+database sits behind a licence agreement, published IES photometry carries no
+reusable licence, and nothing ships `.sdfg`/`.sdf` grids. For those, a generator
+writes files that are exact to the published format and whose content is
+analytic, which is what the tests check against:
+
+```sh
+node tools/gen-assets.mjs                # everything (~135 MB)
+node tools/gen-assets.mjs --list         # list what would be written
+node tools/gen-assets.mjs merl ies       # only the named groups
+```
+
+Mitsuba 3 has the same problem — its scene repository declares no licence — so
+the fixtures under `tests/gpu/assets/mitsuba/` are scenes written to the format's
+spec whose rendered answer is closed-form.
+
 Three kinds of scene are covered by the one command:
 
 - **Bundled scenes** (`Arcade`, `test_scenes`, `inv_rendering_scenes`,
@@ -92,8 +108,8 @@ Extracting needs a `unzip` and/or 7-Zip CLI (`p7zip-full` / `7-zip`); the script
 prints install hints if one is missing.
 
 To load a pbrt scene in the viewer, point it at the `.pbrt` file, e.g.
-`Falcor/media/cornell-box/scene-v4.pbrt` (the importer dispatches on the
-`.pbrt` extension).
+`Falcor/media/cornell-box/scene-v4.pbrt`. Mitsuba 3 scenes load the same way
+from their `.xml` file; the viewer dispatches on the extension.
 
 ## Full setup (develop + run the GPU/oracle tests)
 
