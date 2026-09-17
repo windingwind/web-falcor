@@ -250,7 +250,7 @@ _matProps = {'baseColor', 'specularParams', 'transmissionColor', 'emissiveColor'
              'emissiveFactor', 'doubleSided', 'roughness', 'metallic',
              'indexOfRefraction', 'specularTransmission', 'diffuseTransmission', 'thinSurface',
              'nestedPriority', 'volumeAbsorption', 'volumeScattering',
-             'displacementScale', 'displacementOffset'}
+             'displacementScale', 'displacementOffset', 'lightProfileEnabled'}
 _lightProps = {'position', 'intensity', 'direction', 'angle',
                'openingAngle', 'penumbraAngle', 'scaling', 'rotation'}
 _camProps = {'position', 'target', 'up', 'focalLength', 'focalDistance', 'apertureRadius', 'shutterSpeed', 'ISOSpeed'}

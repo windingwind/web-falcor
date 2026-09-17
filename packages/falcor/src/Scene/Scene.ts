@@ -39,6 +39,7 @@ import {
 import { packBasicMaterialBlob, packMERLMaterialBlob, packRGLMaterialBlob, AlphaMode, MaterialType, TextureHandleMode, type BasicMaterialDesc, type MaterialHeaderDesc } from "./Material/MaterialData.js";
 import { kMERLAlbedoLUTSize, type MERLBRDF } from "./Material/MERLFile.js";
 import { kRGLAlbedoLUTSize, type RGLMeasurement } from "./Material/RGLFile.js";
+import type { LightProfile } from "./Lights/LightProfile.js";
 import type { RenderContext } from "../Core/API/RenderContext.js";
 import { assert, RuntimeError } from "../Core/Error.js";
 import type { NDSDFGrid } from "./SDFs/NDSDFGrid.js";
@@ -112,6 +113,8 @@ export class Scene {
     private textureArrayLinear: Texture;
     private texInfoTexture!: Texture;
     private dummyTexture: Texture;
+    /** IES profile shared by materials with `lightProfileEnabled` (MaterialSystem::mpLightProfile). */
+    lightProfile: LightProfile | null = null;
     private texture3D: Texture;
     private sampler: Sampler;
     private materialCount = 0;
@@ -1220,7 +1223,7 @@ export class Scene {
             MATERIAL_SYSTEM_TEXTURE_3D_DESC_COUNT: 1,
             MATERIAL_SYSTEM_UDIM_INDIRECTION_ENABLED: 0,
             MATERIAL_SYSTEM_HAS_SPEC_GLOSS_MATERIALS: 0,
-            MATERIAL_SYSTEM_USE_LIGHT_PROFILE: 0,
+            MATERIAL_SYSTEM_USE_LIGHT_PROFILE: this.lightProfile ? 1 : 0,
             FALCOR_MATERIAL_INSTANCE_SIZE: 256,
             // Static material dispatch (MaterialFactory override) — mirrors
             // MaterialSystem::getTypeConformances() type registration.
@@ -1453,8 +1456,12 @@ export class Scene {
         }
 
         // Light profile (disabled; dummy bindings).
-        scene["materials"]["lightProfile"]["texture"] = this.dummyTexture;
-        scene["materials"]["lightProfile"]["sampler"] = this.sampler;
+        if (this.lightProfile) {
+            this.lightProfile.bindShaderData(scene["materials"]["lightProfile"] as ShaderVar);
+        } else {
+            scene["materials"]["lightProfile"]["texture"] = this.dummyTexture;
+            scene["materials"]["lightProfile"]["sampler"] = this.sampler;
+        }
 
         // Material system.
         const materials = scene["materials"];

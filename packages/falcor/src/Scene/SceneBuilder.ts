@@ -246,6 +246,7 @@ export class MaterialBridge {
     private _textures: { slot: string; path: string }[] = [];
     /** Measured BRDF file (MERL `.binary` / RGL `.bsdf`), resolved with the textures. */
     private _measured: { kind: "merl" | "rgl"; path: string } | null = null;
+    private _lightProfileEnabled = false;
     private _merl: import("./Material/MERLFile.js").MERLBRDF | null = null;
     private _rgl: import("./Material/RGLFile.js").RGLMeasurement | null = null;
     private _texHandles: { texBaseColor?: number; texSpecular?: number; texEmissive?: number; texNormalMap?: number; texDisplacement?: number } = {};
@@ -305,6 +306,11 @@ export class MaterialBridge {
         this._specularParams = new float4(this._specularParams.x, this._specularParams.y, m, this._specularParams.w);
     }
 
+    /** Mirrors StandardMaterial::setLightProfileEnabled. */
+    set lightProfileEnabled(enabled: boolean) {
+        this._lightProfileEnabled = !!enabled;
+    }
+
     /** Mirrors RGLMaterial::loadBRDF / the MERLMaterial(path) constructor. */
     load(path: unknown): void {
         this._measured = { kind: this.materialType === MaterialType.RGL ? "rgl" : "merl", path: String(path) };
@@ -331,6 +337,7 @@ export class MaterialBridge {
             name: this.name,
             header: {
                 materialType: this.materialType,
+                lightProfileEnabled: this._lightProfileEnabled,
                 doubleSided: this.doubleSided,
                 emissive,
                 ior: this.indexOfRefraction,
@@ -716,6 +723,17 @@ export class SceneBuilderBridge {
 
     private sdfGridsList: { grid: SDFGridBridge; material: MaterialBridge }[] = [];
     private sdfInstances: { nodeID: number; sdfGridID: number }[] = [];
+    /** Pending SceneBuilder::loadLightProfile call, resolved (and baked) in resolve(). */
+    private lightProfileRequest: { path: string; normalize: boolean } | null = null;
+
+    /**
+     * Mirrors SceneBuilder::loadLightProfile: the IES profile is shared by every
+     * material with `lightProfileEnabled`. Resolved and baked in resolve().
+     */
+    loadLightProfile(filename: unknown, normalize: unknown = true): void {
+        this.lightProfileRequest = { path: String(filename), normalize: normalize !== false };
+    }
+
 
     addSDFGrid(grid: SDFGridBridge, material: MaterialBridge): number {
         const g = unwrapGuard(grid) as SDFGridBridge;
@@ -1030,6 +1048,15 @@ export class SceneBuilderBridge {
             scene.gridVolumes.push(vol);
         }
         scene.finalizeGridVolumes();
+
+        // Mirrors MaterialSystem::update's deferred bake of the IES profile.
+        if (this.lightProfileRequest) {
+            const { LightProfile } = await import("./Lights/LightProfile.js");
+            const url = await resolveAssetUrl(this.lightProfileRequest.path, baseUrl, AssetCategory.Any, this.assetResolver);
+            const profile = await LightProfile.createFromIesProfile(device, url, this.lightProfileRequest.normalize);
+            await profile.bake(device.renderContext);
+            scene.lightProfile = profile;
+        }
         return scene;
     }
 }
