@@ -170,7 +170,7 @@ sys.modules.pop('webfalcor_scene', None)  # registerJsModule per call; defeat im
 from webfalcor_scene import (sceneBuilder, SceneBuilderFlags, _TriangleMesh,
     PointLight, DirectionalLight, DistantLight, RectLight, DiscLight, SphereLight,
     StandardMaterial, ClothMaterial, HairMaterial,
-    PBRTDiffuseMaterial, PBRTConductorMaterial, _MERLMaterial, _RGLMaterial,
+    PBRTDiffuseMaterial, PBRTConductorMaterial, _MERLMaterial, _MERLMixMaterial, _RGLMaterial,
     Camera, _makeTransform, _makeAABB, _makeEnvMap, _GridVolume, _Grid, _SDFGridCreate)
 
 # Python-side vector types with arithmetic (upstream pyscenes do e.g. size / 2);
@@ -264,6 +264,15 @@ class MERLMaterial:
     """Measured MERL BRDF (Scene/Material/MERLMaterial): MERLMaterial(name, path)."""
     def __init__(self, name='', path=''):
         self._o = _MERLMaterial(name, path)
+    def __getattr__(self, k): return getattr(object.__getattribute__(self, '_o'), k)
+
+class MERLMixMaterial:
+    """MERL BRDFs selected per texel (Scene/Material/MERLMixMaterial): MERLMixMaterial(name, paths).
+
+    Load the selector with .loadTexture(MaterialTextureSlot.Index, path).
+    """
+    def __init__(self, name='', paths=()):
+        self._o = _MERLMixMaterial(name, list(paths))
     def __getattr__(self, k): return getattr(object.__getattribute__(self, '_o'), k)
 
 class RGLMaterial:
@@ -435,6 +444,13 @@ async function runSceneScriptInternal(device: Device, source: string, baseUrl: s
         _MERLMaterial: (name = "", path = "") => {
             const m = new MaterialBridge(MaterialType.MERL, name);
             if (path) m.load(path);
+            return m;
+        },
+        _MERLMixMaterial: (name = "", paths: unknown = []) => {
+            const m = new MaterialBridge(MaterialType.MERLMix, name);
+            // Python lists arrive as proxies, so iterate rather than Array.isArray.
+            const list = typeof paths === "string" ? [paths] : (paths as Iterable<unknown>);
+            for (const path of list ?? []) m.load(path);
             return m;
         },
         _RGLMaterial: (name = "", path = "") => {

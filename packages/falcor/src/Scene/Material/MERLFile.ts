@@ -45,6 +45,22 @@ export interface MERLBRDF {
     extraData: DiffuseSpecularData;
 }
 
+/** Per-texel BRDF selector (MERLMixMaterial's index map: 8-bit unorm red channel). */
+export interface MERLIndexMap {
+    width: number;
+    height: number;
+    /** One index per texel, row-major from the top-left; wraps modulo the BRDF count. */
+    indices: Uint8Array;
+}
+
+/** Host-side data of a MERLMix material: N BRDFs plus the map that selects them. */
+export interface MERLMixData {
+    brdfs: MERLBRDF[];
+    indexMap: MERLIndexMap;
+    /** Packed TextureHandle of the normal map, if any. */
+    texNormalMap?: number;
+}
+
 /** sRGB -> linear (matches DiffuseSpecularUtils::loadJSONData's conversion). */
 function srgbToLinear(c: number): number {
     return c <= 0.04045 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4);

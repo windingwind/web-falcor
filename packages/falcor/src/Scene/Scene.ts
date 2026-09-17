@@ -36,8 +36,8 @@ import {
     type MeshDescData,
     type StaticVertex,
 } from "./SceneData.js";
-import { packBasicMaterialBlob, packMERLMaterialBlob, packRGLMaterialBlob, AlphaMode, MaterialType, TextureHandleMode, type BasicMaterialDesc, type MaterialHeaderDesc } from "./Material/MaterialData.js";
-import { kMERLAlbedoLUTSize, type MERLBRDF } from "./Material/MERLFile.js";
+import { packBasicMaterialBlob, packMERLMaterialBlob, packMERLMixMaterialBlob, packRGLMaterialBlob, writeDiffuseSpecularData, kDiffuseSpecularDataSize, AlphaMode, MaterialType, TextureHandleMode, type BasicMaterialDesc, type MaterialHeaderDesc } from "./Material/MaterialData.js";
+import { kMERLAlbedoLUTSize, type MERLBRDF, type MERLMixData } from "./Material/MERLFile.js";
 import { kRGLAlbedoLUTSize, type RGLMeasurement } from "./Material/RGLFile.js";
 import type { LightProfile } from "./Lights/LightProfile.js";
 import type { RenderContext } from "../Core/API/RenderContext.js";
@@ -92,6 +92,8 @@ export interface SceneMaterialDesc {
     merl?: MERLBRDF;
     /** Measured RGL BSDF; its tables, CDFs and albedo LUT live in the shared material buffer. */
     rgl?: RGLMeasurement;
+    /** Several MERL BRDFs selected per texel by an index map (MERLMixMaterial). */
+    merlMix?: MERLMixData;
 }
 
 export class Scene {
@@ -174,6 +176,8 @@ export class Scene {
     private readonly merlOffsets = new Map<number, { data: number; lut: number }>();
     /** Element offsets of each RGL material's tables in materialBuffer0. */
     private readonly rglOffsets = new Map<number, Record<string, number>>();
+    /** Byte offsets of each MERLMix material's regions in materialBuffer0. */
+    private readonly merlMixOffsets = new Map<number, { data: number; stride: number; extra: number; indexMap: number; lut: number }>();
     private lcMeshes: SceneMeshDesc[] = [];
     private lcTextureManager: TextureManager = new TextureManager();
     private emissiveTriangleCount = 0;
@@ -495,12 +499,13 @@ export class Scene {
         this.materialCount = materials.length;
         this.materialDescs = materials;
         // Every measured material appends its arrays; offsets are handed to the shader.
-        const regions: { at: number; data: Float32Array }[] = [];
+        const regions: { at: number; data: ArrayBufferView }[] = [];
         let bufferSize = 0;
-        const append = (data: Float32Array) => {
+        const append = (data: ArrayBufferView) => {
             const at = bufferSize;
             regions.push({ at, data });
-            bufferSize += data.byteLength;
+            // ByteAddressBuffer loads are 4-byte addressed, so every region starts aligned.
+            bufferSize += (data.byteLength + 3) & ~3;
             return at;
         };
         const reserve = (floats: number) => {
@@ -530,13 +535,46 @@ export class Scene {
                 put("lumiConditional", r.lumiConditional);
                 offsets["albedoLUT"] = reserve(kRGLAlbedoLUTSize * 4) / 4;
                 this.rglOffsets.set(i, offsets);
+            } else if (m.merlMix) {
+                const mix = m.merlMix;
+                if (mix.brdfs.length === 0) throw new RuntimeError("MERLMix material has no BRDFs");
+                // The BRDFs sit back to back at a common stride, as MERLMixMaterial.cpp checks.
+                const stride = mix.brdfs[0]!.data.byteLength;
+                let dataOffset = -1;
+                for (const brdf of mix.brdfs) {
+                    if (brdf.data.byteLength !== stride) throw new RuntimeError("MERLMix: every BRDF must have the same sample count");
+                    const at = append(brdf.data);
+                    if (dataOffset < 0) dataOffset = at;
+                }
+                // Per-BRDF fitted approximation used for sampling.
+                const extra = new Uint8Array(mix.brdfs.length * kDiffuseSpecularDataSize);
+                const extraView = new DataView(extra.buffer);
+                mix.brdfs.forEach((b, k) => writeDiffuseSpecularData(extraView, k * kDiffuseSpecularDataSize, b.extraData));
+                // Index map: width, height, then one byte per texel (§9: point-sampled
+                // indices cannot go through the shared linear material sampler).
+                const map = mix.indexMap;
+                const mapBytes = new Uint8Array(8 + ((map.indices.length + 3) & ~3));
+                const mapView = new DataView(mapBytes.buffer);
+                mapView.setUint32(0, map.width, true);
+                mapView.setUint32(4, map.height, true);
+                mapBytes.set(map.indices, 8);
+                this.merlMixOffsets.set(i, {
+                    data: dataOffset,
+                    stride,
+                    extra: append(extra),
+                    indexMap: append(mapBytes),
+                    // One 256-entry float4 LUT per BRDF, stacked (upstream's 2D texture).
+                    lut: reserve(kMERLAlbedoLUTSize * 4 * mix.brdfs.length),
+                });
             }
         });
         const materialBuffer = new Uint8Array(Math.max(bufferSize, 16));
         for (const r of regions) materialBuffer.set(new Uint8Array(r.data.buffer, r.data.byteOffset, r.data.byteLength), r.at);
         const blobBytes = new Uint8Array(materials.length * 128);
         materials.forEach((m, i) => {
-            this.materialTypes.add(m.merl ? MaterialType.MERL : m.rgl ? MaterialType.RGL : (m.header?.materialType ?? MaterialType.Standard));
+            this.materialTypes.add(
+                m.merl ? MaterialType.MERL : m.rgl ? MaterialType.RGL : m.merlMix ? MaterialType.MERLMix : (m.header?.materialType ?? MaterialType.Standard),
+            );
             blobBytes.set(this.packMaterial(m, i), i * 128);
         });
         make("materialData", blobBytes, 128);
@@ -666,6 +704,18 @@ export class Scene {
             const offsets = this.merlOffsets.get(index)!;
             return packMERLMaterialBlob(header, { dataOffset: offsets.data, albedoLUTOffset: offsets.lut, extraData: m.merl.extraData });
         }
+        if (m.merlMix) {
+            const o = this.merlMixOffsets.get(index)!;
+            return packMERLMixMaterialBlob(header, {
+                brdfCount: m.merlMix.brdfs.length,
+                byteStride: o.stride,
+                dataOffset: o.data,
+                extraDataOffset: o.extra,
+                indexMapOffset: o.indexMap,
+                albedoLUTOffset: o.lut,
+                texNormalMap: m.merlMix.texNormalMap,
+            });
+        }
         if (m.rgl) {
             const o = this.rglOffsets.get(index)!;
             return packRGLMaterialBlob(header, {
@@ -693,16 +743,35 @@ export class Scene {
             ...[...this.merlOffsets].map(([id, o]) => [id, o.lut] as [number, number]),
             ...[...this.rglOffsets].map(([id, o]) => [id, o["albedoLUT"]! * 4] as [number, number]),
         ];
-        if (targets.length === 0) return;
+        if (targets.length === 0 && this.merlMixOffsets.size === 0) return;
         const { BSDFIntegrator } = await import("../Rendering/Materials/BSDFIntegrator.js");
-        const integrator = new BSDFIntegrator(this.device, this);
         const size = kMERLAlbedoLUTSize; // MERL and RGL both use 256
         const cosThetas = Array.from({ length: size }, (_v, i) => (i + 1) / size);
-        for (const [materialID, byteOffset] of targets) {
+        /** Integrates one material of `scene` and writes the 256-entry float4 table. */
+        const writeLUT = async (integrator: InstanceType<typeof BSDFIntegrator>, materialID: number, byteOffset: number) => {
             const albedos = await integrator.integrateIsotropic(ctx, materialID, cosThetas);
             const lut = new Float32Array(size * 4);
             albedos.forEach((a, i) => lut.set([a.x, a.y, a.z, 1], i * 4));
             this.buffers["materialBuffer0"]!.setBlob(new Uint8Array(lut.buffer), byteOffset);
+        };
+
+        if (targets.length > 0) {
+            const integrator = new BSDFIntegrator(this.device, this);
+            for (const [materialID, byteOffset] of targets) await writeLUT(integrator, materialID, byteOffset);
+        }
+
+        // MERLMix stacks one table per BRDF. Each row is that BRDF's own albedo,
+        // which native gets from a dummy scene holding the single MERL material
+        // (MERLFile::computeAlbedoLUT); one temporary scene per mix does the same.
+        for (const [materialID, offsets] of this.merlMixOffsets) {
+            const mix = this.materialDescs[materialID]!.merlMix!;
+            const temp = new Scene(
+                this.device,
+                [],
+                mix.brdfs.map((merl) => ({ name: merl.name, basic: {}, merl, header: { materialType: MaterialType.MERL } })),
+            );
+            const integrator = new BSDFIntegrator(this.device, temp);
+            for (let k = 0; k < mix.brdfs.length; k++) await writeLUT(integrator, k, offsets.lut + k * size * 16);
         }
     }
 
@@ -1237,6 +1306,7 @@ export class Scene {
             WEBFALCOR_MTL_STANDARD: this.materialTypes.has(MaterialType.Standard) || this.materialTypes.size === 0 ? 1 : 0,
             WEBFALCOR_MTL_CLOTH: this.materialTypes.has(MaterialType.Cloth) ? 1 : 0,
             WEBFALCOR_MTL_MERL: this.materialTypes.has(MaterialType.MERL) ? 1 : 0,
+            WEBFALCOR_MTL_MERLMIX: this.materialTypes.has(MaterialType.MERLMix) ? 1 : 0,
             WEBFALCOR_MTL_RGL: this.materialTypes.has(MaterialType.RGL) ? 1 : 0,
             WEBFALCOR_MTL_HAIR: this.materialTypes.has(MaterialType.Hair) ? 1 : 0,
             WEBFALCOR_MTL_PBRT_DIFFUSE: this.materialTypes.has(MaterialType.PBRTDiffuse) ? 1 : 0,

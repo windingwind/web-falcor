@@ -48,9 +48,11 @@ decode as native), `TriangleMesh`, `HitInfo`, `Transform`.
 This paragraph is the port *strategy*; see §8.4 for per-feature implementation
 status. Landed since the 2026-07-09 audit: `CurveTessellation` + curve rendering,
 displacement mapping, camera DoF, runtime material/light edits (incl. emissive
-flux rebuild). Still unimplemented ⏳: `SceneCache`, `LightProfile` (IES),
-MERL/MERLMix/RGL materials (no `.brdf`/`.bsdf` assets in the drop), vertex
-caches (Alembic).
+flux rebuild), `SceneCache`, `LightProfile` (IES), and the MERL/MERLMix/RGL
+measured materials — the drop ships no `.binary`/`.bsdf` assets, so those run on
+CC0 measurements fetched by `npm run download:assets` and on analytic BRDFs
+written in the same formats by `node tools/gen-assets.mjs`. Still unimplemented
+⏳: vertex caches (Alembic).
 
 Scene GPU access (`Scene.slang`, `SceneBlock`, geometry/material/light buffers) is the
 same reflection-bound parameter block. The **bindless problem**: Falcor binds all

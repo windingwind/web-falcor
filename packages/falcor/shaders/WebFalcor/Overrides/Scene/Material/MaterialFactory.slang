@@ -44,6 +44,9 @@ import Rendering.Materials.HairMaterial;
 #if WEBFALCOR_MTL_MERL
 import Rendering.Materials.MERLMaterial;
 #endif
+#if WEBFALCOR_MTL_MERLMIX
+import Rendering.Materials.MERLMixMaterial;
+#endif
 #if WEBFALCOR_MTL_RGL
 import Rendering.Materials.RGLMaterial;
 #endif
@@ -111,6 +114,10 @@ extension MaterialSystem
         case MaterialType::MERL:
             return reinterpret<MERLMaterial, MaterialDataBlob>(materialData[materialID]);
 #endif
+#if WEBFALCOR_MTL_MERLMIX
+        case MaterialType::MERLMix:
+            return reinterpret<MERLMixMaterial, MaterialDataBlob>(materialData[materialID]);
+#endif
 #if WEBFALCOR_MTL_RGL
         case MaterialType::RGL:
             return reinterpret<RGLMaterial, MaterialDataBlob>(materialData[materialID]);
@@ -151,6 +158,8 @@ extension MaterialSystem
         return reinterpret<HairMaterial, MaterialDataBlob>(materialData[materialID]);
 #elif WEBFALCOR_MTL_MERL
         return reinterpret<MERLMaterial, MaterialDataBlob>(materialData[materialID]);
+#elif WEBFALCOR_MTL_MERLMIX
+        return reinterpret<MERLMixMaterial, MaterialDataBlob>(materialData[materialID]);
 #elif WEBFALCOR_MTL_RGL
         return reinterpret<RGLMaterial, MaterialDataBlob>(materialData[materialID]);
 #elif WEBFALCOR_MTL_PBRT_DIFFUSE

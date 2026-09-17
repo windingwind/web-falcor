@@ -23,6 +23,15 @@ export enum MaterialType {
     RGL = 12,
 }
 
+/** Mirrors Scene/Material/MaterialTypes.slang NormalMapType. */
+export enum NormalMapType {
+    None = 0,
+    /** Normal encoded in RGB channels in [0,1]. */
+    RGB = 1,
+    /** Tangent-space encoding in RG channels in [0,1]. */
+    RG = 2,
+}
+
 export enum AlphaMode {
     Opaque = 0,
     Mask = 1,
@@ -124,13 +133,70 @@ export function packMERLMaterialBlob(header: MaterialHeaderDesc, merl: MERLMater
     let off = 16;
     dv.setUint32(off, merl.dataOffset, true); off += 4; // bufferID -> byte offset
     dv.setUint32(off, 0, true); off += 4; // samplerID
-    // DiffuseSpecularData extraData
-    for (const c of merl.extraData.baseColor) { dv.setFloat32(off, c, true); off += 4; }
-    dv.setFloat32(off, merl.extraData.roughness, true); off += 4;
-    dv.setFloat32(off, merl.extraData.specular, true); off += 4;
-    dv.setFloat32(off, merl.extraData.metallic, true); off += 4;
-    dv.setFloat32(off, merl.extraData.lossValue, true); off += 4;
+    off = writeDiffuseSpecularData(dv, off, merl.extraData); // DiffuseSpecularData extraData
     dv.setUint32(off, merl.albedoLUTOffset, true); off += 4; // texAlbedoLUT -> byte offset
+    return new Uint8Array(blob);
+}
+
+/**
+ * Mirrors MERLMixMaterialData.slang. Web divergence (docs §9): `bufferID`,
+ * `texIndexMap` and `texAlbedoLUT` all carry *byte offsets* into the single
+ * shared material buffer. The index map lives there rather than in the packed
+ * texture array because that array shares one linear sampler and BRDF indices
+ * must be point-sampled.
+ */
+export interface MERLMixMaterialDesc {
+    brdfCount: number;
+    /** Stride in bytes between consecutive BRDF tables. */
+    byteStride: number;
+    /** Byte offset of BRDF 0's table. */
+    dataOffset: number;
+    /** Byte offset of the per-BRDF DiffuseSpecularData array. */
+    extraDataOffset: number;
+    /** Byte offset of the `[width, height, one byte per texel]` index map block. */
+    indexMapOffset: number;
+    /** Byte offset of the 256 x brdfCount float4 albedo LUT. */
+    albedoLUTOffset: number;
+    /** Packed TextureHandle of the normal map, if any. */
+    texNormalMap?: number;
+    normalMapType?: NormalMapType;
+}
+
+/** Size of DiffuseSpecularData in bytes (baseColor.rgb + 4 scalars). */
+export const kDiffuseSpecularDataSize = 28;
+
+/** Writes a DiffuseSpecularData at `off`; returns the offset just past it. */
+export function writeDiffuseSpecularData(dv: DataView, off: number, d: DiffuseSpecularData): number {
+    for (const c of d.baseColor) { dv.setFloat32(off, c, true); off += 4; }
+    dv.setFloat32(off, d.roughness, true); off += 4;
+    dv.setFloat32(off, d.specular, true); off += 4;
+    dv.setFloat32(off, d.metallic, true); off += 4;
+    dv.setFloat32(off, d.lossValue, true); off += 4;
+    return off;
+}
+
+/** Packs a 128-byte MaterialDataBlob for a MERLMix material (MERLMixMaterialData layout). */
+export function packMERLMixMaterialBlob(header: MaterialHeaderDesc, mix: MERLMixMaterialDesc): Uint8Array {
+    const blob = new ArrayBuffer(128);
+    const u32 = new Uint32Array(blob);
+    const dv = new DataView(blob);
+    u32.set(packMaterialHeader({ ...header, materialType: MaterialType.MERLMix, isBasicMaterial: false }), 0);
+
+    let off = 16;
+    const put = (v: number) => {
+        dv.setUint32(off, v, true);
+        off += 4;
+    };
+    // flags: normal map type in bits 0-1; both sampler IDs stay 0 (single sampler, §6.2).
+    put(mix.normalMapType ?? (mix.texNormalMap !== undefined ? NormalMapType.RGB : NormalMapType.None));
+    put(mix.brdfCount);
+    put(mix.byteStride);
+    put(mix.dataOffset); // bufferID -> byte offset of BRDF 0
+    put(mix.extraDataOffset);
+    put(kDiffuseSpecularDataSize);
+    put(mix.texNormalMap ?? 0);
+    put(mix.indexMapOffset); // texIndexMap -> byte offset
+    put(mix.albedoLUTOffset); // texAlbedoLUT -> byte offset
     return new Uint8Array(blob);
 }
 

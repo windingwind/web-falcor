@@ -395,6 +395,8 @@
     "WebFalcor/Overrides/Rendering/Materials/IMaterial.slang",
     "WebFalcor/Overrides/Rendering/Materials/MERLMaterial.slang",
     "WebFalcor/Overrides/Rendering/Materials/MERLMaterialInstance.slang",
+    "WebFalcor/Overrides/Rendering/Materials/MERLMixMaterial.slang",
+    "WebFalcor/Overrides/Rendering/Materials/MERLMixMaterialInstance.slang",
     "WebFalcor/Overrides/Rendering/Materials/PBRT/PBRTCoatedConductorMaterialInstance.slang",
     "WebFalcor/Overrides/Rendering/Materials/PBRT/PBRTConductorMaterial.slang",
     "WebFalcor/Overrides/Rendering/Materials/RGLCommon.slang",

@@ -247,8 +247,12 @@ export class MaterialBridge {
     /** Measured BRDF file (MERL `.binary` / RGL `.bsdf`), resolved with the textures. */
     private _measured: { kind: "merl" | "rgl"; path: string } | null = null;
     private _lightProfileEnabled = false;
+    /** MERLMix takes a *list* of BRDF paths plus a per-texel index map. */
+    private _merlMixPaths: string[] = [];
     private _merl: import("./Material/MERLFile.js").MERLBRDF | null = null;
     private _rgl: import("./Material/RGLFile.js").RGLMeasurement | null = null;
+    private _merlMix: import("./Material/MERLFile.js").MERLMixData | null = null;
+    private _indexMap: import("./Material/MERLFile.js").MERLIndexMap | null = null;
     private _texHandles: { texBaseColor?: number; texSpecular?: number; texEmissive?: number; texNormalMap?: number; texDisplacement?: number } = {};
 
     loadTexture(slot: string, path: string): void {
@@ -259,6 +263,13 @@ export class MaterialBridge {
     async resolveTextures(baseUrl: string, tm: TextureManager, resolver = AssetResolver.getDefaultResolver(), assumeLinearSpaceTextures = false): Promise<void> {
         for (const t of this._textures) {
             const url = await resolveAssetUrl(t.path, baseUrl, AssetCategory.Any, resolver);
+            // MERLMix's index map never reaches the texture array: BRDF indices
+            // must be point-sampled and the packed array shares a linear sampler,
+            // so the bytes go into the material buffer instead (docs §9).
+            if (t.slot === "Index" && this.materialType === MaterialType.MERLMix) {
+                this._indexMap = await loadIndexMap(url, t.path);
+                continue;
+            }
             try {
                 const res = await fetch(url);
                 if (!res.ok) continue;
@@ -317,11 +328,27 @@ export class MaterialBridge {
 
     /** Mirrors RGLMaterial::loadBRDF / the MERLMaterial(path) constructor. */
     load(path: unknown): void {
+        if (this.materialType === MaterialType.MERLMix) {
+            this._merlMixPaths.push(String(path));
+            return;
+        }
         this._measured = { kind: this.materialType === MaterialType.RGL ? "rgl" : "merl", path: String(path) };
     }
 
     /** Fetches the measured BRDF, alongside resolveTextures (docs §9: async asset IO). */
     async resolveMeasured(baseUrl: string, resolver = AssetResolver.getDefaultResolver()): Promise<void> {
+        if (this._merlMixPaths.length > 0) {
+            const { loadMERLBinary } = await import("./Material/MERLFile.js");
+            const brdfs = [];
+            for (const path of this._merlMixPaths) {
+                brdfs.push(await loadMERLBinary(await resolveAssetUrl(path, baseUrl, AssetCategory.Any, resolver)));
+            }
+            // Mirrors MERLMixMaterial's constructor: without an index map every
+            // texel selects BRDF 0.
+            const indexMap = this._indexMap ?? { width: 1, height: 1, indices: new Uint8Array(1) };
+            this._merlMix = { brdfs, indexMap, texNormalMap: this._texHandles.texNormalMap };
+            return;
+        }
         if (!this._measured) return;
         const url = await resolveAssetUrl(this._measured.path, baseUrl, AssetCategory.Any, resolver);
         if (this._measured.kind === "rgl") {
@@ -335,6 +362,7 @@ export class MaterialBridge {
 
     toDesc(): SceneMaterialDesc {
         const emissive = this._emissiveColor.x !== 0 || this._emissiveColor.y !== 0 || this._emissiveColor.z !== 0;
+        if (this._merlMix) return { name: this.name, header: { materialType: MaterialType.MERLMix }, basic: {}, merlMix: this._merlMix };
         if (this._merl) return { name: this.name, header: { materialType: MaterialType.MERL }, basic: {}, merl: this._merl };
         if (this._rgl) return { name: this.name, header: { materialType: MaterialType.RGL }, basic: {}, rgl: this._rgl };
         return {
@@ -520,6 +548,34 @@ async function decodeTgaToBitmap(bytes: Uint8Array): Promise<ImageBitmap> {
     pixels.set(image.rgba);
     const data = new ImageData(pixels, image.width, image.height);
     return createImageBitmap(data, { premultiplyAlpha: "none", colorSpaceConversion: "none" });
+}
+
+/**
+ * Reads a MERLMix index map as raw 8-bit indices (upstream samples the red
+ * channel of an 8-bit unorm texture and scales it by 255).
+ */
+async function loadIndexMap(url: string, path: string): Promise<import("./Material/MERLFile.js").MERLIndexMap> {
+    const bytes = new Uint8Array(await (await fetch(url)).arrayBuffer());
+    let width: number;
+    let height: number;
+    let rgba: Uint8Array | Uint8ClampedArray;
+    if (path.toLowerCase().endsWith(".tga")) {
+        const { decodeTGA } = await import("../Utils/Image/TGADecoder.js");
+        const image = decodeTGA(bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer);
+        ({ width, height } = image);
+        rgba = image.rgba;
+    } else {
+        const bitmap = await createImageBitmap(new Blob([bytes as BlobPart]), { premultiplyAlpha: "none", colorSpaceConversion: "none" });
+        width = bitmap.width;
+        height = bitmap.height;
+        const canvas = new OffscreenCanvas(width, height);
+        const g = canvas.getContext("2d", { willReadFrequently: true })!;
+        g.drawImage(bitmap, 0, 0);
+        rgba = g.getImageData(0, 0, width, height).data;
+    }
+    const indices = new Uint8Array(width * height);
+    for (let i = 0; i < indices.length; i++) indices[i] = rgba[i * 4]!;
+    return { width, height, indices };
 }
 
 /** Recorded GridVolume state (eager copies; PyProxies die at script exit). */

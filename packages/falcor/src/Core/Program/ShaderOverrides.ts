@@ -15,6 +15,8 @@ export const kShaderOverrides: Readonly<Record<string, string>> = {
     "Utils/UI/TextRenderer.3d.slang": "WebFalcor/Overrides/Utils/UI/TextRenderer.3d.slang",
     "Rendering/Materials/MERLMaterial.slang": "WebFalcor/Overrides/Rendering/Materials/MERLMaterial.slang",
     "Rendering/Materials/MERLMaterialInstance.slang": "WebFalcor/Overrides/Rendering/Materials/MERLMaterialInstance.slang",
+    "Rendering/Materials/MERLMixMaterial.slang": "WebFalcor/Overrides/Rendering/Materials/MERLMixMaterial.slang",
+    "Rendering/Materials/MERLMixMaterialInstance.slang": "WebFalcor/Overrides/Rendering/Materials/MERLMixMaterialInstance.slang",
     "Scene/Material/RGLMaterialData.slang": "WebFalcor/Overrides/Scene/Material/RGLMaterialData.slang",
     "Scene/Lights/BakeIesProfile.cs.slang": "WebFalcor/Overrides/Scene/Lights/BakeIesProfile.cs.slang",
     "Rendering/Materials/RGLCommon.slang": "WebFalcor/Overrides/Rendering/Materials/RGLCommon.slang",

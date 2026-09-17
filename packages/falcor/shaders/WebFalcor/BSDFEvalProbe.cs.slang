@@ -11,6 +11,8 @@ cbuffer CB
 }
 
 /// wi in .xyz of even entries, wo in .xyz of odd entries (local frame, z up).
+/// The two .w slots carry the shading point's uv, which materials that vary over
+/// the surface (MERLMix's index map) need in order to pick their BRDF.
 StructuredBuffer<float4> gDirections;
 /// f(wi, wo) * wo.z per pair (what IMaterialInstance::eval returns).
 RWStructuredBuffer<float4> gResults;
@@ -27,6 +29,7 @@ void main(uint3 tid: SV_DispatchThreadID)
     sd.mtl = gScene.materials.getMaterialHeader(gMaterialID);
     sd.materialID = gMaterialID;
     sd.IoR = 1.f;
+    sd.uv = float2(gDirections[tid.x * 2].w, gDirections[tid.x * 2 + 1].w);
     sd.V = normalize(gDirections[tid.x * 2].xyz);
     float3 wo = normalize(gDirections[tid.x * 2 + 1].xyz);
 
@@ -64,6 +67,7 @@ void mainSample(uint3 tid: SV_DispatchThreadID)
     sd.mtl = gScene.materials.getMaterialHeader(gSampleMtlID);
     sd.materialID = gSampleMtlID;
     sd.IoR = 1.f;
+    sd.uv = float2(gIncident[tid.x].w, 0.f);
     sd.V = normalize(gIncident[tid.x].xyz);
 
     let lod = ExplicitLodTextureSampler(0.f);
