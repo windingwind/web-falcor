@@ -13,6 +13,7 @@ import { float2, float3, float4, normalize3 } from "../../Utils/Math/Vector.js";
 import { float4x4, mulMat, matrixFromTranslation, matrixFromScaling, transformPoint, transformVector } from "../../Utils/Math/Matrix.js";
 import { matrixFromQuat, quatf } from "../../Utils/Math/Quaternion.js";
 import { RuntimeError } from "../../Core/Error.js";
+import { Logger } from "../../Utils/Logger.js";
 import { LightType, type AnalyticLight, type StaticVertex } from "../SceneData.js";
 import { decomposeTRS, type SceneNode, type AnimationChannel, type AnimationPath, type SkinDesc, type MorphDesc, type WeightTrack } from "../Animation/SceneAnimation.js";
 import { TextureManager } from "../Material/TextureManager.js";
@@ -51,7 +52,7 @@ interface GltfJson {
         samplers: { input: number; output: number; interpolation?: string }[];
     }[];
     meshes?: { primitives: GltfPrimitive[]; weights?: number[] }[];
-    accessors?: { bufferView?: number; byteOffset?: number; componentType: number; count: number; type: string }[];
+    accessors?: { bufferView?: number; byteOffset?: number; componentType: number; count: number; type: string; normalized?: boolean }[];
     bufferViews?: { buffer: number; byteOffset?: number; byteLength: number; byteStride?: number }[];
     buffers?: { uri?: string; byteLength: number }[];
     materials?: {
@@ -60,7 +61,7 @@ interface GltfJson {
             baseColorFactor?: number[];
             metallicFactor?: number;
             roughnessFactor?: number;
-            baseColorTexture?: { index: number };
+            baseColorTexture?: { index: number; extensions?: { KHR_texture_transform?: { offset?: number[]; scale?: number[]; rotation?: number } } };
         };
         emissiveFactor?: number[];
         doubleSided?: boolean;
@@ -160,6 +161,9 @@ export class GltfImporter {
             }
         }
 
+        /** Quantized attributes arrive as integers; downstream code wants floats. */
+        const toFloats = (data: Float32Array | Uint32Array): Float32Array => (data instanceof Float32Array ? data : Float32Array.from(data));
+
         const readAccessor = (index: number): Float32Array | Uint32Array => {
             const acc = json.accessors![index]!;
             const view = json.bufferViews![acc.bufferView!]!;
@@ -169,23 +173,44 @@ export class GltfImporter {
             const stride = view.byteStride ?? components * compSize;
             const base = buffer.byteOffset + (view.byteOffset ?? 0) + (acc.byteOffset ?? 0);
 
-            if (acc.componentType === 5126) {
+            const dv = new DataView(buffer.buffer);
+            // Reads one component in its declared type. Signed types matter for
+            // KHR_mesh_quantization, which stores normals/uvs as byte/short.
+            const component = (at: number): number => {
+                switch (acc.componentType) {
+                    case 5126: return dv.getFloat32(at, true); // float
+                    case 5125: return dv.getUint32(at, true); // unsigned int
+                    case 5123: return dv.getUint16(at, true); // unsigned short
+                    case 5122: return dv.getInt16(at, true); // short
+                    case 5121: return dv.getUint8(at); // unsigned byte
+                    case 5120: return dv.getInt8(at); // byte
+                    default: throw new RuntimeError(`glTF: unsupported componentType ${acc.componentType}`);
+                }
+            };
+            // Normalized integers map onto [0,1] or [-1,1] (glTF 3.11 / KHR_mesh_quantization).
+            const normalize = (v: number): number => {
+                switch (acc.componentType) {
+                    case 5121: return v / 255;
+                    case 5123: return v / 65535;
+                    case 5120: return Math.max(v / 127, -1);
+                    case 5122: return Math.max(v / 32767, -1);
+                    default: return v;
+                }
+            };
+
+            if (acc.componentType === 5126 || acc.normalized) {
                 const out = new Float32Array(acc.count * components);
-                const dv = new DataView(buffer.buffer);
                 for (let i = 0; i < acc.count; i++) {
-                    for (let c = 0; c < components; c++) out[i * components + c] = dv.getFloat32(base + i * stride + c * 4, true);
+                    for (let c = 0; c < components; c++) {
+                        const raw = component(base + i * stride + c * compSize);
+                        out[i * components + c] = acc.normalized ? normalize(raw) : raw;
+                    }
                 }
                 return out;
             }
             const out = new Uint32Array(acc.count * components);
-            const dv = new DataView(buffer.buffer);
             for (let i = 0; i < acc.count; i++) {
-                for (let c = 0; c < components; c++) {
-                    out[i * components + c] =
-                        compSize === 4 ? dv.getUint32(base + i * stride + c * 4, true)
-                        : compSize === 2 ? dv.getUint16(base + i * stride + c * 2, true)
-                        : dv.getUint8(base + i * stride + c);
-                }
+                for (let c = 0; c < components; c++) out[i * components + c] = component(base + i * stride + c * compSize);
             }
             return out;
         };
@@ -334,11 +359,27 @@ export class GltfImporter {
             if (node.mesh !== undefined) {
                 for (const prim of json.meshes![node.mesh]!.primitives) {
                     if ((prim.mode ?? 4) !== 4) continue; // triangles only
-                    const pos = readAccessor(prim.attributes["POSITION"]!) as Float32Array;
+                    // KHR_mesh_quantization may store positions as (unsigned) shorts or
+                    // bytes; the node's scale/translation puts them back in place.
+                    const posRaw = readAccessor(prim.attributes["POSITION"]!);
+                    const pos = posRaw instanceof Float32Array ? posRaw : Float32Array.from(posRaw);
                     const count = pos.length / 3;
-                    const normals = prim.attributes["NORMAL"] !== undefined ? (readAccessor(prim.attributes["NORMAL"]) as Float32Array) : null;
-                    const tangents = prim.attributes["TANGENT"] !== undefined ? (readAccessor(prim.attributes["TANGENT"]) as Float32Array) : null;
-                    const uvs = prim.attributes["TEXCOORD_0"] !== undefined ? (readAccessor(prim.attributes["TEXCOORD_0"]) as Float32Array) : null;
+                    const normals = prim.attributes["NORMAL"] !== undefined ? toFloats(readAccessor(prim.attributes["NORMAL"])) : null;
+                    const tangents = prim.attributes["TANGENT"] !== undefined ? toFloats(readAccessor(prim.attributes["TANGENT"])) : null;
+                    const uvs = prim.attributes["TEXCOORD_0"] !== undefined ? toFloats(readAccessor(prim.attributes["TEXCOORD_0"])) : null;
+                    // KHR_texture_transform: bake the material's uv transform into the
+                    // vertices. Quantized assets rely on it to rescale integer uvs, and
+                    // a primitive has exactly one material, so baking is exact.
+                    const uvTransform = prim.material !== undefined ? json.materials?.[prim.material]?.pbrMetallicRoughness?.baseColorTexture?.extensions?.KHR_texture_transform : undefined;
+                    if (uvs && uvTransform) {
+                        if (uvTransform.rotation) Logger.warning("GltfImporter: KHR_texture_transform rotation is not supported");
+                        const scale = uvTransform.scale ?? [1, 1];
+                        const offset = uvTransform.offset ?? [0, 0];
+                        for (let i = 0; i < uvs.length; i += 2) {
+                            uvs[i] = uvs[i]! * scale[0]! + offset[0]!;
+                            uvs[i + 1] = uvs[i + 1]! * scale[1]! + offset[1]!;
+                        }
+                    }
 
                     const vertices: StaticVertex[] = [];
                     for (let i = 0; i < count; i++) {

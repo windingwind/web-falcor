@@ -39,6 +39,7 @@ const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 
 const OPENVDB_BASE = "https://media.githubusercontent.com/media/AcademySoftwareFoundation/openvdb-website/master/download/models";
 const RGL_BASE = "https://d38rqfq1h7iukm.cloudfront.net/media/materials";
+const GLTF_SAMPLES = "https://raw.githubusercontent.com/KhronosGroup/glTF-Sample-Assets/main/Models";
 
 /**
  * Catalog. Each group lands in `<dest>/<group.dir>/`; `files` are downloaded
@@ -66,6 +67,20 @@ const GROUPS = [
             { file: "bunny_cloud.vdb", url: `${OPENVDB_BASE}/bunny_cloud.vdb`, sizeMB: 73, desc: "Stanford bunny as a fog volume" },
             { file: "explosion.vdb", url: `${OPENVDB_BASE}/explosion.vdb`, sizeMB: 25, desc: "Explosion (density + temperature grids)" },
             { file: "dragon.vdb", url: `${OPENVDB_BASE}/dragon.vdb`, sizeMB: 25, desc: "Stanford dragon level set" },
+        ],
+    },
+    {
+        name: "gltf-variants",
+        dir: "gltf-variants",
+        small: true,
+        note: "Khronos glTF sample models in compressed/quantized variants (KHR_mesh_quantization); kept in their upstream layout so the .gltf files resolve their own buffers",
+        files: [
+            { file: "Duck-Quantized/Duck.gltf", url: `${GLTF_SAMPLES}/Duck/glTF-Quantized/Duck.gltf`, sizeMB: 1, desc: "Duck, KHR_mesh_quantization (byte normals, short positions/uvs)" },
+            { file: "Duck-Quantized/Duck.bin", url: `${GLTF_SAMPLES}/Duck/glTF-Quantized/Duck.bin`, sizeMB: 1, desc: "Duck quantized geometry" },
+            { file: "Duck-Quantized/DuckCM.png", url: `${GLTF_SAMPLES}/Duck/glTF-Quantized/DuckCM.png`, sizeMB: 1, desc: "Duck base colour texture" },
+            { file: "Duck/Duck.gltf", url: `${GLTF_SAMPLES}/Duck/glTF/Duck.gltf`, sizeMB: 1, desc: "Duck, uncompressed — the reference the quantized variant must match" },
+            { file: "Duck/Duck0.bin", url: `${GLTF_SAMPLES}/Duck/glTF/Duck0.bin`, sizeMB: 1, desc: "Duck reference geometry" },
+            { file: "Duck/DuckCM.png", url: `${GLTF_SAMPLES}/Duck/glTF/DuckCM.png`, sizeMB: 1, desc: "Duck base colour texture" },
         ],
     },
     {
@@ -130,7 +145,10 @@ async function downloadTo(url, dest, label, attempts = 4) {
         try {
             const res = await fetch(url);
             if (!res.ok) throw new Error(`HTTP ${res.status}`);
-            const total = Number(res.headers.get("content-length")) || 0;
+            // A compressed response reports the *compressed* length, which says
+            // nothing about how many bytes we end up writing.
+            const compressed = res.headers.get("content-encoding") !== null;
+            const total = compressed ? 0 : Number(res.headers.get("content-length")) || 0;
             const tmp = `${dest}.part`;
             const out = createWriteStream(tmp);
             let received = 0;
@@ -190,6 +208,7 @@ async function main() {
         console.log(`  ${group.note}`);
         for (const f of group.files) {
             const dest = join(dir, f.file);
+            mkdirSync(dirname(dest), { recursive: true });
             if (!opts.force && existsSync(dest) && statSync(dest).size > 0) {
                 console.log(`  ${f.file} — already present (${(statSync(dest).size / 1048576).toFixed(1)} MB)`);
                 skipped++;
