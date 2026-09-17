@@ -519,8 +519,8 @@ export interface ImportOptions {
 /** Recorded SDF grid state (mirrors SDFGrid python bindings; ND + SBS types). */
 export class SDFGridBridge {
     ops: SDFGridRecipe["ops"] = [];
-    /** Pending SDFGrid::loadValuesFromFile calls, fetched in resolve(). */
-    pendingFiles: { path: string }[] = [];
+    /** Pending loadValuesFromFile/loadPrimitivesFromFile calls, fetched in resolve(). */
+    pendingFiles: { path: string; primitives?: boolean; gridWidth?: number }[] = [];
     constructor(
         readonly type: SDFGridType,
         readonly narrowBandThickness: number,
@@ -534,6 +534,13 @@ export class SDFGridBridge {
     loadValuesFromFile(path: unknown): boolean {
         this.pendingFiles.push({ path: String(path) });
         return true;
+    }
+
+    /** Mirrors SDFGrid::loadPrimitivesFromFile (the `.sdf` primitive-list format). */
+    loadPrimitivesFromFile(path: unknown, gridWidth: unknown): number {
+        this.pendingFiles.push({ path: String(path), primitives: true, gridWidth: Number(gridWidth) });
+        // Native returns the primitive count; it is only known after the fetch.
+        return 0;
     }
     toRecipe(): SDFGridRecipe {
         return { type: this.type, narrowBandThickness: this.narrowBandThickness, brickWidth: this.brickWidth, ops: [...this.ops] };
@@ -1068,6 +1075,11 @@ export class SceneBuilderBridge {
         for (const { grid } of this.sdfGridsList) {
             for (const file of grid.pendingFiles) {
                 const url = await resolveAssetUrl(file.path, baseUrl, AssetCategory.Any, this.assetResolver);
+                if (file.primitives) {
+                    const { loadSDFPrimitives } = await import("./SDFs/SDF3DPrimitive.js");
+                    grid.ops.push({ kind: "primitives", gridWidth: file.gridWidth!, primitives: await loadSDFPrimitives(url) });
+                    continue;
+                }
                 const { loadSDFGridValues } = await import("./SDFs/SDFGridFile.js");
                 const loaded = await loadSDFGridValues(url);
                 grid.ops.push({ kind: "values", gridWidth: loaded.gridWidth, values: loaded.values });

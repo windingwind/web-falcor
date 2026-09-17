@@ -9,6 +9,7 @@ import { SDFSBS } from "./SDFSBS.js";
 import { SDFSVS } from "./SDFSVS.js";
 import { SDFSVO } from "./SDFSVO.js";
 import { RuntimeError } from "../../Core/Error.js";
+import { evaluateSDFPrimitives, type SDF3DPrimitive } from "./SDF3DPrimitive.js";
 
 export type SDFGridType = "ndsdf" | "sbs" | "svs" | "svo";
 
@@ -16,7 +17,11 @@ export interface SDFGridRecipe {
     type: SDFGridType;
     narrowBandThickness: number;
     brickWidth: number;
-    ops: ({ kind: "cheese"; gridWidth: number; seed: number } | { kind: "values"; gridWidth: number; values: Float32Array })[];
+    ops: (
+        | { kind: "cheese"; gridWidth: number; seed: number }
+        | { kind: "values"; gridWidth: number; values: Float32Array }
+        | { kind: "primitives"; gridWidth: number; primitives: SDF3DPrimitive[] }
+    )[];
 }
 
 export type BuiltSDFGrid = NDSDFGrid | SDFSBS | SDFSVS | SDFSVO;
@@ -31,8 +36,11 @@ export function buildSDFGridFromRecipe(recipe: SDFGridRecipe): BuiltSDFGrid {
     for (const op of recipe.ops) {
         if (op.kind === "cheese") built.generateCheeseValues(op.gridWidth, op.seed);
         else if (op.kind === "values") built.setValues(op.values, op.gridWidth);
+        // Primitives bake to corner values here; native evaluates the same loop
+        // on the GPU (EvaluateSDFPrimitives.cs.slang), see SDF3DPrimitive.ts.
+        else if (op.kind === "primitives") built.setValues(evaluateSDFPrimitives(op.primitives, op.gridWidth), op.gridWidth);
     }
     const ok = built instanceof SDFSBS ? built.brickCount > 0 : built instanceof SDFSVS || built instanceof SDFSVO ? built.voxelCount > 0 : built.lodCount > 0;
-    if (!ok) throw new RuntimeError("SDFGrid: no values set (only generateCheeseValues is supported so far)");
+    if (!ok) throw new RuntimeError("SDFGrid: no values set");
     return built;
 }

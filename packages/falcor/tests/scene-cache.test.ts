@@ -47,7 +47,11 @@ function makeScene(): CacheableScene {
         ],
         weightTracks: [{ nodeID: 1, times: new Float32Array([0, 2]), values: new Float32Array([1, 0, 0, 1]), numTargets: 2, interp: "LINEAR" }],
         sdfGrids: {
-            recipes: [{ type: "ndsdf", narrowBandThickness: 2.5, brickWidth: 7, ops: [{ kind: "cheese", gridWidth: 32, seed: 7 }] }],
+            recipes: [
+                { type: "ndsdf", narrowBandThickness: 2.5, brickWidth: 7, ops: [{ kind: "cheese", gridWidth: 32, seed: 7 }] },
+                // A grid loaded from a `.sdfg` file carries its corner values.
+                { type: "svs", narrowBandThickness: 1, brickWidth: 4, ops: [{ kind: "values", gridWidth: 2, values: new Float32Array(27).map((_v, i) => i / 27) }] },
+            ],
             instances: [{ gridIndex: 0, materialID: 0, transform: float4x4.identity() }, { gridIndex: 0, materialID: 0 }],
         },
         gridVolumes: [{ name: "smoke", densityScale: 0.5, emissionScale: 1, albedo: [0.5, 0.5, 0.5], anisotropy: 0.1, emissionTemperature: 0, grids: [{ slot: "density", bytes: new Uint8Array([7, 7, 7, 7, 7, 7, 7]) }] }],
@@ -74,6 +78,10 @@ describe("SceneCache v4 serialization", () => {
         expect(json(back.animations)).toBe(json(scene.animations));
         expect(json(back.weightTracks)).toBe(json(scene.weightTracks));
         expect(json(back.sdfGrids)).toBe(json(scene.sdfGrids));
+        // The corner values must come back as a typed array, not a plain object.
+        const valuesOp = back.sdfGrids.recipes[1]!.ops[0]!;
+        expect(valuesOp.kind).toBe("values");
+        expect((valuesOp as { values: Float32Array }).values).toBeInstanceOf(Float32Array);
         expect(json(back.gridVolumes)).toBe(json(scene.gridVolumes));
         expect(back.meshes.length).toBe(2);
         expect(json(back.meshes[0]!.vertices)).toBe(json(scene.meshes[0]!.vertices));

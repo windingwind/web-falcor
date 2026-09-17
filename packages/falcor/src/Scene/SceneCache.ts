@@ -20,6 +20,11 @@ import { EnvMap } from "./Lights/EnvMap.js";
 import type { AnalyticLight, StaticVertex } from "./SceneData.js";
 import type { AnimationChannel, MorphDesc, SceneNode, SkinDesc, WeightTrack } from "./Animation/SceneAnimation.js";
 import { buildSDFGridFromRecipe, type SDFGridRecipe } from "./SDFs/SDFGridRecipe.js";
+
+/** A recipe in the cache header: the corner values move to the word blobs. */
+type RecipeMeta = Omit<SDFGridRecipe, "ops"> & {
+    ops: (Exclude<SDFGridRecipe["ops"][number], { kind: "values" }> | { kind: "values"; gridWidth: number; valueCount: number })[];
+};
 import type { SceneSDFGridDesc } from "./Scene.js";
 import { GridVolume, type GridSlot } from "./Volume/GridVolume.js";
 import { Grid } from "./Volume/Grid.js";
@@ -158,6 +163,9 @@ function wordBlobs(cached: CacheableScene): (Float32Array | Uint32Array)[] {
     for (const c of cached.curves) blobs.push(c.positionsRadii, c.texCrds ?? new Float32Array(0), c.indices);
     for (const a of cached.animations) blobs.push(a.times, a.values);
     for (const w of cached.weightTracks) blobs.push(w.times, w.values);
+    // SDF corner values (grids loaded from `.sdfg`): bulk float data, so they
+    // ride in the blobs rather than the JSON header.
+    for (const r of cached.sdfGrids.recipes) for (const op of r.ops) if (op.kind === "values") blobs.push(op.values);
     return blobs;
 }
 
@@ -210,7 +218,10 @@ export function serializeScene(cached: CacheableScene): Uint8Array {
         ),
         weightTracks: cached.weightTracks.map((w): TrackMeta => ({ nodeID: w.nodeID, numTargets: w.numTargets, interp: w.interp, timesCount: w.times.length, valuesCount: w.values.length })),
         sdfGrids: {
-            recipes: cached.sdfGrids.recipes,
+            recipes: cached.sdfGrids.recipes.map((r) => ({
+                ...r,
+                ops: r.ops.map((op) => (op.kind === "values" ? { kind: op.kind, gridWidth: op.gridWidth, valueCount: op.values.length } : op)),
+            })),
             instances: cached.sdfGrids.instances.map((i) => ({ gridIndex: i.gridIndex, materialID: i.materialID, transform: i.transform ? { __m4: Array.from(i.transform.data) } : undefined })),
         },
         gridVolumes: cached.gridVolumes.map((v) => ({ ...v, grids: v.grids.map((g) => ({ slot: g.slot, byteLength: g.bytes.byteLength })) })),
@@ -258,7 +269,7 @@ export function deserializeScene(bytes: Uint8Array): CacheableScene {
         envMap?: { byteLength: number; isExr: boolean; intensity: number; tint: [number, number, number]; rotationDeg: [number, number, number] };
         animations: TrackMeta[];
         weightTracks: TrackMeta[];
-        sdfGrids: { recipes: SDFGridRecipe[]; instances: { gridIndex: number; materialID: number; transform?: { __m4: number[] } }[] };
+        sdfGrids: { recipes: RecipeMeta[]; instances: { gridIndex: number; materialID: number; transform?: { __m4: number[] } }[] };
         gridVolumes: (Omit<CachedGridVolume, "grids"> & { grids: { slot: GridSlot; byteLength: number }[] })[];
     };
 
@@ -342,6 +353,12 @@ export function deserializeScene(bytes: Uint8Array): CacheableScene {
         interp: meta.interp as WeightTrack["interp"],
     }));
 
+    // Word blobs are consumed in wordBlobs() order: the SDF values come last.
+    const sdfRecipes: SDFGridRecipe[] = header.sdfGrids.recipes.map((r) => ({
+        ...r,
+        ops: r.ops.map((op) => (op.kind === "values" ? { kind: op.kind, gridWidth: op.gridWidth, values: takeF32(op.valueCount) } : op)),
+    }));
+
     const textures = header.textures.map((meta) => ({ png: takeBytes(meta.byteLength), srgb: meta.srgb }));
     let envMap: CacheableScene["envMap"];
     if (header.envMap) {
@@ -361,7 +378,7 @@ export function deserializeScene(bytes: Uint8Array): CacheableScene {
         envMap,
         animations,
         weightTracks,
-        sdfGrids: { recipes: header.sdfGrids.recipes, instances: header.sdfGrids.instances.map((i) => ({ gridIndex: i.gridIndex, materialID: i.materialID, transform: mat4(i.transform) })) },
+        sdfGrids: { recipes: sdfRecipes, instances: header.sdfGrids.instances.map((i) => ({ gridIndex: i.gridIndex, materialID: i.materialID, transform: mat4(i.transform) })) },
         gridVolumes,
     };
 }

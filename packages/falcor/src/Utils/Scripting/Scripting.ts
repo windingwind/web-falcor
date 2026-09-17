@@ -338,8 +338,8 @@ class Grid:
     def createBox(width, height, depth, voxelSize):
         return _Grid.createBox(width, height, depth, voxelSize)
 
-# SDF grids (NDSDFGrid + SparseBrickSet implemented; SVS/SVO pending — a
-# clear error beats a silent wrong render).
+# SDF grids: all four representations, built from the procedural generator,
+# a .sdfg corner-value file or a .sdf primitive list.
 class SDFGrid:
     @staticmethod
     def createNDGrid(narrowBandThickness=5.0):
