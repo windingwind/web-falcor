@@ -404,7 +404,7 @@ async function runSceneScriptInternal(device: Device, source: string, baseUrl: s
             createCube: (size?: VecLike | null) => TriangleMesh.createCube(size ? new float3(size.x, size.y, size.z) : undefined),
             createSphere: (radius?: number, segmentsU?: number, segmentsV?: number) => TriangleMesh.createSphere(radius, segmentsU, segmentsV),
             createDisk: (radius?: number, segments?: number) => TriangleMesh.createDisk(radius, segments),
-            createFromFile: (path: string, smoothNormals?: boolean) => ({ vertices: [], indices: new Uint32Array(0), _fromFile: { path: String(path), smoothNormals: !!smoothNormals } }),
+            createFromFile: (path: string, smoothNormals?: boolean) => TriangleMesh.createFromFile(String(path), !!smoothNormals),
             // Mutable builder: TriangleMesh() then addVertex()/addTriangle() (tutorial.pyscene).
             createEmpty: () => {
                 const vertices: StaticVertex[] = [];

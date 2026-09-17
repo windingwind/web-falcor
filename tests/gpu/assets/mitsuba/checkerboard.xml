@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  The procedural checkerboard texture on a diffuse rectangle, again under a
+  uniform environment of radiance 1: each quadrant of the rectangle must show
+  exactly its checker colour, and diagonal quadrants must agree.
+-->
+<scene version="3.0.0">
+    <sensor type="perspective">
+        <float name="fov" value="45"/>
+        <transform name="to_world">
+            <lookat origin="0, 0, 4" target="0, 0, 0" up="0, 1, 0"/>
+        </transform>
+        <film type="hdrfilm">
+            <integer name="width" value="256"/>
+            <integer name="height" value="256"/>
+        </film>
+    </sensor>
+
+    <emitter type="constant">
+        <rgb name="radiance" value="1, 1, 1"/>
+    </emitter>
+
+    <shape type="rectangle">
+        <bsdf type="diffuse">
+            <texture type="checkerboard" name="reflectance">
+                <rgb name="color0" value="0.9, 0.1, 0.1"/>
+                <rgb name="color1" value="0.1, 0.1, 0.9"/>
+            </texture>
+        </bsdf>
+    </shape>
+</scene>

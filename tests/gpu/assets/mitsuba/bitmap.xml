@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  A bitmap-textured diffuse rectangle under a uniform environment of radiance 1,
+  so the surface reflects the texture's own albedo.
+-->
+<scene version="3.0.0">
+    <sensor type="perspective">
+        <float name="fov" value="30"/>
+        <transform name="to_world">
+            <lookat origin="0, 0, 4" target="0, 0, 0" up="0, 1, 0"/>
+        </transform>
+        <film type="hdrfilm">
+            <integer name="width" value="256"/>
+            <integer name="height" value="256"/>
+        </film>
+    </sensor>
+
+    <emitter type="constant">
+        <rgb name="radiance" value="1, 1, 1"/>
+    </emitter>
+
+    <shape type="rectangle">
+        <bsdf type="diffuse">
+            <texture type="bitmap" name="reflectance">
+                <string name="filename" value="test_images/monalisa.jpg"/>
+            </texture>
+        </bsdf>
+    </shape>
+</scene>

@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  A single diffuse rectangle facing the camera under a uniform environment.
+  An unoccluded Lambertian surface under constant radiance Le reflects exactly
+  albedo * Le, which makes the rendered colour a closed-form check of the
+  importer, the diffuse BSDF mapping and the constant emitter.
+-->
+<scene version="3.0.0">
+    <sensor type="perspective">
+        <float name="fov" value="45"/>
+        <transform name="to_world">
+            <lookat origin="0, 0, 4" target="0, 0, 0" up="0, 1, 0"/>
+        </transform>
+        <film type="hdrfilm">
+            <integer name="width" value="256"/>
+            <integer name="height" value="256"/>
+        </film>
+    </sensor>
+
+    <emitter type="constant">
+        <rgb name="radiance" value="0.5, 0.25, 0.75"/>
+    </emitter>
+
+    <shape type="rectangle">
+        <bsdf type="diffuse">
+            <rgb name="reflectance" value="0.8, 0.6, 0.4"/>
+        </bsdf>
+    </shape>
+</scene>

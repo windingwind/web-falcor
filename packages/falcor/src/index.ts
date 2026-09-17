@@ -84,6 +84,7 @@ export * from "./Scene/SceneBuilder.js";
 export * from "./Scene/Importer/GltfImporter.js";
 export * from "./Scene/Importer/UsdImporter.js";
 export * from "./Scene/Importer/PbrtImporter.js";
+export * from "./Scene/Importer/MitsubaImporter.js";
 export * from "./Scene/Importer/DDSLoader.js";
 export * from "./Scene/Material/TextureManager.js";
 export * from "./Scene/Lights/EnvMap.js";

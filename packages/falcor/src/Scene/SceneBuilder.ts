@@ -43,6 +43,10 @@ export interface TriangleMeshDesc {
 
 /** Mirrors TriangleMesh factories (TriangleMesh.cpp). */
 export const TriangleMesh = {
+    /** Mirrors TriangleMesh::createFromFile; the asset is fetched in resolve(). */
+    createFromFile(path: string, smoothNormals = false): TriangleMeshDesc {
+        return { vertices: [], indices: new Uint32Array(0), _fromFile: { path: String(path), smoothNormals: !!smoothNormals } };
+    },
     createQuad(size: float2 = new float2(1, 1)): TriangleMeshDesc {
         const hx = 0.5 * size.x;
         const hy = 0.5 * size.y;
@@ -187,6 +191,9 @@ export class CameraBridge {
     focalLength = 21;
     focalDistance = 10000;
     apertureRadius = 0;
+    /** Depth range; only the Mitsuba importer sets these (its sensor carries them). */
+    nearPlane = 0.1;
+    farPlane = 1000;
     shutterSpeed = 0.004;
     ISOSpeed = 100;
 
@@ -252,11 +259,17 @@ export class MaterialBridge {
     private _merl: import("./Material/MERLFile.js").MERLBRDF | null = null;
     private _rgl: import("./Material/RGLFile.js").RGLMeasurement | null = null;
     private _merlMix: import("./Material/MERLFile.js").MERLMixData | null = null;
+    private _bitmaps: { slot: string; bitmap: ImageBitmap; srgb: boolean }[] = [];
     private _indexMap: import("./Material/MERLFile.js").MERLIndexMap | null = null;
     private _texHandles: { texBaseColor?: number; texSpecular?: number; texEmissive?: number; texNormalMap?: number; texDisplacement?: number } = {};
 
     loadTexture(slot: string, path: string): void {
         this._textures.push({ slot: String(slot), path: String(path) });
+    }
+
+    /** Binds an already-decoded image (procedural content: Mitsuba's checkerboard). */
+    loadTextureBitmap(slot: string, bitmap: ImageBitmap, srgb: boolean): void {
+        this._bitmaps.push({ slot: String(slot), bitmap, srgb });
     }
 
     /** Fetches + decodes this material's deferred textures into the TextureManager (MaterialTextureLoader: sRGB for colour slots unless AssumeLinearSpaceTextures). */
@@ -281,16 +294,24 @@ export class MaterialBridge {
                 const bitmap = t.path.toLowerCase().endsWith(".tga")
                     ? await decodeTgaToBitmap(bytes)
                     : await createImageBitmap(blob, { colorSpaceConversion: "none" });
-                const handle = packTextureHandle(TextureHandleMode.Texture, tm.addTexture({ bitmap, srgb, bytes }));
-                if (t.slot === "BaseColor") this._texHandles.texBaseColor = handle;
-                else if (t.slot === "Specular") this._texHandles.texSpecular = handle;
-                else if (t.slot === "Normal") this._texHandles.texNormalMap = handle;
-                else if (t.slot === "Emissive") this._texHandles.texEmissive = handle;
-                else if (t.slot === "Displacement") this._texHandles.texDisplacement = handle;
+                this.assignTextureHandle(t.slot, packTextureHandle(TextureHandleMode.Texture, tm.addTexture({ bitmap, srgb, bytes })));
             } catch {
                 /* undecodable format (e.g. DDS) — material falls back to base color */
             }
         }
+        for (const b of this._bitmaps) {
+            const handle = packTextureHandle(TextureHandleMode.Texture, tm.addTexture({ bitmap: b.bitmap, srgb: b.srgb }));
+            this.assignTextureHandle(b.slot, handle);
+        }
+    }
+
+    /** Routes a packed texture handle to the slot's field. */
+    private assignTextureHandle(slot: string, handle: number): void {
+        if (slot === "BaseColor") this._texHandles.texBaseColor = handle;
+        else if (slot === "Specular") this._texHandles.texSpecular = handle;
+        else if (slot === "Normal") this._texHandles.texNormalMap = handle;
+        else if (slot === "Emissive") this._texHandles.texEmissive = handle;
+        else if (slot === "Displacement") this._texHandles.texDisplacement = handle;
     }
 
     set baseColor(v: { x: number; y: number; z: number; w: number }) {
@@ -626,9 +647,12 @@ export class GridVolumeBridge {
 }
 
 interface EnvMapRef {
+    /** Empty when the env map is a constant colour (Mitsuba's `constant` emitter). */
     path: string;
     intensity: number;
     rotation?: { x: number; y: number; z: number };
+    /** A uniform radiance, uploaded as the 1x1 texture native builds for it. */
+    constantColor?: [number, number, number];
 }
 
 type Command =
@@ -674,6 +698,7 @@ export class SceneBuilderBridge {
                   path: String(v.path),
                   intensity: Number(v.intensity),
                   rotation: v.rotation ? { x: Number(v.rotation.x), y: Number(v.rotation.y), z: Number(v.rotation.z) } : undefined,
+                  constantColor: v.constantColor ? [Number(v.constantColor[0]), Number(v.constantColor[1]), Number(v.constantColor[2])] : undefined,
               }
             : null;
     }
@@ -1137,6 +1162,7 @@ export class SceneBuilderBridge {
             scene.camera.setApertureRadius(this.camera.apertureRadius);
             scene.camera.setShutterSpeed(this.camera.shutterSpeed);
             scene.camera.setISOSpeed(this.camera.ISOSpeed);
+            scene.camera.setDepthRange(this.camera.nearPlane, this.camera.farPlane);
         } else if (this.importedCameraPose) {
             scene.camera.setPosition(this.importedCameraPose.position);
             scene.camera.setTarget(this.importedCameraPose.target);
@@ -1144,8 +1170,10 @@ export class SceneBuilderBridge {
             scene.camera.setFocalLength(this.importedCameraPose.focalLength);
         }
         if (this.envMap) {
-            const url = await resolveAssetUrl(this.envMap.path, baseUrl, AssetCategory.Any, this.assetResolver);
-            const envMap = await EnvMap.createFromUrl(device, url);
+            const constant = this.envMap.constantColor;
+            const envMap = constant
+                ? new EnvMap(device, { width: 1, height: 1, data: new Float32Array([constant[0], constant[1], constant[2], 1]) })
+                : await EnvMap.createFromUrl(device, await resolveAssetUrl(this.envMap.path, baseUrl, AssetCategory.Any, this.assetResolver));
             envMap.intensity = this.envMap.intensity;
             if (this.envMap.rotation) envMap.setRotation([this.envMap.rotation.x, this.envMap.rotation.y, this.envMap.rotation.z]);
             scene.setEnvMap(envMap);

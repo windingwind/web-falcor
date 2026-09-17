@@ -3,7 +3,7 @@
  * execute the graph each frame, present the marked output to the canvas.
  */
 
-import { AssetCategory, AssetResolver, isAbsoluteUrl, kProjectMediaUrl, Clock, Device, Logger, Profiler, ProfilerUI, VideoRecorder, ProgramManager, RenderGraph, ResourceFormat, createPass, encodeExr, initScripting, initSlang, runConsoleCommand, runGraphScript, runSceneScript, runPbrtScene, presentToCanvas, type Scene } from "@web-falcor/falcor";
+import { AssetCategory, AssetResolver, isAbsoluteUrl, kProjectMediaUrl, Clock, Device, Logger, Profiler, ProfilerUI, VideoRecorder, ProgramManager, RenderGraph, ResourceFormat, createPass, encodeExr, initScripting, initSlang, runConsoleCommand, runGraphScript, runSceneScript, runPbrtScene, runMitsubaScene, presentToCanvas, type Scene } from "@web-falcor/falcor";
 import "@web-falcor/render-passes";
 import { CameraController, kCameraControllerTypes, kUpDirectionNames } from "./CameraController.js";
 import { buildUIPanel } from "./UIPanel.js";
@@ -73,9 +73,12 @@ async function loadGraph(state: ViewerState, url: string): Promise<void> {
 
 async function loadScene(state: ViewerState, url: string, baseUrl: string): Promise<void> {
     const source = await (await fetch(url)).text();
-    const scene = url.toLowerCase().endsWith(".pbrt")
+    const lower = url.toLowerCase();
+    const scene = lower.endsWith(".pbrt")
         ? await runPbrtScene(state.device, source, baseUrl)
-        : await runSceneScript(state.device, source, baseUrl, { cache: true }); // OPFS scene cache: fast reloads
+        : lower.endsWith(".xml") // Mitsuba scenes are the only .xml we load
+          ? await runMitsubaScene(state.device, source, baseUrl)
+          : await runSceneScript(state.device, source, baseUrl, { cache: true }); // OPFS scene cache: fast reloads
     scene.camera.setAspectRatio(canvas.width / canvas.height);
     state.scene = scene;
     if (state.graph) state.graph.setScene(scene);

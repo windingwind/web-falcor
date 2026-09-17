@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  The `obj` shape path: geometry from a mesh file, placed by a to_world
+  transform whose composed result is known exactly.
+-->
+<scene version="3.0.0">
+    <sensor type="perspective">
+        <float name="fov" value="45"/>
+        <transform name="to_world">
+            <lookat origin="0, 0, 6" target="0, 0, 0" up="0, 1, 0"/>
+        </transform>
+        <film type="hdrfilm">
+            <integer name="width" value="128"/>
+            <integer name="height" value="128"/>
+        </film>
+    </sensor>
+
+    <shape type="obj">
+        <string name="filename" value="quad.obj"/>
+        <boolean name="face_normals" value="true"/>
+        <transform name="to_world">
+            <scale x="2" y="0.5" z="1"/>
+            <translate z="2"/>
+        </transform>
+        <bsdf type="diffuse">
+            <rgb name="reflectance" value="0.5"/>
+        </bsdf>
+    </shape>
+</scene>

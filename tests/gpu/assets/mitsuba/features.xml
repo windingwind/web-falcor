@@ -1,0 +1,87 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Exercises the importer's plugin coverage in one scene: every built-in shape,
+  the BSDF types upstream maps, a nested area emitter, an interior medium, and
+  the transform operations. Nothing here needs an external mesh file.
+-->
+<scene version="3.0.0">
+    <sensor type="thinlens">
+        <float name="fov" value="45"/>
+        <float name="near_clip" value="0.5"/>
+        <float name="far_clip" value="200"/>
+        <float name="focus_distance" value="7"/>
+        <float name="aperture_radius" value="0.1"/>
+        <transform name="to_world">
+            <lookat origin="0, 1, 6" target="0, 1, 0" up="0, 1, 0"/>
+        </transform>
+        <film type="hdrfilm">
+            <integer name="width" value="800"/>
+            <integer name="height" value="600"/>
+        </film>
+    </sensor>
+
+    <bsdf type="diffuse" id="grey">
+        <rgb name="reflectance" value="0.35, 0.4, 0.45"/>
+    </bsdf>
+
+    <!-- Floor: a rectangle scaled and moved into place. -->
+    <shape type="rectangle" id="floor">
+        <transform name="to_world">
+            <scale value="4"/>
+            <rotate x="1" angle="-90"/>
+            <translate y="-1"/>
+        </transform>
+        <ref id="grey"/>
+    </shape>
+
+    <shape type="cube" id="metal-cube">
+        <transform name="to_world">
+            <scale value="0.5"/>
+            <translate x="-1.5" y="-0.5"/>
+        </transform>
+        <bsdf type="roughconductor" id="metal">
+            <rgb name="eta" value="0.2, 0.92, 1.1"/>
+            <rgb name="k" value="3.9, 2.45, 2.14"/>
+            <float name="alpha" value="0.25"/>
+        </bsdf>
+    </shape>
+
+    <shape type="sphere" id="glass-sphere">
+        <float name="radius" value="0.6"/>
+        <point name="center" value="0, -0.4, 0"/>
+        <bsdf type="dielectric" id="glass">
+            <string name="int_ior" value="water"/>
+        </bsdf>
+        <medium type="homogeneous" name="interior">
+            <rgb name="sigma_s" value="0.5, 0.25, 0.1"/>
+            <rgb name="sigma_a" value="0.02, 0.04, 0.06"/>
+        </medium>
+    </shape>
+
+    <shape type="disk" id="plastic-disk">
+        <transform name="to_world">
+            <translate x="1.6" y="-0.99"/>
+        </transform>
+        <bsdf type="twosided">
+            <bsdf type="roughplastic" id="plastic">
+                <rgb name="diffuse_reflectance" value="0.1, 0.5, 0.2"/>
+                <float name="alpha" value="0.16"/>
+            </bsdf>
+        </bsdf>
+    </shape>
+
+    <!-- Area light: a diffuse rectangle above the scene. -->
+    <shape type="rectangle" id="light">
+        <transform name="to_world">
+            <scale value="0.5"/>
+            <rotate x="1" angle="90"/>
+            <translate y="2.5"/>
+        </transform>
+        <bsdf type="diffuse">
+            <rgb name="reflectance" value="0.78, 0.78, 0.78"/>
+        </bsdf>
+        <emitter type="area">
+            <rgb name="radiance" value="9, 6, 3"/>
+        </emitter>
+    </shape>
+</scene>
