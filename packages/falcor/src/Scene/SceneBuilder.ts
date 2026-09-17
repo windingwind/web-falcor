@@ -264,8 +264,12 @@ export class MaterialBridge {
                 if (!res.ok) continue;
                 const srgb = (t.slot === "BaseColor" || t.slot === "Emissive") && !assumeLinearSpaceTextures;
                 const blob = await res.blob();
-                const bitmap = await createImageBitmap(blob, { colorSpaceConversion: "none" });
                 const bytes = new Uint8Array(await blob.arrayBuffer());
+                // Formats the browser cannot decode go through the CPU decoders
+                // (native gets these from FreeImage).
+                const bitmap = t.path.toLowerCase().endsWith(".tga")
+                    ? await decodeTgaToBitmap(bytes)
+                    : await createImageBitmap(blob, { colorSpaceConversion: "none" });
                 const handle = packTextureHandle(TextureHandleMode.Texture, tm.addTexture({ bitmap, srgb, bytes }));
                 if (t.slot === "BaseColor") this._texHandles.texBaseColor = handle;
                 else if (t.slot === "Specular") this._texHandles.texSpecular = handle;
@@ -506,6 +510,16 @@ export class SDFGridBridge {
     toRecipe(): SDFGridRecipe {
         return { type: this.type, narrowBandThickness: this.narrowBandThickness, brickWidth: this.brickWidth, ops: [...this.ops] };
     }
+}
+
+/** Decodes a TGA and hands back an ImageBitmap, as the browser decoders do. */
+async function decodeTgaToBitmap(bytes: Uint8Array): Promise<ImageBitmap> {
+    const { decodeTGA } = await import("../Utils/Image/TGADecoder.js");
+    const image = decodeTGA(bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer);
+    const pixels = new Uint8ClampedArray(image.rgba.length);
+    pixels.set(image.rgba);
+    const data = new ImageData(pixels, image.width, image.height);
+    return createImageBitmap(data, { premultiplyAlpha: "none", colorSpaceConversion: "none" });
 }
 
 /** Recorded GridVolume state (eager copies; PyProxies die at script exit). */

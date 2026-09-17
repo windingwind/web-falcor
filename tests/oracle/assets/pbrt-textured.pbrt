@@ -1,0 +1,22 @@
+# A textured quad: the pbrt `Texture` directive with an `imagemap` bound to a
+# material's reflectance. The image is a TGA from the bathroom scene, which the
+# browser cannot decode natively (fetch it with: npm run download:scenes -- bathroom).
+LookAt 0 0 3  0 0 0  0 1 0
+Camera "perspective" "float fov" [40]
+WorldBegin
+AttributeBegin
+  AreaLightSource "diffuse" "rgb L" [8 8 8]
+  Translate 0 3 2
+  Shape "trianglemesh"
+    "point3 P" [-1 0 -1  1 0 -1  1 0 1  -1 0 1]
+    "normal N" [0 -1 0  0 -1 0  0 -1 0  0 -1 0]
+    "integer indices" [0 1 2 0 2 3]
+AttributeEnd
+Texture "rug" "spectrum" "imagemap"
+  "string filename" [ "bathroom/textures/rug.tga" ]
+Material "diffuse" "texture reflectance" [ "rug" ]
+Shape "trianglemesh"
+  "point3 P" [-1 -1 0  1 -1 0  1 1 0  -1 1 0]
+  "normal N" [0 0 1  0 0 1  0 0 1  0 0 1]
+  "float uv" [0 0  1 0  1 1  0 1]
+  "integer indices" [0 1 2 0 2 3]

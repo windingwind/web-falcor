@@ -60,6 +60,7 @@ export * from "./RenderGraph/UIWidgets.js";
 export * from "./RenderGraph/RenderGraph.js";
 export * from "./Utils/Properties.js";
 export * from "./Utils/Image/HDRDecoder.js";
+export * from "./Utils/Image/TGADecoder.js";
 export * from "./Utils/Image/EXRDecoder.js";
 export * from "./Utils/Image/EXREncoder.js";
 export * from "./Utils/Scripting/Scripting.js";

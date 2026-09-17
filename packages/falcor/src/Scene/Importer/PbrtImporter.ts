@@ -169,6 +169,15 @@ interface MaterialDef {
     params: Params;
 }
 
+/** A `Texture` directive: `Texture "name" "spectrum|float" "class" params`. */
+interface TextureDef {
+    /** "spectrum" or "float". */
+    kind: string;
+    /** pbrt texture class: imagemap, constant, scale, mix, checkerboard, ... */
+    textureClass: string;
+    params: Params;
+}
+
 // sRGB approximations of pbrt's default "metal-Cu" eta/k spectra (spectral
 // data reduced to RGB); used when a conductor specifies no eta/k/reflectance.
 const kCopperEta = new float3(0.2004, 0.924, 1.1022);
@@ -401,6 +410,8 @@ interface GfxState {
 class PbrtScene {
     private builder = new SceneBuilderBridge();
     private namedMaterials = new Map<string, MaterialDef>();
+    /** Named `Texture` declarations, referenced by material parameters. */
+    private textures = new Map<string, TextureDef>();
     private matCache = new Map<MaterialDef, MaterialBridge>();
     private state: GfxState = { ctm: float4x4.identity(), reverseOrientation: false, material: null, areaLight: null };
     private stack: GfxState[] = [];
@@ -543,7 +554,13 @@ class PbrtScene {
                     this.state.material = m ?? null;
                     break;
                 }
-                case "Texture": this.nextString(tokens, c); this.nextString(tokens, c); this.nextString(tokens, c); this.readParams(tokens, c); this.warn("Texture directive not supported (constant/imagemap textures ignored)"); break;
+                case "Texture": {
+                    const name = this.nextString(tokens, c);
+                    const kind = this.nextString(tokens, c);
+                    const textureClass = this.nextString(tokens, c);
+                    this.textures.set(name, { kind, textureClass, params: this.readParams(tokens, c) });
+                    break;
+                }
                 case "MakeNamedMedium": this.nextString(tokens, c); this.readParams(tokens, c); break;
                 case "MediumInterface": this.nextString(tokens, c); if (tokens[c.i]?.kind === "string") this.nextString(tokens, c); break;
                 // --- Lights ---
@@ -711,8 +728,59 @@ class PbrtScene {
         return assembleMesh(positions, indices, [], []);
     }
 
+    /**
+     * Mirrors getSpectrumTexture: a material parameter may name a `Texture`
+     * instead of holding a constant. Image textures are bound to the material
+     * slot; the constant ones fold into a value (native does the same).
+     *
+     * @returns The constant to use, plus the image file when one should be bound.
+     */
+    private resolveTextureParam(p: Params, name: string, def: float3): { value: float3; filename?: string } {
+        const v = p.get(name);
+        if (!v || v.type !== "texture" || !v.values.length) return { value: P.rgb(p, name, def) };
+
+        const seen = new Set<string>();
+        let scale = new float3(1, 1, 1);
+        let texture = this.textures.get(v.values[0]!);
+        // `scale` textures wrap another texture with a multiplier; follow the chain.
+        while (texture && texture.textureClass === "scale") {
+            const factor = P.rgb(texture.params, "scale", new float3(1, 1, 1));
+            scale = new float3(scale.x * factor.x, scale.y * factor.y, scale.z * factor.z);
+            const inner = texture.params.get("tex");
+            if (!inner || inner.type !== "texture" || !inner.values.length) {
+                const constant = P.rgb(texture.params, "tex", def);
+                return { value: new float3(constant.x * scale.x, constant.y * scale.y, constant.z * scale.z) };
+            }
+            if (seen.has(inner.values[0]!)) break; // guard against cycles
+            seen.add(inner.values[0]!);
+            texture = this.textures.get(inner.values[0]!);
+        }
+        if (!texture) {
+            this.warn(`cannot find texture named '${v.values[0]}' for parameter '${name}'`);
+            return { value: def };
+        }
+        if (texture.textureClass === "constant") {
+            const constant = P.rgb(texture.params, "value", new float3(1, 1, 1));
+            return { value: new float3(constant.x * scale.x, constant.y * scale.y, constant.z * scale.z) };
+        }
+        if (texture.textureClass === "imagemap") {
+            const filename = P.string(texture.params, "filename", "");
+            if (!filename) {
+                this.warn(`imagemap texture '${v.values[0]}' has no filename`);
+                return { value: def };
+            }
+            // The image modulates the constant; pbrt's own scale parameter folds in too.
+            const imageScale = P.float(texture.params, "scale", 1);
+            return { value: new float3(scale.x * imageScale, scale.y * imageScale, scale.z * imageScale), filename };
+        }
+        // checkerboard/mix/noise textures have no Falcor equivalent (native warns too).
+        this.warn(`pbrt texture class '${texture.textureClass}' is not supported (parameter '${name}')`);
+        return { value: def };
+    }
+
     private translateMaterial(def: MaterialDef, isAreaLight = false): MaterialBridge {
         const p = def.params;
+        const normalMap = P.string(p, "normalmap", "");
         // Mirrors the native Settings option; area-light materials always take
         // the StandardMaterial path (as in native createMaterial).
         const usePBRT = !isAreaLight && getGlobalSettings().getOption<boolean>("PBRTImporter:usePBRTMaterials", false) === true;
@@ -723,8 +791,13 @@ class PbrtScene {
             case "none":
             case "interface":
             case "diffuse": {
-                const refl = P.rgb(p, "reflectance", new float3(0.5, 0.5, 0.5));
-                if (usePBRT && def.type === "diffuse") {
+                const reflectance = this.resolveTextureParam(p, "reflectance", new float3(0.5, 0.5, 0.5));
+                const refl = reflectance.value;
+                if (reflectance.filename) {
+                    m.loadTexture("BaseColor", reflectance.filename);
+                    if (usePBRT) this.warn("textured reflectance falls back to StandardMaterial (PBRT material classes take constants)");
+                }
+                if (usePBRT && def.type === "diffuse" && !reflectance.filename) {
                     const pm = new MaterialBridge(MaterialType.PBRTDiffuse, def.name);
                     pm.baseColor = new float4(refl.x, refl.y, refl.z, 1);
                     pm.doubleSided = true;
@@ -736,8 +809,10 @@ class PbrtScene {
                 break;
             }
             case "coateddiffuse": {
-                const refl = P.rgb(p, "reflectance", new float3(0.5, 0.5, 0.5));
-                if (usePBRT) {
+                const coated = this.resolveTextureParam(p, "reflectance", new float3(0.5, 0.5, 0.5));
+                const refl = coated.value;
+                if (coated.filename) m.loadTexture("BaseColor", coated.filename);
+                if (usePBRT && !coated.filename) {
                     const a = scalarRoughnessAlpha(p);
                     const pm = new MaterialBridge(MaterialType.PBRTCoatedDiffuse, def.name);
                     pm.roughness = { x: a, y: a }; // setRoughness(float2) -> specular.rg
@@ -835,6 +910,8 @@ class PbrtScene {
                 break;
             }
         }
+        // Mirrors the native importer binding "normalmap" to the Normal slot.
+        if (normalMap) m.loadTexture("Normal", normalMap);
         return m;
     }
 }
