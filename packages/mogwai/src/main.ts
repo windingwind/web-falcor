@@ -254,6 +254,8 @@ async function main() {
             state.clock.tick();
             // Scene animation follows clock time (rebuilds geometry/BVH; no-op if static).
             if (state.animateScene && state.scene?.isAnimated() && state.scene.animate(state.clock.getTime())) dirty = true;
+            // Grid-volume sequences play back on the same clock (Scene::updateGridVolumes).
+            if (state.animateScene && state.scene?.updateGridVolumePlayback(state.clock.getTime())) dirty = true;
         }
         if (dirty && state.graph) resetAccum(); // camera or geometry moved: restart accumulation
         if (state.playing && state.graph && state.output) {

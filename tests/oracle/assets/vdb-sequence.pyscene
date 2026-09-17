@@ -1,0 +1,13 @@
+# A .vdb grid sequence loaded from files (GridVolume::loadGridSequence): the same
+# density volume twice, so the test can check the binding follows the frame.
+# Fetch the volumes with: npm run download:assets -- openvdb
+seq = GridVolume('sequence')
+seq.loadGridSequence(GridVolume.GridSlot.Density, ['openvdb/smoke.vdb', 'test_scenes/volumes/smoke.vdb'], 'density')
+seq.frameRate = 10.0
+sceneBuilder.addGridVolume(seq)
+
+camera = Camera()
+camera.position = float3(0, 0, 12)
+camera.target = float3(0, 0, 0)
+camera.up = float3(0, 1, 0)
+sceneBuilder.addCamera(camera)

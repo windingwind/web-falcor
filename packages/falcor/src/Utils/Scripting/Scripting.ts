@@ -311,7 +311,8 @@ class _GridSlot:
     Density = 'density'
     Emission = 'emission'
 _gvProps = {'name', 'densityScale', 'emissionScale', 'albedo', 'anisotropy',
-            'emissionMode', 'emissionTemperature', 'densityGrid'}
+            'emissionMode', 'emissionTemperature', 'densityGrid',
+            'frameRate', 'startFrame', 'playbackEnabled'}
 _GridVolumeGuarded = _guarded(_GridVolume, _gvProps)
 class GridVolume:
     GridSlot = _GridSlot

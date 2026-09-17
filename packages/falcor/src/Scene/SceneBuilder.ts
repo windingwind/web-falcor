@@ -531,10 +531,24 @@ export class GridVolumeBridge {
     anisotropy = 0;
     emissionTemperature = 0;
     grids: { slot: string; path: string; gridname: string }[] = [];
+    /** Pending loadGridSequence calls: several files feeding one slot. */
+    gridSequences: { slot: string; paths: string[]; gridname: string }[] = [];
+    frameRate = 30;
+    startFrame = 0;
+    playbackEnabled = true;
     proceduralGrids: { slot: string; parsed: ParsedFloatGrid }[] = [];
 
     constructor(name = "") {
         this.name = String(name);
+    }
+
+    /** Mirrors GridVolume::loadGridSequence(slot, paths, gridname). */
+    loadGridSequence(slot: unknown, paths: unknown, gridname: unknown): number {
+        // A python list arrives as a proxy, not a JS array; both are iterable.
+        const iterable = paths as Iterable<unknown> | null;
+        const list = (typeof paths === "string" || !iterable || typeof iterable[Symbol.iterator] !== "function" ? [paths] : [...iterable]).map((p) => String(p));
+        this.gridSequences.push({ slot: String(slot), paths: list, gridname: String(gridname) });
+        return list.length;
     }
 
     loadGrid(slot: unknown, path: unknown, gridname: unknown): boolean {
@@ -785,6 +799,10 @@ export class SceneBuilderBridge {
         copy.anisotropy = Number(v.anisotropy);
         copy.emissionTemperature = Number(v.emissionTemperature);
         copy.grids = v.grids.map((g) => ({ slot: String(g.slot), path: String(g.path), gridname: String(g.gridname) }));
+        copy.gridSequences = v.gridSequences.map((g) => ({ slot: String(g.slot), paths: g.paths.map((path) => String(path)), gridname: String(g.gridname) }));
+        copy.frameRate = Number(v.frameRate);
+        copy.startFrame = Number(v.startFrame);
+        copy.playbackEnabled = v.playbackEnabled !== false;
         copy.proceduralGrids = v.proceduralGrids.slice();
         this.gridVolumesList.push(copy);
     }
@@ -1075,6 +1093,17 @@ export class SceneBuilderBridge {
                 const url = await resolveAssetUrl(g.path, baseUrl, AssetCategory.Any, this.assetResolver);
                 vol.setGrid(g.slot as GridSlot, await Grid.createFromUrl(device, url, g.gridname));
             }
+            for (const seq of v.gridSequences) {
+                const grids = [];
+                for (const path of seq.paths) {
+                    const url = await resolveAssetUrl(path, baseUrl, AssetCategory.Any, this.assetResolver);
+                    grids.push(await Grid.createFromUrl(device, url, seq.gridname));
+                }
+                vol.setGridSequence(seq.slot as GridSlot, grids);
+            }
+            vol.frameRate = v.frameRate;
+            vol.playbackEnabled = v.playbackEnabled;
+            vol.startFrame = v.startFrame;
             for (const pg of v.proceduralGrids) {
                 vol.setGrid(pg.slot as GridSlot, new Grid(device, buildNanoVDBGrid(pg.parsed)));
             }

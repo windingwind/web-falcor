@@ -108,6 +108,11 @@ export class Scene {
 
     private gridCount = 0;
     private grid0Stats: { minIndex: [number, number, number]; minValue: number; maxIndex: [number, number, number]; maxValue: number } | null = null;
+
+    /** Stats of the grid currently bound as gScene.grid0 (diagnostics/tests). */
+    get gridStats(): { minIndex: [number, number, number]; minValue: number; maxIndex: [number, number, number]; maxValue: number } | null {
+        return this.grid0Stats;
+    }
     private buffers: Record<string, Buffer> = {};
     private textureArray: Texture;
     private textureArrayLinear: Texture;
@@ -1304,6 +1309,18 @@ export class Scene {
             this.grid0Stats = { minIndex: g.minIndex, minValue: g.minValue, maxIndex: g.maxIndex, maxValue: g.maxValue };
         }
         this.gridCount = grids.length;
+    }
+
+    /**
+     * Mirrors Scene::updateGridVolumes' playback step: advances every volume's
+     * grid sequence to `timeSec` and rebuilds the grid bindings when a frame
+     * changed. Returns true if anything moved (the caller can reset accumulation).
+     */
+    updateGridVolumePlayback(timeSec: number): boolean {
+        let changed = false;
+        for (const volume of this.gridVolumes) changed = volume.updatePlayback(timeSec) || changed;
+        if (changed) this.finalizeGridVolumes();
+        return changed;
     }
 
     /** Mirrors Scene::bindShaderData: fills the gScene parameter block. */
