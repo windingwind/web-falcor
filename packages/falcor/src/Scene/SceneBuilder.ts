@@ -486,7 +486,9 @@ export interface ImportOptions {
 
 /** Recorded SDF grid state (mirrors SDFGrid python bindings; ND + SBS types). */
 export class SDFGridBridge {
-    ops: { kind: "cheese"; gridWidth: number; seed: number }[] = [];
+    ops: SDFGridRecipe["ops"] = [];
+    /** Pending SDFGrid::loadValuesFromFile calls, fetched in resolve(). */
+    pendingFiles: { path: string }[] = [];
     constructor(
         readonly type: SDFGridType,
         readonly narrowBandThickness: number,
@@ -494,6 +496,12 @@ export class SDFGridBridge {
     ) {}
     generateCheeseValues(gridWidth: number, seed: number): void {
         this.ops.push({ kind: "cheese", gridWidth: Number(gridWidth), seed: Number(seed) });
+    }
+
+    /** Mirrors SDFGrid::loadValuesFromFile (the `.sdfg` corner-value format). */
+    loadValuesFromFile(path: unknown): boolean {
+        this.pendingFiles.push({ path: String(path) });
+        return true;
     }
     toRecipe(): SDFGridRecipe {
         return { type: this.type, narrowBandThickness: this.narrowBandThickness, brickWidth: this.brickWidth, ops: [...this.ops] };
@@ -739,6 +747,7 @@ export class SceneBuilderBridge {
         const g = unwrapGuard(grid) as SDFGridBridge;
         const copy = new SDFGridBridge(g.type, Number(g.narrowBandThickness), Number(g.brickWidth));
         copy.ops = g.ops.map((o) => ({ ...o }));
+        copy.pendingFiles = g.pendingFiles.map((f) => ({ ...f }));
         this.sdfGridsList.push({ grid: copy, material: unwrapGuard(material) });
         return this.sdfGridsList.length - 1;
     }
@@ -967,6 +976,16 @@ export class SceneBuilderBridge {
 
         // SDF grids (ND + SBS implementations; instances reference builder nodes).
         const sdfGrids: SceneSDFGridDesc[] = [];
+        // Fetch any `.sdfg` corner values first; they become ops on the recipe.
+        for (const { grid } of this.sdfGridsList) {
+            for (const file of grid.pendingFiles) {
+                const url = await resolveAssetUrl(file.path, baseUrl, AssetCategory.Any, this.assetResolver);
+                const { loadSDFGridValues } = await import("./SDFs/SDFGridFile.js");
+                const loaded = await loadSDFGridValues(url);
+                grid.ops.push({ kind: "values", gridWidth: loaded.gridWidth, values: loaded.values });
+            }
+            grid.pendingFiles = [];
+        }
         const sdfRecipes = this.sdfGridsList.map(({ grid }) => grid.toRecipe());
         const builtSdfGrids = this.sdfGridsList.map(({ material }, i) => {
             const built = buildSDFGridFromRecipe(sdfRecipes[i]!);

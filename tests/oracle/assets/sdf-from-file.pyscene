@@ -1,0 +1,18 @@
+# SDF grid loaded from a .sdfg corner-value file (SDFGrid::loadValuesFromFile).
+# The file holds an analytic sphere of radius 0.4 in the unit cube; generate it
+# with: node tools/gen-assets.mjs sdf
+sdfMaterial = Material('SDF Grid')
+sdfMaterial.baseColor = float4(1.0, 0.5, 0.5, 1.0)
+
+sdfGrid = SDFGrid.createNDGrid(narrowBandThickness=2.5)
+sdfGrid.loadValuesFromFile('sdf/sdf-sphere-64.sdfg')
+sceneBuilder.addSDFGridInstance(
+    sceneBuilder.addNode('SDFGrid', Transform()),
+    sceneBuilder.addSDFGrid(sdfGrid, sdfMaterial)
+)
+
+camera = Camera()
+camera.position = float3(0, 0, 2)
+camera.target = float3(0, 0, 0)
+camera.up = float3(0, 1, 0)
+sceneBuilder.addCamera(camera)

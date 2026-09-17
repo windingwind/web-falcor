@@ -16,7 +16,7 @@ export interface SDFGridRecipe {
     type: SDFGridType;
     narrowBandThickness: number;
     brickWidth: number;
-    ops: { kind: "cheese"; gridWidth: number; seed: number }[];
+    ops: ({ kind: "cheese"; gridWidth: number; seed: number } | { kind: "values"; gridWidth: number; values: Float32Array })[];
 }
 
 export type BuiltSDFGrid = NDSDFGrid | SDFSBS | SDFSVS | SDFSVO;
@@ -30,6 +30,7 @@ export function buildSDFGridFromRecipe(recipe: SDFGridRecipe): BuiltSDFGrid {
         : new NDSDFGrid(recipe.narrowBandThickness);
     for (const op of recipe.ops) {
         if (op.kind === "cheese") built.generateCheeseValues(op.gridWidth, op.seed);
+        else if (op.kind === "values") built.setValues(op.values, op.gridWidth);
     }
     const ok = built instanceof SDFSBS ? built.brickCount > 0 : built instanceof SDFSVS || built instanceof SDFSVO ? built.voxelCount > 0 : built.lodCount > 0;
     if (!ok) throw new RuntimeError("SDFGrid: no values set (only generateCheeseValues is supported so far)");
