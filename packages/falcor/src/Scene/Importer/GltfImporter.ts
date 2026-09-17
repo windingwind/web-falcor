@@ -85,6 +85,20 @@ interface GltfPrimitive {
     material?: number;
     mode?: number;
     targets?: Record<string, number>[]; // morph targets (POSITION/NORMAL deltas)
+    extensions?: { KHR_draco_mesh_compression?: { bufferView: number; attributes: Record<string, number> } };
+}
+
+/** Decodes a primitive's `KHR_draco_mesh_compression` payload into plain arrays. */
+async function decodeDracoPrimitive(
+    json: { bufferViews?: { buffer: number; byteOffset?: number; byteLength: number }[] },
+    buffers: Uint8Array[],
+    ext: { bufferView: number; attributes: Record<string, number> },
+) {
+    const { decodeDracoMesh } = await import("./DracoDecoder.js");
+    const view = json.bufferViews![ext.bufferView]!;
+    const buffer = buffers[view.buffer]!;
+    const start = buffer.byteOffset + (view.byteOffset ?? 0);
+    return decodeDracoMesh(new Uint8Array(buffer.buffer, start, view.byteLength), ext.attributes);
 }
 
 const kComponentSize: Record<number, number> = { 5120: 1, 5121: 1, 5122: 2, 5123: 2, 5125: 4, 5126: 4 };
@@ -323,7 +337,8 @@ export class GltfImporter {
         let cameraNodeID: number | undefined;
         let cameraPose: GltfCameraPose | undefined;
 
-        const visit = (nodeIndex: number, parent: float4x4) => {
+        // Async because Draco-compressed primitives decode through a wasm module.
+        const visit = async (nodeIndex: number, parent: float4x4): Promise<void> => {
             const node = json.nodes![nodeIndex]!;
             const world = mulMat(parent, nodeTransform(node));
             const lightRef = node.extensions?.KHR_lights_punctual?.light;
@@ -359,14 +374,22 @@ export class GltfImporter {
             if (node.mesh !== undefined) {
                 for (const prim of json.meshes![node.mesh]!.primitives) {
                     if ((prim.mode ?? 4) !== 4) continue; // triangles only
+                    // KHR_draco_mesh_compression: the geometry lives in a compressed
+                    // buffer view; the accessors only describe the decoded result.
+                    const dracoExt = prim.extensions?.KHR_draco_mesh_compression;
+                    const draco = dracoExt ? await decodeDracoPrimitive(json, buffers, dracoExt) : null;
                     // KHR_mesh_quantization may store positions as (unsigned) shorts or
                     // bytes; the node's scale/translation puts them back in place.
-                    const posRaw = readAccessor(prim.attributes["POSITION"]!);
-                    const pos = posRaw instanceof Float32Array ? posRaw : Float32Array.from(posRaw);
+                    const attribute = (semantic: string): Float32Array | null => {
+                        if (draco) return draco.attributes.get(semantic) ?? null;
+                        return prim.attributes[semantic] !== undefined ? toFloats(readAccessor(prim.attributes[semantic]!)) : null;
+                    };
+                    const pos = attribute("POSITION");
+                    if (!pos) continue; // a primitive without positions has no geometry
                     const count = pos.length / 3;
-                    const normals = prim.attributes["NORMAL"] !== undefined ? toFloats(readAccessor(prim.attributes["NORMAL"])) : null;
-                    const tangents = prim.attributes["TANGENT"] !== undefined ? toFloats(readAccessor(prim.attributes["TANGENT"])) : null;
-                    const uvs = prim.attributes["TEXCOORD_0"] !== undefined ? toFloats(readAccessor(prim.attributes["TEXCOORD_0"])) : null;
+                    const normals = attribute("NORMAL");
+                    const tangents = attribute("TANGENT");
+                    const uvs = attribute("TEXCOORD_0");
                     // KHR_texture_transform: bake the material's uv transform into the
                     // vertices. Quantized assets rely on it to rescale integer uvs, and
                     // a primitive has exactly one material, so baking is exact.
@@ -393,9 +416,9 @@ export class GltfImporter {
                         });
                     }
                     const indices =
-                        prim.indices !== undefined
-                            ? new Uint32Array(readAccessor(prim.indices))
-                            : new Uint32Array(Array.from({ length: count }, (_v, i) => i));
+                        draco ? draco.indices
+                        : prim.indices !== undefined ? new Uint32Array(readAccessor(prim.indices))
+                        : new Uint32Array(Array.from({ length: count }, (_v, i) => i));
                     // SceneBuilder generates MikkTSpace tangents when the asset has none.
                     if (!tangents) generateTangents(vertices, indices);
 
@@ -432,11 +455,11 @@ export class GltfImporter {
                     meshDescs.push({ vertices, indices, materialID: prim.material ?? 0, transform: world, nodeID: nodeIndex, skin, morph });
                 }
             }
-            for (const child of node.children ?? []) visit(child, world);
+            for (const child of node.children ?? []) await visit(child, world);
         };
 
         const sceneDef = json.scenes?.[json.scene ?? 0];
-        for (const rootNode of sceneDef?.nodes ?? []) visit(rootNode, float4x4.identity());
+        for (const rootNode of sceneDef?.nodes ?? []) await visit(rootNode, float4x4.identity());
         if (meshDescs.length === 0) throw new RuntimeError("GltfImporter: no triangle meshes found");
 
         return { meshes: meshDescs, materials, nodes: sceneNodes, animations, lights, cameraNodeID, camera: cameraPose, weightTracks };

@@ -73,7 +73,7 @@ const GROUPS = [
         name: "gltf-variants",
         dir: "gltf-variants",
         small: true,
-        note: "Khronos glTF sample models in compressed/quantized variants (KHR_mesh_quantization); kept in their upstream layout so the .gltf files resolve their own buffers",
+        note: "Khronos glTF sample models in compressed variants (KHR_mesh_quantization, KHR_draco_mesh_compression); kept in their upstream layout so the .gltf files resolve their own buffers",
         files: [
             { file: "Duck-Quantized/Duck.gltf", url: `${GLTF_SAMPLES}/Duck/glTF-Quantized/Duck.gltf`, sizeMB: 1, desc: "Duck, KHR_mesh_quantization (byte normals, short positions/uvs)" },
             { file: "Duck-Quantized/Duck.bin", url: `${GLTF_SAMPLES}/Duck/glTF-Quantized/Duck.bin`, sizeMB: 1, desc: "Duck quantized geometry" },
@@ -81,6 +81,9 @@ const GROUPS = [
             { file: "Duck/Duck.gltf", url: `${GLTF_SAMPLES}/Duck/glTF/Duck.gltf`, sizeMB: 1, desc: "Duck, uncompressed — the reference the quantized variant must match" },
             { file: "Duck/Duck0.bin", url: `${GLTF_SAMPLES}/Duck/glTF/Duck0.bin`, sizeMB: 1, desc: "Duck reference geometry" },
             { file: "Duck/DuckCM.png", url: `${GLTF_SAMPLES}/Duck/glTF/DuckCM.png`, sizeMB: 1, desc: "Duck base colour texture" },
+            { file: "Duck-Draco/Duck.gltf", url: `${GLTF_SAMPLES}/Duck/glTF-Draco/Duck.gltf`, sizeMB: 1, desc: "Duck, KHR_draco_mesh_compression" },
+            { file: "Duck-Draco/Duck.bin", url: `${GLTF_SAMPLES}/Duck/glTF-Draco/Duck.bin`, sizeMB: 1, desc: "Duck Draco-compressed geometry" },
+            { file: "Duck-Draco/DuckCM.png", url: `${GLTF_SAMPLES}/Duck/glTF-Draco/DuckCM.png`, sizeMB: 1, desc: "Duck base colour texture" },
         ],
     },
     {

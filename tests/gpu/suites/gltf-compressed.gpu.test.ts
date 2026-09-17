@@ -1,7 +1,8 @@
 /**
- * KHR_mesh_quantization: geometry stored as normalized bytes and raw shorts
- * instead of floats, with the node transform (and KHR_texture_transform for the
- * uvs) putting it back in place.
+ * Compressed glTF geometry: KHR_mesh_quantization (normalized bytes and raw
+ * shorts instead of floats, placed by the node transform, with
+ * KHR_texture_transform rescaling the uvs) and KHR_draco_mesh_compression
+ * (geometry decoded by Google's Draco decoder).
  *
  * Ground truth is the same model's uncompressed variant: both are rendered and
  * compared, so the decode is checked against float geometry rather than itself.
@@ -18,8 +19,12 @@ import { gpuTest, expectEq, SkipError } from "../harness/registry.js";
 const size = 256;
 const kDir = "/Falcor/media/gltf-variants/";
 
-gpuTest("GltfQuantized.matchesTheUncompressedVariant", async ({ device }) => {
-    if (!(await fetch(`${kDir}Duck-Quantized/Duck.gltf`, { method: "HEAD" })).ok) {
+for (const [variant, folder] of [
+    ["quantized", "Duck-Quantized"],
+    ["draco", "Duck-Draco"],
+] as const) {
+    gpuTest(`GltfCompressed.${variant}MatchesTheUncompressedVariant`, async ({ device }) => {
+    if (!(await fetch(`${kDir}${folder}/Duck.gltf`, { method: "HEAD" })).ok) {
         throw new SkipError("Falcor/media/gltf-variants missing (npm run download:assets -- gltf-variants)");
     }
 
@@ -41,7 +46,7 @@ gpuTest("GltfQuantized.matchesTheUncompressedVariant", async ({ device }) => {
     };
 
     const reference = await render(`${kDir}Duck/Duck.gltf`);
-    const quantized = await render(`${kDir}Duck-Quantized/Duck.gltf`);
+    const quantized = await render(`${kDir}${folder}/Duck.gltf`);
 
     // The models share a camera, so the two renders line up pixel for pixel.
     // Compare distributions rather than extremes: at silhouette edges the two
@@ -83,7 +88,7 @@ gpuTest("GltfQuantized.matchesTheUncompressedVariant", async ({ device }) => {
     };
 
     console.error(
-        `# quantized vs float: hits ${hitsQuantized}/${hitsReference}, coverage mismatch ${coverageMismatch}; ` +
+        `# ${variant} vs float: hits ${hitsQuantized}/${hitsReference}, coverage mismatch ${coverageMismatch}; ` +
             `|dposW| p50=${percentile(positionErrors, 0.5).toExponential(2)} p99=${percentile(positionErrors, 0.99).toExponential(2)}; ` +
             `normal p50=${percentile(normalErrors, 0.5).toFixed(2)} p99=${percentile(normalErrors, 0.99).toFixed(2)} deg; ` +
             `|duv| p50=${percentile(uvErrors, 0.5).toExponential(2)} p99=${percentile(uvErrors, 0.99).toExponential(2)}`,
@@ -96,7 +101,7 @@ gpuTest("GltfQuantized.matchesTheUncompressedVariant", async ({ device }) => {
         if (positionErrors[i]! > 5e-3 || normalErrors[i]! > 3 || uvErrors[i]! > 5e-3) outliers++;
     }
     console.error(
-        `# quantized vs float: ${outliers}/${compared} pixels beyond the quantization budget; ` +
+        `# ${variant} vs float: ${outliers}/${compared} pixels beyond the quantization budget; ` +
             `|dposW| p90=${percentile(positionErrors, 0.9).toExponential(2)}; normal p90=${percentile(normalErrors, 0.9).toFixed(2)} deg; |duv| p90=${percentile(uvErrors, 0.9).toExponential(2)}`,
     );
     expectEq(hitsReference > 1000, true, `the reference model is visible (${hitsReference} hits)`);
@@ -114,4 +119,5 @@ gpuTest("GltfQuantized.matchesTheUncompressedVariant", async ({ device }) => {
     expectEq(percentile(uvErrors, 0.9) < 5e-3, true, `uvs agree over the surface (p90 ${percentile(uvErrors, 0.9)})`);
     expectEq(outliers < compared * 0.05, true, `few disagreeing pixels (${outliers}/${compared})`);
     expectEq(compared > 1000, true, `enough compared pixels (${compared})`);
-});
+    });
+}
