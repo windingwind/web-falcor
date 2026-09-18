@@ -127,25 +127,12 @@ export function buildAabbBvh(aabbs: { min: [number, number, number]; max: [numbe
 }
 
 export function buildBvh(triangles: BvhTriangle[]): BvhBuildResult {
-    const entries: BuildEntry[] = triangles.map((t, i) => {
-        const min = new float3(
-            Math.min(t.v0.x, t.v1.x, t.v2.x),
-            Math.min(t.v0.y, t.v1.y, t.v2.y),
-            Math.min(t.v0.z, t.v1.z, t.v2.z),
-        );
-        const max = new float3(
-            Math.max(t.v0.x, t.v1.x, t.v2.x),
-            Math.max(t.v0.y, t.v1.y, t.v2.y),
-            Math.max(t.v0.z, t.v1.z, t.v2.z),
-        );
-        return { triIndex: i, centroid: new float3((min.x + max.x) / 2, (min.y + max.y) / 2, (min.z + max.z) / 2), min, max };
-    });
+    const n = triangles.length;
 
     // Worst case 2N-1 nodes.
-    const nodes = new Float32Array((2 * triangles.length) * 8 + 8);
+    const nodes = new Float32Array(2 * n * 8 + 8);
     const nodesU32 = new Uint32Array(nodes.buffer);
     let nodeCount = 0;
-    const orderedTris: number[] = [];
 
     // Geometry-less scenes: an all-zero root is a degenerate INTERIOR node
     // whose child pointer loops back to itself -> the traversal spins forever
@@ -153,59 +140,107 @@ export function buildBvh(triangles: BvhTriangle[]): BvhBuildResult {
     // slab intersectors min/max-swap per axis, so an inverted box HITS
     // everything. Emit a root LEAF with one degenerate triangle instead --
     // the leaf branch always terminates and the triangle never intersects.
-    if (triangles.length === 0) {
+    if (n === 0) {
         nodesU32[3] = 0; // leftFirst
         nodesU32[7] = 1; // triCount: one degenerate (all-zero) triangle
         return { nodes: nodes.subarray(0, 8), tris: new Float32Array(12), nodeCount: 1 };
     }
 
-    const writeNode = (index: number, min: float3, max: float3, leftFirst: number, count: number) => {
-        nodes[index * 8 + 0] = min.x;
-        nodes[index * 8 + 1] = min.y;
-        nodes[index * 8 + 2] = min.z;
-        nodesU32[index * 8 + 3] = leftFirst;
-        nodes[index * 8 + 4] = max.x;
-        nodes[index * 8 + 5] = max.y;
-        nodes[index * 8 + 6] = max.z;
-        nodesU32[index * 8 + 7] = count;
+    // Per-triangle bounds and centroids in flat arrays: the build sorts ranges
+    // of an index array in place instead of allocating a list per node, which
+    // is what dominated the build on scenes with >100k triangles. Centroids stay
+    // float64 so the sort keys are bit-identical to computing them inline.
+    const bmin = new Float32Array(n * 3);
+    const bmax = new Float32Array(n * 3);
+    const cent = new Float64Array(n * 3);
+    for (let i = 0; i < n; i++) {
+        const t = triangles[i]!;
+        for (let c = 0; c < 3; c++) {
+            const a = c === 0 ? t.v0.x : c === 1 ? t.v0.y : t.v0.z;
+            const b = c === 0 ? t.v1.x : c === 1 ? t.v1.y : t.v1.z;
+            const d = c === 0 ? t.v2.x : c === 1 ? t.v2.y : t.v2.z;
+            const lo = Math.min(a, b, d);
+            const hi = Math.max(a, b, d);
+            bmin[i * 3 + c] = lo;
+            bmax[i * 3 + c] = hi;
+            cent[i * 3 + c] = (lo + hi) / 2;
+        }
+    }
+
+    const index = new Uint32Array(n);
+    for (let i = 0; i < n; i++) index[i] = i;
+    const scratch = new Uint32Array(n);
+    const ordered = new Uint32Array(n);
+    let orderedCount = 0;
+
+    const writeNode = (at: number, min: number[], max: number[], leftFirst: number, count: number) => {
+        nodes[at * 8 + 0] = min[0]!;
+        nodes[at * 8 + 1] = min[1]!;
+        nodes[at * 8 + 2] = min[2]!;
+        nodesU32[at * 8 + 3] = leftFirst;
+        nodes[at * 8 + 4] = max[0]!;
+        nodes[at * 8 + 5] = max[1]!;
+        nodes[at * 8 + 6] = max[2]!;
+        nodesU32[at * 8 + 7] = count;
     };
 
-    const bounds = (list: BuildEntry[]): [float3, float3] => {
-        const min = new float3(Infinity, Infinity, Infinity);
-        const max = new float3(-Infinity, -Infinity, -Infinity);
-        for (const e of list) {
-            min.x = Math.min(min.x, e.min.x); min.y = Math.min(min.y, e.min.y); min.z = Math.min(min.z, e.min.z);
-            max.x = Math.max(max.x, e.max.x); max.y = Math.max(max.y, e.max.y); max.z = Math.max(max.z, e.max.z);
+    /** Stable merge sort of index[lo, hi) by centroid on `axis` (ties keep order). */
+    const sortRange = (lo: number, hi: number, axis: number) => {
+        const count = hi - lo;
+        if (count < 2) return;
+        const mid = lo + (count >> 1);
+        sortRange(lo, mid, axis);
+        sortRange(mid, hi, axis);
+        let i = lo;
+        let j = mid;
+        let k = lo;
+        while (i < mid && j < hi) {
+            const a = index[i]!;
+            const b = index[j]!;
+            scratch[k++] = cent[a * 3 + axis]! <= cent[b * 3 + axis]! ? ((i++, a)) : ((j++, b));
         }
-        return [min, max];
+        while (i < mid) scratch[k++] = index[i++]!;
+        while (j < hi) scratch[k++] = index[j++]!;
+        index.set(scratch.subarray(lo, hi), lo);
     };
 
     const kLeafSize = 4;
 
-    const build = (list: BuildEntry[]): number => {
+    const build = (lo: number, hi: number): number => {
         const nodeIndex = nodeCount++;
-        const [min, max] = bounds(list);
-        if (list.length <= kLeafSize) {
-            writeNode(nodeIndex, min, max, orderedTris.length, list.length);
-            for (const e of list) orderedTris.push(e.triIndex);
+        const min = [Infinity, Infinity, Infinity];
+        const max = [-Infinity, -Infinity, -Infinity];
+        for (let i = lo; i < hi; i++) {
+            const e = index[i]! * 3;
+            for (let c = 0; c < 3; c++) {
+                if (bmin[e + c]! < min[c]!) min[c] = bmin[e + c]!;
+                if (bmax[e + c]! > max[c]!) max[c] = bmax[e + c]!;
+            }
+        }
+        const count = hi - lo;
+        if (count <= kLeafSize) {
+            writeNode(nodeIndex, min, max, orderedCount, count);
+            for (let i = lo; i < hi; i++) ordered[orderedCount++] = index[i]!;
             return nodeIndex;
         }
         // Median split on the widest centroid axis.
-        const extent = sub3(max, min);
-        const axis = extent.x > extent.y ? (extent.x > extent.z ? "x" : "z") : extent.y > extent.z ? "y" : "z";
-        const sorted = [...list].sort((a, b) => a.centroid[axis] - b.centroid[axis]);
-        const half = Math.ceil(sorted.length / 2);
-        build(sorted.slice(0, half)); // left = nodeIndex + 1 by construction order
-        const rightIndex = build(sorted.slice(half));
+        const ex = max[0]! - min[0]!;
+        const ey = max[1]! - min[1]!;
+        const ez = max[2]! - min[2]!;
+        const axis = ex > ey ? (ex > ez ? 0 : 2) : ey > ez ? 1 : 2;
+        sortRange(lo, hi, axis);
+        const half = Math.ceil(count / 2);
+        build(lo, lo + half); // left = nodeIndex + 1 by construction order
+        const rightIndex = build(lo + half, hi);
         writeNode(nodeIndex, min, max, rightIndex, 0);
         return nodeIndex;
     };
-    build(entries);
+    build(0, n);
 
-    const tris = new Float32Array(orderedTris.length * 12);
+    const tris = new Float32Array(orderedCount * 12);
     const trisU32 = new Uint32Array(tris.buffer);
-    orderedTris.forEach((triIndex, i) => {
-        const t = triangles[triIndex]!;
+    for (let i = 0; i < orderedCount; i++) {
+        const t = triangles[ordered[i]!]!;
         const e1 = sub3(t.v1, t.v0);
         const e2 = sub3(t.v2, t.v0);
         tris[i * 12 + 0] = t.v0.x; tris[i * 12 + 1] = t.v0.y; tris[i * 12 + 2] = t.v0.z;
@@ -214,7 +249,7 @@ export function buildBvh(triangles: BvhTriangle[]): BvhBuildResult {
         trisU32[i * 12 + 7] = t.primitiveIndex;
         tris[i * 12 + 8] = e2.x; tris[i * 12 + 9] = e2.y; tris[i * 12 + 10] = e2.z;
         trisU32[i * 12 + 11] = 0;
-    });
+    }
 
     return { nodes: nodes.subarray(0, nodeCount * 8), tris, nodeCount };
 }
