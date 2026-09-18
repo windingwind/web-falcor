@@ -230,10 +230,13 @@ export class GltfImporter {
         };
 
         // Decode images -> TextureManager (baseColor textures are sRGB).
+        // Each image is an independent fetch + decode, so they run concurrently;
+        // registration stays in declaration order, which keeps texture IDs (and
+        // the material handles built from them) independent of completion order.
         const textureIDs = new Map<number, number>();
-        for (let t = 0; t < (json.textures ?? []).length; t++) {
+        const decodeTexture = async (t: number): Promise<ImageBitmap | null> => {
             const tex = json.textures![t]!;
-            if (tex.source === undefined) continue;
+            if (tex.source === undefined) return null;
             const img = json.images![tex.source]!;
             let blob: Blob;
             if (img.uri?.startsWith("data:")) {
@@ -250,9 +253,12 @@ export class GltfImporter {
                 const imgUrl = new URL(img.uri!, new URL(baseUrl, "http://x/")).pathname;
                 blob = await (await fetch(imgUrl)).blob();
             }
-            const bitmap = await createImageBitmap(blob, { colorSpaceConversion: "none" });
-            textureIDs.set(t, textureManager.addTexture({ bitmap, srgb: !options.assumeLinearSpaceTextures }));
-        }
+            return createImageBitmap(blob, { colorSpaceConversion: "none" });
+        };
+        const decoded = await Promise.all(Array.from({ length: (json.textures ?? []).length }, (_v, t) => decodeTexture(t)));
+        decoded.forEach((bitmap, t) => {
+            if (bitmap) textureIDs.set(t, textureManager.addTexture({ bitmap, srgb: !options.assumeLinearSpaceTextures }));
+        });
 
         // Materials (pbrMetallicRoughness factors; MetalRough encoding: specular = (occlusion, roughness, metallic)).
         const materials: SceneMaterialDesc[] = (json.materials ?? []).map((m) => {
