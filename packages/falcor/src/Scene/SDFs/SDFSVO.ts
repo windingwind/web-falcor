@@ -69,6 +69,9 @@ interface SvoNode {
 }
 
 export class SDFSVO {
+    /** Live primitive list when the grid was built from primitives (SDFEditor path). */
+    primitives?: import("./SDFGridPrimitives.js").SDFGridPrimitives;
+
     gridWidth = 0;
     levelCount = 0;
     /** snorm8 dense field, (gridWidth+1)^3, x-fastest. */

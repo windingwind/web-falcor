@@ -75,6 +75,9 @@ export function generateCheeseCornerValues(gridWidth: number, seed: number): Flo
 }
 
 export class NDSDFGrid {
+    /** Live primitive list when the grid was built from primitives (SDFEditor path). */
+    primitives?: import("./SDFGridPrimitives.js").SDFGridPrimitives;
+
     readonly narrowBandThickness: number;
     gridWidth = 0;
     /** Per-LOD snorm8-quantized values, coarsest first (widths 1+(c<<lod)). */

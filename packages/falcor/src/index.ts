@@ -100,5 +100,6 @@ export * from "./Scene/SceneData.js";
 export * from "./Scene/Material/MaterialData.js";
 export * from "./Scene/Material/MERLFile.js";
 export * from "./Scene/SDFs/SDF3DPrimitive.js";
+export * from "./Scene/SDFs/SDFGridPrimitives.js";
 export * from "./Scene/Material/RGLFile.js";
 export * from "./Scene/Lights/LightProfile.js";

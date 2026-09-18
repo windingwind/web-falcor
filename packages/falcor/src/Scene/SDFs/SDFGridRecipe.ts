@@ -9,7 +9,8 @@ import { SDFSBS } from "./SDFSBS.js";
 import { SDFSVS } from "./SDFSVS.js";
 import { SDFSVO } from "./SDFSVO.js";
 import { RuntimeError } from "../../Core/Error.js";
-import { evaluateSDFPrimitives, type SDF3DPrimitive } from "./SDF3DPrimitive.js";
+import { type SDF3DPrimitive } from "./SDF3DPrimitive.js";
+import { SDFGridPrimitives } from "./SDFGridPrimitives.js";
 
 export type SDFGridType = "ndsdf" | "sbs" | "svs" | "svo";
 
@@ -38,7 +39,11 @@ export function buildSDFGridFromRecipe(recipe: SDFGridRecipe): BuiltSDFGrid {
         else if (op.kind === "values") built.setValues(op.values, op.gridWidth);
         // Primitives bake to corner values here; native evaluates the same loop
         // on the GPU (EvaluateSDFPrimitives.cs.slang), see SDF3DPrimitive.ts.
-        else if (op.kind === "primitives") built.setValues(evaluateSDFPrimitives(op.primitives, op.gridWidth), op.gridWidth);
+        // The list stays on the grid so it can be edited afterwards.
+        else if (op.kind === "primitives") {
+            built.primitives = new SDFGridPrimitives(built, op.gridWidth, op.primitives);
+            built.primitives.rebuild();
+        }
     }
     const ok = built instanceof SDFSBS ? built.brickCount > 0 : built instanceof SDFSVS || built instanceof SDFSVO ? built.voxelCount > 0 : built.lodCount > 0;
     if (!ok) throw new RuntimeError("SDFGrid: no values set");

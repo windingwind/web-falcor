@@ -28,6 +28,9 @@ export interface BrickAABB {
 }
 
 export class SDFSBS {
+    /** Live primitive list when the grid was built from primitives (SDFEditor path). */
+    primitives?: import("./SDFGridPrimitives.js").SDFGridPrimitives;
+
     readonly brickWidth: number;
     gridWidth = 0;
     /** snorm8 dense field, (gridWidth+1)^3, row-major x-fastest. */

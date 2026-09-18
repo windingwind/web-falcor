@@ -14,7 +14,7 @@
  * which feeds every grid type.
  */
 
-import { RenderGraph, createPass, evalSDFPrimitive, initScripting, loadSDFPrimitives, runSceneScript, type SDF3DPrimitive } from "@web-falcor/falcor";
+import { RenderGraph, createPass, evalSDFPrimitive, initScripting, loadSDFPrimitives, runSceneScript, SDF3DShapeType, SDFOperationType, type SDF3DPrimitive } from "@web-falcor/falcor";
 import "@web-falcor/render-passes";
 import { gpuTest, expectEq, expectClose, SkipError } from "../harness/registry.js";
 
@@ -84,4 +84,74 @@ gpuTest("SDFFromPrimitives.csgSurfaceMatchesThePrimitiveList", async ({ device }
     expectEq(barHits > 20, true, `the rotated bar is on the +45° diagonal (${barHits} hits)`);
     expectEq(mirroredHits, 0, "nothing is on the mirrored diagonal");
     expectEq(dentHits > 20, true, `the subtracted sphere carved a dent (${dentHits} hits)`);
+});
+
+gpuTest("SDFFromPrimitives.runtimeEditsRebakeTheGrid", async ({ device }) => {
+    if (!(await fetch("/Falcor/media/sdf/sdf-primitives.sdf", { method: "HEAD" })).ok) {
+        throw new SkipError("Falcor/media/sdf/sdf-primitives.sdf missing (node tools/gen-assets.mjs sdf)");
+    }
+    await initScripting("/node_modules/pyodide");
+    const sceneSource = await (await fetch("/tests/oracle/assets/sdf-from-primitives.pyscene")).text();
+    const scene = await runSceneScript(device, sceneSource, "/Falcor/media");
+    scene.camera.setAspectRatio(1.0);
+
+    const editor = scene.sdfGrids[0]!.grid.primitives!;
+    expectEq(editor.primitiveCount, 3, "the file's primitives are still on the grid");
+
+    const graph = new RenderGraph(device, "SDFEdit");
+    graph.addPass(createPass(device, "GBufferRT", { samplePattern: "Center" }), "GBufferRT");
+    graph.markOutput("GBufferRT.posW");
+    graph.onResize(size, size);
+    graph.setScene(scene);
+    await graph.init();
+    const ctx = device.renderContext;
+
+    /** Renders and reports the hits, plus how many land in the empty corner. */
+    const readHits = async (): Promise<{ hits: [number, number, number][]; corner: number }> => {
+        graph.execute(ctx);
+        const posW = new Float32Array((await ctx.readTextureSubresource(graph.getOutput("GBufferRT.posW")!)).buffer);
+        const hits: [number, number, number][] = [];
+        let corner = 0;
+        for (let i = 0; i < size * size; i++) {
+            if (posW[i * 4 + 3] === 0) continue;
+            const p: [number, number, number] = [posW[i * 4]!, posW[i * 4 + 1]!, posW[i * 4 + 2]!];
+            hits.push(p);
+            // The anti-diagonal corner the fixture leaves empty.
+            if (p[0] < -0.2 && p[1] > 0.2) corner++;
+        }
+        return { hits, corner };
+    };
+
+    const before = await readHits();
+    expectEq(before.corner, 0, "nothing sits on the anti-diagonal to start with");
+
+    // Add a blob where the fixture is empty, then re-bake and re-render.
+    const blob: SDF3DPrimitive = {
+        shapeType: SDF3DShapeType.Sphere,
+        shapeData: [0.12, 0, 0],
+        shapeBlobbing: 0,
+        operationType: SDFOperationType.Union,
+        operationSmoothing: 0,
+        translation: [-0.35, 0.35, 0],
+        invRotationScale: [1, 0, 0, 0, 1, 0, 0, 0, 1],
+    };
+    const blobID = editor.addPrimitives([blob]);
+    expectEq(scene.updateSDFGrids(), true, "the edited grid re-bakes");
+    expectEq(scene.updateSDFGrids(), false, "a clean grid does not re-bake again");
+
+    const added = await readHits();
+    const withBlob = [...(await loadSDFPrimitives("/Falcor/media/sdf/sdf-primitives.sdf")), blob];
+    let worst = 0;
+    for (const p of added.hits) worst = Math.max(worst, Math.abs(evalCSG(withBlob, p)));
+    console.error(`# SDF runtime edit: ${before.hits.length} -> ${added.hits.length} hits, ${added.corner} on the new blob, worst |CSG| ${worst.toExponential(2)}`);
+    expectEq(added.corner > 20, true, `the added primitive is on screen (${added.corner} hits)`);
+    expectEq(added.hits.length > before.hits.length, true, "the edited surface covers more of the frame");
+    expectEq(worst < 0.02, true, `hits lie on the edited CSG surface (${worst})`);
+
+    // Removing it must put the surface back exactly where it was.
+    editor.removePrimitives([blobID]);
+    expectEq(scene.updateSDFGrids(), true, "the removal re-bakes too");
+    const after = await readHits();
+    expectEq(after.corner, 0, "the blob is gone");
+    expectEq(after.hits.length, before.hits.length, "the original surface is restored");
 });

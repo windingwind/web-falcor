@@ -1382,6 +1382,28 @@ export class Scene {
     }
 
     /**
+     * Mirrors Scene::updateSDFGrids: re-bakes any grid whose primitive list was
+     * edited and drops the GPU resources built from it, so the next bind
+     * rebuilds them. Returns true if anything changed (reset accumulation).
+     */
+    updateSDFGrids(): boolean {
+        let changed = false;
+        for (const desc of this.sdfGrids) changed = (desc.grid.primitives?.rebuild() ?? false) || changed;
+        if (changed) this.invalidateSDFResources();
+        return changed;
+    }
+
+    /** Drops the lazily built SDF GPU resources; bindShaderData recreates them.
+     *  Old objects are replaced, not destroyed, so in-flight submits stay valid. */
+    private invalidateSDFResources(): void {
+        this.sdfAtlasTexture = null;
+        this.sbsResources = null;
+        this.svsResources = null;
+        this.svoResources = null;
+        this.sdfBvhBuffers = null;
+    }
+
+    /**
      * Mirrors Scene::updateGridVolumes' playback step: advances every volume's
      * grid sequence to `timeSec` and rebuilds the grid bindings when a frame
      * changed. Returns true if anything moved (the caller can reset accumulation).
