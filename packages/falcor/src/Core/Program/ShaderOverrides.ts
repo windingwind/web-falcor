@@ -94,6 +94,9 @@ export const kShaderOverrides: Readonly<Record<string, string>> = {
     "Tests/Core/BufferTests.cs.slang": "WebFalcor/Overrides/Tests/Core/BufferTests.cs.slang",
     // Sample apps: SV_PrimitiveID has no core-WGSL equivalent.
     "Samples/MultiSampling/MultiSampling.3d.slang": "WebFalcor/Overrides/Samples/MultiSampling/MultiSampling.3d.slang",
+    // HelloDXR: vertex-pulled raster (no SV_PrimitiveID), RT program lowered to compute.
+    "Samples/HelloDXR/HelloDXR.3d.slang": "WebFalcor/Overrides/Samples/HelloDXR/HelloDXR.3d.slang",
+    "Samples/HelloDXR/HelloDXR.rt.slang": "WebFalcor/Overrides/Samples/HelloDXR/HelloDXR.rt.slang",
     "Tests/Core/RootBufferTests.cs.slang": "WebFalcor/Overrides/Tests/Core/RootBufferTests.cs.slang",
     "Tests/Core/RootBufferStructTests.cs.slang": "WebFalcor/Overrides/Tests/Core/RootBufferStructTests.cs.slang",
     "Tests/Core/RootBufferParamBlockTests.cs.slang": "WebFalcor/Overrides/Tests/Core/RootBufferParamBlockTests.cs.slang",

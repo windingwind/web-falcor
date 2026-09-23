@@ -10,6 +10,8 @@ import { SampleAppTemplate } from "../../../packages/samples/src/SampleAppTempla
 import { ShaderToy } from "../../../packages/samples/src/ShaderToy.js";
 import { Visualization2D, Visualization2DScene } from "../../../packages/samples/src/Visualization2D.js";
 import { MultiSampling } from "../../../packages/samples/src/MultiSampling.js";
+import { HelloDXR } from "../../../packages/samples/src/HelloDXR.js";
+import { initScripting } from "@web-falcor/falcor";
 
 async function start<T extends SampleApp>(device: Device, Sample: new (config: SampleAppConfig) => T, width = 128, height = 128): Promise<T> {
     const app = new Sample({ device, headless: true, windowDesc: { width, height } });
@@ -99,4 +101,48 @@ gpuTest("Samples.multiSamplingResolvesTheDisk", async ({ device }) => {
         expectEq(at(2, 2), 0, `${frame}: background`);
         expectEq(edge.size >= 2, true, `${frame}: antialiased edges`);
     }
+});
+
+gpuTest("Samples.helloDXRRasterAndRayTraceAgree", async ({ device }) => {
+    await initScripting("/node_modules/pyodide");
+    const app = await start(device, HelloDXR, 256, 192);
+    const clear = [srgb(0.38), srgb(0.52), srgb(0.1)];
+    const render = async (rayTrace: boolean) => {
+        app.rayTrace = rayTrace;
+        device.gpuDevice.pushErrorScope("validation");
+        app.renderFrame();
+        const error = await device.gpuDevice.popErrorScope();
+        expectEq(error?.message ?? "", "", `${rayTrace ? "ray trace" : "raster"}: WebGPU validation`);
+        return readTarget(app);
+    };
+    const raster = await render(false);
+    const rt = await render(true);
+    // Pixels showing the scene (not the clear/miss color), outside the frame-rate text.
+    const covered = (px: Uint8Array, i: number) => Math.max(...clear.map((c, k) => Math.abs(px[i + k]! - c))) > 2;
+    let both = 0, either = 0, rasterLit = 0;
+    for (let y = 40; y < 192; y++)
+        for (let x = 0; x < 256; x++) {
+            const i = (y * 256 + x) * 4;
+            const a = covered(raster, i), b = covered(rt, i);
+            if (a && b) both++;
+            if (a || b) either++;
+            if (a && raster[i]! + raster[i + 1]! + raster[i + 2]! > 30) rasterLit++;
+        }
+    // RT = raster shading + shadows (darker) + reflections (brighter; native scales them by
+    // 20 / max(1, hitT^2), which brightens most of the close-range Arcade view).
+    let same = 0, darker = 0, brighter = 0, n = 0;
+    for (let y = 40; y < 192; y++)
+        for (let x = 0; x < 256; x++) {
+            const i = (y * 256 + x) * 4;
+            const d = rt[i]! + rt[i + 1]! + rt[i + 2]! - (raster[i]! + raster[i + 1]! + raster[i + 2]!);
+            n++;
+            if (Math.abs(d) <= 12) same++;
+            else if (d < 0) darker++;
+            else brighter++;
+        }
+    console.error(`# samples HelloDXR: scene pixels raster/RT overlap ${both}/${either}, lit raster pixels ${rasterLit}; RT vs raster: same ${same}, darker ${darker}, brighter ${brighter} of ${n}`);
+    expectEq(same > 1000 && darker > 100 && brighter > 100, true, "ray tracing adds shadows and reflections to the raster shading");
+    expectEq(either > 256 * 152 * 0.5, true, "the scene fills the view");
+    expectEq(both / either > 0.97, true, "raster and ray-traced primary visibility agree");
+    expectEq(rasterLit > 1000, true, "analytic lights shade the rasterized scene");
 });

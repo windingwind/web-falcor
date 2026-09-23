@@ -407,6 +407,8 @@
     "WebFalcor/Overrides/Rendering/RTXDI/RTXDIApplicationBridge.slangh",
     "WebFalcor/Overrides/Rendering/RTXDI/SurfaceData.slang",
     "WebFalcor/Overrides/Rendering/Utils/PixelStats.slang",
+    "WebFalcor/Overrides/Samples/HelloDXR/HelloDXR.3d.slang",
+    "WebFalcor/Overrides/Samples/HelloDXR/HelloDXR.rt.slang",
     "WebFalcor/Overrides/Samples/MultiSampling/MultiSampling.3d.slang",
     "WebFalcor/Overrides/Scene/Displacement/DisplacementMapping.slang",
     "WebFalcor/Overrides/Scene/HitInfo.slang",

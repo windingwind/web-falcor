@@ -6,9 +6,10 @@ import { SampleAppTemplate } from "./SampleAppTemplate.js";
 import { ShaderToy } from "./ShaderToy.js";
 import { Visualization2D } from "./Visualization2D.js";
 import { MultiSampling } from "./MultiSampling.js";
+import { HelloDXR } from "./HelloDXR.js";
 
 type SampleClass = (new (config: SampleAppConfig) => SampleApp) & { config: SampleAppConfig };
-export const kSamples: Record<string, SampleClass> = { SampleAppTemplate, ShaderToy, Visualization2D, MultiSampling };
+export const kSamples: Record<string, SampleClass> = { SampleAppTemplate, ShaderToy, Visualization2D, MultiSampling, HelloDXR };
 
 const name = new URLSearchParams(location.search).get("sample") ?? "ShaderToy";
 const picker = document.getElementById("picker")!;
