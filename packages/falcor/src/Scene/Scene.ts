@@ -16,7 +16,7 @@ import { DefineList } from "../Core/Program/DefineList.js";
 import type { ShaderVar } from "../Core/Program/ParameterBlock.js";
 import { Camera } from "./Camera/Camera.js";
 import { float4x4, transpose, inverse } from "../Utils/Math/Matrix.js";
-import { buildBvh, buildAabbBvh, type BvhTriangle } from "./SoftwareRT/Bvh.js";
+import { buildBvh, buildAabbBvh, refitBvh, type BvhTriangle } from "./SoftwareRT/Bvh.js";
 import { packLights, LightType, type AnalyticLight } from "./SceneData.js";
 import { TextureManager } from "./Material/TextureManager.js";
 import type { EnvMap } from "./Lights/EnvMap.js";
@@ -227,6 +227,8 @@ export class Scene {
     readonly analyticLights: AnalyticLight[] = [];
     emissiveActiveTriangleCount = 0;
     private bvhTrisOffset = 0;
+    /** Last animated-frame BVH, refit on the next animation step. */
+    private animatedBvh: import("./SoftwareRT/Bvh.js").BvhBuildResult | null = null;
     private invTransposeOffset = 0;
     // Animation state (retained only for animated scenes; null otherwise).
     private sourceMeshes: SceneMeshDesc[] | null = null;
@@ -1058,7 +1060,9 @@ export class Scene {
                 });
             }
         });
-        const bvh = buildBvh(bvhTris);
+        // Refit the previous frame's BVH (rebuilt when the refit degrades; see refitBvh).
+        const bvh = this.animatedBvh ? refitBvh(this.animatedBvh, bvhTris) : buildBvh(bvhTris);
+        this.animatedBvh = bvh;
         if (bvhTris.length > 0) {
             this.worldBounds = { min: [bvh.nodes[0]!, bvh.nodes[1]!, bvh.nodes[2]!], max: [bvh.nodes[4]!, bvh.nodes[5]!, bvh.nodes[6]!] };
         }

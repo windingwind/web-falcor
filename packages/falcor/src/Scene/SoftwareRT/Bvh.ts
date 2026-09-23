@@ -1,8 +1,10 @@
 /**
  * Software ray tracing BVH (docs §5) — WebGPU has no ray tracing API.
  *
- * v1: CPU median-split BVH over world-space triangles (static scenes; GPU LBVH
- * refit arrives with animation support). Layout is consumed by the
+ * CPU median-split BVH over world-space triangles; animated scenes refit it (same
+ * topology and triangle order, bounds recomputed bottom-up) and rebuild once the
+ * refit tree's surface area has doubled (native refits dynamic BLASes the same way).
+ * Layout is consumed by the
  * Scene/RaytracingInline.slang override:
  * - nodes: 2x float4 per node:
  *     [min.xyz, bits(leftFirst)], [max.xyz, bits(triCount)]
@@ -26,6 +28,77 @@ export interface BvhBuildResult {
     nodes: Float32Array; // 8 floats per node
     tris: Float32Array; // 12 floats per triangle (reordered)
     nodeCount: number;
+    /** Source triangle index of each tris slot (what a refit rewrites in place). */
+    order: Uint32Array;
+    /** Sum of node surface areas when built (refit quality reference). */
+    buildArea: number;
+}
+
+/** Sum of the nodes' AABB surface areas (the SAH cost's geometric part). */
+function totalArea(nodes: Float32Array, nodeCount: number): number {
+    let area = 0;
+    for (let i = 0; i < nodeCount; i++) {
+        const dx = nodes[i * 8 + 4]! - nodes[i * 8]!;
+        const dy = nodes[i * 8 + 5]! - nodes[i * 8 + 1]!;
+        const dz = nodes[i * 8 + 6]! - nodes[i * 8 + 2]!;
+        area += 2 * (dx * dy + dy * dz + dz * dx);
+    }
+    return area;
+}
+
+/** Writes the Moller-Trumbore data of triangles[order[i]] into slot i. */
+function writeTris(tris: Float32Array, triangles: BvhTriangle[], order: Uint32Array): void {
+    const trisU32 = new Uint32Array(tris.buffer, tris.byteOffset, tris.length);
+    for (let i = 0; i < order.length; i++) {
+        const t = triangles[order[i]!]!;
+        const e1 = sub3(t.v1, t.v0);
+        const e2 = sub3(t.v2, t.v0);
+        tris[i * 12 + 0] = t.v0.x; tris[i * 12 + 1] = t.v0.y; tris[i * 12 + 2] = t.v0.z;
+        trisU32[i * 12 + 3] = t.instanceIndex;
+        tris[i * 12 + 4] = e1.x; tris[i * 12 + 5] = e1.y; tris[i * 12 + 6] = e1.z;
+        trisU32[i * 12 + 7] = t.primitiveIndex;
+        tris[i * 12 + 8] = e2.x; tris[i * 12 + 9] = e2.y; tris[i * 12 + 10] = e2.z;
+        trisU32[i * 12 + 11] = 0;
+    }
+}
+
+/**
+ * Refits `prev` to moved triangles (same count and order as when it was built): triangle
+ * data is rewritten and node bounds are recomputed bottom-up. Falls back to a full build
+ * when the triangle count changed or the refit tree's surface area exceeds twice the
+ * built tree's. Returns the BVH to use (prev's arrays are reused for a refit).
+ */
+export function refitBvh(prev: BvhBuildResult, triangles: BvhTriangle[]): BvhBuildResult {
+    if (triangles.length === 0 || triangles.length !== prev.order.length) return buildBvh(triangles);
+    const { nodes, nodeCount, order } = prev;
+    const nodesU32 = new Uint32Array(nodes.buffer, nodes.byteOffset, nodes.length);
+    writeTris(prev.tris, triangles, order);
+    // Pre-order layout: children (i + 1 and leftFirst) come after their parent.
+    for (let i = nodeCount - 1; i >= 0; i--) {
+        const o = i * 8;
+        const count = nodesU32[o + 7]!;
+        let x0 = Infinity, y0 = Infinity, z0 = Infinity, x1 = -Infinity, y1 = -Infinity, z1 = -Infinity;
+        if (count > 0) {
+            const first = nodesU32[o + 3]!;
+            for (let k = first; k < first + count; k++) {
+                const t = triangles[order[k]!]!;
+                for (const v of [t.v0, t.v1, t.v2]) {
+                    x0 = Math.min(x0, v.x); y0 = Math.min(y0, v.y); z0 = Math.min(z0, v.z);
+                    x1 = Math.max(x1, v.x); y1 = Math.max(y1, v.y); z1 = Math.max(z1, v.z);
+                }
+            }
+        } else {
+            for (const c of [i + 1, nodesU32[o + 3]!]) {
+                const co = c * 8;
+                x0 = Math.min(x0, nodes[co]!); y0 = Math.min(y0, nodes[co + 1]!); z0 = Math.min(z0, nodes[co + 2]!);
+                x1 = Math.max(x1, nodes[co + 4]!); y1 = Math.max(y1, nodes[co + 5]!); z1 = Math.max(z1, nodes[co + 6]!);
+            }
+        }
+        nodes[o] = x0; nodes[o + 1] = y0; nodes[o + 2] = z0;
+        nodes[o + 4] = x1; nodes[o + 5] = y1; nodes[o + 6] = z1;
+    }
+    if (totalArea(nodes, nodeCount) > 2 * prev.buildArea) return buildBvh(triangles);
+    return prev;
 }
 
 interface BuildEntry {
@@ -143,7 +216,7 @@ export function buildBvh(triangles: BvhTriangle[]): BvhBuildResult {
     if (n === 0) {
         nodesU32[3] = 0; // leftFirst
         nodesU32[7] = 1; // triCount: one degenerate (all-zero) triangle
-        return { nodes: nodes.subarray(0, 8), tris: new Float32Array(12), nodeCount: 1 };
+        return { nodes: nodes.subarray(0, 8), tris: new Float32Array(12), nodeCount: 1, order: new Uint32Array(0), buildArea: 0 };
     }
 
     // Per-triangle bounds and centroids in flat arrays: the build sorts ranges
@@ -238,18 +311,8 @@ export function buildBvh(triangles: BvhTriangle[]): BvhBuildResult {
     build(0, n);
 
     const tris = new Float32Array(orderedCount * 12);
-    const trisU32 = new Uint32Array(tris.buffer);
-    for (let i = 0; i < orderedCount; i++) {
-        const t = triangles[ordered[i]!]!;
-        const e1 = sub3(t.v1, t.v0);
-        const e2 = sub3(t.v2, t.v0);
-        tris[i * 12 + 0] = t.v0.x; tris[i * 12 + 1] = t.v0.y; tris[i * 12 + 2] = t.v0.z;
-        trisU32[i * 12 + 3] = t.instanceIndex;
-        tris[i * 12 + 4] = e1.x; tris[i * 12 + 5] = e1.y; tris[i * 12 + 6] = e1.z;
-        trisU32[i * 12 + 7] = t.primitiveIndex;
-        tris[i * 12 + 8] = e2.x; tris[i * 12 + 9] = e2.y; tris[i * 12 + 10] = e2.z;
-        trisU32[i * 12 + 11] = 0;
-    }
-
-    return { nodes: nodes.subarray(0, nodeCount * 8), tris, nodeCount };
+    const order = ordered.subarray(0, orderedCount);
+    writeTris(tris, triangles, order);
+    const outNodes = nodes.subarray(0, nodeCount * 8);
+    return { nodes: outNodes, tris, nodeCount, order, buildArea: totalArea(outNodes, nodeCount) };
 }

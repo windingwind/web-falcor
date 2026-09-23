@@ -10,7 +10,7 @@
  */
 
 import { describe, expect, it } from "vitest";
-import { buildBvh, type BvhTriangle } from "../src/Scene/SoftwareRT/Bvh.js";
+import { buildBvh, refitBvh, type BvhTriangle } from "../src/Scene/SoftwareRT/Bvh.js";
 import { float3, sub3 } from "../src/Utils/Math/Vector.js";
 
 /** Median-split BVH written the obvious way: one entry list per node. */
@@ -154,5 +154,59 @@ describe("buildBvh", () => {
         const seen = new Set<number>();
         for (let i = 0; i < triangles.length; i++) seen.add(new Uint32Array(tris.buffer)[i * 12 + 7]!);
         expect(seen.size).toBe(triangles.length);
+    });
+});
+
+describe("refitBvh", () => {
+    /** Every node's bounds are exactly its subtree's (leaves: their triangles; inner: children). */
+    const checkTight = (bvh: ReturnType<typeof buildBvh>, triangles: BvhTriangle[]) => {
+        const u = new Uint32Array(bvh.nodes.buffer, bvh.nodes.byteOffset, bvh.nodes.length);
+        for (let i = 0; i < bvh.nodeCount; i++) {
+            const want = [Infinity, Infinity, Infinity, -Infinity, -Infinity, -Infinity];
+            const grow = (x: number, y: number, z: number, X: number, Y: number, Z: number) => {
+                want[0] = Math.min(want[0]!, x); want[1] = Math.min(want[1]!, y); want[2] = Math.min(want[2]!, z);
+                want[3] = Math.max(want[3]!, X); want[4] = Math.max(want[4]!, Y); want[5] = Math.max(want[5]!, Z);
+            };
+            const count = u[i * 8 + 7]!;
+            if (count > 0) {
+                for (let k = u[i * 8 + 3]!; k < u[i * 8 + 3]! + count; k++)
+                    for (const v of [triangles[bvh.order[k]!]!.v0, triangles[bvh.order[k]!]!.v1, triangles[bvh.order[k]!]!.v2]) grow(v.x, v.y, v.z, v.x, v.y, v.z);
+            } else {
+                for (const c of [i + 1, u[i * 8 + 3]!]) grow(bvh.nodes[c * 8]!, bvh.nodes[c * 8 + 1]!, bvh.nodes[c * 8 + 2]!, bvh.nodes[c * 8 + 4]!, bvh.nodes[c * 8 + 5]!, bvh.nodes[c * 8 + 6]!);
+            }
+            const got = [0, 1, 2, 4, 5, 6].map((k) => bvh.nodes[i * 8 + k]!);
+            expect(got, `node ${i}`).toEqual(want.map(Math.fround));
+        }
+    };
+    const moved = (triangles: BvhTriangle[], d: (i: number) => [number, number, number]) =>
+        triangles.map((t, i) => {
+            const [dx, dy, dz] = d(i);
+            const m = (v: float3) => new float3(Math.fround(v.x + dx), Math.fround(v.y + dy), Math.fround(v.z + dz));
+            return { ...t, v0: m(t.v0), v1: m(t.v1), v2: m(t.v2) };
+        });
+
+    it("keeps the topology and makes the bounds tight again after motion", () => {
+        const triangles = makeTriangles(1000, 42);
+        const bvh = buildBvh(triangles);
+        const topology = new Uint32Array(bvh.nodes.buffer, bvh.nodes.byteOffset, bvh.nodes.length).filter((_v, k) => k % 8 === 3 || k % 8 === 7);
+        const next = moved(triangles, (i) => [0.05 * Math.sin(i), 0.05 * Math.cos(i), 0.02]);
+        const refit = refitBvh(bvh, next);
+        expect(refit).toBe(bvh);
+        expect(new Uint32Array(refit.nodes.buffer, refit.nodes.byteOffset, refit.nodes.length).filter((_v, k) => k % 8 === 3 || k % 8 === 7)).toEqual(topology);
+        checkTight(refit, next);
+        // Triangle data follows the moved vertices in the built order.
+        const t = next[refit.order[5]!]!;
+        expect(Array.from(refit.tris.subarray(5 * 12, 5 * 12 + 3))).toEqual([t.v0.x, t.v0.y, t.v0.z]);
+    });
+
+    it("rebuilds when the refit tree degrades or the triangle count changes", () => {
+        const triangles = makeTriangles(1000, 7);
+        const bvh = buildBvh(triangles);
+        // Scatter every triangle far apart: the old grouping no longer fits.
+        const scattered = moved(triangles, (i) => [((i * 7919) % 1000) - 500, ((i * 104729) % 1000) - 500, 0]);
+        const rebuilt = refitBvh(bvh, scattered);
+        expect(rebuilt).not.toBe(bvh);
+        expect(bytes(rebuilt.nodes)).toEqual(bytes(buildBvh(scattered).nodes));
+        expect(refitBvh(bvh, triangles.slice(1))).not.toBe(bvh);
     });
 });
