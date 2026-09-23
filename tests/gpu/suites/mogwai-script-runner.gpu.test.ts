@@ -43,16 +43,20 @@ for (const [script, captures] of [["PathTracerReload", 20], ["SimplePostFX", 5],
     });
 }
 
-// Every portable native render-pass image test (~9 min): run with --filter NativeImageTestScript.
+// Every portable native image test (~13 min): run with --filter NativeImageTestScript.
 // Not portable: DLSS/OptiX (vendor SDKs), SDFEditor (interactive pass), WARDiff (compiler-blocked).
-const kAllScripts =
-    "BSDFViewer ColorMapPass CompositePass CrossFadePass FLIPPass GaussianBlur GBufferRasterAlpha GBufferRaster GBufferRTInline GBufferRT GBufferRTTexGrads HalfRes MinimalPathTracer ModulateIllumination MVecRaster MVecRT PathTracerAdaptive PathTracerDielectrics PathTracerMaterials PathTracer PathTracerReload RTXDI SideBySide SimplePostFX Skinning SplitScreen SVGF TAA TextureLOD ToneMapping VBufferRasterAlpha VBufferRaster VBufferRTInline VBufferRT".split(" ");
+const kAllScripts = [
+    ..."scene/AnimationBehavior scene/CameraAnimation scene/Displacement scene/NDSDFGrids scene/RtProgram scene/SceneCache scene/SDFSBS scene/SDFSVO scene/SDFSVS scene/TriangleWinding scene/USDPreviewSurface scene/Volumes".split(" "),
+    ..."renderscripts/BSDFViewer renderscripts/MinimalPathTracer renderscripts/PathTracer renderscripts/RTXDI renderscripts/SceneDebugger".split(" "),
+    ..."BSDFViewer ColorMapPass CompositePass CrossFadePass FLIPPass GaussianBlur GBufferRasterAlpha GBufferRaster GBufferRTInline GBufferRT GBufferRTTexGrads HalfRes MinimalPathTracer ModulateIllumination MVecRaster MVecRT PathTracerAdaptive PathTracerDielectrics PathTracerMaterials PathTracer PathTracerReload RTXDI SideBySide SimplePostFX Skinning SplitScreen SVGF TAA TextureLOD ToneMapping VBufferRasterAlpha VBufferRaster VBufferRTInline VBufferRT".split(" ").map((s) => `renderpasses/${s}`),
+];
 const selected = new URLSearchParams(location.search).get("filter")?.includes("NativeImageTestScript") ?? false;
 for (const script of kAllScripts) {
     gpuTest(`NativeImageTestScript.${script}`, async ({ device }) => {
         if (!selected) throw new SkipError("run with --filter NativeImageTestScript");
         await initScripting("/node_modules/pyodide");
-        const { frameCapture } = await runMogwaiScript(device, `/Falcor/tests/image_tests/renderpasses/test_${script}.py`);
-        expectEq(frameCapture.captured.length > 0, true, `test_${script}.py captured ${frameCapture.captured.length} files`);
+        const [dir, name] = script.split("/");
+        const { frameCapture } = await runMogwaiScript(device, `/Falcor/tests/image_tests/${dir}/test_${name}.py`);
+        expectEq(frameCapture.captured.length > 0, true, `${script}.py captured ${frameCapture.captured.length} files`);
     });
 }

@@ -26,6 +26,16 @@ import type { SceneMaterialDesc, SceneMeshDesc } from "../Scene.js";
 import { decomposeTRS, type SceneNode, type AnimationChannel, type SkinDesc } from "../Animation/SceneAnimation.js";
 import { LightType, type AnalyticLight, type StaticVertex } from "../SceneData.js";
 import type { TextureManager } from "../Material/TextureManager.js";
+import { Camera } from "../Camera/Camera.js";
+import type { GltfCameraPose } from "./GltfImporter.js";
+
+/** A camera from an imported file; `nodeID` is set when an animated node drives it. */
+export interface ImportedCamera {
+    name: string;
+    pose: GltfCameraPose;
+    aspectRatio?: number;
+    nodeID?: number;
+}
 
 interface AiProperty {
     key: string;
@@ -92,6 +102,17 @@ interface AiScene {
     materials: AiMaterial[];
     animations?: AiAnimation[];
     lights?: AiLight[];
+    cameras?: AiCamera[];
+}
+
+interface AiCamera {
+    name: string;
+    aspect?: number;
+    clipplanenear?: number;
+    clipplanefar?: number;
+    position?: number[];
+    up?: number[];
+    lookat?: number[];
 }
 
 let assimpModule: unknown | null = null;
@@ -223,7 +244,7 @@ export class FbxImporter {
         baseUrl: string,
         textureManager: TextureManager,
         options: AssimpImportOptions = {},
-    ): Promise<{ meshes: SceneMeshDesc[]; materials: SceneMaterialDesc[]; materialNames: string[]; nodes: SceneNode[]; animations: AnimationChannel[]; lights: AnalyticLight[] }> {
+    ): Promise<{ meshes: SceneMeshDesc[]; materials: SceneMaterialDesc[]; materialNames: string[]; nodes: SceneNode[]; animations: AnimationChannel[]; lights: AnalyticLight[]; cameras: ImportedCamera[] }> {
         if (options.useSpecGloss && options.useMetalRough) {
             throw new RuntimeError("AssimpImporter: UseSpecGlossMaterials and UseMetalRoughMaterials are mutually exclusive");
         }
@@ -386,6 +407,7 @@ export class FbxImporter {
         // Retained node graph for animation (assimp channels target nodes by name).
         const nodes: SceneNode[] = [];
         const nameToNodeID = new Map<string, number>();
+        const nodeNames: string[] = [];
         const nameToWorld = new Map<string, float4x4>(); // for placing lights on their nodes
         const visit = (node: AiNode, parentWorld: float4x4, parentID: number) => {
             const local = new float4x4();
@@ -393,6 +415,7 @@ export class FbxImporter {
             const world = mulMat(parentWorld, local);
             const nodeID = nodes.length;
             nodes.push({ parent: parentID, ...decomposeTRS(local) });
+            nodeNames[nodeID] = node.name;
             if (node.name) {
                 nameToNodeID.set(node.name, nodeID);
                 nameToWorld.set(node.name, world);
@@ -477,6 +500,34 @@ export class FbxImporter {
             }
         }
 
+        // Cameras (createCameras): the pose is the aiCamera's local one; an animated camera node
+        // drives it through a local child node holding the camera's view matrix.
+        const cameras: ImportedCamera[] = [];
+        for (const C of json.cameras ?? []) {
+            const v = (a: number[] | undefined, d: float3) => (a ? new float3(a[0]!, a[1]!, a[2]!) : d);
+            const position = v(C.position, new float3(0, 0, 0));
+            const look = v(C.lookat, new float3(0, 0, -1));
+            const cam = new Camera(C.name);
+            cam.setPosition(position);
+            cam.setUpVector(v(C.up, new float3(0, 1, 0)));
+            cam.setTarget(new float3(look.x + position.x, look.y + position.y, look.z + position.z));
+            const imported: ImportedCamera = {
+                name: C.name,
+                // FBX keeps a fixed 35mm focal length (native backwards compatibility).
+                pose: { position, target: cam.getTarget(), up: cam.getUpVector(), focalLength: 35, depthRange: [C.clipplanenear ?? 0.1, C.clipplanefar ?? 1000] },
+                aspectRatio: C.aspect || undefined,
+            };
+            const nodeID = nameToNodeID.get(C.name);
+            if (nodeID !== undefined && animations.some((a) => a.nodeID === nodeID)) {
+                imported.nodeID = nodes.length;
+                nodes.push({ parent: nodeID, ...decomposeTRS(cam.getViewMatrix()) });
+                // fixFbxCameraAnimation: the animation already holds the pivot helpers' transforms.
+                const prefix = `${C.name}_$AssimpFbx$_`;
+                for (let p = nodes[nodeID]!.parent; p >= 0 && nodeNames[p]?.startsWith(prefix); p = nodes[p]!.parent) Object.assign(nodes[p]!, decomposeTRS(float4x4.identity()));
+            }
+            cameras.push(imported);
+        }
+
         // Analytic lights (directional/point), placed by their node's world transform.
         const lights: AnalyticLight[] = [];
         for (const L of json.lights ?? []) {
@@ -508,7 +559,7 @@ export class FbxImporter {
             }
             mesh.materialID = id;
         }
-        return { meshes: meshDescs, materials: usedMaterials, materialNames: usedNames, nodes, animations, lights };
+        return { meshes: meshDescs, materials: usedMaterials, materialNames: usedNames, nodes, animations, lights, cameras };
     }
 
     /** Parses a single mesh asset (.obj/.ply/etc. via assimp) into one merged

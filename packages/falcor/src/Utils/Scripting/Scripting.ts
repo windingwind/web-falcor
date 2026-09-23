@@ -10,7 +10,7 @@
 import type { Device } from "../../Core/API/Device.js";
 import { RenderGraph } from "../../RenderGraph/RenderGraph.js";
 import { Settings } from "../Settings.js";
-import { buildSceneFromCache, encodeTextureSources, loadSceneCache, sceneCacheKey, snapshotCameraPose, snapshotGridVolumes, storeSceneCache } from "../../Scene/SceneCache.js";
+import { buildSceneFromCache, encodeTextureSources, loadSceneCache, sceneCacheKey, snapshotCameras, snapshotGridVolumes, storeSceneCache } from "../../Scene/SceneCache.js";
 import { createPass, type RenderPass } from "../../RenderGraph/RenderPass.js";
 import { Properties } from "../Properties.js";
 import { RuntimeError } from "../../Core/Error.js";
@@ -448,7 +448,7 @@ async function runSceneScriptInternal(device: Device, source: string, baseUrl: s
                 };
             },
         },
-        Camera: (_name = "") => new CameraBridge(),
+        Camera: (name = "") => new CameraBridge(String(name)),
         PointLight: (name = "") => new LightBridge(LightType.Point, name),
         DirectionalLight: (name = "") => new LightBridge(LightType.Directional, name),
         DistantLight: (name = "") => new LightBridge(LightType.Distant, name),
@@ -530,7 +530,7 @@ sys.modules["falcor"] = _scene_falcor
             lights,
             nodes,
             cameraNodeID,
-            camera: snapshotCameraPose(scene),
+            ...snapshotCameras(scene),
             textures,
             curves,
             envMap: env?.sourceBytes
@@ -571,6 +571,7 @@ export async function fetchLocalPythonModules(dirUrl: string, source: string, ro
             seen.add(mod);
             for (const d of searchDirs) {
                 const url = `${d}/${mod.replaceAll(".", "/")}.py`;
+                if (files[`${root}${url}`] !== undefined) break;
                 const res = await fetch(url);
                 if (!res.ok || res.headers.get("content-type")?.includes("html")) continue;
                 const body = await res.text();
@@ -580,6 +581,15 @@ export async function fetchLocalPythonModules(dirUrl: string, source: string, ro
                 pending.push(body);
                 break;
             }
+        }
+    }
+    // Files the scripts read themselves, e.g. exec(open('../../../scripts/X.py').read()).
+    for (const text of [source, ...Object.values(files)]) {
+        for (const m of text.matchAll(/open\(\s*['"]([^'"]+\.py)['"]/g)) {
+            const url = new URL(m[1]!, `${location.origin}${dir}/`).pathname;
+            if (files[`${root}${url}`] !== undefined) continue;
+            const res = await fetch(url);
+            if (res.ok && !res.headers.get("content-type")?.includes("html")) files[`${root}${url}`] = await res.text();
         }
     }
     return files;
@@ -594,14 +604,22 @@ function writePythonFiles(files: Record<string, string>): void {
     }
 }
 
+/** A value the script read from Mogwai state while recording (resolved at replay). */
+export interface MogwaiRef {
+    mogwaiRef: "clock" | "frameCapture" | "scene";
+    path: string;
+}
+
 /** One recorded Mogwai script call (see recordMogwaiScript). */
 export type MogwaiCommand =
     | { op: "addGraph"; graph: RenderGraph }
-    | { op: "loadScene"; path: string }
+    | { op: "removeGraph"; graph: RenderGraph }
+    | { op: "loadScene"; path: string; flags: number }
     | { op: "resizeFrameBuffer"; width: number; height: number }
     | { op: "renderFrame" }
     | { op: "set"; target: "clock" | "frameCapture" | "scene"; key: string; value: unknown }
-    | { op: "call"; target: "clock" | "frameCapture" | "scene" | RenderGraph | RenderPass; method: string; args: unknown[] };
+    | { op: "call"; target: "clock" | "frameCapture" | "scene" | RenderGraph | RenderPass; method: string; args: unknown[] }
+    | { op: "setPass"; target: RenderPass; key: string; value: unknown };
 
 /**
  * Runs a Mogwai script (e.g. an unmodified `tests/image_tests` test) and records
@@ -631,6 +649,8 @@ export function recordMogwaiScript(device: Device, source: string, files: Record
                 if (typeof value !== "function") return value;
                 return (...args: unknown[]) => void commands.push({ op: "call", target, method: String(key), args: args.map(conv) });
             },
+            // Python property sets (e.g. SceneDebugger.mode) apply in script order at replay.
+            set: (target, key, value) => (commands.push({ op: "setPass", target, key: String(key), value: conv(value) }), true),
         });
     const camel = (k: string) => k.replace(/_([a-z])/g, (_m, c: string) => c.toUpperCase());
     // Graphs record their calls once added (building them at import time runs directly).
@@ -653,11 +673,23 @@ export function recordMogwaiScript(device: Device, source: string, files: Record
         return proxy;
     };
     // Records property sets and calls on m.clock / m.frameCapture / m.scene (nested paths for the scene).
+    // Values read at record time (e.g. m.scene.cameras[1]) become references resolved at replay.
+    const kRef = Symbol("mogwaiRef");
+    const deref = (v: unknown): unknown => {
+        const ref = (v as { [kRef]?: MogwaiRef } | null | undefined)?.[kRef];
+        return ref ?? conv(v);
+    };
     const recorder = (target: "clock" | "frameCapture" | "scene", path = ""): Record<string, unknown> =>
         new Proxy((() => {}) as unknown as Record<string, unknown>, {
-            get: (_t, key) => (key === "then" ? undefined : recorder(target, path ? `${path}.${String(key)}` : String(key))),
-            set: (_t, key, value) => (commands.push({ op: "set", target, key: path ? `${path}.${String(key)}` : String(key), value: conv(value) }), true),
-            apply: (_t, _this, args: unknown[]) => void commands.push({ op: "call", target, method: path, args: args.map(conv) }),
+            get: (_t, key) => {
+                if (key === kRef) return { mogwaiRef: target, path } satisfies MogwaiRef;
+                if (key === "then") return undefined;
+                // Subscripts arrive as .get(index) on the JS side.
+                if (key === "get") return (index: unknown) => recorder(target, `${path}.${String(index)}`);
+                return recorder(target, path ? `${path}.${String(key)}` : String(key));
+            },
+            set: (_t, key, value) => (commands.push({ op: "set", target, key: path ? `${path}.${String(key)}` : String(key), value: deref(value) }), true),
+            apply: (_t, _this, args: unknown[]) => void commands.push({ op: "call", target, method: path, args: args.map(deref) }),
         });
 
     pyodide.registerJsModule("_falcor_js", {
@@ -680,7 +712,8 @@ export function recordMogwaiScript(device: Device, source: string, files: Record
             added.add(graph);
             commands.push({ op: "addGraph", graph });
         },
-        loadScene: (path: string) => void commands.push({ op: "loadScene", path: String(path) }),
+        loadScene: (path: string, flags?: number) => void commands.push({ op: "loadScene", path: String(path), flags: Number(flags ?? 0) }),
+        removeGraph: (g: RenderGraph) => void commands.push({ op: "removeGraph", graph: targets.get(g) ?? g }),
         resizeFrameBuffer: (width: number, height: number) => void commands.push({ op: "resizeFrameBuffer", width: Number(width), height: Number(height) }),
         renderFrame: () => void commands.push({ op: "renderFrame" }),
         clock: recorder("clock"),

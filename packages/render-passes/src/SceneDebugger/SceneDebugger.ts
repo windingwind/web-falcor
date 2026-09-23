@@ -74,7 +74,17 @@ export class SceneDebugger extends RenderPass {
     /** Mirrors mpPixelDebug (UI under "Debugging"; left click selects the pixel). */
     readonly pixelDebug = new PixelDebug(this.device);
     private frameDim: [number, number] = [0, 0];
-    private mode = kModes["FaceNormal"]!;
+    private modeValue = kModes["FaceNormal"]!;
+
+    /** Mirrors the Python `mode` property (the SceneDebuggerMode enum name). */
+    get mode(): string {
+        return Object.keys(kModes).find((k) => kModes[k] === this.modeValue) ?? "FaceNormal";
+    }
+    set mode(value: string) {
+        const mode = kModes[value];
+        if (mode === undefined) throw new Error(`Invalid SceneDebuggerMode '${value}'`);
+        this.modeValue = mode;
+    }
     private bsdfProperty = 0;
     // Remaining SceneDebuggerParams (native defaults).
     private bsdfIndex = 0;
@@ -93,7 +103,7 @@ export class SceneDebugger extends RenderPass {
     constructor(device: Device, props: Properties) {
         super(device);
         const mode = props.getOpt<string | number>("mode");
-        if (mode !== undefined) this.mode = (typeof mode === "string" ? kModes[mode] : mode) ?? this.mode;
+        if (mode !== undefined) this.modeValue = (typeof mode === "string" ? kModes[mode] : mode) ?? this.modeValue;
         // Which BSDF property BSDFProperties mode visualizes (SceneDebuggerBSDFProperty:
         // 0 Emission, 1 Roughness, 2 GuideNormal, 3 DiffuseReflectionAlbedo, ...).
         const bp = props.getOpt<string | number>("bsdfProperty");
@@ -102,13 +112,13 @@ export class SceneDebugger extends RenderPass {
 
     override getProperties(): Properties {
         const name = (table: Record<string, number>, v: number) => Object.keys(table).find((k) => table[k] === v) ?? v;
-        return new Properties({ mode: name(kModes, this.mode), bsdfProperty: name(kBSDFProps, this.bsdfProperty) });
+        return new Properties({ mode: name(kModes, this.modeValue), bsdfProperty: name(kBSDFProps, this.bsdfProperty) });
     }
 
     /** Mirrors SceneDebugger::renderUI (all runtime parameters; pixel-data readout lives in the viewer's picking). */
     override renderUI(ui: UIWidgets): void {
         const name = (table: Record<string, number>, v: number) => Object.keys(table).find((k) => table[k] === v) ?? Object.keys(table)[0]!;
-        ui.dropdown("Mode", Object.keys(kModes), name(kModes, this.mode), (v) => (this.mode = kModes[v]!));
+        ui.dropdown("Mode", Object.keys(kModes), name(kModes, this.modeValue), (v) => (this.modeValue = kModes[v]!));
         ui.slider("Triangle density range min (log2)", this.triangleDensityLogRange[0], -32, 32, 1, (v) => (this.triangleDensityLogRange = [Math.round(v), this.triangleDensityLogRange[1]]));
         ui.slider("Triangle density range max (log2)", this.triangleDensityLogRange[1], -32, 32, 1, (v) => (this.triangleDensityLogRange = [this.triangleDensityLogRange[0], Math.round(v)]));
         ui.dropdown("BSDF property", Object.keys(kBSDFProps), name(kBSDFProps, this.bsdfProperty), (v) => (this.bsdfProperty = kBSDFProps[v]!));
@@ -118,7 +128,7 @@ export class SceneDebugger extends RenderPass {
         ui.checkbox("Remap to [0,1]", this.remapRange, (v) => (this.remapRange = v));
         ui.checkbox("Show volumes", this.showVolumes, (v) => (this.showVolumes = v));
         ui.slider("Volume density scale", this.volumeDensityScale, 0, 1000, 0.1, (v) => (this.volumeDensityScale = v));
-        ui.text(`Description: ${kModeDesc[name(kModes, this.mode)] ?? ""}`);
+        ui.text(`Description: ${kModeDesc[name(kModes, this.modeValue)] ?? ""}`);
         this.pixelDebug.renderUI(ui.group("Debugging"), () => (this.pass = null));
     }
 
@@ -194,7 +204,7 @@ export class SceneDebugger extends RenderPass {
         this.scene.bindShaderData(root);
         const sd = root["CB"]!["gSceneDebugger"] as ShaderVar;
         const p = sd["params"] as ShaderVar;
-        p["mode"] = this.mode;
+        p["mode"] = this.modeValue;
         p["frameDim"] = [w, h];
         p["frameCount"] = this.frameCount;
         p["bsdfProperty"] = this.bsdfProperty;

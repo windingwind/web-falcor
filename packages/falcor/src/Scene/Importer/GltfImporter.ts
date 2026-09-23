@@ -77,6 +77,9 @@ export interface GltfCameraPose {
     target: float3;
     up: float3;
     focalLength: number;
+    /** Near/far planes, when the importer provides them. */
+    depthRange?: [number, number];
+    name?: string;
 }
 
 interface GltfPrimitive {

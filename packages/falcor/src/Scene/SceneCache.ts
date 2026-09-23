@@ -9,6 +9,7 @@
  * and grid volumes (NanoVDB buffers).
  */
 
+import { Camera } from "./Camera/Camera.js";
 import type { Device } from "../Core/API/Device.js";
 import { RuntimeError } from "../Core/Error.js";
 import { float2, float3, float4 } from "../Utils/Math/Vector.js";
@@ -30,7 +31,7 @@ import { GridVolume, type GridSlot } from "./Volume/GridVolume.js";
 import { Grid } from "./Volume/Grid.js";
 
 const kMagic = 0x43534657; // 'WFSC'
-const kVersion = 4; // v4: + animation, skin/morph, SDF recipes, grid volumes
+const kVersion = 5; // v4: + animation, skin/morph, SDF recipes, grid volumes; v5: camera list
 const kFloatsPerVertex = 13; // pos3 + normal3 + tangent4 + texCrd2 + curveRadius
 
 export interface SceneCameraPose {
@@ -42,6 +43,9 @@ export interface SceneCameraPose {
     apertureRadius: number;
     shutterSpeed?: number;
     ISOSpeed?: number;
+    name?: string;
+    depthRange?: [number, number];
+    aspectRatio?: number;
 }
 
 export interface CacheableScene {
@@ -50,7 +54,10 @@ export interface CacheableScene {
     lights: AnalyticLight[];
     nodes: SceneNode[];
     cameraNodeID?: number;
-    camera: SceneCameraPose;
+    /** Every scene camera; `selectedCamera` indexes it, `animatedCamera` is the one cameraNodeID drives. */
+    cameras: SceneCameraPose[];
+    selectedCamera: number;
+    animatedCamera: number;
     /** Material textures as lossless PNG (phase 2). */
     textures: { png: Uint8Array; srgb: boolean }[];
     /** Static curve geometry (phase 3). */
@@ -197,7 +204,9 @@ export function serializeScene(cached: CacheableScene): Uint8Array {
         lights: encodeValue(cached.lights),
         nodes: encodeValue(cached.nodes),
         cameraNodeID: cached.cameraNodeID,
-        camera: cached.camera,
+        cameras: cached.cameras,
+        selectedCamera: cached.selectedCamera,
+        animatedCamera: cached.animatedCamera,
         textures: cached.textures.map((t) => ({ srgb: t.srgb, byteLength: t.png.byteLength })),
         curves: cached.curves.map((c) => ({
             floatCount: c.positionsRadii.length,
@@ -267,7 +276,9 @@ export function deserializeScene(bytes: Uint8Array): CacheableScene {
         lights: unknown;
         nodes: unknown;
         cameraNodeID?: number;
-        camera: SceneCameraPose;
+        cameras: SceneCameraPose[];
+        selectedCamera: number;
+        animatedCamera: number;
         textures: { srgb: boolean; byteLength: number }[];
         curves: { floatCount: number; texCrdCount: number; indexCount: number; materialID: number; transform?: { __m4: number[] } }[];
         envMap?: { byteLength: number; isExr: boolean; intensity: number; tint: [number, number, number]; rotationDeg: [number, number, number]; equalAreaOctahedral?: boolean };
@@ -377,7 +388,9 @@ export function deserializeScene(bytes: Uint8Array): CacheableScene {
         lights: decodeValue(header.lights) as AnalyticLight[],
         nodes: decodeValue(header.nodes) as SceneNode[],
         cameraNodeID: header.cameraNodeID,
-        camera: header.camera,
+        cameras: header.cameras,
+        selectedCamera: header.selectedCamera,
+        animatedCamera: header.animatedCamera,
         textures,
         curves,
         envMap,
@@ -475,31 +488,43 @@ export async function buildSceneFromCache(device: Device, cached: CacheableScene
         env.setRotation(cached.envMap.rotationDeg);
         scene.setEnvMap(env);
     }
-    const cam = cached.camera;
-    scene.camera.setPosition(new float3(...cam.position));
-    scene.camera.setTarget(new float3(...cam.target));
-    scene.camera.setUpVector(new float3(...cam.up));
-    scene.camera.setFocalLength(cam.focalLength);
-    scene.camera.setFocalDistance(cam.focalDistance);
-    scene.camera.setApertureRadius(cam.apertureRadius);
-    if (cam.shutterSpeed !== undefined) scene.camera.setShutterSpeed(cam.shutterSpeed);
-    if (cam.ISOSpeed !== undefined) scene.camera.setISOSpeed(cam.ISOSpeed);
+    const cameras = cached.cameras.map((pose) => {
+        const cam = new Camera(pose.name ?? "Camera");
+        cam.setPosition(new float3(...pose.position));
+        cam.setTarget(new float3(...pose.target));
+        cam.setUpVector(new float3(...pose.up));
+        cam.setFocalLength(pose.focalLength);
+        cam.setFocalDistance(pose.focalDistance);
+        cam.setApertureRadius(pose.apertureRadius);
+        if (pose.shutterSpeed !== undefined) cam.setShutterSpeed(pose.shutterSpeed);
+        if (pose.ISOSpeed !== undefined) cam.setISOSpeed(pose.ISOSpeed);
+        if (pose.depthRange) cam.setDepthRange(...pose.depthRange);
+        if (pose.aspectRatio) cam.setAspectRatio(pose.aspectRatio);
+        return cam;
+    });
+    scene.setCameraList(cameras, cached.selectedCamera, cached.animatedCamera);
     return scene;
 }
 
-/** Camera pose snapshot for the cache (read back off the built scene). */
-export function snapshotCameraPose(scene: Scene): SceneCameraPose {
-    const p = scene.camera.getPosition();
-    const t = scene.camera.getTarget();
-    const u = scene.camera.getUpVector();
-    return {
-        position: [p.x, p.y, p.z],
-        target: [t.x, t.y, t.z],
-        up: [u.x, u.y, u.z],
-        focalLength: scene.camera.getFocalLength(),
-        focalDistance: scene.camera.getFocalDistance(),
-        apertureRadius: scene.camera.getApertureRadius(),
-        shutterSpeed: scene.camera.getShutterSpeed(),
-        ISOSpeed: scene.camera.getISOSpeed(),
-    };
+/** Camera snapshots for the cache (read back off the built scene). */
+export function snapshotCameras(scene: Scene): Pick<CacheableScene, "cameras" | "selectedCamera" | "animatedCamera"> {
+    const cameras = scene.getCameras().map((c): SceneCameraPose => {
+        const p = c.getPosition();
+        const t = c.getTarget();
+        const u = c.getUpVector();
+        return {
+            name: c.name,
+            position: [p.x, p.y, p.z],
+            target: [t.x, t.y, t.z],
+            up: [u.x, u.y, u.z],
+            focalLength: c.getFocalLength(),
+            focalDistance: c.getFocalDistance(),
+            apertureRadius: c.getApertureRadius(),
+            shutterSpeed: c.getShutterSpeed(),
+            ISOSpeed: c.getISOSpeed(),
+            depthRange: [c.getNearPlane(), c.getFarPlane()],
+            aspectRatio: c.getAspectRatio(),
+        };
+    });
+    return { cameras, selectedCamera: scene.getSelectedCameraIndex(), animatedCamera: scene.getAnimatedCameraIndex() };
 }

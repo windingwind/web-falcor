@@ -9,10 +9,11 @@ import { GridVolume, type GridSlot } from "./Volume/GridVolume.js";
 import { buildNanoVDBGrid, type ParsedFloatGrid } from "./Volume/VDBLoader.js";
 import { buildSDFGridFromRecipe, type SDFGridRecipe, type SDFGridType } from "./SDFs/SDFGridRecipe.js";
 import type { SceneSDFGridDesc } from "./Scene.js";
+import { Camera } from "./Camera/Camera.js";
 import { Scene, type SceneMaterialDesc, type SceneMeshDesc } from "./Scene.js";
 import type { SceneNode, AnimationChannel, WeightTrack } from "./Animation/SceneAnimation.js";
 import { GltfImporter } from "./Importer/GltfImporter.js";
-import { FbxImporter, kAssimpSceneExtensions, objMaterialLibraries } from "./Importer/FbxImporter.js";
+import { FbxImporter, kAssimpSceneExtensions, objMaterialLibraries, type ImportedCamera } from "./Importer/FbxImporter.js";
 import { UsdImporter } from "./Importer/UsdImporter.js";
 import { convertToLinearSweptSphere, convertToPolytube, extractBasisCurvesFromUsda } from "./Curves/CurveTessellation.js";
 import { TextureManager } from "./Material/TextureManager.js";
@@ -186,6 +187,7 @@ function applyMaterialEdit(mat: SceneMaterialDesc, prop: string, value: unknown)
 
 /** Camera description assembled in pyscenes (Camera() + sceneBuilder.addCamera). */
 export class CameraBridge {
+    constructor(public name = "") {}
     private _position = new float3(0, 0, 3);
     private _target = new float3(0, 0, 0);
     private _up = new float3(0, 1, 0);
@@ -747,12 +749,11 @@ export class SceneBuilderBridge {
     private meshInstanced = new Map<number, float4x4[]>();
     private nodes: float4x4[] = [];
     private lights: LightBridge[] = [];
-    /** Node driving an imported camera (glTF), for camera animation; undefined if none. */
-    private importedCameraNodeID: number | undefined;
-    /** Bind-pose of an imported glTF camera (used when the pyscene sets no camera). */
-    private importedCameraPose: import("./Importer/GltfImporter.js").GltfCameraPose | undefined;
+    /** Cameras from imported files (native adds them at import, ahead of later pyscene cameras). */
+    private importedCameras: ImportedCamera[] = [];
     private gridVolumesList: GridVolumeBridge[] = [];
     private _envMap: EnvMapRef | null = null;
+    /** Explicit selection (sceneBuilder.selectedCamera); null selects camera 0 like native. */
     camera: CameraBridge | null = null;
 
     /** Eagerly copies the descriptor: python-side values (PyProxies) may not
@@ -777,10 +778,12 @@ export class SceneBuilderBridge {
     addCamera(camera: CameraBridge): void {
         const c = unwrapGuard(camera);
         this._cameras.push(c);
-        this.camera = c; // default selection = most recent; overridden by selectedCamera
     }
     get cameras(): CameraBridge[] {
         return this._cameras;
+    }
+    get selectedCamera(): CameraBridge | null {
+        return this.camera ?? this._cameras[0] ?? null;
     }
     set selectedCamera(camera: CameraBridge) {
         this.camera = unwrapGuard(camera);
@@ -986,6 +989,7 @@ export class SceneBuilderBridge {
     } | null = null;
 
     async resolve(device: Device, baseUrl: string): Promise<Scene> {
+        this.importedCameras = [];
         const textureManager = new TextureManager();
         const meshes: SceneMeshDesc[] = [];
         const materials: SceneMaterialDesc[] = [];
@@ -1098,6 +1102,7 @@ export class SceneBuilderBridge {
                     for (const ch of parsed.animations)
                         animations.push({ ...ch, nodeID: ch.nodeID + nodeOffset, clip: ch.clip !== undefined ? ch.clip + clipOffset : undefined });
                     clipOffset += parsed.animations.reduce((mx, c) => Math.max(mx, (c.clip ?? -1) + 1), 0);
+                    for (const c of parsed.cameras) this.importedCameras.push({ ...c, nodeID: c.nodeID !== undefined ? c.nodeID + nodeOffset : undefined });
                     importedLights.push(...parsed.lights);
                     for (const m of parsed.meshes)
                         meshes.push({
@@ -1116,10 +1121,7 @@ export class SceneBuilderBridge {
                     for (const ch of parsed.animations) animations.push({ ...ch, nodeID: ch.nodeID + nodeOffset });
                     for (const l of parsed.lights) importedLights.push({ ...l, nodeID: l.nodeID !== undefined ? l.nodeID + nodeOffset : undefined });
                     for (const wt of parsed.weightTracks) weightTracks.push({ ...wt, nodeID: wt.nodeID + nodeOffset });
-                    if (parsed.cameraNodeID !== undefined && this.importedCameraNodeID === undefined) {
-                        this.importedCameraNodeID = parsed.cameraNodeID + nodeOffset;
-                        this.importedCameraPose = parsed.camera;
-                    }
+                    if (parsed.camera) this.importedCameras.push({ name: parsed.camera.name ?? "Camera", pose: parsed.camera, nodeID: parsed.cameraNodeID !== undefined ? parsed.cameraNodeID + nodeOffset : undefined });
                     for (const m of parsed.meshes)
                         meshes.push({
                             ...m,
@@ -1277,9 +1279,11 @@ export class SceneBuilderBridge {
             });
         }
 
-        // Only bind the camera to an imported node when the pyscene doesn't define
-        // its own camera (an explicit pyscene camera wins and stays static).
-        const cameraNodeID = this.camera ? undefined : this.importedCameraNodeID;
+        // Native camera list: the imported camera (bound to its node) precedes the pyscene
+        // cameras, and camera 0 is selected unless the pyscene selects one.
+        // The scene animates one camera node: the first imported camera that has one.
+        const animatedCamera = this.importedCameras.findIndex((c) => c.nodeID !== undefined);
+        const cameraNodeID = animatedCamera >= 0 ? this.importedCameras[animatedCamera]!.nodeID : undefined;
         const scene = new Scene(device, meshes, materials, lights, textureManager, sdfGrids, nodes, animations, cameraNodeID, weightTracks, curves);
         for (const c of this.customPrimitives) scene.addCustomPrimitive(c.userID, c.aabb);
         // Snapshot for the scene cache (v4: every scene class; grid volumes are
@@ -1300,22 +1304,32 @@ export class SceneBuilderBridge {
             },
             cacheable: true,
         };
-        if (this.camera) {
-            scene.camera.setPosition(this.camera.getPosition());
-            scene.camera.setTarget(this.camera.getTarget());
-            scene.camera.setUpVector(this.camera.getUp());
-            scene.camera.setFocalLength(this.camera.focalLength);
-            scene.camera.setFocalDistance(this.camera.focalDistance);
-            scene.camera.setApertureRadius(this.camera.apertureRadius);
-            scene.camera.setShutterSpeed(this.camera.shutterSpeed);
-            scene.camera.setISOSpeed(this.camera.ISOSpeed);
-            scene.camera.setDepthRange(this.camera.nearPlane, this.camera.farPlane);
-        } else if (this.importedCameraPose) {
-            scene.camera.setPosition(this.importedCameraPose.position);
-            scene.camera.setTarget(this.importedCameraPose.target);
-            scene.camera.setUpVector(this.importedCameraPose.up);
-            scene.camera.setFocalLength(this.importedCameraPose.focalLength);
+        const cameraList: Camera[] = [];
+        for (const { name, pose, aspectRatio } of this.importedCameras) {
+            const cam = new Camera(name);
+            cam.setPosition(pose.position);
+            cam.setTarget(pose.target);
+            cam.setUpVector(pose.up);
+            cam.setFocalLength(pose.focalLength);
+            if (pose.depthRange) cam.setDepthRange(...pose.depthRange);
+            if (aspectRatio) cam.setAspectRatio(aspectRatio);
+            cameraList.push(cam);
         }
+        for (const c of this._cameras) {
+            const cam = new Camera(c.name || "Camera");
+            cam.setPosition(c.getPosition());
+            cam.setTarget(c.getTarget());
+            cam.setUpVector(c.getUp());
+            cam.setFocalLength(c.focalLength);
+            cam.setFocalDistance(c.focalDistance);
+            cam.setApertureRadius(c.apertureRadius);
+            cam.setShutterSpeed(c.shutterSpeed);
+            cam.setISOSpeed(c.ISOSpeed);
+            cam.setDepthRange(c.nearPlane, c.farPlane);
+            cameraList.push(cam);
+        }
+        const selected = this.camera ? this._cameras.indexOf(this.camera) : -1;
+        scene.setCameraList(cameraList, selected >= 0 ? selected + this.importedCameras.length : 0, Math.max(animatedCamera, 0));
         if (this.envMap) {
             const constant = this.envMap.constantColor;
             const envMap = constant

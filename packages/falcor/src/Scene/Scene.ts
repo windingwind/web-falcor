@@ -125,7 +125,57 @@ function f16Round(v: number): number {
 }
 
 export class Scene {
-    readonly camera = new Camera();
+    /** Mirrors Scene's camera list; `camera` is the selected one (Scene::getCamera/selectCamera). */
+    private cameraList: Camera[] = [new Camera()];
+    private activeCameraIndex = 0;
+    /** Index of the camera bound to cameraNodeID (the imported, animated one). */
+    private animatedCameraIndex = 0;
+
+    get camera(): Camera {
+        return this.cameraList[this.activeCameraIndex]!;
+    }
+
+    /** Mirrors the Python `scene.camera = cam` property: selects `cam` from the camera list. */
+    set camera(camera: Camera) {
+        this.selectCamera(camera);
+    }
+
+    /** Mirrors Scene::getCameras. */
+    getCameras(): Camera[] {
+        return [...this.cameraList];
+    }
+
+    /** Python-facing alias (`scene.cameras`). */
+    get cameras(): Camera[] {
+        return this.getCameras();
+    }
+
+    /** Mirrors Scene::selectCamera (by index or instance); the new camera keeps the frame's aspect ratio. */
+    selectCamera(camera: Camera | number): void {
+        const index = typeof camera === "number" ? camera : this.cameraList.indexOf(camera);
+        if (index < 0 || index >= this.cameraList.length) throw new RuntimeError(`Scene.selectCamera: camera ${typeof camera === "number" ? camera : "instance"} is not in the scene`);
+        if (index === this.activeCameraIndex) return;
+        const aspect = this.camera.getAspectRatio();
+        this.activeCameraIndex = index;
+        this.camera.setAspectRatio(aspect);
+    }
+
+    /** Index of the selected camera in getCameras() (Scene::mSelectedCamera). */
+    getSelectedCameraIndex(): number {
+        return this.activeCameraIndex;
+    }
+
+    getAnimatedCameraIndex(): number {
+        return this.animatedCameraIndex;
+    }
+
+    /** SceneBuilder hookup: every camera the scene defines, the selected one, and which one the node animates. */
+    setCameraList(cameras: Camera[], active: number, animated = 0): void {
+        if (cameras.length === 0) return;
+        this.cameraList = cameras;
+        this.activeCameraIndex = Math.min(Math.max(active, 0), cameras.length - 1);
+        this.animatedCameraIndex = animated;
+    }
     readonly gridVolumes: import("./Volume/GridVolume.js").GridVolume[] = [];
 
     /** Scene size counters (diagnostics; mirrors Scene::getSceneStats subset). */
@@ -1053,9 +1103,10 @@ export class Scene {
             const g = globals[this.cameraNodeID]!;
             const pos = transformPoint(g, ZERO);
             const fwd = normalize3(transformVector(g, FWD));
-            this.camera.setPosition(pos);
-            this.camera.setTarget(new float3(pos.x + fwd.x, pos.y + fwd.y, pos.z + fwd.z));
-            this.camera.setUpVector(normalize3(transformVector(g, UP)));
+            const camera = this.cameraList[this.animatedCameraIndex]!;
+            camera.setPosition(pos);
+            camera.setTarget(new float3(pos.x + fwd.x, pos.y + fwd.y, pos.z + fwd.z));
+            camera.setUpVector(normalize3(transformVector(g, UP)));
         }
         let lightsDirty = false;
         for (const light of this.analyticLights) {

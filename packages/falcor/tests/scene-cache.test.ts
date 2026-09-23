@@ -37,7 +37,12 @@ function makeScene(): CacheableScene {
             { parent: 0, t: new float3(0, 3, 0), r: new quatf(0, 0, 0, 1), s: new float3(1, 1, 1) },
         ],
         cameraNodeID: 2,
-        camera: { position: [0, 1, 5], target: [0, 0, 0], up: [0, 1, 0], focalLength: 21, focalDistance: 10000, apertureRadius: 0 },
+        cameras: [
+            { position: [0, 1, 5], target: [0, 0, 0], up: [0, 1, 0], focalLength: 21, focalDistance: 10000, apertureRadius: 0 },
+            { name: "Back", position: [0, 1, -5], target: [0, 0, 0], up: [0, 1, 0], focalLength: 35, focalDistance: 10, apertureRadius: 0.1, depthRange: [0.01, 100], aspectRatio: 1.5 },
+        ],
+        selectedCamera: 1,
+        animatedCamera: 0,
         textures: [{ png: new Uint8Array([1, 2, 3, 4, 5]), srgb: true }],
         curves: [{ positionsRadii: new Float32Array([0, 0, 0, 0.1, 1, 0, 0, 0.2]), texCrds: null, indices: new Uint32Array([0]), materialID: 0 }],
         envMap: { bytes: new Uint8Array([9, 8, 7]), isExr: false, intensity: 1.5, tint: [1, 0.5, 0.25], rotationDeg: [0, 90, 0] },
@@ -59,7 +64,7 @@ function makeScene(): CacheableScene {
     };
 }
 
-describe("SceneCache v4 serialization", () => {
+describe("SceneCache v5 serialization", () => {
     it("round-trips every scene class bit-exactly", () => {
         const scene = makeScene();
         const bytes = serializeScene(scene);
@@ -68,7 +73,8 @@ describe("SceneCache v4 serialization", () => {
 
         // Plain JSON view of everything but typed arrays / math types.
         const json = (v: unknown) => JSON.stringify(v, (_k, x) => (x instanceof Float32Array || x instanceof Uint32Array || x instanceof Uint8Array ? Array.from(x) : x));
-        expect(json(back.camera)).toBe(json(scene.camera));
+        expect(json(back.cameras)).toBe(json(scene.cameras));
+        expect([back.selectedCamera, back.animatedCamera]).toEqual([1, 0]);
         expect(back.cameraNodeID).toBe(2);
         expect(json(back.nodes)).toBe(json(scene.nodes));
         expect(json(back.materials)).toBe(json(scene.materials));

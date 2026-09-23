@@ -123,6 +123,8 @@ export class Camera {
     setAspectRatio(ratio: number): void { this.aspectRatio = ratio; this.dirty = true; }
     getAspectRatio(): number { return this.aspectRatio; }
     setDepthRange(nearZ: number, farZ: number): void { this.nearZ = nearZ; this.farZ = farZ; this.dirty = true; }
+    getNearPlane(): number { return this.nearZ; }
+    getFarPlane(): number { return this.farZ; }
     setJitter(x: number, y: number): void { this.jitter = new float2(x, y); this.dirty = true; }
 
     getFovY(): number {
