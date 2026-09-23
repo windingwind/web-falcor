@@ -25,9 +25,11 @@
  * `PBRTImporter:usePBRTMaterials` (same key as native) diffuse/coateddiffuse/
  * conductor/coatedconductor/dielectric/diffusetransmission map to the
  * dedicated PBRT material classes instead (area lights stay Standard, like
- * native). Documented divergences: named-spectrum reflectance/eta/k fall back
- * to constants (default conductor uses an sRGB copper approximation);
- * non-constant/anisotropic roughness and spectra are not supported.
+ * native). Spectral parameters (named, sampled and blackbody) convert to RGB
+ * through the CIE curves exactly as native does (Utils/Color/Spectrum.ts), and
+ * `infinite` lights take native's two paths: a constant `L` becomes a one-pixel
+ * env map, a `filename` an equal-area-octahedral map converted to lat-long.
+ * Documented divergence: non-constant/anisotropic roughness is not supported.
  */
 
 import type { Device } from "../../Core/API/Device.js";
@@ -45,8 +47,10 @@ import {
     matrixFromRotationAxisAngle,
     transformPoint,
     transformVector,
+    extractEulerAngleXYZ,
 } from "../../Utils/Math/Matrix.js";
 import { fovYToFocalLength } from "../Camera/Camera.js";
+import { BlackbodySpectrum, PiecewiseLinearSpectrum, Spectra, spectrumToRGB } from "../../Utils/Color/Spectrum.js";
 import { RuntimeError } from "../../Core/Error.js";
 import { AssetCategory, resolveAssetUrl, withScriptSearchPath } from "../../Core/AssetResolver.js";
 import { getGlobalSettings } from "../../Utils/Scripting/Scripting.js";
@@ -142,7 +146,10 @@ const P = {
         const v = p.get(name);
         return v ? v.values.map(parseFloat) : [];
     },
-    /** rgb/color -> float3; single float -> gray; named spectra -> fallback. */
+    /**
+     * rgb/color -> float3; single float -> gray; blackbody, named and sampled
+     * spectra -> RGB through the CIE curves (mirrors getSpectrumAsRGB).
+     */
     rgb(p: Params, name: string, def: float3): float3 {
         const v = p.get(name);
         if (!v || !v.values.length) return def;
@@ -154,10 +161,48 @@ const P = {
             const g = parseFloat(v.values[0]!);
             return new float3(g, g, g);
         }
-        // blackbody / named spectrum / spectrum arrays: unsupported -> fallback.
-        return def;
+        return spectrumParamToRGB(v, name) ?? def;
+    },
+    /** Mirrors ParameterDictionary::hasSpectrum. */
+    hasSpectrum(p: Params, name: string): boolean {
+        const t = p.get(name)?.type;
+        return t === "rgb" || t === "blackbody" || t === "spectrum";
     },
 };
+
+/**
+ * Mirrors ParameterDictionary::extractSpectrumArray + spectrumToRGB for the
+ * spectral parameter types: `blackbody [T]`, `spectrum "named"` and
+ * `spectrum [lambda value ...]`. Returns undefined for anything else.
+ */
+function spectrumParamToRGB(v: Param, name: string): float3 | undefined {
+    if (v.type === "blackbody") return spectrumToRGB(new BlackbodySpectrum(parseFloat(v.values[0]!)));
+    if (v.type !== "spectrum") return undefined;
+    const first = v.values[0]!;
+    if (Number.isFinite(Number(first))) {
+        const f = v.values.map(parseFloat);
+        if (f.length % 2 !== 0) throw new RuntimeError(`pbrt: found odd number of values for '${name}'`);
+        const wavelengths: number[] = [];
+        const values: number[] = [];
+        for (let i = 0; i < f.length; i += 2) {
+            if (i > 0 && f[i]! <= wavelengths[wavelengths.length - 1]!) {
+                throw new RuntimeError(`pbrt: spectrum '${name}' wavelengths aren't increasing`);
+            }
+            wavelengths.push(f[i]!);
+            values.push(f[i + 1]!);
+        }
+        return spectrumToRGB(new PiecewiseLinearSpectrum(wavelengths, values));
+    }
+    const named = Spectra.getNamedSpectrum(first);
+    // Native falls back to reading a spectrum file, which it leaves unimplemented.
+    if (!named) throw new RuntimeError(`pbrt: unable to read spectrum file '${first}'`);
+    return spectrumToRGB(named);
+}
+
+/** RGB of one of native's named spectra (they are always present). */
+function namedSpectrumRGB(name: string): float3 {
+    return spectrumToRGB(Spectra.getNamedSpectrum(name)!);
+}
 
 // -------------------------------------------------------------------------
 // Material / light intermediate + conductor helpers
@@ -178,10 +223,9 @@ interface TextureDef {
     params: Params;
 }
 
-// sRGB approximations of pbrt's default "metal-Cu" eta/k spectra (spectral
-// data reduced to RGB); used when a conductor specifies no eta/k/reflectance.
-const kCopperEta = new float3(0.2004, 0.924, 1.1022);
-const kCopperK = new float3(3.9129, 2.4528, 2.1421);
+// Native's default conductor is copper: the "metal-Cu" eta/k spectra in RGB.
+const copperEta = () => namedSpectrumRGB("metal-Cu-eta");
+const copperK = () => namedSpectrumRGB("metal-Cu-k");
 
 /** Fresnel reflectance of a conductor (mirrors fresnelDieletricConductor). */
 function fresnelConductor(eta: float3, k: float3, cosTheta: number): float3 {
@@ -214,11 +258,11 @@ function scalarRoughnessAlpha(p: Params, rName = "roughness", uName = "uroughnes
     return alpha;
 }
 
+/** Mirrors getScalarEta: a spectral eta collapses to the mean of its RGB. */
 function scalarEta(p: Params, name = "eta"): number {
-    const v = p.get(name);
-    if (v && (v.type === "rgb" || v.type === "spectrum")) {
-        const f = v.values.map(parseFloat);
-        return (f[0]! + (f[1] ?? f[0]!) + (f[2] ?? f[0]!)) / 3;
+    if (P.hasSpectrum(p, name)) {
+        const rgb = P.rgb(p, name, new float3(1.5, 1.5, 1.5));
+        return (rgb.x + rgb.y + rgb.z) / 3;
     }
     return P.float(p, name, 1.5);
 }
@@ -237,8 +281,8 @@ function conductorEtaK(p: Params, rName = "reflectance", etaName = "eta", kName 
         return { eta: new float3(1, 1, 1), k };
     }
     return {
-        eta: P.has(p, etaName) ? P.rgb(p, etaName, kCopperEta) : kCopperEta,
-        k: P.has(p, kName) ? P.rgb(p, kName, kCopperK) : kCopperK,
+        eta: P.has(p, etaName) ? P.rgb(p, etaName, copperEta()) : copperEta(),
+        k: P.has(p, kName) ? P.rgb(p, kName, copperK()) : copperK(),
     };
 }
 
@@ -630,7 +674,8 @@ class PbrtScene {
 
     private addLight(type: string, params: Params): void {
         if (type === "distant") {
-            const L = P.rgb(params, "L", new float3(1, 1, 1));
+            // Native defaults L to the D65 illuminant (unit luminance).
+            const L = P.rgb(params, "L", namedSpectrumRGB("stdillum-D65"));
             const scale = P.float(params, "scale", 1);
             const from = P.has(params, "from") ? P.rgb(params, "from", new float3(0, 0, 0)) : new float3(0, 0, 0);
             const to = P.has(params, "to") ? P.rgb(params, "to", new float3(0, 0, 1)) : new float3(0, 0, 1);
@@ -642,10 +687,24 @@ class PbrtScene {
         } else if (type === "infinite") {
             const filename = P.string(params, "filename", "");
             const scale = P.float(params, "scale", 1);
-            if (filename) {
-                this.builder.envMap = { path: filename, intensity: scale };
-            } else {
-                this.warn("constant infinite light (no filename) is not supported");
+            const hasL = P.has(params, "L");
+            if (hasL && filename) throw new RuntimeError("pbrt: can't specify both emission 'L' and 'filename' for infinite light");
+            if (hasL) {
+                // Falcor has no constant environment emitter: native builds a
+                // one-pixel env map (and leaves `scale` unapplied there).
+                const L = P.rgb(params, "L", new float3(1, 1, 1));
+                this.builder.envMap = { path: "", intensity: 1, constantColor: [L.x, L.y, L.z] };
+            } else if (filename) {
+                // pbrt-v4 stores env maps equal-area octahedral; native converts
+                // them to lat-long and orients them by the light's transform.
+                const rotation = extractEulerAngleXYZ(this.state.ctm);
+                const degrees = (r: number) => (r * 180) / Math.PI;
+                this.builder.envMap = {
+                    path: filename,
+                    intensity: scale,
+                    equalAreaOctahedral: true,
+                    rotation: { x: degrees(rotation.x), y: degrees(rotation.y), z: degrees(rotation.z) },
+                };
             }
         } else {
             this.warn(`unsupported light type '${type}'`);
@@ -704,7 +763,8 @@ class PbrtScene {
             mb = this.translateMaterial(materialDef, true);
             const L = P.rgb(this.state.areaLight, "L", new float3(1, 1, 1));
             mb.emissiveColor = L;
-            mb.emissiveFactor = P.float(this.state.areaLight, "scale", 1);
+            // Native reads `scale` for diffuse area lights but never applies it.
+            mb.emissiveFactor = 1;
         } else {
             const cached = this.matCache.get(materialDef);
             if (cached) mb = cached;

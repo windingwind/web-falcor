@@ -16,6 +16,13 @@ import { ResourceFormat } from "../../Core/API/Formats.js";
 import type { ShaderVar } from "../../Core/Program/ParameterBlock.js";
 import { RuntimeError } from "../../Core/Error.js";
 import { decodeHdr, type HdrImage } from "../../Utils/Image/HDRDecoder.js";
+import { convertEqualAreaOctToLatLong } from "./EnvMapConverter.js";
+import { decodePfm, isPfm } from "../../Utils/Image/PFMDecoder.js";
+
+export interface EnvMapLoadOptions {
+    /** The file is an equal-area octahedral map (pbrt-v4) to convert to lat-long. */
+    equalAreaOctahedral?: boolean;
+}
 import { decodeExr } from "../../Utils/Image/EXRDecoder.js";
 import { float4x4, inverse, matrixFromRotationXYZ } from "../../Utils/Math/Matrix.js";
 
@@ -35,6 +42,8 @@ export class EnvMap {
     /** Original encoded file (retained by createFromUrl/Bytes for the scene cache). */
     sourceBytes: Uint8Array | null = null;
     sourceIsExr = false;
+    /** The source was an equal-area octahedral map (pbrt-v4), converted on load. */
+    sourceEqualAreaOctahedral = false;
     /** Last rotation set (degrees), for cache snapshots. */
     rotationDeg: [number, number, number] = [0, 0, 0];
 
@@ -74,17 +83,21 @@ export class EnvMap {
         });
     }
 
-    static async createFromUrl(device: Device, url: string): Promise<EnvMap> {
+    static async createFromUrl(device: Device, url: string, options: EnvMapLoadOptions = {}): Promise<EnvMap> {
         const res = await fetch(url);
         if (!res.ok) throw new RuntimeError(`Failed to fetch env map '${url}' (${res.status})`);
-        return EnvMap.createFromBytes(device, new Uint8Array(await res.arrayBuffer()), url.toLowerCase().endsWith(".exr"));
+        return EnvMap.createFromBytes(device, new Uint8Array(await res.arrayBuffer()), url.toLowerCase().endsWith(".exr"), options);
     }
 
     /** Decodes an encoded .hdr/.exr file; retains the bytes for the scene cache. */
-    static createFromBytes(device: Device, bytes: Uint8Array, isExr: boolean): EnvMap {
-        const env = new EnvMap(device, isExr ? decodeExr(bytes.slice().buffer as ArrayBuffer) : decodeHdr(bytes));
+    static createFromBytes(device: Device, bytes: Uint8Array, isExr: boolean, options: EnvMapLoadOptions = {}): EnvMap {
+        // PFM is recognised by its signature (pbrt-v4 env maps); EXR/HDR by the flag.
+        let image = isPfm(bytes) ? decodePfm(bytes) : isExr ? decodeExr(bytes.slice().buffer as ArrayBuffer) : decodeHdr(bytes);
+        if (options.equalAreaOctahedral) image = convertEqualAreaOctToLatLong(image);
+        const env = new EnvMap(device, image);
         env.sourceBytes = bytes;
         env.sourceIsExr = isExr;
+        env.sourceEqualAreaOctahedral = !!options.equalAreaOctahedral;
         return env;
     }
 

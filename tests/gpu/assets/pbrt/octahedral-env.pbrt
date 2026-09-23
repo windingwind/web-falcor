@@ -1,0 +1,7 @@
+# An infinite light from an equal-area octahedral PFM (pbrt-v4's env-map
+# parameterization). octahedral-split.pfm is (2, 1, 0.5) on its inner diamond,
+# the +z hemisphere, and (0.1, 0.2, 0.4) elsewhere.
+LookAt 0 0 0  0 0 1  0 1 0
+Camera "perspective" "float fov" [ 60 ]
+WorldBegin
+LightSource "infinite" "string filename" "octahedral-split.pfm" "float scale" [ 3 ]

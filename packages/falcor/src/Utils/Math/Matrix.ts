@@ -226,3 +226,15 @@ export function matrixFromRotationXYZ(angleX: number, angleY: number, angleZ: nu
     m.set(2, 0, s1 * s3 + c1 * s2 * c3); m.set(2, 1, -s1 * c3 + c1 * s2 * s3); m.set(2, 2, c1 * c2);
     return m;
 }
+
+/** Mirrors math::extractEulerAngleXYZ (radians), the inverse of matrixFromRotationXYZ. */
+export function extractEulerAngleXYZ(m: float4x4): float3 {
+    const at = (r: number, c: number) => m.get(r, c);
+    const t1 = Math.atan2(at(1, 2), at(2, 2));
+    const c2 = Math.hypot(at(0, 0), at(0, 1));
+    const t2 = Math.atan2(-at(0, 2), c2);
+    const s1 = Math.sin(t1);
+    const c1 = Math.cos(t1);
+    const t3 = Math.atan2(s1 * at(2, 0) - c1 * at(1, 0), c1 * at(1, 1) - s1 * at(2, 1));
+    return new float3(-t1, -t2, -t3);
+}

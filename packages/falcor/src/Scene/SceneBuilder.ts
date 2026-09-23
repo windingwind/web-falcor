@@ -712,6 +712,8 @@ interface EnvMapRef {
     rotation?: { x: number; y: number; z: number };
     /** A uniform radiance, uploaded as the 1x1 texture native builds for it. */
     constantColor?: [number, number, number];
+    /** The file is an equal-area octahedral map (pbrt-v4 `infinite` lights). */
+    equalAreaOctahedral?: boolean;
 }
 
 type Command =
@@ -758,6 +760,7 @@ export class SceneBuilderBridge {
                   intensity: Number(v.intensity),
                   rotation: v.rotation ? { x: Number(v.rotation.x), y: Number(v.rotation.y), z: Number(v.rotation.z) } : undefined,
                   constantColor: v.constantColor ? [Number(v.constantColor[0]), Number(v.constantColor[1]), Number(v.constantColor[2])] : undefined,
+                  equalAreaOctahedral: v.equalAreaOctahedral ? true : undefined,
               }
             : null;
     }
@@ -1284,7 +1287,9 @@ export class SceneBuilderBridge {
             const constant = this.envMap.constantColor;
             const envMap = constant
                 ? new EnvMap(device, { width: 1, height: 1, data: new Float32Array([constant[0], constant[1], constant[2], 1]) })
-                : await EnvMap.createFromUrl(device, await resolveAssetUrl(this.envMap.path, baseUrl, AssetCategory.Any, this.assetResolver));
+                : await EnvMap.createFromUrl(device, await resolveAssetUrl(this.envMap.path, baseUrl, AssetCategory.Any, this.assetResolver), {
+                      equalAreaOctahedral: this.envMap.equalAreaOctahedral,
+                  });
             envMap.intensity = this.envMap.intensity;
             if (this.envMap.rotation) envMap.setRotation([this.envMap.rotation.x, this.envMap.rotation.y, this.envMap.rotation.z]);
             scene.setEnvMap(envMap);

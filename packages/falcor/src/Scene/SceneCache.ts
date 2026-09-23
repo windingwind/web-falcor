@@ -56,7 +56,7 @@ export interface CacheableScene {
     /** Static curve geometry (phase 3). */
     curves: SceneCurveDesc[];
     /** Env map as the original encoded .hdr/.exr file (phase 3). */
-    envMap?: { bytes: Uint8Array; isExr: boolean; intensity: number; tint: [number, number, number]; rotationDeg: [number, number, number] };
+    envMap?: { bytes: Uint8Array; isExr: boolean; intensity: number; tint: [number, number, number]; rotationDeg: [number, number, number]; equalAreaOctahedral?: boolean };
     /** Node animation channels + morph weight tracks (v4). */
     animations: AnimationChannel[];
     weightTracks: WeightTrack[];
@@ -211,6 +211,7 @@ export function serializeScene(cached: CacheableScene): Uint8Array {
                   intensity: cached.envMap.intensity,
                   tint: cached.envMap.tint,
                   rotationDeg: cached.envMap.rotationDeg,
+                  equalAreaOctahedral: cached.envMap.equalAreaOctahedral,
               }
             : undefined,
         animations: cached.animations.map(
@@ -266,7 +267,7 @@ export function deserializeScene(bytes: Uint8Array): CacheableScene {
         camera: SceneCameraPose;
         textures: { srgb: boolean; byteLength: number }[];
         curves: { floatCount: number; texCrdCount: number; indexCount: number; materialID: number; transform?: { __m4: number[] } }[];
-        envMap?: { byteLength: number; isExr: boolean; intensity: number; tint: [number, number, number]; rotationDeg: [number, number, number] };
+        envMap?: { byteLength: number; isExr: boolean; intensity: number; tint: [number, number, number]; rotationDeg: [number, number, number]; equalAreaOctahedral?: boolean };
         animations: TrackMeta[];
         weightTracks: TrackMeta[];
         sdfGrids: { recipes: RecipeMeta[]; instances: { gridIndex: number; materialID: number; transform?: { __m4: number[] } }[] };
@@ -362,7 +363,7 @@ export function deserializeScene(bytes: Uint8Array): CacheableScene {
     const textures = header.textures.map((meta) => ({ png: takeBytes(meta.byteLength), srgb: meta.srgb }));
     let envMap: CacheableScene["envMap"];
     if (header.envMap) {
-        envMap = { bytes: takeBytes(header.envMap.byteLength), isExr: header.envMap.isExr, intensity: header.envMap.intensity, tint: header.envMap.tint, rotationDeg: header.envMap.rotationDeg };
+        envMap = { bytes: takeBytes(header.envMap.byteLength), isExr: header.envMap.isExr, intensity: header.envMap.intensity, tint: header.envMap.tint, rotationDeg: header.envMap.rotationDeg, equalAreaOctahedral: header.envMap.equalAreaOctahedral };
     }
     const gridVolumes: CachedGridVolume[] = header.gridVolumes.map((v) => ({ ...v, grids: v.grids.map((g) => ({ slot: g.slot, bytes: takeBytes(g.byteLength) })) }));
 
@@ -462,7 +463,7 @@ export async function buildSceneFromCache(device: Device, cached: CacheableScene
     }
     scene.finalizeGridVolumes();
     if (cached.envMap) {
-        const env = EnvMap.createFromBytes(device, cached.envMap.bytes, cached.envMap.isExr);
+        const env = EnvMap.createFromBytes(device, cached.envMap.bytes, cached.envMap.isExr, { equalAreaOctahedral: cached.envMap.equalAreaOctahedral });
         env.intensity = cached.envMap.intensity;
         env.tint = cached.envMap.tint;
         env.setRotation(cached.envMap.rotationDeg);

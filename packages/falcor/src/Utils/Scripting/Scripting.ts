@@ -500,7 +500,7 @@ async function runSceneScriptInternal(device: Device, source: string, baseUrl: s
             textures,
             curves,
             envMap: env?.sourceBytes
-                ? { bytes: env.sourceBytes, isExr: env.sourceIsExr, intensity: env.intensity, tint: env.tint, rotationDeg: env.rotationDeg }
+                ? { bytes: env.sourceBytes, isExr: env.sourceIsExr, intensity: env.intensity, tint: env.tint, rotationDeg: env.rotationDeg, equalAreaOctahedral: env.sourceEqualAreaOctahedral }
                 : undefined,
             animations,
             weightTracks,

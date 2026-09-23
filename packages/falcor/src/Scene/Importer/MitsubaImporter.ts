@@ -32,7 +32,7 @@ import type { Device } from "../../Core/API/Device.js";
 import type { Scene } from "../Scene.js";
 import { MaterialType } from "../Material/MaterialData.js";
 import { float2, float3, float4, normalize3, sub3, cross, length3 } from "../../Utils/Math/Vector.js";
-import { float4x4, mulMat, matrixFromTranslation, matrixFromScaling, matrixFromRotationAxisAngle, transformPoint, transformVector } from "../../Utils/Math/Matrix.js";
+import { float4x4, mulMat, matrixFromTranslation, matrixFromScaling, matrixFromRotationAxisAngle, transformPoint, transformVector, extractEulerAngleXYZ } from "../../Utils/Math/Matrix.js";
 import { fovYToFocalLength } from "../Camera/Camera.js";
 import { RuntimeError } from "../../Core/Error.js";
 import { withScriptSearchPath } from "../../Core/AssetResolver.js";
@@ -532,17 +532,6 @@ function buildFrameTangent(n: float3): float3 {
     return new float3(1 + sign * n.x * n.x * a, sign * b, -sign * n.x);
 }
 
-/** Mirrors math::extractEulerAngleXYZ (radians), used for the env map rotation. */
-function extractEulerAngleXYZ(m: float4x4): float3 {
-    const at = (r: number, c: number) => m.get(r, c);
-    const t1 = Math.atan2(at(1, 2), at(2, 2));
-    const c2 = Math.hypot(at(0, 0), at(0, 1));
-    const t2 = Math.atan2(-at(0, 2), c2);
-    const s1 = Math.sin(t1);
-    const c1 = Math.cos(t1);
-    const t3 = Math.atan2(s1 * at(2, 0) - c1 * at(1, 0), c1 * at(1, 1) - s1 * at(2, 1));
-    return new float3(-t1, -t2, -t3);
-}
 
 // -------------------------------------------------------------------------
 // Building (mirrors MitsubaImporter.cpp)
