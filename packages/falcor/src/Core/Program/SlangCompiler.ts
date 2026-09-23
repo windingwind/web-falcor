@@ -101,6 +101,16 @@ export function lowerDynamicObjects(source: string, conformances: { typeName: st
     return out + fns.join("");
 }
 
+/**
+ * WGSL has no typed (texel) buffers: Buffer<T>/RWBuffer<T> become StructuredBuffer<T>/
+ * RWStructuredBuffer<T>, which index and Load the same way (the host binds typed buffers as
+ * storage buffers). GetDimensions differs in arity and 3-component elements get a 16-byte
+ * stride, which the shaders that need it handle in their overrides.
+ */
+export function lowerTypedBuffers(source: string): string {
+    return source.replace(/\b(RW)?Buffer\s*</g, (_m, rw: string | undefined) => `${rw ?? ""}StructuredBuffer<`);
+}
+
 /** A compile unit: shader-root path (for #line / relative imports), optional module name, and its sources. */
 export interface CompileModule {
     path: string;
@@ -178,7 +188,7 @@ export class SlangCompiler {
     private rewriteIncludes(source: string, filePath: string): string {
         const dir = filePath.split("/").slice(0, -1).join("/");
         const known = new Set(this.registeredFiles);
-        return source.replace(/^(\s*#\s*include\s+")([^"]+)(")/gm, (_m, pre: string, target: string, post: string) => {
+        return lowerTypedBuffers(source).replace(/^(\s*#\s*include\s+")([^"]+)(")/gm, (_m, pre: string, target: string, post: string) => {
             if (target.startsWith("/")) return `${pre}${target}${post}`;
             if (known.has(target)) return `${pre}/${target}${post}`;
             const relative = dir ? `${dir}/${target}` : target;
@@ -296,7 +306,7 @@ export class SlangCompiler {
                     if (text === undefined) throw new RuntimeError(`Shader source not found: ${src.file}`);
                     return `#line 1 "${src.file}"\n${this.rewriteIncludes(text, src.file)}`;
                 }
-                return `#line 1 "${src.path ?? path}"\n${src.string}`;
+                return `#line 1 "${src.path ?? path}"\n${lowerTypedBuffers(src.string)}`;
             });
             const joined = parts.join("\n");
             const rewritten = lowerDynamicObjects(joined, typeConformances);

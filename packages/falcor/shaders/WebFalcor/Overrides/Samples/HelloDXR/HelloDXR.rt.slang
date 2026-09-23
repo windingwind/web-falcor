@@ -32,14 +32,13 @@
  * group 0 is traceRay with the primaryAnyHit alpha test; the shadow ray (hit group 1,
  * whose any-hit accepts every hit) is an untested visibility ray; primaryClosestHit and
  * primaryMiss are functions, and the depth-1 reflection is a second, non-recursive trace
- * (WGSL has no recursion). gOutput is write-only with its format declared; the launch size
- * is viewportDims (no DispatchRaysDimensions in compute).
+ * (WGSL has no recursion). gOutput is write-only; the launch size is viewportDims (no
+ * DispatchRaysDimensions in compute).
  */
 import Scene.RaytracingInline;
 import Utils.Sampling.TinyUniformSampleGenerator;
 import Rendering.Lights.LightHelpers;
 
-[format("rgba16f")] // WGSL storage textures need their format (the sample's RGBA16Float).
 WTexture2D<float4> gOutput;
 
 cbuffer PerFrameCB

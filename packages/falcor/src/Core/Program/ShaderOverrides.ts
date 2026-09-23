@@ -18,7 +18,6 @@ export const kShaderOverrides: Readonly<Record<string, string>> = {
     "Rendering/Materials/MERLMixMaterial.slang": "WebFalcor/Overrides/Rendering/Materials/MERLMixMaterial.slang",
     "Rendering/Materials/MERLMixMaterialInstance.slang": "WebFalcor/Overrides/Rendering/Materials/MERLMixMaterialInstance.slang",
     "Scene/Material/RGLMaterialData.slang": "WebFalcor/Overrides/Scene/Material/RGLMaterialData.slang",
-    "Scene/Lights/BakeIesProfile.cs.slang": "WebFalcor/Overrides/Scene/Lights/BakeIesProfile.cs.slang",
     "Rendering/Materials/RGLCommon.slang": "WebFalcor/Overrides/Rendering/Materials/RGLCommon.slang",
     "Rendering/Materials/RGLMaterial.slang": "WebFalcor/Overrides/Rendering/Materials/RGLMaterial.slang",
     "Utils/Algorithm/BitonicSort.cs.slang": "WebFalcor/Overrides/Utils/Algorithm/BitonicSort.cs.slang",
@@ -57,8 +56,6 @@ export const kShaderOverrides: Readonly<Record<string, string>> = {
     "Rendering/Materials/IMaterial.slang": "WebFalcor/Overrides/Rendering/Materials/IMaterial.slang",
     // SV_PrimitiveID/SV_Barycentrics/[earlydepthstencil] absent from WGSL; static material dispatch.
     "RenderPasses/GBuffer/GBuffer/GBufferRaster.3d.slang": "WebFalcor/Overrides/RenderPasses/GBuffer/GBuffer/GBufferRaster.3d.slang",
-    // rgb10a2unorm storage unsupported in WGSL (normWRoughnessMaterialID -> rgba16f).
-    "RenderPasses/GBuffer/GBuffer/GBufferRT.slang": "WebFalcor/Overrides/RenderPasses/GBuffer/GBuffer/GBufferRT.slang",
     // RT pipeline -> compute megakernel over SceneRayQuery (docs §5).
     "RenderPasses/MinimalPathTracer/MinimalPathTracer.rt.slang": "WebFalcor/Overrides/RenderPasses/MinimalPathTracer/MinimalPathTracer.rt.slang",
     // RT pipeline + shader table -> compute kernel with explicit hit-group selection.
@@ -67,11 +64,8 @@ export const kShaderOverrides: Readonly<Record<string, string>> = {
     "RenderPasses/PathTracer/GeneratePaths.cs.slang": "WebFalcor/Overrides/RenderPasses/PathTracer/GeneratePaths.cs.slang",
     "RenderPasses/PathTracer/PathTracer.slang": "WebFalcor/Overrides/RenderPasses/PathTracer/PathTracer.slang",
     "RenderPasses/PathTracer/TracePass.rt.slang": "WebFalcor/Overrides/RenderPasses/PathTracer/TracePass.rt.slang",
-    "RenderPasses/PathTracer/ResolvePass.cs.slang": "WebFalcor/Overrides/RenderPasses/PathTracer/ResolvePass.cs.slang",
     // Newer-Slang nested brace-init fix.
     "Rendering/Materials/PBRT/PBRTConductorMaterial.slang": "WebFalcor/Overrides/Rendering/Materials/PBRT/PBRTConductorMaterial.slang",
-    // Typed buffers (Buffer<T>) don't exist in WGSL -> structured buffer.
-    "Rendering/Lights/EmissivePowerSampler.slang": "WebFalcor/Overrides/Rendering/Lights/EmissivePowerSampler.slang",
     // 64-bit traversal bitmask kept as uint2 (no 64-bit ints in WGSL).
     "Rendering/Lights/LightBVHSampler.slang": "WebFalcor/Overrides/Rendering/Lights/LightBVHSampler.slang",
     // WGSL has no 64-bit integers: SplitMix64 state emulated as uint2 (lo, hi), bit-identical sequences.
@@ -79,10 +73,7 @@ export const kShaderOverrides: Readonly<Record<string, string>> = {
     // FalcorTest kernels (transplanted GPU unit tests): no typed buffers / 64-bit ints in WGSL.
     "Tests/Utils/HashUtilsTests.cs.slang": "WebFalcor/Overrides/Tests/Utils/HashUtilsTests.cs.slang",
     "Tests/Sampling/PseudorandomTests.cs.slang": "WebFalcor/Overrides/Tests/Sampling/PseudorandomTests.cs.slang",
-    "Tests/Utils/GeometryHelpersTests.cs.slang": "WebFalcor/Overrides/Tests/Utils/GeometryHelpersTests.cs.slang",
-    "Tests/Slang/SlangMutatingTests.cs.slang": "WebFalcor/Overrides/Tests/Slang/SlangMutatingTests.cs.slang",
     "Tests/Slang/Atomics.cs.slang": "WebFalcor/Overrides/Tests/Slang/Atomics.cs.slang",
-    "Tests/Slang/SlangInheritance.cs.slang": "WebFalcor/Overrides/Tests/Slang/SlangInheritance.cs.slang",
     "Tests/Slang/SlangTests.cs.slang": "WebFalcor/Overrides/Tests/Slang/SlangTests.cs.slang",
     // Avoids a 0/0 that upstream masks with isnan() (WGSL may assume no NaNs).
     "Rendering/Materials/HairChiang16.slang": "WebFalcor/Overrides/Rendering/Materials/HairChiang16.slang",
@@ -95,19 +86,16 @@ export const kShaderOverrides: Readonly<Record<string, string>> = {
     // HelloDXR: vertex-pulled raster (no SV_PrimitiveID), RT program lowered to compute.
     "Samples/HelloDXR/HelloDXR.3d.slang": "WebFalcor/Overrides/Samples/HelloDXR/HelloDXR.3d.slang",
     "Samples/HelloDXR/HelloDXR.rt.slang": "WebFalcor/Overrides/Samples/HelloDXR/HelloDXR.rt.slang",
-    "Tests/Core/RootBufferTests.cs.slang": "WebFalcor/Overrides/Tests/Core/RootBufferTests.cs.slang",
-    "Tests/Core/RootBufferStructTests.cs.slang": "WebFalcor/Overrides/Tests/Core/RootBufferStructTests.cs.slang",
     "Tests/Core/RootBufferParamBlockTests.cs.slang": "WebFalcor/Overrides/Tests/Core/RootBufferParamBlockTests.cs.slang",
     "Tests/Core/ParamBlockDefinition.slang": "WebFalcor/Overrides/Tests/Core/ParamBlockDefinition.slang",
     // Atomic<uint> histogram; WaveMatch emulated (no WGSL builtin).
     "Utils/Debug/WarpProfiler.slang": "WebFalcor/Overrides/Utils/Debug/WarpProfiler.slang",
     "Utils/Sampling/UniformSampleGenerator.slang": "WebFalcor/Overrides/Utils/Sampling/UniformSampleGenerator.slang",
     // Typed buffers (Buffer<T>) don't exist in WGSL -> structured buffer.
+    // SampleLevel offsets folded into the coordinate (WGSL needs const-expression offsets).
     "RenderPasses/Utils/GaussianBlur/GaussianBlur.ps.slang": "WebFalcor/Overrides/RenderPasses/Utils/GaussianBlur/GaussianBlur.ps.slang",
     // Write-only gDst + gDstPrev ping-pong, uint gInPlace, border sampling emulated (no border mode in WebGPU).
     "RenderPasses/SimplePostFX/SimplePostFX.cs.slang": "WebFalcor/Overrides/RenderPasses/SimplePostFX/SimplePostFX.cs.slang",
-    // RWBuffer<float> texel buffer -> RWStructuredBuffer<float>.
-    "RenderPasses/FLIPPass/ComputeLuminance.cs.slang": "WebFalcor/Overrides/RenderPasses/FLIPPass/ComputeLuminance.cs.slang",
     // Aggregate init of a struct with an explicit __init is rejected by Slang 2026.12.2 -> member-wise.
     "Rendering/Materials/PBRT/PBRTCoatedConductorMaterialInstance.slang":
         "WebFalcor/Overrides/Rendering/Materials/PBRT/PBRTCoatedConductorMaterialInstance.slang",
