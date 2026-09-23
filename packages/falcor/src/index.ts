@@ -49,6 +49,7 @@ export * from "./Utils/Timing/TimeReport.js";
 export * from "./Utils/Timing/FrameRate.js";
 export * from "./Utils/Video/VideoRecorder.js";
 export * from "./Utils/Debug/PixelDebug.js";
+export * from "./Utils/Debug/WarpProfiler.js";
 export * from "./Utils/UI/Font.js";
 export * from "./Utils/UI/TextRenderer.js";
 export * from "./Utils/Algorithm/BitonicSort.js";

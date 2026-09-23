@@ -87,6 +87,8 @@ export const kShaderOverrides: Readonly<Record<string, string>> = {
     "Tests/Slang/SlangInheritance.cs.slang": "WebFalcor/Overrides/Tests/Slang/SlangInheritance.cs.slang",
     "Tests/Slang/SlangTests.cs.slang": "WebFalcor/Overrides/Tests/Slang/SlangTests.cs.slang",
     "Tests/Slang/WaveOps.cs.slang": "WebFalcor/Overrides/Tests/Slang/WaveOps.cs.slang",
+    // Atomic<uint> histogram; WaveMatch emulated (no WGSL builtin).
+    "Utils/Debug/WarpProfiler.slang": "WebFalcor/Overrides/Utils/Debug/WarpProfiler.slang",
     "Utils/Sampling/UniformSampleGenerator.slang": "WebFalcor/Overrides/Utils/Sampling/UniformSampleGenerator.slang",
     // Write-only storage textures (WGSL r32*-only read_write rule).
     "RenderPasses/Utils/Composite/Composite.cs.slang": "WebFalcor/Overrides/RenderPasses/Utils/Composite/Composite.cs.slang",
