@@ -86,6 +86,7 @@ export const kShaderOverrides: Readonly<Record<string, string>> = {
     "Tests/Slang/Atomics.cs.slang": "WebFalcor/Overrides/Tests/Slang/Atomics.cs.slang",
     "Tests/Slang/SlangInheritance.cs.slang": "WebFalcor/Overrides/Tests/Slang/SlangInheritance.cs.slang",
     "Tests/Slang/SlangTests.cs.slang": "WebFalcor/Overrides/Tests/Slang/SlangTests.cs.slang",
+    "Tests/Slang/WaveOps.cs.slang": "WebFalcor/Overrides/Tests/Slang/WaveOps.cs.slang",
     "Utils/Sampling/UniformSampleGenerator.slang": "WebFalcor/Overrides/Utils/Sampling/UniformSampleGenerator.slang",
     // Write-only storage textures (WGSL r32*-only read_write rule).
     "RenderPasses/Utils/Composite/Composite.cs.slang": "WebFalcor/Overrides/RenderPasses/Utils/Composite/Composite.cs.slang",

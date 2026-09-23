@@ -1,5 +1,5 @@
 /**
- * WGSL post-pass for Slang's WGSL backend: `bool` is not host-shareable, yet
+ * WGSL post-passes for Slang's WGSL backend. Bools: `bool` is not host-shareable, yet
  * Slang emits bool members in the std140/std430 layout structs it generates for
  * cbuffers and structured buffers (WGSL rejects the module). HLSL stores a bool
  * as a 32-bit value, so those members become u32 and each access converts:
@@ -101,4 +101,16 @@ export function lowerHostShareableBools(wgsl: string): string {
         }
     }
     return out;
+}
+
+/**
+ * HLSL wave intrinsics operate on the active lanes, including inside divergent
+ * branches; WGSL's uniformity analysis rejects subgroup builtins there unless
+ * the subgroup_uniformity diagnostic is turned off, which restores HLSL semantics.
+ */
+export function relaxSubgroupUniformity(wgsl: string): string {
+    if (!/\bsubgroup[A-Z]\w*\s*\(/.test(wgsl) || /diagnostic\s*\(\s*off\s*,\s*subgroup_uniformity/.test(wgsl)) return wgsl;
+    // Directives must precede declarations: insert after any leading `enable ...;` lines.
+    const m = /^(\s*(?:enable[^;]*;\s*)*)/.exec(wgsl)!;
+    return `${m[1]}diagnostic(off, subgroup_uniformity);\n${wgsl.slice(m[1]!.length)}`;
 }

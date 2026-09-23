@@ -47,3 +47,12 @@ describe("lowerHostShareableBools", () => {
         expect(lowerHostShareableBools(plain)).toBe(plain);
     });
 });
+
+describe("relaxSubgroupUniformity", () => {
+    it("adds the diagnostic after enable directives when subgroup builtins are used", async () => {
+        const { relaxSubgroupUniformity } = await import("../src/Core/Program/WgslBoolLowering.js");
+        const src = "enable subgroups;\nfn f(v : f32) -> f32 { return subgroupMax(v); }";
+        expect(relaxSubgroupUniformity(src)).toBe("enable subgroups;\ndiagnostic(off, subgroup_uniformity);\nfn f(v : f32) -> f32 { return subgroupMax(v); }");
+        expect(relaxSubgroupUniformity("fn f() {}")).toBe("fn f() {}");
+    });
+});

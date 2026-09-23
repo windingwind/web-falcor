@@ -429,6 +429,7 @@
     "WebFalcor/Overrides/Tests/Slang/SlangInheritance.cs.slang",
     "WebFalcor/Overrides/Tests/Slang/SlangMutatingTests.cs.slang",
     "WebFalcor/Overrides/Tests/Slang/SlangTests.cs.slang",
+    "WebFalcor/Overrides/Tests/Slang/WaveOps.cs.slang",
     "WebFalcor/Overrides/Tests/Utils/GeometryHelpersTests.cs.slang",
     "WebFalcor/Overrides/Tests/Utils/HashUtilsTests.cs.slang",
     "WebFalcor/Overrides/Utils/Algorithm/BitonicSort.cs.slang",

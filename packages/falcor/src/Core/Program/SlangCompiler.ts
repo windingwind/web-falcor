@@ -12,7 +12,7 @@
 
 import { DefineList } from "./DefineList.js";
 import { RuntimeError } from "../Error.js";
-import { lowerHostShareableBools } from "./WgslBoolLowering.js";
+import { lowerHostShareableBools, relaxSubgroupUniformity } from "./WgslBoolLowering.js";
 
 /** Slang stage ids (slang.h SlangStage). */
 export enum ShaderType {
@@ -272,7 +272,7 @@ export class SlangCompiler {
         const composite = session.createCompositeComponentType([...modules, ...eps]);
         const linked = composite.link();
         // Bools in cbuffer/structured-buffer layouts aren't host-shareable in WGSL; lower them to u32.
-        const entryPointCode = entryPoints.map((_ep, i) => lowerHostShareableBools(linked.getEntryPointCode(i, 0)));
+        const entryPointCode = entryPoints.map((_ep, i) => relaxSubgroupUniformity(lowerHostShareableBools(linked.getEntryPointCode(i, 0))));
         // slang-wasm can abort WGSL emission silently (e.g. fp64 internal
         // errors return an empty string with no diagnostics) — fail loudly.
         for (const code of entryPointCode) {
