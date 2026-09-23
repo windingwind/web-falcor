@@ -76,6 +76,7 @@ export * from "./Utils/Math/Quaternion.js";
 export * from "./Utils/SampleGenerators/CPUSampleGenerator.js";
 export * from "./RenderGraph/RenderPassHelpers.js";
 export * from "./Utils/Sampling/SampleGenerator.js";
+export * from "./Utils/Sampling/AliasTable.js";
 export * from "./Utils/Logger.js";
 export * from "./Scene/Scene.js";
 export * from "./Scene/Volume/Grid.js";

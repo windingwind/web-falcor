@@ -5,23 +5,10 @@
  * Utils/PackedFormatsTests, Sampling/LowDiscrepancyTests, Sampling/PseudorandomTests.
  */
 
-import { Mt19937, ResourceBindFlags, ResourceFormat, MemoryType, canonicalFloat } from "@web-falcor/falcor";
+import { Mt19937, ResourceBindFlags, MemoryType, canonicalFloat } from "@web-falcor/falcor";
 import { gpuTest, expectEq } from "../../harness/registry.js";
 import { GPUUnitTestContext, getElements } from "../../harness/unit-test-context.js";
-
-/** Collects EXPECT_* failures like gtest and reports the first few. */
-class Expect {
-    failures: string[] = [];
-    count = 0;
-    check(ok: boolean, msg: () => string): void {
-        this.count++;
-        if (!ok && this.failures.length < 5) this.failures.push(msg());
-        else if (!ok) this.failures.push("");
-    }
-    done(what: string): void {
-        expectEq(this.failures.length, 0, `${what}: ${this.failures.length} of ${this.count} checks failed; first: ${this.failures.slice(0, 5).join("; ")}`);
-    }
-}
+import { Expect } from "../../harness/expect.js";
 
 // Utils/HashUtilsTests.cpp
 
