@@ -385,6 +385,7 @@
     "WebFalcor/Overrides/RenderPasses/SceneDebugger/SceneDebugger.cs.slang",
     "WebFalcor/Overrides/RenderPasses/SimplePostFX/SimplePostFX.cs.slang",
     "WebFalcor/Overrides/RenderPasses/TAA/TAA.ps.slang",
+    "WebFalcor/Overrides/RenderPasses/TestPasses/TestRtProgram.rt.slang",
     "WebFalcor/Overrides/RenderPasses/Utils/Composite/Composite.cs.slang",
     "WebFalcor/Overrides/RenderPasses/Utils/CrossFade/CrossFade.cs.slang",
     "WebFalcor/Overrides/RenderPasses/Utils/GaussianBlur/GaussianBlur.ps.slang",

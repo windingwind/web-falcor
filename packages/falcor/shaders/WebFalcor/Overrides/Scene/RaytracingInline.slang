@@ -57,8 +57,39 @@ bool intersectAabb(const float3 origin, const float3 invDir, const float tMin, c
     return tEnter <= tExit;
 }
 
+/** Candidate triangle filter; the software stand-in for an any-hit shader (false = IgnoreHit). */
+interface ITriangleHitFilter
+{
+    bool accept(const uint instance, const uint primitive, const float2 barycentrics, const float t);
+};
+
+/** Material alpha test through the material system (mirrors upstream candidate handling). */
+struct AlphaTestHitFilter : ITriangleHitFilter
+{
+    bool enabled;
+    bool accept(const uint instance, const uint primitive, const float2 barycentrics, const float t)
+    {
+        if (!enabled) return true;
+        TriangleHit candidate;
+        candidate.instanceID.index = instance;
+        candidate.primitiveIndex = primitive;
+        candidate.barycentrics = barycentrics;
+        const VertexData v = gScene.getVertexData(candidate);
+        const uint materialID = gScene.getMaterialID(candidate.instanceID);
+        return !gScene.materials.alphaTest(v, materialID, 0.f);
+    }
+};
+
 /** Software BVH traversal; returns closest triangle hit (or none). */
 bool traverseBvh(const Ray ray, const bool anyHit, const bool useAlphaTest,
+                 out uint hitInstance, out uint hitPrimitive, out float2 hitBarycentrics, out float hitT)
+{
+    AlphaTestHitFilter filter = { useAlphaTest };
+    return traverseBvhFiltered(ray, anyHit, filter, hitInstance, hitPrimitive, hitBarycentrics, hitT);
+}
+
+/** Software BVH traversal with a caller-supplied candidate filter. */
+bool traverseBvhFiltered<F : ITriangleHitFilter>(const Ray ray, const bool anyHit, F filter,
                  out uint hitInstance, out uint hitPrimitive, out float2 hitBarycentrics, out float hitT)
 {
     hitInstance = 0;
@@ -96,19 +127,7 @@ bool traverseBvh(const Ray ray, const bool anyHit, const bool useAlphaTest,
                     float2 uv;
                     if (intersectTriangle(ray.origin, ray.dir, ray.tMin, hitT, t0.xyz, t1.xyz, t2.xyz, t, uv))
                     {
-                        bool accept = true;
-                        if (useAlphaTest)
-                        {
-                            // Alpha test through the material system (mirrors upstream candidate handling).
-                            TriangleHit candidate;
-                            candidate.instanceID.index = asuint(t0.w);
-                            candidate.primitiveIndex = asuint(t1.w);
-                            candidate.barycentrics = uv;
-                            const VertexData v = gScene.getVertexData(candidate);
-                            const uint materialID = gScene.getMaterialID(candidate.instanceID);
-                            if (gScene.materials.alphaTest(v, materialID, 0.f)) accept = false;
-                        }
-                        if (accept)
+                        if (filter.accept(asuint(t0.w), asuint(t1.w), uv, t))
                         {
                             hitT = t;
                             hitInstance = asuint(t0.w);

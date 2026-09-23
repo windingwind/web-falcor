@@ -164,6 +164,8 @@ export class Scene {
         return this.materialCount;
     }
     private instanceCount = 0;
+    /** Native mesh ID per triangle instance (instances of one builder mesh share it). */
+    private meshIDs = new Uint32Array(0);
     /** Mesh vertices/triangles uploaded (Scene::getSceneStats meshVertexCount / meshTriangleCount). */
     private vertexTotal = 0;
     private triangleTotal = 0;
@@ -292,6 +294,13 @@ export class Scene {
                 // IsDynamic routes getPrevPosW to the prevVertices buffer.
                 flags: mesh.skin || mesh.morph ? 0x2 : 0,
             });
+        });
+        // The web scene flattens instances; native meshes are recovered from shared vertex data.
+        const meshIDOf = new Map<StaticVertex[], number>();
+        this.meshIDs = Uint32Array.from(meshes, (m) => {
+            let id = meshIDOf.get(m.vertices);
+            if (id === undefined) meshIDOf.set(m.vertices, (id = meshIDOf.size));
+            return id;
         });
         this.vertexTotal = allVertices.length;
         this.triangleTotal = allIndices.length / 3;
@@ -1702,6 +1711,14 @@ export class Scene {
 
     getGeometryInstanceCount(): number {
         return this.instanceCount;
+    }
+
+    /**
+     * Native mesh ID (GeometryInstanceData::geometryID) for each triangle instance.
+     * Instances of one mesh share it, unlike the web's one-mesh-per-instance layout.
+     */
+    getMeshIDs(): Uint32Array {
+        return this.meshIDs;
     }
 
     /** Raster draw data (mirrors Scene::rasterize): buffers + per-mesh indexed draws. */

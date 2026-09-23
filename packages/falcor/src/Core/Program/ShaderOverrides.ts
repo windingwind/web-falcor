@@ -63,6 +63,8 @@ export const kShaderOverrides: Readonly<Record<string, string>> = {
     "RenderPasses/GBuffer/GBuffer/GBufferRT.slang": "WebFalcor/Overrides/RenderPasses/GBuffer/GBuffer/GBufferRT.slang",
     // RT pipeline -> compute megakernel over SceneRayQuery (docs §5).
     "RenderPasses/MinimalPathTracer/MinimalPathTracer.rt.slang": "WebFalcor/Overrides/RenderPasses/MinimalPathTracer/MinimalPathTracer.rt.slang",
+    // RT pipeline + shader table -> compute kernel with explicit hit-group selection.
+    "RenderPasses/TestPasses/TestRtProgram.rt.slang": "WebFalcor/Overrides/RenderPasses/TestPasses/TestRtProgram.rt.slang",
     // Full PathTracer: '= {}' fixes + RT pipeline -> compute megakernel over SceneRayQuery.
     "RenderPasses/PathTracer/GeneratePaths.cs.slang": "WebFalcor/Overrides/RenderPasses/PathTracer/GeneratePaths.cs.slang",
     "RenderPasses/PathTracer/PathTracer.slang": "WebFalcor/Overrides/RenderPasses/PathTracer/PathTracer.slang",

@@ -1261,7 +1261,17 @@ export class SceneBuilderBridge {
         // Flags::DontUseDisplacement: drop displacement maps (meshes stay plain triangles).
         if (this.hasFlag(SceneBuilderFlags.DontUseDisplacement)) for (const m of materials) delete m.basic.texDisplacement;
         // Flags::NonIndexedVertices: every triangle gets its own vertices.
-        if (this.hasFlag(SceneBuilderFlags.NonIndexedVertices)) meshes.forEach((m, i) => (meshes[i] = deindexMesh(m)));
+        if (this.hasFlag(SceneBuilderFlags.NonIndexedVertices)) {
+            // Instances of one mesh keep sharing vertex data (Scene.getMeshIDs relies on it).
+            const expanded = new Map<StaticVertex[], StaticVertex[]>();
+            meshes.forEach((m, i) => {
+                const d = deindexMesh(m);
+                const shared = expanded.get(m.vertices);
+                if (shared && !m.skin && !m.morph) d.vertices = shared;
+                else expanded.set(m.vertices, d.vertices);
+                meshes[i] = d;
+            });
+        }
 
         // Only bind the camera to an imported node when the pyscene doesn't define
         // its own camera (an explicit pyscene camera wins and stays static).
