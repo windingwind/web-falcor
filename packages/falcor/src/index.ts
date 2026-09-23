@@ -67,6 +67,7 @@ export * from "./Utils/Image/EXRDecoder.js";
 export * from "./Utils/Image/EXREncoder.js";
 export * from "./Utils/Image/PNGCodec.js";
 export * from "./Utils/Image/Bitmap.js";
+export * from "./Utils/Image/ImageProcessing.js";
 export * from "./Utils/Scripting/Scripting.js";
 export * from "./Scene/Camera/Camera.js";
 export * from "./Scene/Camera/CameraController.js";
