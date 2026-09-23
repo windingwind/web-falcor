@@ -24,7 +24,8 @@ export enum FillMode {
 export class RasterizerStateDesc {
     cullMode = CullMode.Back;
     fillMode = FillMode.Solid;
-    frontCounterClockwise = false;
+    /** Native default (mIsFrontCcw = true): counter-clockwise triangles in NDC are front-facing, as WebGPU's "ccw". */
+    frontCounterClockwise = true;
     depthBias = 0;
     slopeScaledDepthBias = 0;
     depthClampEnabled = false;

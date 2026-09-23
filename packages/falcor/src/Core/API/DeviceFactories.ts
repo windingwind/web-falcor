@@ -40,6 +40,8 @@ declare module "./Device.js" {
             initData?: ArrayBufferView,
             bindFlags?: ResourceBindFlags,
         ): Texture;
+        /** Mirrors Device::createTexture2DMS. §9: WebGPU multisamples at 1 or 4 samples only. */
+        createTexture2DMS(width: number, height: number, format: ResourceFormat, sampleCount: number, arraySize?: number, bindFlags?: ResourceBindFlags): Texture;
         createTexture3D(width: number, height: number, depth: number, format: ResourceFormat, mipLevels?: number, bindFlags?: ResourceBindFlags): Texture;
         createTextureCube(width: number, height: number, format: ResourceFormat, arraySize?: number, mipLevels?: number, bindFlags?: ResourceBindFlags): Texture;
         /** Mirrors Device::createSampler. */
@@ -82,6 +84,10 @@ Device.prototype.createTexture2D = function (width, height, format, arraySize = 
     const texture = new Texture(this, { type: ResourceType.Texture2D, width, height, format, arraySize, mipLevels, bindFlags });
     if (initData) texture.setSubresourceBlob(0, 0, initData);
     return texture;
+};
+
+Device.prototype.createTexture2DMS = function (width, height, format, sampleCount, arraySize = 1, bindFlags = ResourceBindFlags.ShaderResource) {
+    return new Texture(this, { type: ResourceType.Texture2DMultisample, width, height, format, sampleCount, arraySize, mipLevels: 1, bindFlags });
 };
 
 Device.prototype.createTexture3D = function (width, height, depth, format, mipLevels = kMaxPossible, bindFlags = ResourceBindFlags.ShaderResource) {

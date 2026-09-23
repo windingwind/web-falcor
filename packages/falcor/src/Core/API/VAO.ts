@@ -4,7 +4,7 @@
  */
 
 import type { Buffer } from "./Buffer.js";
-import { ResourceFormat, toGpuTextureFormat } from "./Formats.js";
+import { ResourceFormat, getFormatBytesPerBlock, toGpuTextureFormat } from "./Formats.js";
 import { ArgumentError } from "../Error.js";
 
 export enum Topology {
@@ -74,8 +74,10 @@ export class VertexBufferLayout {
     inputClass = InputClass.PerVertexData;
     instanceStepRate = 0;
 
+    /** As natively, the stride grows by the element's size (callers may still set `stride`). */
     addElement(name: string, offset: number, format: ResourceFormat, arraySize = 1, shaderLocation?: number): this {
         this.elements.push({ name, offset, format, arraySize, shaderLocation: shaderLocation ?? this.elements.length });
+        this.stride += getFormatBytesPerBlock(format) * arraySize;
         return this;
     }
     setInputClass(inputClass: InputClass, stepRate = 0): this {

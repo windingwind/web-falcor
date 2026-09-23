@@ -54,6 +54,7 @@ export class GraphicsState {
             this.fbo.getGpuDepthFormat() ?? "-",
             this.fbo.sampleCount,
             this.vao?.topology ?? Topology.TriangleList,
+            JSON.stringify(this.vao?.vertexLayout?.getGpuLayouts() ?? null),
             JSON.stringify(this.blendState.desc),
             JSON.stringify(this.rasterizerState.desc),
             JSON.stringify(this.depthStencilState.desc),

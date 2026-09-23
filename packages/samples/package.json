@@ -1,0 +1,14 @@
+{
+  "name": "@web-falcor/samples",
+  "version": "0.1.0",
+  "description": "Falcor's sample applications on the web SampleApp (mirrors Falcor/Source/Samples)",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@web-falcor/falcor": "*",
+    "@web-falcor/render-passes": "*"
+  }
+}

@@ -37,13 +37,13 @@ struct VSOut { @builtin(position) pos: vec4f, @location(0) color: vec3f };
 `;
 
 function makeTriangleVao(device: Parameters<Parameters<typeof gpuTest>[1]>[0]["device"]): Vao {
-    // Oversized viewport-covering triangle, clockwise winding (Falcor's default
-    // rasterizer state culls back faces with CW = front, D3D convention).
+    // Oversized viewport-covering triangle, counter-clockwise in NDC (Falcor's default
+    // rasterizer state culls back faces with CCW = front, RasterizerState::Desc::mIsFrontCcw).
     // Interleaved pos.xy + color.rgb.
     const verts = new Float32Array([
         -3, -3, 1, 0, 0,
-        0, 3, 1, 0, 0,
         3, -3, 1, 0, 0,
+        0, 3, 1, 0, 0,
     ]);
     const vb = device.createBuffer(verts.byteLength, ResourceBindFlags.Vertex, MemoryType.DeviceLocal, verts);
     const layout = new VertexLayout();

@@ -89,6 +89,11 @@ export class RasterPass {
         this.build();
     }
 
+    /** Mirrors RasterPass::getState. */
+    getState(): GraphicsState {
+        return this.state;
+    }
+
     getRootVar(): ShaderVar {
         this.refresh();
         return this.root;

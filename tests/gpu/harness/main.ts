@@ -14,6 +14,7 @@ async function initProgramSystem(device: Device): Promise<void> {
         renderPassFiles: string[];
         localFiles: string[];
         testFiles?: string[];
+        sampleFiles?: string[];
         externalFiles?: { path: string; url: string }[];
     };
     const sources = new Map<string, string>();
@@ -32,6 +33,7 @@ async function initProgramSystem(device: Device): Promise<void> {
         fetchInto("/Falcor/Source", list.renderPassFiles),
         fetchInto("/packages/falcor/shaders", list.localFiles),
         fetchInto("/Falcor/Source/Tools/FalcorTest", list.testFiles ?? []),
+        fetchInto("/Falcor/Source", list.sampleFiles ?? []),
         ...(list.externalFiles ?? []).map(async ({ path, url }) => {
             const res = await fetch(url);
             if (res.ok) sources.set(path, await res.text());

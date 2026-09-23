@@ -18,6 +18,15 @@ interface Attachment {
     arraySize: number;
 }
 
+/** Mirrors FboAttachmentType (which attachments clearFbo touches). */
+export enum FboAttachmentType {
+    None = 0,
+    Color = 1,
+    Depth = 2,
+    Stencil = 4,
+    All = 7,
+}
+
 const kEmpty: Attachment = { texture: null, mipLevel: 0, firstArraySlice: 0, arraySize: 1 };
 
 export class Fbo {
@@ -36,6 +45,18 @@ export class Fbo {
         if (texture && !isDepthFormat(texture.format)) throw new ArgumentError("Depth attachment must have a depth format");
         this.depthAttachment = { texture, mipLevel, firstArraySlice, arraySize };
         return this;
+    }
+
+    /** The render-target view of color attachment `index` (mip/slice as attached). */
+    getRenderTargetView(index: number): GPUTextureView | null {
+        const a = this.colorAttachments[index];
+        return a?.texture ? a.texture.getRTV(a.mipLevel, a.firstArraySlice, a.arraySize) : null;
+    }
+
+    /** The depth-stencil view as attached. */
+    getDepthStencilView(): GPUTextureView | null {
+        const a = this.depthAttachment;
+        return a.texture ? a.texture.getDSV(a.mipLevel, a.firstArraySlice, a.arraySize) : null;
     }
 
     getColorTexture(index: number): Texture | null {

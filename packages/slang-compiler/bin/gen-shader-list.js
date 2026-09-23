@@ -15,6 +15,8 @@ const falcorRoot = join(repoRoot, "Falcor/Source/Falcor");
 const renderPassesRoot = join(repoRoot, "Falcor/Source/RenderPasses");
 // FalcorTest kernels ("Tests/..."), for the transplanted GPU unit tests.
 const falcorTestRoot = join(repoRoot, "Falcor/Source/Tools/FalcorTest");
+// Sample apps' shaders deploy as Samples/<Name>/*.
+const samplesRoot = join(repoRoot, "Falcor/Source/Samples");
 const localRoot = join(repoRoot, "packages/falcor/shaders");
 
 function walk(dir, filter) {
@@ -52,8 +54,9 @@ const falcorFiles = list(falcorRoot, "");
 const renderPassFiles = list(renderPassesRoot, "RenderPasses/");
 const localFiles = list(localRoot, "");
 const testFiles = list(join(falcorTestRoot, "Tests"), "Tests/");
+const sampleFiles = list(samplesRoot, "Samples/");
 
 const outDir = join(localRoot, "generated");
 mkdirSync(outDir, { recursive: true });
-writeFileSync(join(outDir, "shader-file-list.json"), JSON.stringify({ falcorFiles, renderPassFiles, localFiles, testFiles, externalFiles }, null, 2) + "\n");
-console.log(`shader-file-list.json: ${falcorFiles.length} Falcor + ${renderPassFiles.length} render-pass + ${localFiles.length} local + ${testFiles.length} test + ${externalFiles.length} external shader files`);
+writeFileSync(join(outDir, "shader-file-list.json"), JSON.stringify({ falcorFiles, renderPassFiles, localFiles, testFiles, sampleFiles, externalFiles }, null, 2) + "\n");
+console.log(`shader-file-list.json: ${falcorFiles.length} Falcor + ${renderPassFiles.length} render-pass + ${localFiles.length} local + ${testFiles.length} test + ${sampleFiles.length} sample + ${externalFiles.length} external shader files`);

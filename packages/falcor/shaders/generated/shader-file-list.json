@@ -407,6 +407,7 @@
     "WebFalcor/Overrides/Rendering/RTXDI/RTXDIApplicationBridge.slangh",
     "WebFalcor/Overrides/Rendering/RTXDI/SurfaceData.slang",
     "WebFalcor/Overrides/Rendering/Utils/PixelStats.slang",
+    "WebFalcor/Overrides/Samples/MultiSampling/MultiSampling.3d.slang",
     "WebFalcor/Overrides/Scene/Displacement/DisplacementMapping.slang",
     "WebFalcor/Overrides/Scene/HitInfo.slang",
     "WebFalcor/Overrides/Scene/Lights/BakeIesProfile.cs.slang",
@@ -525,6 +526,14 @@
     "Tests/Utils/MathHelpersTests.cs.slang",
     "Tests/Utils/PackedFormatsTests.cs.slang",
     "Tests/Utils/SplitBufferTests.cs.slang"
+  ],
+  "sampleFiles": [
+    "Samples/HelloDXR/HelloDXR.3d.slang",
+    "Samples/HelloDXR/HelloDXR.rt.slang",
+    "Samples/MultiSampling/MultiSampling.3d.slang",
+    "Samples/ShaderToy/Toy.ps.slang",
+    "Samples/Visualization2D/Visualization2d.ps.slang",
+    "Samples/Visualization2D/VoxelNormals.ps.slang"
   ],
   "externalFiles": [
     {

@@ -8,7 +8,7 @@
 
 import { ComputeContext } from "./ComputeContext.js";
 import type { Texture } from "./Texture.js";
-import type { Fbo } from "./FBO.js";
+import { FboAttachmentType, type Fbo } from "./FBO.js";
 import type { Vao } from "./VAO.js";
 import type { GraphicsStateObject } from "./GraphicsStateObject.js";
 import { FormatType, ResourceFormat, getFormatType, isDepthFormat } from "./Formats.js";
@@ -25,11 +25,19 @@ const kStandardReductions = [TextureReductionMode.Standard, TextureReductionMode
  * (what a reduction sampler returns). Integer sources can't be filtered in WebGPU:
  * they load texels, and the linear filter averages the 2x2 footprint exactly (floor).
  */
-function blitWgsl(src: BlitKind, dst: BlitKind, reductions: readonly TextureReductionMode[], linear: boolean): string {
+function blitWgsl(src: BlitKind, dst: BlitKind, reductions: readonly TextureReductionMode[], linear: boolean, sampleCount = 1): string {
     const vec = (k: BlitKind) => `vec4<${k}>`;
     const complex = reductions.some((r) => r !== TextureReductionMode.Standard);
     let body: string;
-    if (src === "f32" && !complex) {
+    if (sampleCount > 1) {
+        // Native's SAMPLE_COUNT > 1 path: the average of the texel's samples, point-sampled.
+        body = `
+    let dims = textureDimensions(gSrc);
+    let crd = vec2<u32>(vec2<f32>(dims) * in.uv);
+    var res = vec4<f32>(0.0);
+    for (var i = 0u; i < ${sampleCount}u; i++) { res += textureLoad(gSrc, crd, i); }
+    res /= ${sampleCount}.0;`;
+    } else if (src === "f32" && !complex) {
         body = `let res = textureSampleLevel(gSrc, gSampler, in.uv, 0.0);`;
     } else {
         body = `
@@ -59,8 +67,8 @@ function blitWgsl(src: BlitKind, dst: BlitKind, reductions: readonly TextureRedu
     }
     const convert = src === dst ? "res" : `${vec(dst)}(res)`;
     return /* wgsl */ `
-@group(0) @binding(0) var gSrc: texture_2d<${src}>;
-${src === "f32" ? "@group(0) @binding(1) var gSampler: sampler;" : ""}
+@group(0) @binding(0) var gSrc: ${sampleCount > 1 ? "texture_multisampled_2d" : "texture_2d"}<${src}>;
+${src === "f32" && sampleCount === 1 ? "@group(0) @binding(1) var gSampler: sampler;" : ""}
 
 struct VSOut {
     @builtin(position) pos: vec4f,
@@ -124,6 +132,21 @@ export class RenderContext extends ComputeContext {
         pass.end();
     }
 
+    /** Mirrors RenderContext::clearFbo: every color target, then depth/stencil, as `flags` selects. */
+    clearFbo(fbo: Fbo, color: [number, number, number, number], depth: number, stencil: number, flags = FboAttachmentType.All): void {
+        if (flags & FboAttachmentType.Color) {
+            for (let i = 0; i < fbo.getColorAttachmentCount(); i++) {
+                const view = fbo.getRenderTargetView(i);
+                if (view) this.clearRtv(view, color);
+            }
+        }
+        const dsv = fbo.getDepthStencilView();
+        if (dsv && flags & (FboAttachmentType.Depth | FboAttachmentType.Stencil)) {
+            const clearStencil = (flags & FboAttachmentType.Stencil) !== 0 && fbo.getDepthStencilTexture()!.gpuFormat.includes("stencil");
+            this.clearDsv(dsv, depth, stencil, (flags & FboAttachmentType.Depth) !== 0, clearStencil);
+        }
+    }
+
     /** Mirrors RenderContext::clearTexture (color textures). */
     clearTexture(texture: Texture, color: [number, number, number, number] = [0, 0, 0, 0]): void {
         if (isDepthFormat(texture.format)) {
@@ -152,6 +175,8 @@ export class RenderContext extends ComputeContext {
         const complex = reductions.some((r) => r !== TextureReductionMode.Standard);
         const srcKind = blitKind(src.format);
         if (complex && srcKind !== "f32") throw new RuntimeError("RenderContext::blit() requires non-integer source format for complex blit");
+        if (src.sampleCount > 1 && complex) throw new RuntimeError("RenderContext::blit() does not support complex blit for multisampled textures");
+        if (src.sampleCount > 1 && srcKind !== "f32") throw new RuntimeError("RenderContext::blit() does not support sample count > 1 for integer source formats");
         if (
             !complex && src !== dst && src.format === dst.format && src.width === dst.width && src.height === dst.height &&
             src.mipCount === 1 && dst.mipCount === 1 && src.arraySize === 1 && dst.arraySize === 1 && src.sampleCount === dst.sampleCount
@@ -160,10 +185,10 @@ export class RenderContext extends ComputeContext {
             return;
         }
         const dstKind = blitKind(dst.format);
-        const key = `${dst.gpuFormat}|${srcKind}|${reductions.join(",")}|${filter}`;
+        const key = `${dst.gpuFormat}|${srcKind}|${reductions.join(",")}|${filter}|${src.sampleCount}`;
         let pipeline = this.blitPipelines.get(key);
         if (!pipeline) {
-            const module = this.device.gpuDevice.createShaderModule({ code: blitWgsl(srcKind, dstKind, reductions, filter === "linear") });
+            const module = this.device.gpuDevice.createShaderModule({ code: blitWgsl(srcKind, dstKind, reductions, filter === "linear", src.sampleCount) });
             pipeline = this.device.gpuDevice.createRenderPipeline({
                 layout: "auto",
                 vertex: { module, entryPoint: "vsMain" },
@@ -173,7 +198,7 @@ export class RenderContext extends ComputeContext {
             this.blitPipelines.set(key, pipeline);
         }
         const entries: GPUBindGroupEntry[] = [{ binding: 0, resource: src.getSRV(srcMip, 1, srcLayer, 1) }];
-        if (srcKind === "f32") {
+        if (srcKind === "f32" && src.sampleCount === 1) {
             let sampler = this.blitSamplers.get(filter);
             if (!sampler) {
                 sampler = this.device.gpuDevice.createSampler({ magFilter: filter, minFilter: filter });
