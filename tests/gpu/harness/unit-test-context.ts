@@ -9,7 +9,7 @@
  * from the WGSL layout Slang emits (float3 elements are 16 bytes, not 12).
  */
 
-import { Buffer, ComputePass, DefineList, ResourceBindFlags, type Device, type ShaderModuleDesc, type ShaderVar } from "@web-falcor/falcor";
+import { Buffer, ComputePass, DefineList, ResourceBindFlags, type Device, type ShaderModuleDesc, type ShaderVar, type TypeConformance } from "@web-falcor/falcor";
 
 type TypedArray = Float32Array | Uint32Array | Int32Array | Uint16Array | Uint8Array | Float64Array;
 type TypedArrayCtor<T extends TypedArray> = { new (buffer: ArrayBuffer): T };
@@ -77,14 +77,14 @@ export class GPUUnitTestContext {
     }
 
     /** Mirrors createProgram(path, csEntry, defines). */
-    createProgram(path: string, csEntry = "main", defines: DefineList | Record<string, string | number | boolean> = {}): void {
-        this.pass = ComputePass.create(this.device, { path, csEntry, defines });
+    createProgram(path: string, csEntry = "main", defines: DefineList | Record<string, string | number | boolean> = {}, typeConformances: TypeConformance[] = []): void {
+        this.pass = ComputePass.create(this.device, { path, csEntry, defines, typeConformances });
         this.buffers.clear();
     }
 
     /** Mirrors createProgram(const ProgramDesc&, defines): shader modules from files and strings. */
-    createProgramFromModules(modules: ShaderModuleDesc[], csEntry = "main", defines: DefineList | Record<string, string | number | boolean> = {}): void {
-        this.pass = ComputePass.create(this.device, { modules, csEntry, defines });
+    createProgramFromModules(modules: ShaderModuleDesc[], csEntry = "main", defines: DefineList | Record<string, string | number | boolean> = {}, typeConformances: TypeConformance[] = []): void {
+        this.pass = ComputePass.create(this.device, { modules, csEntry, defines, typeConformances });
         this.buffers.clear();
     }
 

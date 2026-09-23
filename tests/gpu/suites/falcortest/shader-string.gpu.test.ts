@@ -1,8 +1,7 @@
 /**
  * Transplanted FalcorTest GPU tests: Slang/ShaderString — shader modules built
  * from files and code strings (ProgramDesc::addShaderModule().addString()).
- * ShaderStringImportDuplicate stays disabled as natively; ShaderStringDynamicObject
- * needs type conformances, which the web doesn't expose.
+ * ShaderStringImportDuplicate stays disabled as natively.
  */
 
 import { MemoryType, Mt19937, ResourceBindFlags } from "@web-falcor/falcor";
@@ -60,4 +59,18 @@ gpuTest("FalcorTest.ShaderStringImported", async ({ device }) => {
     ]);
     ctx.allocateStructuredBuffer("result", kSize);
     await expectResult(ctx, "ShaderStringImported", (i) => i * 997);
+});
+
+gpuTest("FalcorTest.ShaderStringDynamicObject", async ({ device }) => {
+    const typeID = 55;
+    const ctx = new GPUUnitTestContext(device);
+    ctx.createProgramFromModules(
+        [{ name: "GeneratedModule", sources: [{ string: kShaderModuleD }] }, { sources: [{ file: "Tests/Slang/ShaderStringDynamic.cs.slang" }] }],
+        "main",
+        {},
+        [{ typeName: "DynamicType", interfaceName: "IDynamicType", id: typeID }],
+    );
+    ctx.allocateStructuredBuffer("result", kSize);
+    ctx.vars()["CB"]["type"] = typeID;
+    await expectResult(ctx, "ShaderStringDynamicObject", (i) => i * 997);
 });

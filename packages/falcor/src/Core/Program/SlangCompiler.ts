@@ -76,6 +76,29 @@ export interface SlangReflectionType {
     [key: string]: unknown;
 }
 
+/**
+ * Type conformances without slang-wasm's conformance components: each
+ * createDynamicObject<I, T>(id, data) becomes a generated switch that
+ * reinterprets `data` as the type registered for `id` (what the conformance
+ * table does natively). Unregistered IDs fall back to the first conformance.
+ */
+export function lowerDynamicObjects(source: string, conformances: { typeName: string; interfaceName: string; id: number }[]): string {
+    const re = /createDynamicObject\s*<\s*(\w+)\s*,\s*([^>]+?)\s*>\s*\(/g;
+    if (conformances.length === 0 || !re.test(source)) return source;
+    const used = new Set<string>();
+    const out = source.replace(re, (_m, iface: string, dataType: string) => {
+        used.add(iface);
+        return `__webfalcor_createDynamicObject_${iface}<${dataType}>(`;
+    });
+    const fns = [...used].map((iface) => {
+        const cases = conformances.filter((c) => c.interfaceName === iface).sort((a, b) => a.id - b.id);
+        if (cases.length === 0) return "";
+        const body = cases.map((c) => `    case ${c.id}: return reinterpret<${c.typeName}, T>(data);`).join("\n");
+        return `\n${iface} __webfalcor_createDynamicObject_${iface}<T>(int typeId, T data)\n{\n    switch (typeId)\n    {\n${body}\n    default: return reinterpret<${cases[0]!.typeName}, T>(data);\n    }\n}\n`;
+    });
+    return out + fns.join("");
+}
+
 /** A compile unit: shader-root path (for #line / relative imports), optional module name, and its sources. */
 export interface CompileModule {
     path: string;
@@ -247,7 +270,12 @@ export class SlangCompiler {
      * multiple modules cover Falcor's multi-translation-unit programs (e.g.
      * FullScreenPass.vs.slang + user pixel shader).
      */
-    compile(modulesIn: string | string[] | CompileModule[], entryPoints: EntryPointDesc[], defines = new DefineList()): CompileResult {
+    compile(
+        modulesIn: string | string[] | CompileModule[],
+        entryPoints: EntryPointDesc[],
+        defines = new DefineList(),
+        typeConformances: { typeName: string; interfaceName: string; id: number }[] = [],
+    ): CompileResult {
         const list: CompileModule[] = (typeof modulesIn === "string" ? [modulesIn] : modulesIn).map((m) => (typeof m === "string" ? { path: m, sources: [{ file: m }] } : m));
         const paths = list.map((m) => m.path);
         const slang = slangInstance!;
@@ -264,9 +292,12 @@ export class SlangCompiler {
                 }
                 return `#line 1 "${src.path ?? path}"\n${src.string}`;
             });
-            const rewritten = parts.join("\n");
-            const moduleName = name ?? path.replace(/[/.]/g, "_");
-            const module = session.loadModuleFromSource(`${header}${rewritten}`, moduleName, `/${path}`);
+            const joined = parts.join("\n");
+            const rewritten = lowerDynamicObjects(joined, typeConformances);
+            // Sessions cache modules by name: a conformance-lowered variant needs its own name.
+            const variant = rewritten === joined ? "" : `__tc_${typeConformances.map((c) => `${c.typeName}_${c.id}`).join("_")}`;
+            const moduleName = (name ?? path.replace(/[/.]/g, "_")) + variant;
+            const module = session.loadModuleFromSource(`${header}${rewritten}`, moduleName, `/${variant ? path.replace(/(\.[^./]*)?$/, `${variant}$1`) : path}`);
             if (!module) {
                 const err = slang.getLastError();
                 throw new RuntimeError(`Slang compilation failed for ${path}:\n${err.type}: ${err.message}`);

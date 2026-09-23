@@ -31,7 +31,16 @@ export interface ProgramDesc {
     path?: string | string[];
     /** Modules composed of files and strings (ProgramDesc::addShaderModule); appended after `path`. */
     modules?: ShaderModuleDesc[];
+    /** Mirrors ProgramDesc::addTypeConformances: IDs for createDynamicObject<Interface, T>(id, data). */
+    typeConformances?: TypeConformance[];
     entryPoints: EntryPointDesc[];
+}
+
+/** Mirrors TypeConformance + its conformance ID. */
+export interface TypeConformance {
+    typeName: string;
+    interfaceName: string;
+    id: number;
 }
 
 export interface EntryPointKernel {
@@ -222,7 +231,7 @@ export class ProgramManager {
 
     compileProgram(desc: ProgramDesc, defines: DefineList): ProgramVersion {
         const allDefines = this.globalDefines.clone().addAll(defines);
-        const result = this.compiler.compile(programModules(desc), desc.entryPoints, allDefines);
+        const result = this.compiler.compile(programModules(desc), desc.entryPoints, allDefines, desc.typeConformances ?? []);
         const kernels = desc.entryPoints.map((ep, i) => {
             const wgsl = fixupWgsl(result.entryPointCode[i]!);
             return {
