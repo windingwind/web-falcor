@@ -3,6 +3,7 @@
  * execute the graph each frame, present the marked output to the canvas.
  */
 
+import { captureOutput } from "./FrameCapture.js";
 import { AssetCategory, AssetResolver, isAbsoluteUrl, kProjectMediaUrl, Clock, Device, Logger, Profiler, ProfilerUI, VideoRecorder, ProgramManager, RenderGraph, ResourceFormat, Bitmap, BitmapExportFlags, createPass, initScripting, initSlang, runConsoleCommand, runGraphScript, runSceneScript, runPbrtScene, runMitsubaScene, presentToCanvas, type Scene } from "@web-falcor/falcor";
 import "@web-falcor/render-passes";
 import { CameraController, kCameraControllerTypes, kUpDirectionNames } from "./CameraController.js";
@@ -311,15 +312,11 @@ async function main() {
     requestAnimationFrame(frame);
 }
 
-/** Downloads the current marked output (mirrors Mogwai FrameCapture: the
- *  file type follows the format — EXR for float, PNG for 8-bit — RGB only). */
+/** Downloads the current marked output, one file per marked channel mask (mirrors Mogwai FrameCapture). */
 async function captureFrame(state: ViewerState): Promise<void> {
     if (!state.graph || !state.output) return;
-    const tex = state.graph.getOutput(state.output);
-    if (!tex) return;
-    const ext = Bitmap.getFileExtFromResourceFormat(tex.format);
-    const name = `${state.output.replace(/\./g, "_")}.${state.frame}.${ext}`;
-    await tex.captureToFile(0, 0, name, Bitmap.getFormatFromFileExtension(ext), BitmapExportFlags.None);
+    const index = state.graph.getOutputNames().indexOf(state.output);
+    await captureOutput(state.device, state.graph, index, `${state.output.replace(/\./g, "_")}.${state.frame}`);
 }
 
 /** Interactive python console (mirrors Mogwai's console; Enter runs the line). */

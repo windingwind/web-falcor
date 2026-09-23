@@ -34,10 +34,20 @@ interface CompiledPass {
     resources: Map<string, Resource>;
 }
 
+/** TextureChannelFlags values used by markOutput (RGB is native's default). */
+const kChannelsRGB = 7;
+const kChannelNames: Record<number, string> = {
+    1: "TextureChannelFlags.Red",
+    2: "TextureChannelFlags.Green",
+    4: "TextureChannelFlags.Blue",
+    8: "TextureChannelFlags.Alpha",
+    15: "TextureChannelFlags.RGBA",
+};
+
 export class RenderGraph {
     private passes = new Map<string, RenderPass>();
     private edges: RenderGraphEdge[] = [];
-    private outputs: { pass: string; field: string }[] = [];
+    private outputs: { pass: string; field: string; masks: Set<number> }[] = [];
     private externalInputs = new Map<string, Resource>();
     private renderSettingsKey: string | null = null;
     private compiled: CompiledPass[] | null = null;
@@ -103,11 +113,39 @@ export class RenderGraph {
         this.compiled = null;
     }
 
-    /** Mirrors RenderGraph::markOutput. */
-    markOutput(ref: string): void {
+    /**
+     * Mirrors RenderGraph::markOutput: `mask` (TextureChannelFlags, default RGB) selects
+     * what frame capture writes; marking again adds a mask; "*" marks every available output.
+     */
+    markOutput(ref: string, mask = kChannelsRGB): void {
+        if (mask === 0) throw new Error("Mask must be non-empty");
+        if (ref === "*") {
+            for (const o of this.getAvailableOutputs()) this.markOutput(o, mask);
+            return;
+        }
         const [pass, field] = splitFieldRef(ref);
-        this.outputs.push({ pass, field });
+        const existing = this.outputs.find((o) => o.pass === pass && o.field === field);
+        if (existing) {
+            existing.masks.add(mask); // already generated: no recompile
+            return;
+        }
+        this.outputs.push({ pass, field, masks: new Set([mask]) });
         this.compiled = null;
+    }
+
+    /** Mirrors RenderGraph::getOutputMasks (by output index, in mark order). */
+    getOutputMasks(index: number): Set<number> {
+        return new Set(this.outputs[index]?.masks ?? []);
+    }
+
+    /** Mirrors RenderGraph::getAvailableOutputs: every output field of every pass, "Pass.field". */
+    getAvailableOutputs(): string[] {
+        const out: string[] = [];
+        for (const [name, pass] of this.passes) {
+            const compileData: CompileData = { defaultTexDims: this.defaultDims, defaultTexFormat: this.defaultFormat, connectedResources: new RenderPassReflection() };
+            for (const f of pass.reflect(compileData).fields) if (f.isOutput()) out.push(`${name}.${f.name_}`);
+        }
+        return out;
     }
 
     /** Mirrors RenderGraph::unmarkOutput. */
@@ -121,7 +159,7 @@ export class RenderGraph {
      * Mirrors RenderGraphExporter: a python script reproducing this graph.
      * Divergence (docs §9): emits the camelCase dialect of the upstream
      * image-test graphs (what runGraphScript executes) rather than the native
-     * snake_case IR; markOutput channel masks are not tracked.
+     * snake_case IR.
      */
     exportScript(): string {
         let varName = this.name.replace(/\W/g, "_");
@@ -134,7 +172,8 @@ export class RenderGraph {
             lines.push(`    g.addPass(createPass(${pyRepr(pass.type || pass.constructor.name)}, ${pyRepr(props?.toJSON() ?? {})}), ${pyRepr(name)})`);
         }
         for (const e of this.edges) lines.push(`    g.addEdge(${pyRepr(`${e.srcPass}.${e.srcField}`)}, ${pyRepr(`${e.dstPass}.${e.dstField}`)})`);
-        for (const o of this.outputs) lines.push(`    g.markOutput(${pyRepr(`${o.pass}.${o.field}`)})`);
+        for (const o of this.outputs)
+            for (const mask of o.masks) lines.push(`    g.markOutput(${pyRepr(`${o.pass}.${o.field}`)}${mask === kChannelsRGB ? "" : `, ${kChannelNames[mask] ?? mask}`})`);
         lines.push("    return g", "", `${varName} = ${fn}()`, `try: m.addGraph(${varName})`, "except NameError: None", "");
         return lines.join("\n");
     }
