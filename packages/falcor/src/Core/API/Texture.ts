@@ -5,7 +5,19 @@
 
 import { Resource } from "./Resource.js";
 import { ResourceBindFlags, ResourceType, bindFlagsToTextureUsage } from "./Types.js";
-import { ResourceFormat, getFormatBytesPerBlock, isCompressedFormat, isDepthFormat, toGpuTextureFormat } from "./Formats.js";
+import {
+    FormatType,
+    ResourceFormat,
+    getFormatBytesPerBlock,
+    getFormatChannelCount,
+    getFormatType,
+    getNumChannelBits,
+    isCompressedFormat,
+    isDepthFormat,
+    toGpuTextureFormat,
+} from "./Formats.js";
+import { Bitmap, BitmapExportFlags, BitmapFileFormat } from "../../Utils/Image/Bitmap.js";
+import { float16ToFloat32 } from "../../Utils/Math/Float16.js";
 import { ArgumentError, RuntimeError } from "../Error.js";
 import type { Device } from "./Device.js";
 
@@ -156,5 +168,41 @@ export class Texture extends Resource {
 
     override destroy(): void {
         this.gpuTexture.destroy();
+    }
+
+    /**
+     * Mirrors Texture::captureToFile. Returns the encoded file; in a page it is
+     * also downloaded under the file name of `path` (there is no file system).
+     */
+    async captureToFile(mipLevel: number, arraySlice: number, path: string, format: BitmapFileFormat, exportFlags = BitmapExportFlags.None, download = true): Promise<Uint8Array> {
+        if (format === BitmapFileFormat.DdsFile) throw new RuntimeError("Texture::captureToFile does not yet support saving to DDS.");
+        if (this.type !== ResourceType.Texture2D) throw new RuntimeError("Texture::captureToFile only supported for 2D textures.");
+        const width = Math.max(1, this.width >> mipLevel);
+        const height = Math.max(1, this.height >> mipLevel);
+        let data: ArrayBufferView = await this.device.renderContext.readTextureSubresource(this, mipLevel, arraySlice);
+        let resourceFormat = this.format;
+        // HDR textures with fewer than 3 channels widen to RGBA32Float (native blits; the values are the same).
+        const channels = getFormatChannelCount(this.format);
+        if (getFormatType(this.format) === FormatType.Float && channels < 3) {
+            const bytes = data as Uint8Array;
+            const half = getNumChannelBits(this.format, 0) === 16;
+            const src = half ? new Uint16Array(bytes.slice().buffer) : new Float32Array(bytes.slice().buffer);
+            const rgba = new Float32Array(width * height * 4);
+            for (let i = 0; i < width * height; i++) {
+                for (let c = 0; c < channels; c++) rgba[i * 4 + c] = half ? float16ToFloat32(src[i * channels + c]!) : src[i * channels + c]!;
+                rgba[i * 4 + 3] = 1;
+            }
+            data = rgba;
+            resourceFormat = ResourceFormat.RGBA32Float;
+        }
+        const file = await Bitmap.saveImage(width, height, format, exportFlags, resourceFormat, true, data);
+        if (download && typeof document !== "undefined") {
+            const a = document.createElement("a");
+            a.href = URL.createObjectURL(new Blob([file as BlobPart]));
+            a.download = path.split(/[\\/]/).pop()!;
+            a.click();
+            URL.revokeObjectURL(a.href);
+        }
+        return file;
     }
 }

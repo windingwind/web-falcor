@@ -1,8 +1,11 @@
 /**
- * Minimal OpenEXR encoder: single-part scanline image, RGBA float32,
- * NO_COMPRESSION (the web capture path; native writes via OpenEXR).
- * Round-trips bit-exactly through decodeExr.
+ * Minimal OpenEXR encoder: single-part scanline image, RGB or RGBA, HALF or
+ * FLOAT, NO_COMPRESSION or ZIP_COMPRESSION (Bitmap.saveImage and the web
+ * capture path; native writes via OpenEXR). Round-trips through decodeExr.
  */
+
+import { float32ToFloat16 } from "../Math/Float16.js";
+import { zlibDeflate } from "./PNGCodec.js";
 
 const kMagic = 0x01312f76;
 
@@ -65,18 +68,46 @@ class Writer {
     }
 }
 
-/** Encodes top-down RGBA float32 pixels as an uncompressed scanline EXR. */
-export function encodeExr(data: Float32Array, width: number, height: number): Uint8Array {
+export interface ExrEncodeOptions {
+    /** Write the A channel (default true). */
+    alpha?: boolean;
+    /** HALF instead of FLOAT samples (default false). */
+    half?: boolean;
+}
+
+/** Channel-planar scanline bytes for rows [y0, y1): each row holds (A,)B,G,R runs. */
+function scanlineBytes(data: Float32Array, width: number, y0: number, y1: number, opts: Required<ExrEncodeOptions>): Uint8Array {
+    const channels: [number, number][] = opts.alpha ? [[0, 3], [1, 2], [2, 1], [3, 0]] : [[0, 2], [1, 1], [2, 0]];
+    const sampleBytes = opts.half ? 2 : 4;
+    const rowBytes = width * channels.length * sampleBytes;
+    const out = new Uint8Array(rowBytes * (y1 - y0));
+    const view = new DataView(out.buffer);
+    for (let y = y0; y < y1; y++) {
+        for (const [c, srcC] of channels) {
+            let o = (y - y0) * rowBytes + c * width * sampleBytes;
+            for (let x = 0; x < width; x++, o += sampleBytes) {
+                const v = data[(y * width + x) * 4 + srcC]!;
+                if (opts.half) view.setUint16(o, float32ToFloat16(v), true);
+                else view.setFloat32(o, v, true);
+            }
+        }
+    }
+    return out;
+}
+
+/** Header + offset table + blocks; `blocks[i]` is the (possibly compressed) data of block i. */
+function assemble(width: number, height: number, opts: Required<ExrEncodeOptions>, compression: number, linesPerBlock: number, blocks: Uint8Array[]): Uint8Array {
     const w = new Writer();
     w.i32(kMagic);
     w.i32(2); // version 2, single-part scanline
 
-    // channels: alphabetical (A, B, G, R), each float (type 2), sampling 1.
+    // channels: alphabetical ((A,) B, G, R), HALF (1) or FLOAT (2), sampling 1.
+    const names = opts.alpha ? ["A", "B", "G", "R"] : ["B", "G", "R"];
     const channelEntry = 18; // name(2) + type(4) + pLinear+reserved(4) + xSampling(4) + ySampling(4)
-    w.attr("channels", "chlist", 4 * channelEntry + 1);
-    for (const name of ["A", "B", "G", "R"]) {
+    w.attr("channels", "chlist", names.length * channelEntry + 1);
+    for (const name of names) {
         w.str(name);
-        w.i32(2); // FLOAT
+        w.i32(opts.half ? 1 : 2);
         w.i32(0); // pLinear + reserved
         w.i32(1); // xSampling
         w.i32(1); // ySampling
@@ -84,7 +115,7 @@ export function encodeExr(data: Float32Array, width: number, height: number): Ui
     w.u8(0); // end of channel list
 
     w.attr("compression", "compression", 1);
-    w.u8(0); // NO_COMPRESSION
+    w.u8(compression);
     w.attr("dataWindow", "box2i", 16);
     w.i32(0);
     w.i32(0);
@@ -106,22 +137,48 @@ export function encodeExr(data: Float32Array, width: number, height: number): Ui
     w.f32(1);
     w.u8(0); // end of header
 
-    // Scanline offset table (u64 per scanline), then blocks: y(i32),
-    // size(i32), channel-planar pixel data (A,B,G,R rows).
-    const scanBytes = width * 4 * 4;
-    const blockSize = 8 + scanBytes;
-    const tableStart = w.length;
-    const dataStart = tableStart + height * 8;
-    for (let y = 0; y < height; y++) w.u64(dataStart + y * blockSize);
-
-    for (let y = 0; y < height; y++) {
-        w.i32(y);
-        w.i32(scanBytes);
-        const row = new Float32Array(width * 4);
-        for (const [c, srcC] of [[0, 3], [1, 2], [2, 1], [3, 0]] as const) {
-            for (let x = 0; x < width; x++) row[c * width + x] = data[(y * width + x) * 4 + srcC]!;
-        }
-        w.bytes(new Uint8Array(row.buffer));
+    // Offset table (u64 per block), then blocks: y(i32), size(i32), data.
+    let offset = w.length + blocks.length * 8;
+    for (const b of blocks) {
+        w.u64(offset);
+        offset += 8 + b.length;
     }
+    blocks.forEach((b, i) => {
+        w.i32(i * linesPerBlock);
+        w.i32(b.length);
+        w.bytes(b);
+    });
     return w.concat();
+}
+
+/** Encodes top-down RGBA float32 pixels as an uncompressed scanline EXR. */
+export function encodeExr(data: Float32Array, width: number, height: number, options: ExrEncodeOptions = {}): Uint8Array {
+    const opts = { alpha: options.alpha ?? true, half: options.half ?? false };
+    const blocks = Array.from({ length: height }, (_, y) => scanlineBytes(data, width, y, y + 1, opts));
+    return assemble(width, height, opts, 0, 1, blocks);
+}
+
+/**
+ * ZIP_COMPRESSION (16-line blocks): OpenEXR's byte interleave and delta
+ * predictor, then zlib. A block that doesn't shrink is stored raw, as OpenEXR does.
+ */
+export async function encodeExrZip(data: Float32Array, width: number, height: number, options: ExrEncodeOptions = {}): Promise<Uint8Array> {
+    const opts = { alpha: options.alpha ?? true, half: options.half ?? false };
+    const kLines = 16;
+    const blocks: Uint8Array[] = [];
+    for (let y0 = 0; y0 < height; y0 += kLines) {
+        const raw = scanlineBytes(data, width, y0, Math.min(height, y0 + kLines), opts);
+        const t = new Uint8Array(raw.length);
+        const half = (raw.length + 1) >> 1;
+        for (let i = 0; i < raw.length; i++) t[(i & 1) === 0 ? i >> 1 : half + (i >> 1)] = raw[i]!;
+        let p = t[0]!;
+        for (let i = 1; i < t.length; i++) {
+            const d = (t[i]! - p + 128 + 256) & 0xff;
+            p = t[i]!;
+            t[i] = d;
+        }
+        const z = await zlibDeflate(t);
+        blocks.push(z.length < raw.length ? z : raw);
+    }
+    return assemble(width, height, opts, 3, kLines, blocks);
 }

@@ -76,6 +76,10 @@ export enum ResourceFormat {
     BC6HU16,
     BC7Unorm,
     BC7UnormSrgb,
+
+    // No WebGPU texture format; Bitmap uses them for FreeImage's 24-bit loads.
+    BGRX8Unorm,
+    BGRX8UnormSrgb,
 }
 
 const kGpuFormatMap: Partial<Record<ResourceFormat, GPUTextureFormat>> = {
@@ -155,7 +159,7 @@ const kBytesPerBlock: Partial<Record<ResourceFormat, number>> = {
     [ResourceFormat.R32Float]: 4, [ResourceFormat.R32Int]: 4, [ResourceFormat.R32Uint]: 4,
     [ResourceFormat.RG16Unorm]: 4, [ResourceFormat.RG16Snorm]: 4, [ResourceFormat.RG16Float]: 4, [ResourceFormat.RG16Int]: 4, [ResourceFormat.RG16Uint]: 4,
     [ResourceFormat.RGBA8Unorm]: 4, [ResourceFormat.RGBA8Snorm]: 4, [ResourceFormat.RGBA8UnormSrgb]: 4, [ResourceFormat.RGBA8Int]: 4, [ResourceFormat.RGBA8Uint]: 4,
-    [ResourceFormat.BGRA8Unorm]: 4, [ResourceFormat.BGRA8UnormSrgb]: 4,
+    [ResourceFormat.BGRA8Unorm]: 4, [ResourceFormat.BGRA8UnormSrgb]: 4, [ResourceFormat.BGRX8Unorm]: 4, [ResourceFormat.BGRX8UnormSrgb]: 4,
     [ResourceFormat.R11G11B10Float]: 4, [ResourceFormat.RGB10A2Unorm]: 4, [ResourceFormat.RGB10A2Uint]: 4, [ResourceFormat.RGB9E5Float]: 4,
     [ResourceFormat.RG32Float]: 8, [ResourceFormat.RG32Int]: 8, [ResourceFormat.RG32Uint]: 8,
     [ResourceFormat.RGBA16Float]: 8, [ResourceFormat.RGBA16Int]: 8, [ResourceFormat.RGBA16Uint]: 8, [ResourceFormat.RGBA16Unorm]: 8,
@@ -228,4 +232,76 @@ export function getFormatBindFlags(format: ResourceFormat, hasFeature: (feature:
         flags |= ResourceBindFlags.UnorderedAccess;
     }
     return flags;
+}
+
+/** Mirrors Falcor's FormatType. */
+export enum FormatType {
+    Unknown,
+    Float,
+    Unorm,
+    UnormSrgb,
+    Snorm,
+    Uint,
+    Sint,
+}
+
+interface FormatInfo {
+    channelCount: number;
+    type: FormatType;
+    bits: [number, number, number, number];
+}
+
+// Formats whose name doesn't spell out uniform channels (native kFormatDesc rows).
+const kIrregularFormats: Partial<Record<ResourceFormat, FormatInfo>> = {
+    [ResourceFormat.R11G11B10Float]: { channelCount: 3, type: FormatType.Float, bits: [11, 11, 10, 0] },
+    [ResourceFormat.RGB10A2Unorm]: { channelCount: 4, type: FormatType.Unorm, bits: [10, 10, 10, 2] },
+    [ResourceFormat.RGB10A2Uint]: { channelCount: 4, type: FormatType.Uint, bits: [10, 10, 10, 2] },
+    [ResourceFormat.RGB9E5Float]: { channelCount: 3, type: FormatType.Float, bits: [9, 9, 9, 5] },
+    [ResourceFormat.D32Float]: { channelCount: 1, type: FormatType.Float, bits: [32, 0, 0, 0] },
+    [ResourceFormat.D32FloatS8Uint]: { channelCount: 1, type: FormatType.Float, bits: [32, 0, 0, 0] },
+    [ResourceFormat.D16Unorm]: { channelCount: 1, type: FormatType.Unorm, bits: [16, 0, 0, 0] },
+    [ResourceFormat.D24UnormS8Uint]: { channelCount: 1, type: FormatType.Unorm, bits: [24, 8, 0, 0] },
+    [ResourceFormat.BC1Unorm]: { channelCount: 3, type: FormatType.Unorm, bits: [64, 0, 0, 0] },
+    [ResourceFormat.BC1UnormSrgb]: { channelCount: 3, type: FormatType.UnormSrgb, bits: [64, 0, 0, 0] },
+    [ResourceFormat.BC2Unorm]: { channelCount: 4, type: FormatType.Unorm, bits: [128, 0, 0, 0] },
+    [ResourceFormat.BC2UnormSrgb]: { channelCount: 4, type: FormatType.UnormSrgb, bits: [128, 0, 0, 0] },
+    [ResourceFormat.BC3Unorm]: { channelCount: 4, type: FormatType.Unorm, bits: [128, 0, 0, 0] },
+    [ResourceFormat.BC3UnormSrgb]: { channelCount: 4, type: FormatType.UnormSrgb, bits: [128, 0, 0, 0] },
+    [ResourceFormat.BC4Unorm]: { channelCount: 1, type: FormatType.Unorm, bits: [64, 0, 0, 0] },
+    [ResourceFormat.BC4Snorm]: { channelCount: 1, type: FormatType.Snorm, bits: [64, 0, 0, 0] },
+    [ResourceFormat.BC5Unorm]: { channelCount: 2, type: FormatType.Unorm, bits: [128, 0, 0, 0] },
+    [ResourceFormat.BC5Snorm]: { channelCount: 2, type: FormatType.Snorm, bits: [128, 0, 0, 0] },
+    [ResourceFormat.BC6HS16]: { channelCount: 3, type: FormatType.Float, bits: [128, 0, 0, 0] },
+    [ResourceFormat.BC6HU16]: { channelCount: 3, type: FormatType.Float, bits: [128, 0, 0, 0] },
+    [ResourceFormat.BC7Unorm]: { channelCount: 4, type: FormatType.Unorm, bits: [128, 0, 0, 0] },
+    [ResourceFormat.BC7UnormSrgb]: { channelCount: 4, type: FormatType.UnormSrgb, bits: [128, 0, 0, 0] },
+};
+
+const kTypeNames: Record<string, FormatType> = { Float: FormatType.Float, Unorm: FormatType.Unorm, Snorm: FormatType.Snorm, Uint: FormatType.Uint, Int: FormatType.Sint };
+
+/** Channel layout of a format, parsed from its native name (e.g. RGBA16Float). */
+function formatInfo(format: ResourceFormat): FormatInfo {
+    const irregular = kIrregularFormats[format];
+    if (irregular) return irregular;
+    const m = /^(R|RG|RGB|RGBA|BGRA|BGRX)(\d+)(Float|Unorm|Snorm|Uint|Int)(Srgb)?$/.exec(ResourceFormat[format] ?? "");
+    if (!m) return { channelCount: 0, type: FormatType.Unknown, bits: [0, 0, 0, 0] };
+    const channelCount = m[1]!.length;
+    const b = Number(m[2]);
+    const type = m[4] ? FormatType.UnormSrgb : kTypeNames[m[3]!]!;
+    return { channelCount, type, bits: [0, 1, 2, 3].map((c) => (c < channelCount ? b : 0)) as FormatInfo["bits"] };
+}
+
+/** Mirrors getFormatType. */
+export function getFormatType(format: ResourceFormat): FormatType {
+    return formatInfo(format).type;
+}
+
+/** Mirrors getFormatChannelCount. */
+export function getFormatChannelCount(format: ResourceFormat): number {
+    return formatInfo(format).channelCount;
+}
+
+/** Mirrors getNumChannelBits. */
+export function getNumChannelBits(format: ResourceFormat, channel: number): number {
+    return formatInfo(format).bits[channel] ?? 0;
 }
