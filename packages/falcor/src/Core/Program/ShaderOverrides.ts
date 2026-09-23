@@ -81,6 +81,7 @@ export const kShaderOverrides: Readonly<Record<string, string>> = {
     // FalcorTest kernels (transplanted GPU unit tests): no typed buffers / 64-bit ints in WGSL.
     "Tests/Utils/HashUtilsTests.cs.slang": "WebFalcor/Overrides/Tests/Utils/HashUtilsTests.cs.slang",
     "Tests/Sampling/PseudorandomTests.cs.slang": "WebFalcor/Overrides/Tests/Sampling/PseudorandomTests.cs.slang",
+    "Tests/Utils/GeometryHelpersTests.cs.slang": "WebFalcor/Overrides/Tests/Utils/GeometryHelpersTests.cs.slang",
     "Utils/Sampling/UniformSampleGenerator.slang": "WebFalcor/Overrides/Utils/Sampling/UniformSampleGenerator.slang",
     // Write-only storage textures (WGSL r32*-only read_write rule).
     "RenderPasses/Utils/Composite/Composite.cs.slang": "WebFalcor/Overrides/RenderPasses/Utils/Composite/Composite.cs.slang",
