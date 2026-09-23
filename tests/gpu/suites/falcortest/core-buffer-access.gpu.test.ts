@@ -80,3 +80,17 @@ gpuTest("FalcorTest.BufferReadbackMap", async ({ device }) => {
     b.unmap();
     e.done("BufferReadbackMap");
 });
+
+// Web-specific: WebGPU copies need 4-byte multiples; unaligned setBlob must still leave neighbouring bytes intact.
+gpuTest("FalcorTest.BufferUnalignedSetBlob", async ({ device }) => {
+    const e = new Expect();
+    const b = device.createBuffer(1024, ResourceBindFlags.ShaderResource | ResourceBindFlags.UnorderedAccess, MemoryType.DeviceLocal, new Uint8Array(1024).fill(0xaa));
+    b.setBlob(Uint8Array.of(1, 2, 3), 517);
+    b.setBlob(Uint8Array.of(9), 2);
+    const data = await getElements(b, Uint8Array);
+    for (let i = 0; i < 1024; i++) {
+        const want = i === 2 ? 9 : i >= 517 && i < 520 ? i - 516 : 0xaa;
+        e.check(data[i] === want, () => `byte ${i}: ${data[i]} != ${want}`);
+    }
+    e.done("BufferUnalignedSetBlob");
+});

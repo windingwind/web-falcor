@@ -53,6 +53,13 @@ export class CopyContext {
         const view =
             data instanceof ArrayBuffer ? new Uint8Array(data) : new Uint8Array(data.buffer, data.byteOffset, data.byteLength);
         if (offset + view.byteLength > buffer.size) throw new ArgumentError("updateBuffer out of range");
+        if (view.byteLength === 0) return;
+        const unaligned = offset % 4 !== 0 || view.byteLength % 4 !== 0;
+        if (unaligned && buffer.gpuBuffer.usage & GPUBufferUsage.STORAGE) {
+            this.updateBufferUnaligned(buffer, view, offset);
+            return;
+        }
+        // Copies need 4-byte multiples; without storage usage the padding bytes are overwritten.
         const alignedSize = Math.ceil(view.byteLength / 4) * 4;
         const staging = this.device.gpuDevice.createBuffer({
             size: alignedSize,
@@ -62,6 +69,64 @@ export class CopyContext {
         new Uint8Array(staging.getMappedRange()).set(view);
         staging.unmap();
         this.getEncoder().copyBufferToBuffer(staging, 0, buffer.gpuBuffer, offset, alignedSize);
+    }
+
+    private mergePipeline: GPUComputePipeline | null = null;
+
+    /**
+     * Byte-exact update of an unaligned range (native allows any): the covered
+     * words are rewritten with masks, so neighbouring bytes are preserved.
+     */
+    private updateBufferUnaligned(buffer: Buffer, view: Uint8Array, offset: number): void {
+        const gpu = this.device.gpuDevice;
+        // Bind a window of dst starting at a 256-byte boundary (storage binding alignment).
+        const bindStart = Math.floor(offset / 256) * 256;
+        const bindEnd = Math.min(buffer.gpuBuffer.size, Math.ceil((offset + view.byteLength) / 4) * 4);
+        const firstWord = Math.floor((offset - bindStart) / 4);
+        const wordCount = Math.ceil((offset - bindStart + view.byteLength) / 4) - firstWord;
+        // Source words (data shifted into place) followed by first/count/begin/end, all window-relative.
+        const words = new Uint8Array(wordCount * 4);
+        words.set(view, offset - bindStart - firstWord * 4);
+        const src = gpu.createBuffer({ size: words.byteLength + 16, usage: GPUBufferUsage.STORAGE, mappedAtCreation: true });
+        const mapped = new Uint32Array(src.getMappedRange());
+        mapped.set(new Uint32Array(words.buffer));
+        mapped.set([firstWord, wordCount, offset - bindStart, offset - bindStart + view.byteLength], wordCount);
+        src.unmap();
+        this.mergePipeline ??= gpu.createComputePipeline({
+            layout: "auto",
+            compute: {
+                entryPoint: "main",
+                module: gpu.createShaderModule({
+                    code: /* wgsl */ `
+@group(0) @binding(0) var<storage, read_write> dst: array<u32>;
+@group(0) @binding(1) var<storage, read_write> src: array<u32>;
+@compute @workgroup_size(64) fn main(@builtin(global_invocation_id) id: vec3u) {
+    let n = arrayLength(&src) - 4u;
+    let first = src[n]; let count = src[n + 1u]; let begin = src[n + 2u]; let end = src[n + 3u];
+    if (id.x >= count) { return; }
+    let w = first + id.x;
+    var mask = 0u;
+    for (var b = 0u; b < 4u; b++) {
+        let byte = w * 4u + b;
+        if (byte >= begin && byte < end) { mask |= 0xffu << (8u * b); }
+    }
+    dst[w] = (dst[w] & ~mask) | (src[id.x] & mask);
+}`,
+                }),
+            },
+        });
+        const bindGroup = gpu.createBindGroup({
+            layout: this.mergePipeline.getBindGroupLayout(0),
+            entries: [
+                { binding: 0, resource: { buffer: buffer.gpuBuffer, offset: bindStart, size: bindEnd - bindStart } },
+                { binding: 1, resource: { buffer: src } },
+            ],
+        });
+        const pass = this.getEncoder().beginComputePass();
+        pass.setPipeline(this.mergePipeline);
+        pass.setBindGroup(0, bindGroup);
+        pass.dispatchWorkgroups(Math.ceil(wordCount / 64));
+        pass.end();
     }
 
     /** Mirrors CopyContext::copyResource for buffers. */
