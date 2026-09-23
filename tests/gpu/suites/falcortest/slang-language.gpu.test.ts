@@ -1,6 +1,7 @@
 /**
  * Transplanted FalcorTest GPU tests for Slang language features, compiled to
- * WGSL: Slang/SlangMutatingTests, SlangExtension, SlangGenerics, NestedStructs.
+ * WGSL: Slang/SlangMutatingTests, SlangExtension, SlangGenerics, NestedStructs, SlangTests (SlangEnum; the rest
+ * of that file needs 16/64-bit scalar types).
  */
 
 import { type Device } from "@web-falcor/falcor";
@@ -78,4 +79,17 @@ gpuTest("FalcorTest.NestedStructs", async ({ device }) => {
     const e = new Expect();
     want.forEach((w, i) => e.check(result[i] === w, () => `result[${i}] = ${result[i]}, expected ${w}`));
     e.done("NestedStructs");
+});
+
+gpuTest("FalcorTest.SlangEnum", async ({ device }) => {
+    // Values of Tests/Slang/SlangShared.slang's Type1/Type2/Type3 (the C++ side of native's check).
+    const want = [0, 1, 2, 3, 0, 1, 20, 21, 1, 2, 4, 8];
+    const ctx = new GPUUnitTestContext(device);
+    ctx.createProgram("Tests/Slang/SlangTests.cs.slang", "testEnum");
+    ctx.allocateStructuredBuffer("result", 12);
+    ctx.runProgram(1, 1, 1);
+    const result = await ctx.readBuffer("result", Uint32Array);
+    const e = new Expect();
+    want.forEach((w, i) => e.check(result[i] === w, () => `result[${i}] = ${result[i]}, expected ${w}`));
+    e.done("SlangEnum");
 });
