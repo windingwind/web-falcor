@@ -26,13 +26,16 @@ const entries = [
 ];
 
 // Needs the fetched Falcor shader tree (setup:web or a full clone); skip otherwise.
+// Each check reads the whole tree (~450 files), which on a network filesystem
+// under load outruns vitest's 5 s default.
+const kTreeTimeoutMs = 60_000;
 const hasShaders = existsSync(resolve(repoRoot, "Falcor/Source/Falcor/Scene/Scene.slang"));
 
 describe.skipIf(!hasShaders)("shader manifest", () => {
     it("every registry file exists at its served path", () => {
         const missing = entries.filter((e) => !existsSync(resolve(repoRoot, e.file))).map((e) => e.file);
         expect(missing).toEqual([]);
-    });
+    }, kTreeTimeoutMs);
 
     it("every SDK header the shaders include is an externalFiles entry", () => {
         const keys = new Set(entries.map((e) => e.key));
@@ -50,7 +53,7 @@ describe.skipIf(!hasShaders)("shader manifest", () => {
             }
         }
         expect([...unlisted]).toEqual([]);
-    });
+    }, kTreeTimeoutMs);
 
     it("externalFiles carry the upstream URL setup:web fetches from", () => {
         for (const e of manifest.externalFiles) expect(e.upstream, e.path).toMatch(/^https:\/\//);
