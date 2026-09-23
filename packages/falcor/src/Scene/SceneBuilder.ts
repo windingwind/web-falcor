@@ -812,6 +812,18 @@ export class SceneBuilderBridge {
         return this.nodes.length - 1;
     }
 
+    /** Curve geometry added by importers (linear swept spheres), with its material. */
+    private builderCurves: { positionsRadii: Float32Array; indices: Uint32Array; material: MaterialBridge; nodeID: number }[] = [];
+
+    /**
+     * Mirrors SceneBuilder::addCurve + addCurveInstance: tessellated curve
+     * geometry (xyz + radius per vertex, segment-start indices) placed by a node.
+     */
+    addCurveInstance(nodeID: number, curve: { positionsRadii: Float32Array; indices: Uint32Array }, material: MaterialBridge): void {
+        if (!this.nodes[nodeID]) throw new RuntimeError(`addCurveInstance: unknown node ${nodeID}`);
+        this.builderCurves.push({ ...curve, material, nodeID });
+    }
+
     addMeshInstance(nodeID: number, meshID: number): void {
         const transform = this.nodes[nodeID];
         if (!transform) throw new RuntimeError(`addMeshInstance: unknown node ${nodeID}`);
@@ -1189,6 +1201,17 @@ export class SceneBuilderBridge {
                 meshes.push({ vertices, indices: geo.indices, materialID, transform });
             }
         });
+
+        // Builder-added curves share the builder materials' IDs.
+        for (const c of this.builderCurves) {
+            let materialID = materialIDs.get(c.material);
+            if (materialID === undefined) {
+                materialID = materials.length;
+                materials.push(c.material.toDesc());
+                materialIDs.set(c.material, materialID);
+            }
+            curves.push({ positionsRadii: c.positionsRadii, texCrds: null, indices: c.indices, materialID, transform: this.nodes[c.nodeID]! });
+        }
 
         const lights: AnalyticLight[] = this.lights.map((l) => {
             const isArea = l.lightType === LightType.Rect || l.lightType === LightType.Disc || l.lightType === LightType.Sphere;

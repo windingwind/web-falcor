@@ -258,6 +258,48 @@ bool intersectLinearSweptSphereHan19(
         }
     }
 
+    // WebFalcor fix (docs §9): with equal end radii the cone below has its apex
+    // at infinity; upstream divides by (r2 - r1) = 0 and every term turns into
+    // inf/NaN, so a constant-width strand only hits its sphere joints and
+    // renders as beads. Intersect the cylinder directly instead. Segments whose
+    // radii differ take the unchanged upstream path.
+    if (r2 - r1 <= 1e-6f * r2)
+    {
+        float3 axis = P2 - P1;
+        const float axisLength = length(axis);
+        axis /= axisLength;
+        const float3 o = rayOrigin - P1;
+        const float3 dPerp = rayDir - dot(rayDir, axis) * axis;
+        const float3 oPerp = o - dot(o, axis) * axis;
+        const float a = dot(dPerp, dPerp);
+        const float b = 2.f * dot(oPerp, dPerp);
+        const float c = dot(oPerp, oPerp) - r1 * r1;
+        const float disc = b * b - 4.f * a * c;
+        if (a > 0.f && disc >= 0.f)
+        {
+            const float sqrtDisc = sqrt(disc);
+            const float inv2a = 0.5f / a;
+            [unroll]
+            for (int i = 0; i < 2; i++)
+            {
+                float t = (-b + (i * 2.f - 1.f) * sqrtDisc) * inv2a;
+                if (t >= 0 && t < result.x)
+                {
+                    // Only the part between the two end planes belongs to this segment.
+                    const float h = dot(o + t * rayDir, axis);
+                    if (h >= 0.f && h <= axisLength)
+                    {
+                        const float u = h / axisLength;
+                        result.x = t;
+                        result.y = (reversed ? 1.f - u : u);
+                    }
+                }
+            }
+        }
+        result.x += t0;
+        return (result.x < FLT_MAX);
+    }
+
     // Intersecting cone.
     float3 C = P2 - P1;
     const float lengthC = length(C);

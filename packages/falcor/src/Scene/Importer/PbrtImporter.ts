@@ -56,12 +56,14 @@ import { AssetCategory, resolveAssetUrl, withScriptSearchPath } from "../../Core
 import { getGlobalSettings } from "../../Utils/Scripting/Scripting.js";
 import {
     SceneBuilderBridge,
+    SceneBuilderFlags,
     CameraBridge,
     LightBridge,
     MaterialBridge,
     TriangleMesh,
     type TriangleMeshDesc,
 } from "../SceneBuilder.js";
+import { convertToLinearSweptSphere, convertToPolytube } from "../Curves/CurveTessellation.js";
 
 // pbrt is left-handed; Falcor is right-handed. Upstream flips only the camera's
 // z axis (geometry is loaded verbatim). Mirrors PBRTImporter.cpp `kInvertZ`.
@@ -451,8 +453,21 @@ interface GfxState {
     areaLight: Params | null;
 }
 
+interface CurveAggregate {
+    key: string;
+    transform: float4x4;
+    material: MaterialBridge;
+    splitDepth: number;
+    /** Point count per strand. */
+    strands: number[];
+    /** xyz per point, concatenated over strands. */
+    points: number[];
+    widths: number[];
+}
+
 class PbrtScene {
-    private builder = new SceneBuilderBridge();
+    private builder: SceneBuilderBridge;
+    private curveAggregates: CurveAggregate[] = [];
     private namedMaterials = new Map<string, MaterialDef>();
     /** Named `Texture` declarations, referenced by material parameters. */
     private textures = new Map<string, TextureDef>();
@@ -463,7 +478,9 @@ class PbrtScene {
     private cameraParams: Params | null = null;
     private warned = new Set<string>();
 
-    constructor(private device: Device, private baseUrl: string) {}
+    constructor(private device: Device, private baseUrl: string, flags: SceneBuilderFlags = SceneBuilderFlags.Default) {
+        this.builder = new SceneBuilderBridge(flags);
+    }
 
     private warn(msg: string): void {
         if (!this.warned.has(msg)) {
@@ -474,6 +491,8 @@ class PbrtScene {
 
     async load(source: string): Promise<Scene> {
         await this.run(tokenize(source));
+        // Curves are aggregated while reading and emitted after all other shapes.
+        this.emitCurveAggregates();
         // Apply the captured camera now that all transforms are known.
         if (this.cameraFromWorld && this.cameraParams) this.applyCamera(this.cameraFromWorld, this.cameraParams);
         return this.builder.resolve(this.device, this.baseUrl);
@@ -751,6 +770,9 @@ class PbrtScene {
                 mesh = this.makeDisk(P.float(params, "radius", 1), P.float(params, "height", 0));
                 break;
             }
+            case "curve":
+                this.addCurve(params);
+                return;
             default:
                 this.warn(`unsupported shape '${type}'`);
                 return;
@@ -774,6 +796,84 @@ class PbrtScene {
         const meshID = this.builder.addTriangleMesh(mesh, mb);
         const nodeID = this.builder.addNode(type, this.state.ctm.clone());
         this.builder.addMeshInstance(nodeID, meshID);
+    }
+
+    /** The material a plain (non-emissive) shape gets, shared per definition. */
+    private shapeMaterial(): MaterialBridge {
+        const materialDef = this.state.material ?? { type: "diffuse", name: "", params: new Map() };
+        const cached = this.matCache.get(materialDef);
+        if (cached) return cached;
+        const mb = this.translateMaterial(materialDef);
+        this.matCache.set(materialDef, mb);
+        return mb;
+    }
+
+    /**
+     * Mirrors the `curve` shape: strands collect into one aggregate per
+     * (transform, material), emitted once the whole scene is read.
+     */
+    private addCurve(params: Params): void {
+        for (const unsupported of ["degree", "N"]) if (P.has(params, unsupported)) this.warn(`Parameter '${unsupported}' is currently not supported and ignored.`);
+        const splitDepth = P.ints(params, "splitdepth")[0] ?? 1;
+        const width = P.float(params, "width", 1);
+        const width0 = P.has(params, "width0") ? P.float(params, "width0", width) : width;
+        const width1 = P.has(params, "width1") ? P.float(params, "width1", width) : width;
+        const basis = P.string(params, "basis", "bezier");
+        if (basis !== "bspline") this.warn(`Basis '${basis}' is not supported. Using 'bspline' basis instead.`);
+        const curveType = P.string(params, "type", "flat");
+        if (curveType !== "cylinder") this.warn(`Curve type '${curveType}' is not supported. Using 'cylinder' type instead.`);
+        const points = P.floats(params, "P");
+        const pointCount = Math.floor(points.length / 3);
+        if (pointCount < 2) {
+            this.warn("curve needs at least two control points");
+            return;
+        }
+
+        const material = this.shapeMaterial();
+        const transform = this.state.ctm.clone();
+        const key = `${Array.from(transform.data).join(",")}`;
+        let aggregate = this.curveAggregates.find((a) => a.key === key && a.material === material);
+        if (!aggregate) {
+            aggregate = { key, transform, material, splitDepth, strands: [], points: [], widths: [] };
+            this.curveAggregates.push(aggregate);
+        }
+        aggregate.strands.push(pointCount);
+        for (let i = 0; i < pointCount; i++) {
+            aggregate.points.push(points[i * 3]!, points[i * 3 + 1]!, points[i * 3 + 2]!);
+            // Native interpolates the width over i / pointCount (not / (count - 1)).
+            const t = i / pointCount;
+            aggregate.widths.push(width0 + (width1 - width0) * t);
+        }
+    }
+
+    /** Mirrors createCurveGeometry for every aggregate: swept spheres, or poly tubes under the flag. */
+    private emitCurveAggregates(): void {
+        const polytube = (this.builder.getFlags() & SceneBuilderFlags.TessellateCurvesIntoPolyTubes) !== 0;
+        for (const aggregate of this.curveAggregates) {
+            const nodeID = this.builder.addNode("curves", aggregate.transform);
+            const subdiv = 1 << aggregate.splitDepth;
+            if (polytube) {
+                const tube = convertToPolytube(aggregate.strands.length, aggregate.strands, aggregate.points, aggregate.widths, null, subdiv, 1, 1, 1, 4);
+                const vertices: StaticVertex[] = [];
+                for (let v = 0; v < tube.radii.length; v++) {
+                    vertices.push({
+                        position: new float3(tube.vertices[v * 3]!, tube.vertices[v * 3 + 1]!, tube.vertices[v * 3 + 2]!),
+                        normal: new float3(tube.normals[v * 3]!, tube.normals[v * 3 + 1]!, tube.normals[v * 3 + 2]!),
+                        tangent: new float4(tube.tangents[v * 4]!, tube.tangents[v * 4 + 1]!, tube.tangents[v * 4 + 2]!, tube.tangents[v * 4 + 3]!),
+                        texCrd: new float2(0, 0),
+                        curveRadius: tube.radii[v]!,
+                    });
+                }
+                const meshID = this.builder.addTriangleMesh({ vertices, indices: tube.faceVertexIndices }, aggregate.material);
+                this.builder.addMeshInstance(nodeID, meshID);
+            } else {
+                const r = convertToLinearSweptSphere(aggregate.strands.length, aggregate.strands, aggregate.points, aggregate.widths, null, 1, subdiv, 1, 1, 1, float4x4.identity());
+                const positionsRadii = new Float32Array(r.points.length * 4);
+                r.points.forEach((pnt, i) => positionsRadii.set([pnt.x, pnt.y, pnt.z, r.radius[i]!], i * 4));
+                this.builder.addCurveInstance(nodeID, { positionsRadii, indices: r.indices }, aggregate.material);
+            }
+        }
+        this.curveAggregates = [];
     }
 
     private makeDisk(radius: number, height: number): TriangleMeshDesc {
@@ -995,6 +1095,6 @@ function lookAtLH(eye: float3, center: float3, up: float3): float4x4 {
  * Parses a pbrt-v4 scene file and builds a Scene (assets fetched relative to
  * baseUrl). Parallels runSceneScript for .pyscene.
  */
-export async function runPbrtScene(device: Device, source: string, baseUrl: string): Promise<Scene> {
-    return withScriptSearchPath(baseUrl, () => new PbrtScene(device, baseUrl).load(source));
+export async function runPbrtScene(device: Device, source: string, baseUrl: string, options: { flags?: SceneBuilderFlags } = {}): Promise<Scene> {
+    return withScriptSearchPath(baseUrl, () => new PbrtScene(device, baseUrl, options.flags).load(source));
 }
