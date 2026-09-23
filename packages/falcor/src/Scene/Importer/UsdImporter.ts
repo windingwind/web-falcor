@@ -45,6 +45,10 @@ interface UsdMaterial {
     ior?: number;
     emissiveColor?: ArrayLike<number>;
     opacity?: number;
+    opacityThreshold?: number;
+    opacityTextureId?: number;
+    displacementTextureId?: number;
+    useSpecularWorkflow?: boolean;
 }
 
 interface UsdImage {
@@ -151,17 +155,20 @@ export class UsdImporter {
                 const dc = m.diffuseColor ?? [0.18, 0.18, 0.18];
                 const em = m.emissiveColor ?? [0, 0, 0];
                 const emissive = em[0]! !== 0 || em[1]! !== 0 || em[2]! !== 0;
+                if (m.useSpecularWorkflow) Logger.warning("UsdImporter: Specular workflow is not supported.");
                 desc = {
                     name,
-                    header: { materialType: MaterialType.Standard, ior: m.ior ?? 1.5, emissive },
+                    // PreviewSurfaceConverter forces every material double-sided.
+                    header: { materialType: MaterialType.Standard, ior: m.ior ?? 1.5, emissive, doubleSided: true },
                     basic: {
-                        baseColor: new float4(dc[0]!, dc[1]!, dc[2]!, m.opacity ?? 1),
-                        specular: new float4(0, m.roughness ?? 0.5, m.metallic ?? 0, 0),
+                        baseColor: new float4(dc[0]!, dc[1]!, dc[2]!, 1),
+                        specular: new float4(0, m.roughness ?? 0.5, m.metallic ?? 0, 1),
                         emissive: new float3(em[0]!, em[1]!, em[2]!),
                         emissiveFactor: 1,
                     },
                 };
-                const hasTexture = [m.diffuseColorTextureId, m.roughnessTextureId, m.metallicTextureId, m.normalTextureId, m.emissiveColorTextureId].some((t) => t !== undefined && t >= 0);
+                applyUniformOpacity(m, desc);
+                const hasTexture = [m.diffuseColorTextureId, m.roughnessTextureId, m.metallicTextureId, m.normalTextureId, m.emissiveColorTextureId, m.opacityTextureId, m.displacementTextureId].some((t) => t !== undefined && t >= 0);
                 if (hasTexture) textureJobs.push({ desc, material: m });
             } else {
                 // UsdPreviewSurface fallback (18% gray).
@@ -220,10 +227,32 @@ export class UsdImporter {
     }
 }
 
+/**
+ * Mirrors PreviewSurfaceConverter's opacity handling for untextured opacity.
+ * Below 1 it is a cutout when an opacity threshold is set (alpha in the base
+ * colour, tested against the threshold) and specular transmission of
+ * 1 - opacity otherwise. Textured opacity is finished in resolveMaterialTextures.
+ */
+function applyUniformOpacity(m: UsdMaterial, desc: SceneMaterialDesc): void {
+    const opacity = m.opacity ?? 1;
+    const threshold = m.opacityThreshold ?? 0;
+    const textured = m.opacityTextureId !== undefined && m.opacityTextureId >= 0;
+    if (!(opacity < 1 || textured)) return;
+    desc.header!.alphaThreshold = threshold;
+    if (threshold > 0) {
+        const base = desc.basic.baseColor!;
+        desc.basic.baseColor = new float4(base.x, base.y, base.z, opacity);
+    } else if (!textured) {
+        desc.basic.specularTransmission = 1 - opacity;
+    }
+}
+
 /** Resolves the material's texture slots (mirrors PreviewSurfaceConverter):
  *  baseColor sRGB; roughness+metallic packed into one ORM texture like the
  *  native CreateSpecularTexture kernel (channel r — tinyusdz exposes no
- *  channel selectors); normal + emissive direct. */
+ *  channel selectors); opacity through packBaseColorAlpha or
+ *  createSpecularTransmissionTexture; normal, emissive and displacement direct.
+ *  The packing kernels run on the CPU here (the port decodes textures there). */
 async function resolveMaterialTextures(
     usd: TinyUsdzScene,
     m: UsdMaterial,
@@ -241,9 +270,58 @@ async function resolveMaterialTextures(
             return undefined;
         }
     };
-    if (valid(m.diffuseColorTextureId)) {
+    const threshold = m.opacityThreshold ?? 0;
+    const opacityTextured = valid(m.opacityTextureId);
+    if (threshold > 0 && (valid(m.diffuseColorTextureId) || opacityTextured) && ((m.opacity ?? 1) < 1 || opacityTextured)) {
+        // packBaseColorAlpha: cutout opacity rides in the base colour's alpha.
+        try {
+            const baseImg = valid(m.diffuseColorTextureId) ? readPixels(await resolveImageBitmap(usd, m.diffuseColorTextureId, baseUrl)) : null;
+            const opacityImg = opacityTextured ? readPixels(await resolveImageBitmap(usd, m.opacityTextureId!, baseUrl)) : null;
+            const w = baseImg?.width ?? opacityImg!.width;
+            const h = baseImg?.height ?? opacityImg!.height;
+            const packed = new Uint8ClampedArray(w * h * 4);
+            const base = desc.basic.baseColor!;
+            // The packed texture is decoded as sRGB, so encode the linear uniform colour.
+            const toSrgb = (c: number) => (c <= 0.0031308 ? 12.92 * c : 1.055 * Math.pow(c, 1 / 2.4) - 0.055);
+            const uniformRgb = [base.x, base.y, base.z].map((c) => Math.round(toSrgb(Math.min(Math.max(c, 0), 1)) * 255));
+            const opacityConst = Math.round((m.opacity ?? 1) * 255);
+            for (let y = 0; y < h; y++) {
+                for (let x = 0; x < w; x++) {
+                    const i = (y * w + x) * 4;
+                    for (let c = 0; c < 3; c++) packed[i + c] = baseImg ? sampleNearest(baseImg, x, y, w, h, c) : uniformRgb[c]!;
+                    // tinyusdz exposes no channel selector: the red channel carries opacity.
+                    packed[i + 3] = opacityImg ? sampleNearest(opacityImg, x, y, w, h, 0) : opacityConst;
+                }
+            }
+            const bitmap = await createImageBitmap(new ImageData(packed, w, h), { premultiplyAlpha: "none", colorSpaceConversion: "none" });
+            desc.basic.texBaseColor = packTextureHandle(TextureHandleMode.Texture, textureManager.addTexture({ bitmap, srgb: !assumeLinear }));
+        } catch (err) {
+            Logger.warning(`UsdImporter: failed to pack base colour and opacity (${String(err)})`);
+        }
+    } else if (valid(m.diffuseColorTextureId)) {
         const id = await load(m.diffuseColorTextureId, true);
         if (id !== undefined) desc.basic.texBaseColor = packTextureHandle(TextureHandleMode.Texture, id);
+    }
+    if (threshold <= 0 && opacityTextured) {
+        // createSpecularTransmissionTexture: textured opacity becomes a grey
+        // transmission map of 1 - opacity, with full specular transmission.
+        try {
+            const opacityImg = readPixels(await resolveImageBitmap(usd, m.opacityTextureId!, baseUrl));
+            const out = new Uint8ClampedArray(opacityImg.width * opacityImg.height * 4);
+            for (let i = 0; i < out.length; i += 4) {
+                const v = 255 - opacityImg.data[i]!;
+                out.set([v, v, v, 255], i);
+            }
+            const bitmap = await createImageBitmap(new ImageData(out, opacityImg.width, opacityImg.height), { premultiplyAlpha: "none", colorSpaceConversion: "none" });
+            desc.basic.texTransmission = packTextureHandle(TextureHandleMode.Texture, textureManager.addTexture({ bitmap, srgb: false }));
+            desc.basic.specularTransmission = 1;
+        } catch (err) {
+            Logger.warning(`UsdImporter: failed to build the transmission texture (${String(err)})`);
+        }
+    }
+    if (valid(m.displacementTextureId)) {
+        const id = await load(m.displacementTextureId, false);
+        if (id !== undefined) desc.basic.texDisplacement = packTextureHandle(TextureHandleMode.Texture, id);
     }
     if (valid(m.roughnessTextureId) || valid(m.metallicTextureId)) {
         try {
@@ -285,6 +363,13 @@ async function resolveMaterialTextures(
             if (desc.header) desc.header.emissive = true;
         }
     }
+}
+
+/** Nearest texel of `img` for pixel (x, y) of a w x h target, channel c. */
+function sampleNearest(img: { data: Uint8ClampedArray; width: number; height: number }, x: number, y: number, w: number, h: number, c: number): number {
+    const sx = Math.min(Math.floor((x * img.width) / w), img.width - 1);
+    const sy = Math.min(Math.floor((y * img.height) / h), img.height - 1);
+    return img.data[(sy * img.width + sx) * 4 + c]!;
 }
 
 /** Reads an ImageBitmap back to pixels (packing input for the ORM texture). */

@@ -1,0 +1,157 @@
+#usda 1.0
+(
+    defaultPrim = "World"
+    metersPerUnit = 1
+    upAxis = "Y"
+)
+# UsdPreviewSurface opacity, the three ways PreviewSurfaceConverter maps it:
+# uniform opacity 0.4 -> specular transmission 0.6; opacity 0.3 below an
+# opacity threshold of 0.5 -> an alpha cutout; textured opacity -> a grey
+# transmission texture of 1 - opacity with full specular transmission; and a
+# textured opacity under a threshold -> packed into the base colour alpha.
+def Xform "World"
+{
+    def Mesh "Transmit"
+    {
+        uniform token subdivisionScheme = "none"
+        int[] faceVertexCounts = [3, 3]
+        int[] faceVertexIndices = [0, 1, 2, 0, 2, 3]
+        point3f[] points = [(-3.8, -0.8, 0), (-2.2, -0.8, 0), (-2.2, 0.8, 0), (-3.8, 0.8, 0)]
+        normal3f[] normals = [(0, 0, 1), (0, 0, 1), (0, 0, 1), (0, 0, 1)] (
+            interpolation = "vertex"
+        )
+        texCoord2f[] primvars:st = [(0, 0), (1, 0), (1, 1), (0, 1)] (
+            interpolation = "vertex"
+        )
+        rel material:binding = </World/Materials/TransmitMat>
+    }
+    def Mesh "Cutout"
+    {
+        uniform token subdivisionScheme = "none"
+        int[] faceVertexCounts = [3, 3]
+        int[] faceVertexIndices = [0, 1, 2, 0, 2, 3]
+        point3f[] points = [(-1.8, -0.8, 0), (-0.2, -0.8, 0), (-0.2, 0.8, 0), (-1.8, 0.8, 0)]
+        normal3f[] normals = [(0, 0, 1), (0, 0, 1), (0, 0, 1), (0, 0, 1)] (
+            interpolation = "vertex"
+        )
+        texCoord2f[] primvars:st = [(0, 0), (1, 0), (1, 1), (0, 1)] (
+            interpolation = "vertex"
+        )
+        rel material:binding = </World/Materials/CutoutMat>
+    }
+    def Mesh "TexOpacity"
+    {
+        uniform token subdivisionScheme = "none"
+        int[] faceVertexCounts = [3, 3]
+        int[] faceVertexIndices = [0, 1, 2, 0, 2, 3]
+        point3f[] points = [(0.2, -0.8, 0), (1.8, -0.8, 0), (1.8, 0.8, 0), (0.2, 0.8, 0)]
+        normal3f[] normals = [(0, 0, 1), (0, 0, 1), (0, 0, 1), (0, 0, 1)] (
+            interpolation = "vertex"
+        )
+        texCoord2f[] primvars:st = [(0, 0), (1, 0), (1, 1), (0, 1)] (
+            interpolation = "vertex"
+        )
+        rel material:binding = </World/Materials/TexOpacityMat>
+    }
+
+    def Mesh "TexCutout"
+    {
+        uniform token subdivisionScheme = "none"
+        int[] faceVertexCounts = [3, 3]
+        int[] faceVertexIndices = [0, 1, 2, 0, 2, 3]
+        point3f[] points = [(2.2, -0.8, 0), (3.8, -0.8, 0), (3.8, 0.8, 0), (2.2, 0.8, 0)]
+        normal3f[] normals = [(0, 0, 1), (0, 0, 1), (0, 0, 1), (0, 0, 1)] (
+            interpolation = "vertex"
+        )
+        texCoord2f[] primvars:st = [(0, 0), (1, 0), (1, 1), (0, 1)] (
+            interpolation = "vertex"
+        )
+        rel material:binding = </World/Materials/TexCutoutMat>
+    }
+
+    def Scope "Materials"
+    {
+        def Material "TransmitMat"
+        {
+            token outputs:surface.connect = </World/Materials/TransmitMat/Shader.outputs:surface>
+
+            def Shader "Shader"
+            {
+                uniform token info:id = "UsdPreviewSurface"
+                color3f inputs:diffuseColor = (0.6, 0.5, 0.4)
+                float inputs:roughness = 0.5
+                float inputs:opacity = 0.4
+                token outputs:surface
+            }
+        }
+        def Material "CutoutMat"
+        {
+            token outputs:surface.connect = </World/Materials/CutoutMat/Shader.outputs:surface>
+
+            def Shader "Shader"
+            {
+                uniform token info:id = "UsdPreviewSurface"
+                color3f inputs:diffuseColor = (0.6, 0.5, 0.4)
+                float inputs:roughness = 0.5
+                float inputs:opacity = 0.3
+                float inputs:opacityThreshold = 0.5
+                token outputs:surface
+            }
+        }
+        def Material "TexOpacityMat"
+        {
+            token outputs:surface.connect = </World/Materials/TexOpacityMat/Shader.outputs:surface>
+
+            def Shader "Shader"
+            {
+                uniform token info:id = "UsdPreviewSurface"
+                color3f inputs:diffuseColor = (0.6, 0.5, 0.4)
+                float inputs:roughness = 0.5
+                float inputs:opacity.connect = </World/Materials/TexOpacityMat/OpacityTex.outputs:r>
+                token outputs:surface
+            }
+            def Shader "Reader"
+            {
+                uniform token info:id = "UsdPrimvarReader_float2"
+                token inputs:varname = "st"
+                float2 outputs:result
+            }
+
+            def Shader "OpacityTex"
+            {
+                uniform token info:id = "UsdUVTexture"
+                asset inputs:file = @oracle-usd-checker.png@
+                float2 inputs:st.connect = </World/Materials/TexOpacityMat/Reader.outputs:result>
+                float outputs:r
+            }
+        }
+        def Material "TexCutoutMat"
+        {
+            token outputs:surface.connect = </World/Materials/TexCutoutMat/Shader.outputs:surface>
+
+            def Shader "Shader"
+            {
+                uniform token info:id = "UsdPreviewSurface"
+                color3f inputs:diffuseColor = (0.6, 0.5, 0.4)
+                float inputs:roughness = 0.5
+                float inputs:opacity.connect = </World/Materials/TexCutoutMat/OpacityTex.outputs:r>
+                float inputs:opacityThreshold = 0.7
+                token outputs:surface
+            }
+            def Shader "Reader"
+            {
+                uniform token info:id = "UsdPrimvarReader_float2"
+                token inputs:varname = "st"
+                float2 outputs:result
+            }
+
+            def Shader "OpacityTex"
+            {
+                uniform token info:id = "UsdUVTexture"
+                asset inputs:file = @oracle-usd-checker.png@
+                float2 inputs:st.connect = </World/Materials/TexCutoutMat/Reader.outputs:result>
+                float outputs:r
+            }
+        }
+    }
+}

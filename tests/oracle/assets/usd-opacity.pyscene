@@ -1,0 +1,8 @@
+# UsdPreviewSurface opacity mapping (see usd-opacity.usda).
+sceneBuilder.importScene('usd-opacity.usda')
+
+camera = Camera()
+camera.position = float3(0, 0, 8)
+camera.target = float3(0, 0, 0)
+camera.up = float3(0, 1, 0)
+sceneBuilder.addCamera(camera)
