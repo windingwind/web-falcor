@@ -40,8 +40,9 @@ export function bindFlagsToBufferUsage(bindFlags: ResourceBindFlags, memoryType:
             usage |= GPUBufferUsage.COPY_SRC | GPUBufferUsage.COPY_DST;
             break;
         case MemoryType.Upload:
-            // Mappable-for-write staging; WebGPU forbids MAP_WRITE with most usages.
-            usage |= GPUBufferUsage.MAP_WRITE | GPUBufferUsage.COPY_SRC;
+            // WebGPU forbids MAP_WRITE with other usages: Buffer.map() writes a CPU shadow
+            // that unmap() uploads, so upload buffers stay bindable as natively.
+            usage |= GPUBufferUsage.COPY_SRC | GPUBufferUsage.COPY_DST;
             break;
         case MemoryType.ReadBack:
             usage |= GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST;

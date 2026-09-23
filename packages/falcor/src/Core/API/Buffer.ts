@@ -35,6 +35,9 @@ export class Buffer extends Resource {
     readonly memoryType: MemoryType;
     /** Emulated UAV counter (see class docs). */
     readonly counterBuffer: Buffer | undefined;
+    /** CPU copy behind map()/unmap() of upload buffers. */
+    private shadow: Uint8Array | null = null;
+    private mapped = false;
 
     constructor(device: Device, desc: BufferDesc) {
         super(device, ResourceType.Buffer, desc.bindFlags ?? ResourceBindFlags.ShaderResource);
@@ -48,18 +51,14 @@ export class Buffer extends Resource {
         if (this.structSize > 0 && this.size % this.structSize !== 0) {
             throw new ArgumentError(`Buffer size (${this.size}) must be a multiple of structSize (${this.structSize})`);
         }
-        if (this.memoryType === MemoryType.Upload && (this.bindFlags & ~(ResourceBindFlags.None)) !== 0 && this.bindFlags !== ResourceBindFlags.None) {
-            // WebGPU restricts MAP_WRITE to COPY_SRC only; shader-visible upload buffers
-            // are not representable (Falcor allows them on UMA). Documented divergence.
-            throw new RuntimeError("Upload buffers cannot have bind flags in WebGPU; use DeviceLocal + setBlob()");
-        }
-
         this.gpuBuffer = device.gpuDevice.createBuffer({
             label: this.name,
             // WebGPU requires 4-byte-aligned sizes for most operations; round up like Falcor aligns to CB requirements.
             size: Math.ceil(this.size / 4) * 4,
             usage: bindFlagsToBufferUsage(this.bindFlags, this.memoryType),
         });
+
+        if (this.memoryType === MemoryType.Upload) this.shadow = new Uint8Array(this.size);
 
         if (desc.createCounter) {
             this.counterBuffer = new Buffer(device, {
@@ -80,6 +79,28 @@ export class Buffer extends Resource {
      */
     setBlob(data: ArrayBufferView | ArrayBuffer, offset = 0): void {
         this.device.renderContext.updateBuffer(this, data, offset);
+        if (this.shadow) {
+            const bytes = data instanceof ArrayBuffer ? new Uint8Array(data) : new Uint8Array(data.buffer, data.byteOffset, data.byteLength);
+            this.shadow.set(bytes.subarray(0, this.size - offset), offset);
+        }
+    }
+
+    /**
+     * Mirrors Buffer::map for upload buffers: returns a CPU copy of the contents
+     * that unmap() uploads (ordered with recorded commands). Readback buffers map
+     * asynchronously on the web — use getBlob().
+     */
+    map(): Uint8Array {
+        if (this.memoryType !== MemoryType.Upload) throw new RuntimeError("Buffer::map is only synchronous for upload buffers on the web; use getBlob() to read back");
+        this.mapped = true;
+        return this.shadow!;
+    }
+
+    /** Mirrors Buffer::unmap: uploads the mapped CPU copy. */
+    unmap(): void {
+        if (!this.mapped || !this.shadow) return;
+        this.mapped = false;
+        this.device.renderContext.updateBuffer(this, this.shadow, 0);
     }
 
     /**
