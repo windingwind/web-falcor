@@ -1,0 +1,49 @@
+import { describe, expect, it } from "vitest";
+import { lowerHostShareableBools } from "../src/Core/Program/WgslBoolLowering.js";
+
+const kSource = `struct S2_std140_0
+{
+    @align(16) a_1 : vec3<bool>,
+    @align(16) b_1 : f32,
+};
+struct S3_std140_0
+{
+    @align(16) a_2 : u32,
+    @align(4) b_2 : bool,
+    @align(16) s2_0 : S2_std140_0,
+};
+struct Local_0
+{
+    x_0 : bool,
+};
+@binding(1) @group(0) var<uniform> CB_0 : S3_std140_0;
+@binding(2) @group(0) var<storage, read_write> buf_0 : array<S3_std140_0>;
+fn main()
+{
+    if(CB_0.b_2)
+    {
+    }
+    var l : Local_0;
+    l.x_0 = CB_0.s2_0.a_1.y;
+    var v : vec3<bool> = CB_0.s2_0.a_1;
+    buf_0[i32(3)].b_2 = !l.x_0 && CB_0.b_2;
+}`;
+
+describe("lowerHostShareableBools", () => {
+    const out = lowerHostShareableBools(kSource);
+    it("retypes bools in layout structs only", () => {
+        expect(out).toContain("@align(4) b_2 : u32,");
+        expect(out).toContain("@align(16) a_1 : vec3<u32>,");
+        expect(out).toContain("x_0 : bool,");
+    });
+    it("converts reads and writes", () => {
+        expect(out).toContain("if((CB_0.b_2 != 0u))");
+        expect(out).toContain("l.x_0 = (CB_0.s2_0.a_1.y != 0u);");
+        expect(out).toContain("var v : vec3<bool> = (CB_0.s2_0.a_1 != vec3<u32>(0u));");
+        expect(out).toContain("buf_0[i32(3)].b_2 = select(0u, 1u, !l.x_0 && (CB_0.b_2 != 0u));");
+    });
+    it("leaves modules without layout bools untouched", () => {
+        const plain = "struct A_std140_0 { @align(4) f_0 : f32, };\nfn main() {}";
+        expect(lowerHostShareableBools(plain)).toBe(plain);
+    });
+});

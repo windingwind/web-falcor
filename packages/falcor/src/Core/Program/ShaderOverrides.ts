@@ -82,14 +82,13 @@ export const kShaderOverrides: Readonly<Record<string, string>> = {
     "Tests/Utils/HashUtilsTests.cs.slang": "WebFalcor/Overrides/Tests/Utils/HashUtilsTests.cs.slang",
     "Tests/Sampling/PseudorandomTests.cs.slang": "WebFalcor/Overrides/Tests/Sampling/PseudorandomTests.cs.slang",
     "Tests/Utils/GeometryHelpersTests.cs.slang": "WebFalcor/Overrides/Tests/Utils/GeometryHelpersTests.cs.slang",
+    "Tests/Slang/SlangMutatingTests.cs.slang": "WebFalcor/Overrides/Tests/Slang/SlangMutatingTests.cs.slang",
     "Utils/Sampling/UniformSampleGenerator.slang": "WebFalcor/Overrides/Utils/Sampling/UniformSampleGenerator.slang",
     // Write-only storage textures (WGSL r32*-only read_write rule).
     "RenderPasses/Utils/Composite/Composite.cs.slang": "WebFalcor/Overrides/RenderPasses/Utils/Composite/Composite.cs.slang",
     "RenderPasses/Utils/CrossFade/CrossFade.cs.slang": "WebFalcor/Overrides/RenderPasses/Utils/CrossFade/CrossFade.cs.slang",
     // Typed buffers (Buffer<T>) don't exist in WGSL -> structured buffer.
     "RenderPasses/Utils/GaussianBlur/GaussianBlur.ps.slang": "WebFalcor/Overrides/RenderPasses/Utils/GaussianBlur/GaussianBlur.ps.slang",
-    // bool in uniform address space is non-host-shareable in WGSL -> uint.
-    "RenderPasses/DebugPasses/Comparison.ps.slang": "WebFalcor/Overrides/RenderPasses/DebugPasses/Comparison.ps.slang",
     // Write-only storage textures (WGSL r32*-only read_write rule).
     "RenderPasses/ModulateIllumination/ModulateIllumination.cs.slang": "WebFalcor/Overrides/RenderPasses/ModulateIllumination/ModulateIllumination.cs.slang",
     // Write-only gDst + gDstPrev ping-pong, uint gInPlace, border sampling emulated (no border mode in WebGPU).
@@ -111,8 +110,6 @@ export const kShaderOverrides: Readonly<Record<string, string>> = {
     "Rendering/Utils/PixelStats.slang": "WebFalcor/Overrides/Rendering/Utils/PixelStats.slang",
     // Warp-size-32 wave reduction -> portable shared-memory reduction; no `= {}` ShadingData init.
     "Rendering/Materials/BSDFIntegrator.cs.slang": "WebFalcor/Overrides/Rendering/Materials/BSDFIntegrator.cs.slang",
-    // bool in cbuffer is non-host-shareable in WGSL -> uint flag.
-    "RenderPasses/TAA/TAA.ps.slang": "WebFalcor/Overrides/RenderPasses/TAA/TAA.ps.slang",
     // RTXDI: no texel buffers in WGSL (structured swap), boiling filter
     // compiled out (WaveActiveCountBits unmapped), brace-init fixes.
     "Rendering/RTXDI/RTXDI.slang": "WebFalcor/Overrides/Rendering/RTXDI/RTXDI.slang",
