@@ -69,7 +69,8 @@ function toJs(value: unknown): unknown {
  * Mirrors Mogwai's scripting surface: executes a graph script and returns the
  * graphs registered via m.addGraph() (plus any RenderGraph left in globals).
  */
-export async function runGraphScript(device: Device, source: string): Promise<RenderGraph[]> {
+/** `extras` adds Mogwai extension objects to `m` (e.g. the viewer's frameCapture). */
+export async function runGraphScript(device: Device, source: string, extras: Record<string, unknown> = {}): Promise<RenderGraph[]> {
     if (!pyodide) throw new RuntimeError("Call initScripting() first");
     const graphs: RenderGraph[] = [];
 
@@ -106,6 +107,7 @@ export async function runGraphScript(device: Device, source: string): Promise<Re
             clearOptions: () => globalSettings.clearOptions(),
             clearFilteredAttributes: () => globalSettings.clearFilteredAttributes(),
         },
+        ...extras,
     };
     pyodide.globals.set("m", mogwai);
 
@@ -126,7 +128,7 @@ export async function runGraphScript(device: Device, source: string): Promise<Re
 export function runConsoleCommand(
     device: Device,
     source: string,
-    context: { scene: Scene | null; graph: RenderGraph | null; clock?: unknown; timingCapture?: unknown; profiler?: import("../../Core/API/Profiler.js").Profiler | null },
+    context: { scene: Scene | null; graph: RenderGraph | null; clock?: unknown; timingCapture?: unknown; frameCapture?: unknown; profiler?: import("../../Core/API/Profiler.js").Profiler | null },
 ): string {
     if (!pyodide) throw new RuntimeError("Call initScripting() first");
     const lines: string[] = [];
@@ -143,6 +145,7 @@ export function runConsoleCommand(
         activeGraph: context.graph,
         clock: context.clock,
         timingCapture: context.timingCapture,
+        frameCapture: context.frameCapture,
         profiler: (context.profiler ?? device.profilerHook)?.pythonBindings((v) => pyodide!.toPy(v)) ?? null,
         settings: {
             addOptions: (dict: unknown) => {

@@ -3,7 +3,7 @@
  * execute the graph each frame, present the marked output to the canvas.
  */
 
-import { captureOutput } from "./FrameCapture.js";
+import { FrameCaptureExtension, captureOutput } from "./FrameCapture.js";
 import { AssetCategory, AssetResolver, isAbsoluteUrl, kProjectMediaUrl, Clock, Device, Logger, Profiler, ProfilerUI, VideoRecorder, ProgramManager, RenderGraph, ResourceFormat, Bitmap, BitmapExportFlags, createPass, initScripting, initSlang, runConsoleCommand, runGraphScript, runSceneScript, runPbrtScene, runMitsubaScene, presentToCanvas, type Scene } from "@web-falcor/falcor";
 import "@web-falcor/render-passes";
 import { CameraController, kCameraControllerTypes, kUpDirectionNames } from "./CameraController.js";
@@ -25,6 +25,8 @@ interface ViewerState {
     /** Global time control (mirrors m.clock; drives scene animation). */
     clock: Clock;
     timingCapture: TimingCapture;
+    /** m.frameCapture (Mogwai's FrameCapture extension). */
+    frameCapture: FrameCaptureExtension | null;
     /** Scene panel "Animate Scene" (mirrors AnimationController::setEnabled). */
     animateScene: boolean;
     /** Last graph execute error (graph edits can leave inputs unconnected); cleared on the next edit. */
@@ -63,7 +65,7 @@ class TimingCapture {
 
 async function loadGraph(state: ViewerState, url: string): Promise<void> {
     const source = await (await fetch(url)).text();
-    const [graph] = await runGraphScript(state.device, source);
+    const [graph] = await runGraphScript(state.device, source, { frameCapture: state.frameCapture });
     await graph!.init(); // async pass initialization (ImageLoader etc.; docs §9)
     graph!.onResize(canvas.width, canvas.height);
     if (state.scene) graph!.setScene(state.scene);
@@ -214,7 +216,8 @@ async function main() {
     await initProgramSystem(device);
     await initScripting("/node_modules/pyodide");
 
-    const state: ViewerState = { device, context, format, graph: null, scene: null, output: null, frame: 0, playing: true, clock: new Clock(), timingCapture: new TimingCapture(), animateScene: true, graphError: null };
+    const state: ViewerState = { device, context, format, graph: null, scene: null, output: null, frame: 0, playing: true, clock: new Clock(), timingCapture: new TimingCapture(), frameCapture: null, animateScene: true, graphError: null };
+    state.frameCapture = new FrameCaptureExtension(device, () => state.graph, (name) => (state.graph?.name === name ? state.graph : null), () => state.clock.getFrame());
 
     // Initial content from URL params (?scene=/?graph=/?output=), or the default
     // cornell-box path tracer when none are given.
@@ -289,6 +292,7 @@ async function main() {
         if (state.playing && state.graph && state.output) {
             if (lastNow >= 0) state.timingCapture.record(now - lastNow);
             lastNow = now;
+            state.frameCapture?.beginFrame();
             try {
                 state.graph.execute(device.renderContext);
             } catch (e) {
@@ -297,6 +301,7 @@ async function main() {
             }
             const tex = state.graph.getOutput(state.output);
             if (tex) presentToCanvas(device, tex, context!.getCurrentTexture(), format);
+            void state.frameCapture?.endFrame();
             pixelZoom.render();
             if (videoRecorder.recording) videoRecorder.captureFrame();
             state.frame++;
@@ -354,7 +359,7 @@ function wireConsole(state: ViewerState, resetAccum: () => void, rebuildUI: () =
             input.value = "";
             append(`>>> ${src}`, "in");
             try {
-                const out = runConsoleCommand(state.device, src, { scene: state.scene, graph: state.graph, clock: state.clock, timingCapture: state.timingCapture, profiler });
+                const out = runConsoleCommand(state.device, src, { scene: state.scene, graph: state.graph, clock: state.clock, timingCapture: state.timingCapture, frameCapture: state.frameCapture, profiler });
                 if (out) append(out);
             } catch (e) {
                 append(String(e), "err");
@@ -538,7 +543,7 @@ function wireControls(state: ViewerState, rebuildUI: () => void): void {
     ($("graphFile") as HTMLInputElement | null)?.addEventListener("change", async (ev) => {
         const file = (ev.target as HTMLInputElement).files?.[0];
         if (file) {
-            const [graph] = await runGraphScript(state.device, await file.text());
+            const [graph] = await runGraphScript(state.device, await file.text(), { frameCapture: state.frameCapture });
             await graph!.init();
             graph!.onResize(canvas.width, canvas.height);
             if (state.scene) graph!.setScene(state.scene);

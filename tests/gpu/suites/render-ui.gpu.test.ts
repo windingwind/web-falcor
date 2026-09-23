@@ -51,7 +51,8 @@ const kCreationProps: Record<string, Record<string, unknown>> = {
 gpuTest("RenderUI.everyPassExposesFlippableControls", async ({ device }) => {
     const withControls: string[] = [];
     const without: string[] = [];
-    for (const type of getRegisteredRenderPasses()) {
+    // Pass types other suites register for testing ("_Test" prefix) are not product passes.
+    for (const type of getRegisteredRenderPasses().filter((t) => !t.startsWith("_Test"))) {
         let pass: RenderPass;
         try {
             pass = createPass(device, type, kCreationProps[type] ?? {});

@@ -91,3 +91,112 @@ export async function captureOutput(device: Device, graph: RenderGraph, index: n
     }
     return files;
 }
+
+/**
+ * Mirrors Mogwai's FrameCapture extension (CaptureTrigger + FrameCapture), the
+ * `m.frameCapture` object of Mogwai scripts: frames registered with addFrames()
+ * are captured at the end of that frame. §9: files go to `captured` (and are
+ * downloaded in a page); outputDir only prefixes the recorded path.
+ */
+export class FrameCaptureExtension {
+    outputDir = ".";
+    baseFilename = "Mogwai";
+    captureAllOutputs = false;
+    frameDigits = 0;
+    includeOutputInFilename = true;
+    outputNameFilter = "";
+    ui = false;
+    download = true;
+    /** Every file captured so far, with its outputDir-relative path. */
+    readonly captured: (CapturedFile & { path: string })[] = [];
+    private ranges = new Map<RenderGraph, [number, number][]>();
+    private current: { graph: RenderGraph; range: [number, number] } | null = null;
+
+    constructor(
+        private readonly device: Device,
+        private readonly getActiveGraph: () => RenderGraph | null,
+        private readonly getGraph: (name: string) => RenderGraph | null,
+        private readonly getFrame: () => number,
+    ) {}
+
+    /** Mirrors addFrames(graph | name, frames): one single-frame range per entry. */
+    addFrames(graph: RenderGraph | string, frames: Iterable<number>): void {
+        const g = typeof graph === "string" ? this.getGraph(graph) : graph;
+        if (!g) throw new Error(`Can't find a graph named '${String(graph)}'`);
+        for (const f of frames) this.addRange(g, Number(f), 1);
+    }
+
+    /** Mirrors CaptureTrigger::addRange (count 0 removes the range starting at startFrame). */
+    private addRange(graph: RenderGraph, start: number, count: number): void {
+        const ranges = this.ranges.get(graph) ?? [];
+        this.ranges.set(graph, ranges);
+        if (count === 0) {
+            const i = ranges.findIndex((r) => r[0] === start);
+            if (i >= 0) ranges.splice(i, 1);
+            return;
+        }
+        for (const [s, c] of ranges) {
+            if (s === start && c === count) return; // existing ranges are ignored silently
+            if (start <= s + c - 1 && s <= start + count - 1) throw new Error("This range overlaps an existing range!");
+        }
+        ranges.push([start, count]);
+    }
+
+    /** Mirrors reset(graph = None). */
+    reset(graph?: RenderGraph | null): void {
+        if (graph) this.ranges.delete(graph);
+        else this.ranges.clear();
+    }
+
+    /** Mirrors print(graph?): the registered start frames. */
+    print(graph?: RenderGraph): string {
+        const fmt = (g: RenderGraph) => `\tframes = [${(this.ranges.get(g) ?? []).map((r) => r[0]).join(", ")}]`;
+        if (graph) return fmt(graph);
+        const s = [...this.ranges.keys()].map((g) => `'${g.name}':\n${fmt(g)}\n`).join("");
+        return s || "Empty";
+    }
+
+    /** Mirrors CaptureTrigger::beginFrame. */
+    beginFrame(): void {
+        const graph = this.getActiveGraph();
+        if (!graph || this.current) return;
+        const frame = this.getFrame();
+        const range = this.ranges.get(graph)?.find((r) => r[0] === frame);
+        if (range) this.current = { graph, range };
+    }
+
+    /** Mirrors CaptureTrigger::endFrame: captures while inside a range. */
+    async endFrame(): Promise<void> {
+        if (!this.current) return;
+        const frame = this.getFrame();
+        const { graph, range } = this.current;
+        if (frame + 1 === range[0] + range[1]) this.current = null;
+        await this.triggerFrame(graph, frame);
+    }
+
+    /** Mirrors capture(): the active graph's current frame, now. */
+    async capture(): Promise<void> {
+        const graph = this.getActiveGraph();
+        if (graph) await this.triggerFrame(graph, this.getFrame());
+    }
+
+    /** Mirrors FrameCapture::triggerFrame. */
+    private async triggerFrame(graph: RenderGraph, frame: number): Promise<void> {
+        let unmarked: string[] = [];
+        if (this.captureAllOutputs) {
+            const marked = new Set(graph.getOutputNames());
+            unmarked = graph.getAvailableOutputs().filter((o) => !marked.has(o));
+            for (const o of unmarked) graph.markOutput(o);
+            await graph.init();
+            graph.execute(this.device.renderContext);
+        }
+        const names = graph.getOutputNames();
+        for (let i = 0; i < names.length; i++) {
+            if (this.outputNameFilter && names[i] !== this.outputNameFilter) continue;
+            const frameStr = this.frameDigits > 0 ? String(frame).padStart(this.frameDigits, "0") : String(frame);
+            const basename = this.includeOutputInFilename ? `${this.baseFilename}.${names[i]}.${frameStr}` : `${this.baseFilename}_${frameStr}`;
+            for (const f of await captureOutput(this.device, graph, i, basename, this.download)) this.captured.push({ ...f, path: `${this.outputDir}/${f.name}` });
+        }
+        for (const o of unmarked) graph.unmarkOutput(o);
+    }
+}
