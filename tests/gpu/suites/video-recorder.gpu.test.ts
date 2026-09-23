@@ -13,8 +13,13 @@ gpuTest("VideoRecorder.capturesAnimatedCanvas", async () => {
     document.body.appendChild(canvas);
     const c2d = canvas.getContext("2d")!;
 
+    // A recording starts from a canvas that already shows something (the
+    // viewer's has presented frames); that first frame brings the recorder up.
+    c2d.fillStyle = "black";
+    c2d.fillRect(0, 0, 128, 128);
+
     const rec = new VideoRecorder();
-    rec.start(canvas);
+    await rec.start(canvas);
     expectEq(rec.recording, true, "recording started");
 
     // Animate ~0.5 s so several frames land in the stream.

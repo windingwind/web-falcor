@@ -541,8 +541,11 @@ function wireControls(state: ViewerState, rebuildUI: () => void): void {
     ($("record") as HTMLButtonElement | null)?.addEventListener("click", (e) => {
         const btn = e.currentTarget as HTMLButtonElement;
         if (!videoRecorder.recording) {
-            videoRecorder.start(document.getElementById("canvas") as HTMLCanvasElement);
             btn.textContent = "Stop";
+            videoRecorder.start(document.getElementById("canvas") as HTMLCanvasElement).catch((err: unknown) => {
+                btn.textContent = "Record";
+                Logger.error(String(err));
+            });
         } else {
             void videoRecorder.stop().then((blob: Blob) => {
                 btn.textContent = "Record";

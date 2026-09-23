@@ -23,9 +23,22 @@ export class VideoRecorder {
         return this.recorder !== null && this.recorder.state === "recording";
     }
 
-    /** Starts recording; add frames with captureFrame() after each present
-     *  (native VideoCapture encodes per rendered frame, not wall-clock). */
-    start(canvas: HTMLCanvasElement, mimeType?: string): void {
+    /** How long start() waits for the recorder to come up. */
+    private static readonly kStartTimeoutMs = 1000;
+
+    /**
+     * Starts recording; add frames with captureFrame() after each present
+     * (native VideoCapture encodes per rendered frame, not wall-clock).
+     *
+     * With a manually driven capture stream the recorder only starts once a
+     * frame arrives, and frames requested before it is live are dropped — on a
+     * cold encoder that can swallow a whole short recording. So this pushes the
+     * canvas's current contents as the first frame and resolves once the
+     * recorder has actually started; await it before capturing. A canvas that
+     * has never been drawn produces no frame; then the recorder starts on the
+     * first captured one instead, as it would without the wait.
+     */
+    async start(canvas: HTMLCanvasElement, mimeType?: string): Promise<void> {
         if (this.recorder) throw new RuntimeError("VideoRecorder: already recording");
         const type = mimeType ?? kPreferredTypes.find((t) => MediaRecorder.isTypeSupported(t));
         if (!type) throw new RuntimeError("VideoRecorder: no supported video mime type");
@@ -40,7 +53,13 @@ export class VideoRecorder {
             this.recorder!.onstop = () => resolve(new Blob(this.chunks, { type }));
             this.recorder!.onerror = (e) => reject(new RuntimeError(`VideoRecorder: ${(e as ErrorEvent).error ?? "recording failed"}`));
         });
+        const started = new Promise<void>((resolve) => {
+            this.recorder!.onstart = () => resolve();
+            setTimeout(resolve, VideoRecorder.kStartTimeoutMs);
+        });
         this.recorder.start();
+        this.track.requestFrame();
+        await started;
     }
 
     /** Pushes the canvas's current contents as the next video frame. */
