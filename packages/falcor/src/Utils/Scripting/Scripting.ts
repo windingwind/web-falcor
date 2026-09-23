@@ -11,7 +11,7 @@ import type { Device } from "../../Core/API/Device.js";
 import { RenderGraph } from "../../RenderGraph/RenderGraph.js";
 import { Settings } from "../Settings.js";
 import { buildSceneFromCache, encodeTextureSources, loadSceneCache, sceneCacheKey, snapshotCameraPose, snapshotGridVolumes, storeSceneCache } from "../../Scene/SceneCache.js";
-import { createPass } from "../../RenderGraph/RenderPass.js";
+import { createPass, type RenderPass } from "../../RenderGraph/RenderPass.js";
 import { Properties } from "../Properties.js";
 import { RuntimeError } from "../../Core/Error.js";
 import { AssetResolver, withScriptSearchPath } from "../../Core/AssetResolver.js";
@@ -111,6 +111,8 @@ export async function runGraphScript(device: Device, source: string, extras: Rec
     };
     pyodide.globals.set("m", mogwai);
 
+    // Import falcor afresh: registerJsModule doesn't replace an already imported module.
+    pyodide.runPython(`import sys\nsys.modules.pop("falcor", None)`);
     pyodide.runPython(source);
 
     if (graphs.length === 0) throw new RuntimeError("Graph script did not register a graph via m.addGraph()");
@@ -157,7 +159,7 @@ export function runConsoleCommand(
     const py = pyodide as unknown as { setStdout(opts: { batched: (s: string) => void }): void; runPython(src: string): unknown };
     py.setStdout({ batched: (s) => lines.push(s) });
     try {
-        const result = py.runPython("from falcor import *\n" + source);
+        const result = py.runPython('import sys\nsys.modules.pop("falcor", None)\nfrom falcor import *\n' + source);
         if (result !== undefined && result !== null) lines.push(String(result));
     } finally {
         py.setStdout({ batched: (s) => console.log(s) });
@@ -173,7 +175,8 @@ sys.modules.pop('webfalcor_scene', None)  # registerJsModule per call; defeat im
 from webfalcor_scene import (sceneBuilder, SceneBuilderFlags, _TriangleMesh,
     PointLight, DirectionalLight, DistantLight, RectLight, DiscLight, SphereLight,
     StandardMaterial, ClothMaterial, HairMaterial,
-    PBRTDiffuseMaterial, PBRTConductorMaterial, _MERLMaterial, _MERLMixMaterial, _RGLMaterial,
+    PBRTDiffuseMaterial, PBRTConductorMaterial, PBRTDiffuseTransmissionMaterial, PBRTDielectricMaterial,
+    PBRTCoatedConductorMaterial, PBRTCoatedDiffuseMaterial, _MERLMaterial, _MERLMixMaterial, _RGLMaterial,
     Camera, _makeTransform, _makeAABB, _makeEnvMap, _GridVolume, _Grid, _SDFGridCreate)
 
 # Python-side vector types with arithmetic (upstream pyscenes do e.g. size / 2);
@@ -293,6 +296,10 @@ class RGLMaterial:
         self._o = _RGLMaterial(name, path)
     def __getattr__(self, k): return getattr(object.__getattribute__(self, '_o'), k)
 PBRTConductorMaterial = _guarded(PBRTConductorMaterial, _matProps)
+PBRTDiffuseTransmissionMaterial = _guarded(PBRTDiffuseTransmissionMaterial, _matProps)
+PBRTDielectricMaterial = _guarded(PBRTDielectricMaterial, _matProps)
+PBRTCoatedConductorMaterial = _guarded(PBRTCoatedConductorMaterial, _matProps)
+PBRTCoatedDiffuseMaterial = _guarded(PBRTCoatedDiffuseMaterial, _matProps)
 PointLight = _guarded(PointLight, _lightProps)
 DirectionalLight = _guarded(DirectionalLight, _lightProps)
 DistantLight = _guarded(DistantLight, _lightProps)
@@ -454,6 +461,10 @@ async function runSceneScriptInternal(device: Device, source: string, baseUrl: s
         HairMaterial: (name = "") => new MaterialBridge(MaterialType.Hair, name),
         PBRTDiffuseMaterial: (name = "") => new MaterialBridge(MaterialType.PBRTDiffuse, name),
         PBRTConductorMaterial: (name = "") => new MaterialBridge(MaterialType.PBRTConductor, name),
+        PBRTDiffuseTransmissionMaterial: (name = "") => new MaterialBridge(MaterialType.PBRTDiffuseTransmission, name),
+        PBRTDielectricMaterial: (name = "") => new MaterialBridge(MaterialType.PBRTDielectric, name),
+        PBRTCoatedConductorMaterial: (name = "") => new MaterialBridge(MaterialType.PBRTCoatedConductor, name),
+        PBRTCoatedDiffuseMaterial: (name = "") => new MaterialBridge(MaterialType.PBRTCoatedDiffuse, name),
         _MERLMaterial: (name = "", path = "") => {
             const m = new MaterialBridge(MaterialType.MERL, name);
             if (path) m.load(path);
@@ -485,7 +496,27 @@ async function runSceneScriptInternal(device: Device, source: string, baseUrl: s
     };
     pyodide.registerJsModule("webfalcor_scene", sceneModule);
 
-    pyodide.runPython(kScenePrelude + "\n" + source);
+    // Native runs scene scripts as files: define __file__ and provide their local imports.
+    const sceneDir = `/mogwai${new URL(`${baseUrl.startsWith("http") ? baseUrl : location.origin + (baseUrl.startsWith("/") ? "" : "/") + baseUrl}/`).pathname.replace(/\/$/, "")}`;
+    if (/^\s*(from|import)\s/m.test(source)) writePythonFiles(await fetchLocalPythonModules(baseUrl, source, "/mogwai"));
+    pyodide.globals.set("__file__", `${sceneDir}/scene.pyscene`);
+    // Modules the scene imports do `from falcor import *` and expect the scene API, as natively.
+    const exposeSceneApi = `
+import types as _types
+_prev_falcor = sys.modules.get("falcor")
+_scene_falcor = _types.ModuleType("falcor")
+if _prev_falcor is not None:
+    for _k in dir(_prev_falcor):
+        if not _k.startswith("__"): setattr(_scene_falcor, _k, getattr(_prev_falcor, _k))
+for _k, _v in list(globals().items()):
+    if not _k.startswith("_") and _k != "sys": setattr(_scene_falcor, _k, _v)
+sys.modules["falcor"] = _scene_falcor
+`;
+    try {
+        pyodide.runPython(kScenePrelude + "\n" + exposeSceneApi + "\n" + source);
+    } finally {
+        pyodide.runPython(`import sys\nif globals().get("_prev_falcor") is not None: sys.modules["falcor"] = _prev_falcor\nelse: sys.modules.pop("falcor", None)`);
+    }
 
     const scene = await builder.resolve(device, baseUrl);
     const env = scene.getEnvMap();
@@ -516,4 +547,162 @@ async function runSceneScriptInternal(device: Device, source: string, baseUrl: s
         });
     }
     return scene;
+}
+
+/**
+ * Fetches the Python modules a script imports from its own directory (and
+ * sys.path.append'ed ones): `from X.Y import` / `import X` become files under
+ * `root` + their URL path, with package __init__.py files. Pyodide can only
+ * import what is in its file system.
+ */
+export async function fetchLocalPythonModules(dirUrl: string, source: string, root: string): Promise<Record<string, string>> {
+    const files: Record<string, string> = {};
+    const base = dirUrl.startsWith("http") ? dirUrl : `${location.origin}${dirUrl.startsWith("/") ? "" : "/"}${dirUrl}`;
+    const dir = new URL(`${base}/`).pathname.replace(/\/$/, "");
+    const searchDirs = [dir];
+    for (const m of source.matchAll(/sys\.path\.append\(\s*['"]([^'"]+)['"]\s*\)/g)) searchDirs.push(new URL(m[1]!, `${location.origin}${dir}/`).pathname.replace(/\/$/, ""));
+    const pending: string[] = [source];
+    const seen = new Set<string>();
+    while (pending.length > 0) {
+        const text = pending.pop()!;
+        for (const m of text.matchAll(/^\s*(?:from\s+([\w.]+)\s+import|import\s+([\w.]+))/gm)) {
+            const mod = m[1] ?? m[2]!;
+            if (seen.has(mod) || ["falcor", "sys", "os", "math", "random", "json"].includes(mod)) continue;
+            seen.add(mod);
+            for (const d of searchDirs) {
+                const url = `${d}/${mod.replaceAll(".", "/")}.py`;
+                const res = await fetch(url);
+                if (!res.ok || res.headers.get("content-type")?.includes("html")) continue;
+                const body = await res.text();
+                files[`${root}${url}`] = body;
+                const parts = mod.split(".");
+                for (let i = 1; i < parts.length; i++) files[`${root}${d}/${parts.slice(0, i).join("/")}/__init__.py`] ??= "";
+                pending.push(body);
+                break;
+            }
+        }
+    }
+    return files;
+}
+
+/** Writes path -> source files into Pyodide's file system. */
+function writePythonFiles(files: Record<string, string>): void {
+    const fs = (pyodide as unknown as { FS: { mkdirTree(p: string): void; writeFile(p: string, d: string): void } }).FS;
+    for (const [path, text] of Object.entries(files)) {
+        fs.mkdirTree(path.slice(0, path.lastIndexOf("/")) || "/");
+        fs.writeFile(path, text);
+    }
+}
+
+/** One recorded Mogwai script call (see recordMogwaiScript). */
+export type MogwaiCommand =
+    | { op: "addGraph"; graph: RenderGraph }
+    | { op: "loadScene"; path: string }
+    | { op: "resizeFrameBuffer"; width: number; height: number }
+    | { op: "renderFrame" }
+    | { op: "set"; target: "clock" | "frameCapture" | "scene"; key: string; value: unknown }
+    | { op: "call"; target: "clock" | "frameCapture" | "scene" | RenderGraph | RenderPass; method: string; args: unknown[] };
+
+/**
+ * Runs a Mogwai script (e.g. an unmodified `tests/image_tests` test) and records
+ * what it asks Mogwai to do, for asynchronous replay: native scripts call
+ * m.loadScene / m.renderFrame / m.frameCapture.capture synchronously, which
+ * the web can only perform asynchronously. Graph calls after m.addGraph(g)
+ * (e.g. g.updatePass between captures) are recorded in order too. `files`
+ * (path -> source) are written to Pyodide's file system under /mogwai, `cwd`
+ * becomes the working directory and first sys.path entry.
+ */
+export function recordMogwaiScript(device: Device, source: string, files: Record<string, string>, cwd: string): MogwaiCommand[] {
+    if (!pyodide) throw new RuntimeError("Call initScripting() first");
+    const commands: MogwaiCommand[] = [];
+    const added = new WeakSet<RenderGraph>();
+    const targets = new WeakMap<object, RenderGraph>();
+    const conv = (v: unknown) => toJs(v);
+
+    // Passes fetched from a graph: property reads run now, set_properties is recorded.
+    const makePass = (pass: RenderPass) =>
+        new Proxy(pass, {
+            get(target, key, receiver) {
+                if (key === "getDictionary") return () => pyodide!.toPy(target.getProperties().toJSON());
+                if (key === "properties") return pyodide!.toPy(target.getProperties().toJSON());
+                if (key === "set_properties")
+                    return (dict: unknown) => void commands.push({ op: "call", target, method: "setProperties", args: [new Properties(conv(dict) as Record<string, never>)] });
+                const value = Reflect.get(target, key, receiver);
+                if (typeof value !== "function") return value;
+                return (...args: unknown[]) => void commands.push({ op: "call", target, method: String(key), args: args.map(conv) });
+            },
+        });
+    const camel = (k: string) => k.replace(/_([a-z])/g, (_m, c: string) => c.toUpperCase());
+    // Graphs record their calls once added (building them at import time runs directly).
+    const makeGraph = (name: string) => {
+        const graph = new RenderGraph(device, name);
+        const proxy = new Proxy(graph, {
+            get(target, key, receiver) {
+                const name = typeof key === "string" && !(key in target) ? camel(key) : key;
+                if (name === "getPass" || name === "get") return (passName: string) => makePass(target.getPass(String(passName))!);
+                const value = Reflect.get(target, name, receiver);
+                if (typeof value !== "function") return value;
+                return (...args: unknown[]) => {
+                    if (!added.has(target)) return (value as (...a: unknown[]) => unknown).apply(target, args.map(conv));
+                    commands.push({ op: "call", target, method: String(name), args: args.map(conv) });
+                    return undefined;
+                };
+            },
+        });
+        targets.set(proxy, graph);
+        return proxy;
+    };
+    // Records property sets and calls on m.clock / m.frameCapture / m.scene (nested paths for the scene).
+    const recorder = (target: "clock" | "frameCapture" | "scene", path = ""): Record<string, unknown> =>
+        new Proxy((() => {}) as unknown as Record<string, unknown>, {
+            get: (_t, key) => (key === "then" ? undefined : recorder(target, path ? `${path}.${String(key)}` : String(key))),
+            set: (_t, key, value) => (commands.push({ op: "set", target, key: path ? `${path}.${String(key)}` : String(key), value: conv(value) }), true),
+            apply: (_t, _this, args: unknown[]) => void commands.push({ op: "call", target, method: path, args: args.map(conv) }),
+        });
+
+    pyodide.registerJsModule("_falcor_js", {
+        RenderGraph: makeGraph,
+        createPass: (type: string, props?: unknown) => createPass(device, type, new Properties((toJs(props) as Record<string, never>) ?? {})),
+        TextureChannelFlags: { Red: 1, Green: 2, Blue: 4, Alpha: 8, RGB: 7, RGBA: 15 },
+        float2: (x = 0, y = 0) => new float2(x, y),
+        float3: (x = 0, y = 0, z = 0) => new float3(x, y, z),
+        float4: (x = 0, y = 0, z = 0, w = 0) => new float4(x, y, z, w),
+        SceneBuilderFlags: kSceneBuilderFlagsPython,
+        ...AssetResolver.pythonBindings,
+    });
+    // A real module object: scripts probe it (e.g. `"IMAGE_TEST_RUN_ONLY" in falcor.__dict__`).
+    pyodide.runPython(
+        `import sys, types, _falcor_js\n_falcor = types.ModuleType("falcor")\nfor _k in dir(_falcor_js):\n    if not _k.startswith("__"): setattr(_falcor, _k, getattr(_falcor_js, _k))\nsys.modules["falcor"] = _falcor`,
+    );
+    pyodide.globals.set("m", {
+        addGraph: (g: RenderGraph) => {
+            const graph = targets.get(g) ?? g;
+            added.add(graph);
+            commands.push({ op: "addGraph", graph });
+        },
+        loadScene: (path: string) => void commands.push({ op: "loadScene", path: String(path) }),
+        resizeFrameBuffer: (width: number, height: number) => void commands.push({ op: "resizeFrameBuffer", width: Number(width), height: Number(height) }),
+        renderFrame: () => void commands.push({ op: "renderFrame" }),
+        clock: recorder("clock"),
+        frameCapture: recorder("frameCapture"),
+        scene: recorder("scene"),
+        ui: false,
+        settings: { addOptions: (dict: unknown) => globalSettings.addOptions(toJs(dict) as Record<string, never>) },
+    });
+
+    writePythonFiles(files);
+    (pyodide as unknown as { FS: { mkdirTree(p: string): void } }).FS.mkdirTree(cwd);
+    // Fresh imports per run: the scripts' modules (helpers, graphs.*) are cached across runs otherwise.
+    pyodide.runPython(
+        `import os, sys\nos.chdir(${JSON.stringify(cwd)})\nsys.path.insert(0, ${JSON.stringify(cwd)})\n` +
+            `for _k in [k for k, v in list(sys.modules.items()) if getattr(v, "__file__", None) and str(getattr(v, "__file__")).startswith("/mogwai")]: del sys.modules[_k]`,
+    );
+    try {
+        pyodide.globals.set("__mogwai_script", source);
+        pyodide.runPython(`try:\n    exec(compile(__mogwai_script, "script", "exec"), globals())\nexcept SystemExit:\n    pass\n`);
+    } finally {
+        // The recording falcor module must not leak into later graph/console scripts.
+        pyodide.runPython(`sys.path.remove(${JSON.stringify(cwd)})\nsys.modules.pop("falcor", None)`);
+    }
+    return commands;
 }

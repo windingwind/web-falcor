@@ -14,7 +14,8 @@ import { Buffer } from "../Core/API/Buffer.js";
 import type { Resource } from "../Core/API/Resource.js";
 import { MemoryType, ResourceBindFlags } from "../Core/API/Types.js";
 import { ResourceFormat } from "../Core/API/Formats.js";
-import { RenderPass, RenderData, type CompileData } from "./RenderPass.js";
+import { RenderPass, RenderData, createPass, type CompileData } from "./RenderPass.js";
+import type { Properties } from "../Utils/Properties.js";
 import { Field, FieldType, RenderPassReflection, resourceTypeToFieldType } from "./RenderPassReflection.js";
 import { ArgumentError, RuntimeError } from "../Core/Error.js";
 import { Logger } from "../Utils/Logger.js";
@@ -71,6 +72,17 @@ export class RenderGraph {
         if (this.scene) pass.setScene(this.scene);
         this.compiled = null;
         return pass;
+    }
+
+    /** Mirrors RenderGraph::updatePass: recreates the pass from `props` alone (unset properties revert to defaults). */
+    updatePass(name: string, props: Properties | Record<string, unknown>): void {
+        const old = this.passes.get(name);
+        if (!old) throw new ArgumentError(`Can't update render pass '${name}'. Pass doesn't exist.`);
+        const pass = createPass(this.device, old.type || old.constructor.name, props);
+        pass.name = name;
+        this.passes.set(name, pass);
+        if (this.scene) pass.setScene(this.scene);
+        this.compiled = null;
     }
 
     removePass(name: string): void {

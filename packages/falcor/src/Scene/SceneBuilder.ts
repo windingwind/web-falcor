@@ -357,6 +357,10 @@ export class MaterialBridge {
         if (this.rejectsMetalRoughParam("Roughness")) return;
         if (typeof r === "number") {
             this._specularParams = new float4(this._specularParams.x, r, this._specularParams.z, this._specularParams.w);
+        } else if ("w" in r && typeof (r as { w?: number }).w === "number") {
+            // PBRTCoatedConductorMaterial::setRoughness(float4): interface xy, conductor zw.
+            const v = r as { x: number; y: number; z: number; w: number };
+            this._specularParams = new float4(v.x, v.y, v.z, v.w);
         } else {
             // PBRTConductorMaterial::setRoughness(float2) -> specular.rg.
             this._specularParams = new float4(r.x, r.y, this._specularParams.z, this._specularParams.w);

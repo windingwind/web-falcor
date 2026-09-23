@@ -222,6 +222,15 @@ export class PathTracer extends RenderPass {
         this.tracePass = null;
         this.rtxdi = null;
         this.frameCount = 0;
+        // Mirrors resetLighting(): light samplers were built from the previous scene.
+        this.lightBVHSampler = null;
+        this.powerSampler = null;
+        this.envMapSampler = null;
+    }
+
+    /** Mirrors PathTracer::reset (script binding): restarts the frame count. */
+    reset(): void {
+        this.frameCount = 0;
     }
 
     /** Mirrors PathTracer::getProperties (StaticParams + sampler options). */
