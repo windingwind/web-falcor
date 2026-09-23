@@ -12,6 +12,7 @@ export * from "./Core/API/Types.js";
 export * from "./Core/API/Resource.js";
 export * from "./Core/API/Buffer.js";
 export * from "./Core/API/Texture.js";
+export * from "./Core/API/TextureLoading.js";
 export * from "./Core/API/Sampler.js";
 export * from "./Core/API/Present.js";
 export * from "./Core/API/Fence.js";

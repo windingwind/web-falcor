@@ -17,6 +17,7 @@ import {
     toGpuTextureFormat,
 } from "./Formats.js";
 import { Bitmap, BitmapExportFlags, BitmapFileFormat } from "../../Utils/Image/Bitmap.js";
+import { TextureReductionMode } from "./Sampler.js";
 import { float16ToFloat32 } from "../../Utils/Math/Float16.js";
 import { ArgumentError, RuntimeError } from "../Error.js";
 import type { Device } from "./Device.js";
@@ -134,12 +135,17 @@ export class Texture extends Resource {
 
     /** Mirrors Texture::generateMips: box-filter downsample chain via blits
      *  (linear sampling at destination texel centers == 2x2 average); array
-     *  textures generate every layer. */
-    generateMips(ctx: { blit(src: Texture, dst: Texture, filter?: GPUFilterMode, srcMip?: number, dstMip?: number, srcLayer?: number, dstLayer?: number): void }): void {
+     *  textures generate every layer. minMaxMips stores the average in R and A,
+     *  the minimum in G and the maximum in B, as native. */
+    generateMips(
+        ctx: { blit(src: Texture, dst: Texture, filter?: GPUFilterMode, srcMip?: number, dstMip?: number, srcLayer?: number, dstLayer?: number, reductions?: readonly TextureReductionMode[]): void },
+        minMaxMips = false,
+    ): void {
+        const reductions = minMaxMips ? [TextureReductionMode.Standard, TextureReductionMode.Min, TextureReductionMode.Max, TextureReductionMode.Standard] : undefined;
         const layers = this.type === ResourceType.Texture3D ? 1 : this.gpuTexture.depthOrArrayLayers;
         for (let layer = 0; layer < layers; layer++) {
             for (let mip = 1; mip < this.mipCount; mip++) {
-                ctx.blit(this, this, "linear", mip - 1, mip, layer, layer);
+                ctx.blit(this, this, "linear", mip - 1, mip, layer, layer, reductions);
             }
         }
     }
