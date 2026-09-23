@@ -13,6 +13,7 @@
     "download:assets": "node scripts/download-assets.mjs",
     "gen:assets": "node scripts/gen-assets.mjs",
     "gen:spectra": "node scripts/gen-spectra.mjs",
+    "image-compare": "vite-node scripts/image-compare.ts --",
     "build": "npm run build --workspaces --if-present",
     "shaders": "node packages/slang-compiler/bin/compile-shaders.js",
     "dev": "npm run dev --workspace=@web-falcor/mogwai",
