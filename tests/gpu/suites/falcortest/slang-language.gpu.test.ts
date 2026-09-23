@@ -1,7 +1,8 @@
 /**
  * Transplanted FalcorTest GPU tests for Slang language features, compiled to
- * WGSL: Slang/SlangMutatingTests, SlangExtension, SlangGenerics, NestedStructs, SlangTests (SlangEnum; the rest
- * of that file needs 16/64-bit scalar types).
+ * WGSL: Slang/SlangMutatingTests, SlangExtension, SlangGenerics, NestedStructs, SlangTests (SlangEnum,
+ * SlangDefaultInitializers without its double case, SlangHashedStrings; the rest of that file needs
+ * 16/64-bit scalar types).
  */
 
 import { type Device } from "@web-falcor/falcor";
@@ -92,4 +93,35 @@ gpuTest("FalcorTest.SlangEnum", async ({ device }) => {
     const e = new Expect();
     want.forEach((w, i) => e.check(result[i] === w, () => `result[${i}] = ${result[i]}, expected ${w}`));
     e.done("SlangEnum");
+});
+
+gpuTest("FalcorTest.SlangDefaultInitializers", async ({ device }) => {
+    const maxTests = 100;
+    const usedTests = 43;
+    const ctx = new GPUUnitTestContext(device);
+    ctx.createProgram("Tests/Slang/SlangTests.cs.slang", "testDefaultInitializers");
+    ctx.allocateStructuredBuffer("result", maxTests, new Uint32Array(maxTests).fill(0xffffffff));
+    ctx.runProgram(1, 1, 1);
+    const result = await ctx.readBuffer("result", Uint32Array);
+    const e = new Expect();
+    for (let i = 0; i < maxTests; i++) {
+        // i = 9..14 held the double case (not in WGSL), so they keep the init value.
+        const expected = i === 42 ? 4 /* Type3::C */ : i < usedTests && !(i >= 9 && i < 15) ? 0 : 0xffffffff;
+        e.check(result[i] === expected, () => `i = ${i}: ${result[i]} != ${expected}`);
+    }
+    e.done("SlangDefaultInitializers");
+});
+
+gpuTest("FalcorTest.SlangHashedStrings", async ({ device }) => {
+    const ctx = new GPUUnitTestContext(device);
+    ctx.createProgram("Tests/Slang/SlangTests.cs.slang", "testHashedStrings");
+    ctx.allocateStructuredBuffer("result", 4);
+    ctx.runProgram(1, 1, 1);
+    const hashedStrings = ctx.getReflector().getHashedStrings();
+    const e = new Expect();
+    e.check(hashedStrings.length === 4, () => `${hashedStrings.length} hashed strings`);
+    for (let i = 0; i < 4; i++) e.check(hashedStrings[i]?.string === `Test String ${i}`, () => `string ${i}: ${hashedStrings[i]?.string}`);
+    const result = await ctx.readBuffer("result", Uint32Array);
+    for (let i = 0; i < 4; i++) e.check(result[i] === hashedStrings[i]?.hash, () => `hash ${i}: ${result[i]} != ${hashedStrings[i]?.hash}`);
+    e.done("SlangHashedStrings");
 });

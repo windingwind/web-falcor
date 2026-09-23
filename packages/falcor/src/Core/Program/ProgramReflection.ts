@@ -100,6 +100,17 @@ export class ProgramReflection {
         return this.parameters.find((p) => p.name === name);
     }
 
+    /** Mirrors ProgramReflection::getHashedStrings: the strings passed to getStringHash() (and print()). */
+    getHashedStrings(): { string: string; hash: number }[] {
+        return Object.entries(this.json.hashedStrings ?? {}).map(([string, hash]) => ({ string, hash: hash >>> 0 }));
+    }
+
+    /** Mirrors ProgramReflection::getParameterBlock (undefined if `name` is not a ParameterBlock<T>). */
+    getParameterBlock(name: string): ReflectionVar | undefined {
+        const p = this.findParameter(name);
+        return p?.type.kind === "parameterBlock" ? p : undefined;
+    }
+
     getEntryPoint(name: string): EntryPointReflection {
         const ep = this.entryPoints.find((e) => e.name === name) ?? this.entryPoints[0];
         if (!ep) throw new RuntimeError(`Entry point '${name}' not found in reflection`);

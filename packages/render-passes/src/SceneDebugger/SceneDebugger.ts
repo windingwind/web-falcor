@@ -234,7 +234,7 @@ export class SceneDebugger extends RenderPass {
         sd["vbuffer"] = renderData.getTexture("vbuffer") ?? this.dummyVbuffer;
         sd["output"] = output;
         sd["pixelData"] = this.pixelData!;
-        this.pixelDebug.prepareProgram(root);
+        this.pixelDebug.prepareProgram(root, this.pass);
         this.pass.execute(ctx, w, h);
         this.pixelDebug.endFrame();
         this.frameCount++;

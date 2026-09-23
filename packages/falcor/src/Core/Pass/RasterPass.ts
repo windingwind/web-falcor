@@ -11,7 +11,7 @@ import type { Vao } from "../API/VAO.js";
 import { DefineList } from "../Program/DefineList.js";
 import { ShaderType } from "../Program/SlangCompiler.js";
 import { ParameterBlock, makeRootVar, type ShaderVar } from "../Program/ParameterBlock.js";
-import { mergeWgslBindings } from "../Program/ProgramReflection.js";
+import { mergeWgslBindings, type ProgramReflection } from "../Program/ProgramReflection.js";
 import type { Program, ProgramVersion } from "../Program/Program.js";
 import { GraphicsState } from "../State/GraphicsState.js";
 import { QueryHeap, QueryHeapType } from "../API/QueryHeap.js";
@@ -92,6 +92,12 @@ export class RasterPass {
     getRootVar(): ShaderVar {
         this.refresh();
         return this.root;
+    }
+
+    /** Mirrors getProgram()->getReflector(). */
+    getReflector(): ProgramReflection {
+        this.refresh();
+        return this.vars.reflection;
     }
 
     getParameterBlock(): ParameterBlock {

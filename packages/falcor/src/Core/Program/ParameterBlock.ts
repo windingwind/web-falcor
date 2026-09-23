@@ -185,6 +185,12 @@ export class ParameterBlock {
         this.generation++;
     }
 
+    /** Mirrors reading a resource back through a ShaderVar (`ref<Buffer> b = var["x"]`). */
+    getResourceByPath(path: string[]): BindableResource | null {
+        const slot = this.slots.get(path.join("."));
+        return slot?.kind === "resource" ? slot.resource : null;
+    }
+
     /** Uniform write: longest slot prefix is the containing cbuffer; rest addresses members. */
     setUniformByPath(path: string[], value: unknown): void {
         for (let prefixLen = path.length - 1; prefixLen >= 1; prefixLen--) {
@@ -326,6 +332,71 @@ export type ShaderVar = {
     [key: string]: any;
 };
 
+/**
+ * Mirrors ParameterBlock::create(device, reflection): a block filled on its own and
+ * bound later with `var["gBlock"] = block`. §9: program parameter blocks are laid
+ * out per program here, so the block records its values and forwards them to every
+ * program it is bound to (later writes included, as native blocks are shared).
+ */
+export class StandaloneParameterBlock {
+    private values = new Map<string, { path: string[]; value: unknown }>();
+    private targets: { block: ParameterBlock; prefix: string[] }[] = [];
+    private readonly root: ReflectionVar;
+
+    private constructor(
+        public readonly device: Device,
+        reflection: ReflectionVar,
+    ) {
+        this.root = reflection;
+    }
+
+    /** `reflection` is a ParameterBlock<T> parameter, e.g. `getReflector().getParameterBlock("gBlock")`. */
+    static create(device: Device, reflection: ReflectionVar): StandaloneParameterBlock {
+        if (reflection.type.kind !== "parameterBlock") throw new ArgumentError(`'${reflection.name}' is not a parameter block`);
+        return new StandaloneParameterBlock(device, reflection);
+    }
+
+    getRootVar(): ShaderVar {
+        const makeProxy = (path: string[]): any =>
+            new Proxy(Object.create(null), {
+                get: (_t, prop: string) => (prop === "getBuffer" || prop === "getTexture" || prop === "getResource" ? () => this.get(path) : makeProxy([...path, prop])),
+                set: (_t, prop: string, value) => (this.set([...path, prop], value), true),
+            });
+        return makeProxy([]);
+    }
+
+    setBuffer(name: string, buffer: Buffer): void {
+        this.set([name], buffer);
+    }
+
+    getBuffer(name: string): Buffer | null {
+        const v = this.get([name]);
+        return v instanceof Buffer ? v : null;
+    }
+
+    private get(path: string[]): unknown {
+        return this.values.get(path.join("."))?.value ?? null;
+    }
+
+    private set(path: string[], value: unknown): void {
+        let v: ReflectionVar | undefined = this.root;
+        for (const part of path) if (!(v = v.findMember(part))) throw new ArgumentError(`No member '${path.join(".")}' in parameter block '${this.root.name}'`);
+        this.values.set(path.join("."), { path, value });
+        for (const t of this.targets) write(t.block, [...t.prefix, ...path], value);
+    }
+
+    /** Binds the block's values at `prefix` of a program block (ShaderVar assignment). */
+    bindTo(block: ParameterBlock, prefix: string[]): void {
+        if (!this.targets.some((t) => t.block === block && t.prefix.join(".") === prefix.join("."))) this.targets.push({ block, prefix });
+        for (const { path, value } of this.values.values()) write(block, [...prefix, ...path], value);
+    }
+}
+
+function write(block: ParameterBlock, path: string[], value: unknown): void {
+    if (isBindable(value)) block.setResourceByPath(path, value);
+    else block.setUniformByPath(path, value);
+}
+
 function isBindable(value: unknown): value is BindableResource {
     return value instanceof Buffer || value instanceof Texture || value instanceof Sampler || (typeof GPUTextureView !== "undefined" && value instanceof GPUTextureView);
 }
@@ -333,11 +404,11 @@ function isBindable(value: unknown): value is BindableResource {
 export function makeRootVar(block: ParameterBlock): ShaderVar {
     const makeProxy = (path: string[]): any =>
         new Proxy(Object.create(null), {
-            get: (_t, prop: string) => makeProxy([...path, prop]),
+            get: (_t, prop: string) => (prop === "getBuffer" || prop === "getTexture" || prop === "getResource" ? () => block.getResourceByPath(path) : makeProxy([...path, prop])),
             set: (_t, prop: string, value) => {
                 const full = [...path, prop];
-                if (isBindable(value)) block.setResourceByPath(full, value);
-                else block.setUniformByPath(full, value);
+                if (value instanceof StandaloneParameterBlock) value.bindTo(block, full);
+                else write(block, full, value);
                 return true;
             },
         });

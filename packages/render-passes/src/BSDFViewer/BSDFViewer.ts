@@ -247,7 +247,7 @@ export class BSDFViewer extends RenderPass {
 
         v["outputColor"] = output;
         v["pixelData"] = this.pixelData!;
-        this.pixelDebug.prepareProgram(root);
+        this.pixelDebug.prepareProgram(root, this.pass);
         this.pass.execute(ctx, w, h);
         this.pixelDebug.endFrame();
         this.frameCount++;

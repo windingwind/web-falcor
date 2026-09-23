@@ -41,6 +41,8 @@ export interface CompileResult {
 /** Shape of the slang reflection JSON we rely on (subset). */
 export interface SlangReflectionJson {
     parameters?: SlangReflectionParameter[];
+    /** getStringHash() literals, string -> signed 32-bit hash. */
+    hashedStrings?: Record<string, number>;
     entryPoints?: {
         name: string;
         stage?: string;

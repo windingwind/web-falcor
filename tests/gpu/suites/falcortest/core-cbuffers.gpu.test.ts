@@ -1,10 +1,9 @@
 /**
  * Transplanted FalcorTest GPU tests: Core/ConstantBufferTests, Core/ParamBlockCB,
- * Core/TextureArrays. ParamBlockCB assigns through the program's root var (the
- * web has no standalone ParameterBlock::create from reflection).
+ * Core/TextureArrays.
  */
 
-import { ResourceBindFlags, ResourceFormat } from "@web-falcor/falcor";
+import { ResourceBindFlags, ResourceFormat, StandaloneParameterBlock } from "@web-falcor/falcor";
 import { gpuTest } from "../../harness/registry.js";
 import { GPUUnitTestContext } from "../../harness/unit-test-context.js";
 import { Expect } from "../../harness/expect.js";
@@ -41,7 +40,9 @@ gpuTest("FalcorTest.ParamBlockCB", async ({ device }) => {
     const ctx = new GPUUnitTestContext(device);
     ctx.createProgram("Tests/Core/ParamBlockCB.cs.slang", "main");
     ctx.allocateStructuredBuffer("result", 1);
-    ctx.vars()["gParamBlock"]["a"] = 42.1;
+    const paramBlock = StandaloneParameterBlock.create(device, ctx.getReflector().getParameterBlock("gParamBlock")!);
+    paramBlock.getRootVar()["a"] = 42.1;
+    ctx.vars()["gParamBlock"] = paramBlock;
     ctx.runProgram(1, 1, 1);
     const r = await ctx.readBuffer("result", Float32Array);
     const e = new Expect();

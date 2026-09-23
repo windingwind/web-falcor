@@ -7,6 +7,7 @@ import type { ComputeContext } from "../API/ComputeContext.js";
 import { DefineList } from "../Program/DefineList.js";
 import { ShaderType } from "../Program/SlangCompiler.js";
 import { ParameterBlock, makeRootVar, type ShaderVar } from "../Program/ParameterBlock.js";
+import type { ProgramReflection } from "../Program/ProgramReflection.js";
 import type { Program, ProgramVersion, EntryPointKernel, ShaderModuleDesc, TypeConformance } from "../Program/Program.js";
 
 export interface ComputePassDesc {
@@ -78,6 +79,12 @@ export class ComputePass {
     getParameterBlock(): ParameterBlock {
         this.refresh();
         return this.vars;
+    }
+
+    /** Mirrors getProgram()->getReflector(). */
+    getReflector(): ProgramReflection {
+        this.refresh();
+        return this.version.reflection;
     }
 
     getThreadGroupSize(): [number, number, number] {

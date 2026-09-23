@@ -92,6 +92,10 @@ export const kShaderOverrides: Readonly<Record<string, string>> = {
     "Tests/Rendering/Materials/MicrofacetTests.cs.slang": "WebFalcor/Overrides/Tests/Rendering/Materials/MicrofacetTests.cs.slang",
     "Tests/Scene/Material/BSDFTests.cs.slang": "WebFalcor/Overrides/Tests/Scene/Material/BSDFTests.cs.slang",
     "Tests/Core/BufferTests.cs.slang": "WebFalcor/Overrides/Tests/Core/BufferTests.cs.slang",
+    "Tests/Core/RootBufferTests.cs.slang": "WebFalcor/Overrides/Tests/Core/RootBufferTests.cs.slang",
+    "Tests/Core/RootBufferStructTests.cs.slang": "WebFalcor/Overrides/Tests/Core/RootBufferStructTests.cs.slang",
+    "Tests/Core/RootBufferParamBlockTests.cs.slang": "WebFalcor/Overrides/Tests/Core/RootBufferParamBlockTests.cs.slang",
+    "Tests/Core/ParamBlockDefinition.slang": "WebFalcor/Overrides/Tests/Core/ParamBlockDefinition.slang",
     // Atomic<uint> histogram; WaveMatch emulated (no WGSL builtin).
     "Utils/Debug/WarpProfiler.slang": "WebFalcor/Overrides/Utils/Debug/WarpProfiler.slang",
     "Utils/Sampling/UniformSampleGenerator.slang": "WebFalcor/Overrides/Utils/Sampling/UniformSampleGenerator.slang",

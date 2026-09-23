@@ -535,7 +535,7 @@ export class RTXDI {
         for (const [k, val] of Object.entries(cb)) (cbVar as Record<string, unknown>)[k] = val;
         this.bindShaderDataInternal(root, motionVectors);
         // Native prepares the debug resources on the candidate-generation and spatial-resampling programs.
-        if (pass === this.generateCandidatesPass || pass === this.spatialResamplingPass) this.pixelDebug.prepareProgram(root);
+        if (pass === this.generateCandidatesPass || pass === this.spatialResamplingPass) this.pixelDebug.prepareProgram(root, pass);
         pass.execute(ctx, this.frameDim[0], this.frameDim[1]);
     }
 

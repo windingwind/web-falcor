@@ -581,7 +581,7 @@ export class PathTracer extends RenderPass {
             this.bindStats(root, frameDim);
             const block = root["gPathTracer"] as ShaderVar;
             this.bindPathTracerData(block, vbuffer, color, frameDim);
-            this.pixelDebug.prepareProgram(root);
+            this.pixelDebug.prepareProgram(root, this.tracePass!);
             if (this.emissiveSampler === "Power" && this.scene.useEmissiveLights) {
                 if (!this.powerSampler) this.powerSampler = new EmissivePowerSampler(this.device, this.scene.getEmissiveFluxes());
                 this.powerSampler.bindShaderData(block["emissiveSampler"] as ShaderVar);

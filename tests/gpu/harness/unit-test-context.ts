@@ -9,7 +9,7 @@
  * from the WGSL layout Slang emits (float3 elements are 16 bytes, not 12).
  */
 
-import { Buffer, ComputePass, DefineList, ResourceBindFlags, type Device, type ShaderModuleDesc, type ShaderVar, type TypeConformance } from "@web-falcor/falcor";
+import { Buffer, ComputePass, DefineList, ResourceBindFlags, type Device, type ProgramReflection, type ShaderModuleDesc, type ShaderVar, type TypeConformance } from "@web-falcor/falcor";
 
 type TypedArray = Float32Array | Uint32Array | Int32Array | Uint16Array | Uint8Array | Float64Array;
 type TypedArrayCtor<T extends TypedArray> = { new (buffer: ArrayBuffer): T };
@@ -92,6 +92,11 @@ export class GPUUnitTestContext {
     vars(): ShaderVar {
         if (!this.pass) throw new Error("GPUUnitTestContext: program not created");
         return this.pass.getRootVar();
+    }
+
+    /** Mirrors getProgram()->getReflector(). */
+    getReflector(): ProgramReflection {
+        return this.pass!.getReflector();
     }
 
     /** Thread-group size from reflection (mirrors mThreadGroupSize). */

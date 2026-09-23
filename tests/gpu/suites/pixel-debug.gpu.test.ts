@@ -2,7 +2,8 @@
  * PixelDebug end-to-end: a compute kernel prints uint/float/int/bool/vector
  * values via the portable override; the host captures records for the
  * selected pixel only, in order, with exact bit-decoded values, plus the
- * assert record from exactly one failing pixel.
+ * assert record from exactly one failing pixel. Messages resolve through the
+ * program's hashed-string reflection, as native.
  */
 
 import { ComputePass, PixelDebug, PrintValueType } from "@web-falcor/falcor";
@@ -16,7 +17,7 @@ gpuTest("PixelDebug.capturesSelectedPixelPrints", async ({ device }) => {
     const pass = ComputePass.create(device, { path: "WebFalcor/PixelDebugTest.cs.slang", defines: PixelDebug.getDefines() });
     const ctx = device.renderContext;
     debug.beginFrame(ctx);
-    debug.prepareProgram(pass.getRootVar());
+    debug.prepareProgram(pass.getRootVar(), pass);
     pass.execute(ctx, 16, 16);
     debug.endFrame();
     ctx.submit();
@@ -40,9 +41,11 @@ gpuTest("PixelDebug.capturesSelectedPixelPrints", async ({ device }) => {
     expectEq(prints[3]!.type, PrintValueType.Bool, "bool type");
     expectEq(prints[3]!.values[0], false, "x=3 is odd");
     expectEq(prints[4]!.values.join(","), "1.5,2.5,3.5", "float3 components");
+    expectEq(prints.map((p) => debug.getMessage(p.msgHash)).join(","), "x,half,neg,even,vec", "print messages");
 
     const asserts = debug.getAssertRecords();
     expectEq(asserts.length, 1, "exactly one failing pixel");
     expectEq(asserts[0]!.launchX, 3, "assert launch x");
     expectEq(asserts[0]!.launchY, 5, "assert launch y");
+    expectEq(debug.getMessage(asserts[0]!.msgHash), "hit", "assert message");
 });

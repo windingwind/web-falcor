@@ -1,10 +1,9 @@
 /**
  * Host side of Utils/Debug/PixelDebug: captures shader print()/assert()
  * records for one selected pixel. Web divergences (docs §9): records read
- * back asynchronously (~1 frame late) instead of native's fence wait, and
- * message strings surface as slang string hashes (hashed-string reflection
- * is not exposed by slang-wasm); passes must compile with the
- * _PIXEL_DEBUG_ENABLED define (see getDefines()).
+ * back asynchronously (~1 frame late) instead of native's fence wait; passes
+ * must compile with the _PIXEL_DEBUG_ENABLED define (see getDefines()).
+ * Message strings resolve through the programs' hashed-string reflection.
  */
 
 import { Buffer } from "../../Core/API/Buffer.js";
@@ -12,6 +11,7 @@ import type { ComputeContext } from "../../Core/API/ComputeContext.js";
 import type { Device } from "../../Core/API/Device.js";
 import { MemoryType, ResourceBindFlags } from "../../Core/API/Types.js";
 import type { ShaderVar } from "../../Core/Program/ParameterBlock.js";
+import type { ProgramReflection } from "../../Core/Program/ProgramReflection.js";
 import type { UIWidgets } from "../../RenderGraph/UIWidgets.js";
 
 /** Minimal mouse event shape (the viewer forwards normalized canvas positions). */
@@ -44,6 +44,7 @@ export class PixelDebug {
     private recordsBuffer: Buffer | null = null;
     private readbackInFlight = false;
     private prints: PrintRecord[] = [];
+    private hashToString = new Map<number, string>();
     private asserts: AssertRecord[] = [];
 
     enabled = false;
@@ -80,10 +81,14 @@ export class PixelDebug {
         ui.text(`Pixel log:${prints.length === 0 ? " <empty>" : ""}`);
         for (const p of prints) {
             const values = p.values.map((v) => (typeof v === "number" && p.type === PrintValueType.Float ? v.toPrecision(6) : String(v)));
-            // §9: message strings surface as slang hashes (no hashed-string reflection in slang-wasm).
-            ui.text(`msg#${p.msgHash.toString(16)} ${values.length > 1 ? `(${values.join(", ")})` : values[0] ?? ""}`);
+            ui.text(`${this.getMessage(p.msgHash)} ${values.length > 1 ? `(${values.join(", ")})` : values[0] ?? ""}`);
         }
-        for (const a of this.asserts) ui.text(`assert failed at (${a.launchX}, ${a.launchY}) msg#${a.msgHash.toString(16)}`);
+        for (const a of this.asserts) ui.text(`assert failed at (${a.launchX}, ${a.launchY}) ${this.getMessage(a.msgHash)}`);
+    }
+
+    /** The print()/assert() message for a record's hash (msg#hash for programs not seen by prepareProgram). */
+    getMessage(hash: number): string {
+        return this.hashToString.get(hash) ?? `msg#${hash.toString(16)}`;
     }
 
     /** Compile-time define a debugged program must include. */
@@ -115,10 +120,11 @@ export class PixelDebug {
         ctx.clearBuffer(this.countersBuffer);
     }
 
-    /** Mirrors PixelDebug::prepareProgram: binds the debug resources
-     *  (members absent when the define is off or DCE removed them). */
-    prepareProgram(root: ShaderVar): void {
+    /** Mirrors PixelDebug::prepareProgram: binds the debug resources (members absent
+     *  when the define is off or DCE removed them) and collects the program's message strings. */
+    prepareProgram(root: ShaderVar, program?: { getReflector(): ProgramReflection }): void {
         if (!this.enabled) return;
+        for (const { string, hash } of program?.getReflector().getHashedStrings() ?? []) this.hashToString.set(hash, string);
         const trySet = (name: string, value: unknown) => {
             try {
                 (root as Record<string, unknown>)[name] = value;
