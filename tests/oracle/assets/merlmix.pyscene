@@ -1,6 +1,6 @@
 # MERLMix oracle: a unit quad whose BRDF is chosen per texel from three measured
 # MERL BRDFs by an 8x8 index map (texel (x, y) holds the index x + 8y).
-# Write the fixtures with: node tools/gen-assets.mjs merl
+# Write the fixtures with: node scripts/gen-assets.mjs merl
 mixMat = MERLMixMaterial('mix', [
     'merl/merl-lambert.binary',
     'merl/merl-lambert-green.binary',

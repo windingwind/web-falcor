@@ -78,9 +78,9 @@ writes files that are exact to the published format and whose content is
 analytic, which is what the tests check against:
 
 ```sh
-node tools/gen-assets.mjs                # everything (~135 MB)
-node tools/gen-assets.mjs --list         # list what would be written
-node tools/gen-assets.mjs merl ies       # only the named groups
+node scripts/gen-assets.mjs                # everything (~135 MB)
+node scripts/gen-assets.mjs --list         # list what would be written
+node scripts/gen-assets.mjs merl ies       # only the named groups
 ```
 
 Mitsuba 3 has the same problem — its scene repository declares no licence — so

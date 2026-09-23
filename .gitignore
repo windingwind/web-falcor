@@ -1,7 +1,8 @@
 # Upstream Falcor clone (reference; has its own repo)
 /Falcor/
 
-# Toolchains (native slangc + slang-wasm; see README for download)
+# Toolchains (native slangc + slang-wasm; see README for download). Scripts
+# that belong in the repo live in scripts/, not here.
 /tools/
 
 node_modules/
@@ -20,3 +21,4 @@ tests/gpu/out/
 
 # Local scratch dir for throwaway tests / browser-verify tooling
 /scratch/
+__pycache__/

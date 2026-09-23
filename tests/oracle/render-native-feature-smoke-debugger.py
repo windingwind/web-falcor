@@ -3,7 +3,7 @@
 # density grid loads from the pre-converted smoke.nvdb (the prebuilt native
 # openvdb segfaults in initialize() on this machine, so native cannot read
 # .vdb; the NanoVDB buffer is byte-identical to what the web builds from the
-# original smoke.vdb - tools/vdb/, tests/oracle/validate-nvdb.py). The scene
+# original smoke.vdb - scripts/vdb/, tests/oracle/validate-nvdb.py). The scene
 # is generated here with absolute paths (native asset resolution rejects
 # ../-relative paths).
 from falcor import *

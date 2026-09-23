@@ -1,6 +1,6 @@
 # SDF grid built from a .sdf primitive list (SDFGrid::loadPrimitivesFromFile).
 # The file is a CSG solid — a sphere unioned with a 45-degree bar, minus a
-# sphere at the top; generate it with: node tools/gen-assets.mjs sdf
+# sphere at the top; generate it with: node scripts/gen-assets.mjs sdf
 sdfMaterial = Material('SDF Grid')
 sdfMaterial.baseColor = float4(0.6, 0.8, 1.0, 1.0)
 

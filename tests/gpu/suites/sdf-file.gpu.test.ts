@@ -3,7 +3,7 @@
  * values come from disk instead of the procedural generator, which is the
  * content path native scenes use (and a prerequisite for SDF editing, §8.4).
  *
- * The fixture is an analytic sphere written by `node tools/gen-assets.mjs sdf`,
+ * The fixture is an analytic sphere written by `node scripts/gen-assets.mjs sdf`,
  * so the rendered surface has a closed form: every hit must sit on the sphere.
  */
 
@@ -15,7 +15,7 @@ const size = 128;
 
 gpuTest("SDFFromFile.loadedGridRendersTheAnalyticSphere", async ({ device }) => {
     if (!(await fetch("/Falcor/media/sdf/sdf-sphere-64.sdfg", { method: "HEAD" })).ok) {
-        throw new SkipError("Falcor/media/sdf/sdf-sphere-64.sdfg missing (node tools/gen-assets.mjs sdf)");
+        throw new SkipError("Falcor/media/sdf/sdf-sphere-64.sdfg missing (node scripts/gen-assets.mjs sdf)");
     }
     await initScripting("/node_modules/pyodide");
     const sceneSource = await (await fetch("/tests/oracle/assets/sdf-from-file.pyscene")).text();

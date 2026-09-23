@@ -4,7 +4,7 @@
  * reduced on the GPU — the same two steps native performs.
  *
  * The profiles are written with analytic candela distributions by
- * `node tools/gen-assets.mjs` (manufacturer photometry is free to download but
+ * `node scripts/gen-assets.mjs` (manufacturer photometry is free to download but
  * carries no reusable licence), so the whole bake has a closed form: this test
  * recomputes the kernel's output on the CPU and compares texel by texel.
  */
@@ -71,7 +71,7 @@ for (const [file, description] of [
 ] as const) {
     gpuTest(`LightProfile.bakes_${file.replace(/[^a-z]/g, "_")}`, async ({ device }) => {
         if (!(await fetch(kIesDir + file, { method: "HEAD" })).ok) {
-            throw new SkipError(`Falcor/media/ies/${file} missing (node tools/gen-assets.mjs)`);
+            throw new SkipError(`Falcor/media/ies/${file} missing (node scripts/gen-assets.mjs)`);
         }
         const profile = await LightProfile.createFromIesProfile(device, kIesDir + file);
         const data = profile.rawData;
@@ -105,7 +105,7 @@ for (const [file, description] of [
 
 gpuTest("LightProfile.boundToTheMaterialSystem", async ({ device }) => {
     if (!(await fetch(`${kIesDir}ies-cosine.ies`, { method: "HEAD" })).ok) {
-        throw new SkipError("Falcor/media/ies/ies-cosine.ies missing (node tools/gen-assets.mjs)");
+        throw new SkipError("Falcor/media/ies/ies-cosine.ies missing (node scripts/gen-assets.mjs)");
     }
     // A scene without a profile keeps the feature compiled out, as native does.
     const vertices = [

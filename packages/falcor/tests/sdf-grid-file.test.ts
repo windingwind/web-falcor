@@ -1,6 +1,6 @@
 /**
  * `.sdfg` corner-value files (SDFGrid::loadValuesFromFile / writeValuesToFile).
- * Generate the fixtures with `node tools/gen-assets.mjs sdf`.
+ * Generate the fixtures with `node scripts/gen-assets.mjs sdf`.
  */
 
 import { describe, expect, it } from "vitest";

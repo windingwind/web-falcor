@@ -3,7 +3,7 @@
  * CSG shapes defined by transformed spheres/boxes folded together with union,
  * subtraction and their smooth variants.
  *
- * The fixture from `node tools/gen-assets.mjs sdf` is a sphere unioned with a
+ * The fixture from `node scripts/gen-assets.mjs sdf` is a sphere unioned with a
  * bar rotated 45° about z, minus a sphere at the top, so the rendered surface
  * has a closed form: every hit must sit on the zero level set of that CSG
  * expression, the bar must lie on one diagonal, and the subtracted sphere must
@@ -31,7 +31,7 @@ function evalCSG(primitives: SDF3DPrimitive[], p: [number, number, number]): num
 
 gpuTest("SDFFromPrimitives.csgSurfaceMatchesThePrimitiveList", async ({ device }) => {
     if (!(await fetch("/Falcor/media/sdf/sdf-primitives.sdf", { method: "HEAD" })).ok) {
-        throw new SkipError("Falcor/media/sdf/sdf-primitives.sdf missing (node tools/gen-assets.mjs sdf)");
+        throw new SkipError("Falcor/media/sdf/sdf-primitives.sdf missing (node scripts/gen-assets.mjs sdf)");
     }
     const primitives = await loadSDFPrimitives("/Falcor/media/sdf/sdf-primitives.sdf");
     expectEq(primitives.length, 3, "primitives in the file");
@@ -88,7 +88,7 @@ gpuTest("SDFFromPrimitives.csgSurfaceMatchesThePrimitiveList", async ({ device }
 
 gpuTest("SDFFromPrimitives.runtimeEditsRebakeTheGrid", async ({ device }) => {
     if (!(await fetch("/Falcor/media/sdf/sdf-primitives.sdf", { method: "HEAD" })).ok) {
-        throw new SkipError("Falcor/media/sdf/sdf-primitives.sdf missing (node tools/gen-assets.mjs sdf)");
+        throw new SkipError("Falcor/media/sdf/sdf-primitives.sdf missing (node scripts/gen-assets.mjs sdf)");
     }
     await initScripting("/node_modules/pyodide");
     const sceneSource = await (await fetch("/tests/oracle/assets/sdf-from-primitives.pyscene")).text();

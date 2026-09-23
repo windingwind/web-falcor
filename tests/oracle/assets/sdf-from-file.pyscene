@@ -1,6 +1,6 @@
 # SDF grid loaded from a .sdfg corner-value file (SDFGrid::loadValuesFromFile).
 # The file holds an analytic sphere of radius 0.4 in the unit cube; generate it
-# with: node tools/gen-assets.mjs sdf
+# with: node scripts/gen-assets.mjs sdf
 sdfMaterial = Material('SDF Grid')
 sdfMaterial.baseColor = float4(1.0, 0.5, 0.5, 1.0)
 

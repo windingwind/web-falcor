@@ -5,7 +5,7 @@
  * `MERLCommon::eval` bin lookup.
  *
  * The real database is licence-gated, so the fixtures are analytic BRDFs written
- * in exactly that format by `node tools/gen-assets.mjs` — which makes the ground
+ * in exactly that format by `node scripts/gen-assets.mjs` — which makes the ground
  * truth closed-form on both sides:
  *   • merl-lambert: constant f = albedo / pi, so every evaluation equals
  *     albedo/pi * cos(theta) and the integrated albedo LUT equals the albedo.
@@ -90,7 +90,7 @@ async function evalBSDF(device: ConstructorParameters<typeof Scene>[0], scene: S
 
 gpuTest("MERLMaterial.lambertEvaluatesAndIntegratesToItsAlbedo", async ({ device }) => {
     if (!(await fetch(`${kMerlDir}merl-lambert.binary`, { method: "HEAD" })).ok) {
-        throw new SkipError("Falcor/media/merl/merl-lambert.binary missing (node tools/gen-assets.mjs)");
+        throw new SkipError("Falcor/media/merl/merl-lambert.binary missing (node scripts/gen-assets.mjs)");
     }
     const merl = await loadMERLBinary(`${kMerlDir}merl-lambert.binary`);
     expectEq(merl.data.length, 1458000 * 3, "sample count");
@@ -141,7 +141,7 @@ gpuTest("MERLMaterial.lambertEvaluatesAndIntegratesToItsAlbedo", async ({ device
 
 gpuTest("MERLMaterial.indexProbeMatchesTheBinMapping", async ({ device }) => {
     if (!(await fetch(`${kMerlDir}merl-index-probe.binary`, { method: "HEAD" })).ok) {
-        throw new SkipError("Falcor/media/merl/merl-index-probe.binary missing (node tools/gen-assets.mjs)");
+        throw new SkipError("Falcor/media/merl/merl-index-probe.binary missing (node scripts/gen-assets.mjs)");
     }
     const merl = await loadMERLBinary(`${kMerlDir}merl-index-probe.binary`);
     const scene = makeScene(device, merl);

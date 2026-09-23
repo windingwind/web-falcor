@@ -1,6 +1,6 @@
 /**
  * OpenVDB (.vdb) parser and NanoVDB (v32.3 ABI) grid builder — TS ports of
- * the validated reference implementations in tools/vdb/ (vdb_parse.py,
+ * the validated reference implementations in scripts/vdb/ (vdb_parse.py,
  * vdb_to_nvdb.py; native-validated 0/500 point mismatches via Mogwai's
  * header-only NanoVDB loader).
  *
@@ -315,7 +315,7 @@ export function parseOpenVDBFloatGrid(buffer: ArrayBuffer, gridname = "density")
 }
 
 // ---------------------------------------------------------------------------
-// NanoVDB v32.3 builder (see tools/vdb/vdb_to_nvdb.py for the layout notes).
+// NanoVDB v32.3 builder (see scripts/vdb/vdb_to_nvdb.py for the layout notes).
 // ---------------------------------------------------------------------------
 
 const GRID_DATA_SIZE = 672;

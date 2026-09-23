@@ -56,7 +56,7 @@ async function evalBSDF(device: ConstructorParameters<typeof Scene>[0], scene: S
 gpuTest("MERLMixMaterial.selectsTheBrdfPerTexelAndStacksAlbedoLUTs", async ({ device }) => {
     for (const file of [...kFiles, "merl-index-map.tga"]) {
         if (!(await fetch(`${kMerlDir}${file}`, { method: "HEAD" })).ok) {
-            throw new SkipError(`Falcor/media/merl/${file} missing (node tools/gen-assets.mjs)`);
+            throw new SkipError(`Falcor/media/merl/${file} missing (node scripts/gen-assets.mjs)`);
         }
     }
     const brdfs = [];
@@ -135,7 +135,7 @@ gpuTest("MERLMixMaterial.selectsTheBrdfPerTexelAndStacksAlbedoLUTs", async ({ de
 gpuTest("MERLMixMaterial.pysceneLoadsTheBrdfListAndIndexMap", async ({ device }) => {
     for (const file of [...kFiles, "merl-index-map.tga"]) {
         if (!(await fetch(`${kMerlDir}${file}`, { method: "HEAD" })).ok) {
-            throw new SkipError(`Falcor/media/merl/${file} missing (node tools/gen-assets.mjs)`);
+            throw new SkipError(`Falcor/media/merl/${file} missing (node scripts/gen-assets.mjs)`);
         }
     }
     // The scene script drives the whole host path: the MERLMixMaterial binding

@@ -27,7 +27,7 @@
  *
  * Formats whose reference data is license-gated (MERL) or not published under a
  * reusable license (manufacturer IES photometry) are *generated* instead, by
- * `tools/gen-assets.mjs` — format-exact files that native Falcor loads too, so
+ * `scripts/gen-assets.mjs` — format-exact files that native Falcor loads too, so
  * they still serve as oracles.
  */
 
@@ -222,7 +222,7 @@ async function main() {
         }
     }
     console.log(`\nDone: ${downloaded} downloaded, ${skipped} already present → ${opts.dest}`);
-    console.log("For the generated formats (MERL BRDFs, IES profiles) run: node tools/gen-assets.mjs");
+    console.log("For the generated formats (MERL BRDFs, IES profiles) run: node scripts/gen-assets.mjs");
 }
 
 main().catch((err) => {

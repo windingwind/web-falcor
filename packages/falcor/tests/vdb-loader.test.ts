@@ -1,6 +1,6 @@
 /**
  * TS OpenVDB parser + NanoVDB builder vs the validated reference tools
- * (tools/vdb/*.py, native-validated 0/500): parses the real smoke.vdb,
+ * (scripts/vdb/*.py, native-validated 0/500): parses the real smoke.vdb,
  * checks 500 ground-truth samples, builds the NanoVDB grid buffer and
  * byte-compares it against the committed smoke.nvdb's embedded grid.
  */
