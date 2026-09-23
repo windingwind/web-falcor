@@ -57,9 +57,7 @@ export const kShaderOverrides: Readonly<Record<string, string>> = {
     "Rendering/Materials/IMaterial.slang": "WebFalcor/Overrides/Rendering/Materials/IMaterial.slang",
     // SV_PrimitiveID/SV_Barycentrics/[earlydepthstencil] absent from WGSL; static material dispatch.
     "RenderPasses/GBuffer/GBuffer/GBufferRaster.3d.slang": "WebFalcor/Overrides/RenderPasses/GBuffer/GBuffer/GBufferRaster.3d.slang",
-    // Write-only storage textures (WGSL r32*-only read_write rule).
-    "RenderPasses/GBuffer/VBuffer/VBufferRT.slang": "WebFalcor/Overrides/RenderPasses/GBuffer/VBuffer/VBufferRT.slang",
-    // Same + rgb10a2unorm storage unsupported in WGSL (normWRoughnessMaterialID -> rgba16f).
+    // rgb10a2unorm storage unsupported in WGSL (normWRoughnessMaterialID -> rgba16f).
     "RenderPasses/GBuffer/GBuffer/GBufferRT.slang": "WebFalcor/Overrides/RenderPasses/GBuffer/GBuffer/GBufferRT.slang",
     // RT pipeline -> compute megakernel over SceneRayQuery (docs §5).
     "RenderPasses/MinimalPathTracer/MinimalPathTracer.rt.slang": "WebFalcor/Overrides/RenderPasses/MinimalPathTracer/MinimalPathTracer.rt.slang",
@@ -104,17 +102,10 @@ export const kShaderOverrides: Readonly<Record<string, string>> = {
     // Atomic<uint> histogram; WaveMatch emulated (no WGSL builtin).
     "Utils/Debug/WarpProfiler.slang": "WebFalcor/Overrides/Utils/Debug/WarpProfiler.slang",
     "Utils/Sampling/UniformSampleGenerator.slang": "WebFalcor/Overrides/Utils/Sampling/UniformSampleGenerator.slang",
-    // Write-only storage textures (WGSL r32*-only read_write rule).
-    "RenderPasses/Utils/Composite/Composite.cs.slang": "WebFalcor/Overrides/RenderPasses/Utils/Composite/Composite.cs.slang",
-    "RenderPasses/Utils/CrossFade/CrossFade.cs.slang": "WebFalcor/Overrides/RenderPasses/Utils/CrossFade/CrossFade.cs.slang",
     // Typed buffers (Buffer<T>) don't exist in WGSL -> structured buffer.
     "RenderPasses/Utils/GaussianBlur/GaussianBlur.ps.slang": "WebFalcor/Overrides/RenderPasses/Utils/GaussianBlur/GaussianBlur.ps.slang",
-    // Write-only storage textures (WGSL r32*-only read_write rule).
-    "RenderPasses/ModulateIllumination/ModulateIllumination.cs.slang": "WebFalcor/Overrides/RenderPasses/ModulateIllumination/ModulateIllumination.cs.slang",
     // Write-only gDst + gDstPrev ping-pong, uint gInPlace, border sampling emulated (no border mode in WebGPU).
     "RenderPasses/SimplePostFX/SimplePostFX.cs.slang": "WebFalcor/Overrides/RenderPasses/SimplePostFX/SimplePostFX.cs.slang",
-    // Write-only outputs + uniform bools -> uint.
-    "RenderPasses/FLIPPass/FLIPPass.cs.slang": "WebFalcor/Overrides/RenderPasses/FLIPPass/FLIPPass.cs.slang",
     // RWBuffer<float> texel buffer -> RWStructuredBuffer<float>.
     "RenderPasses/FLIPPass/ComputeLuminance.cs.slang": "WebFalcor/Overrides/RenderPasses/FLIPPass/ComputeLuminance.cs.slang",
     // Aggregate init of a struct with an explicit __init is rejected by Slang 2026.12.2 -> member-wise.

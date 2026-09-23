@@ -70,6 +70,24 @@ export class ComputePass {
         ({ version: this.version, kernel: this.kernel, vars: this.vars, root: this.root, pipeline: this.pipeline } = this.build());
     }
 
+    /** Storage textures take their bound textures' formats (native UAV semantics): patch the WGSL declarations and rebuild the pipeline. */
+    private retargetStorageFormats(): void {
+        const changed = this.vars.retargetStorageFormats();
+        if (!changed) return;
+        let wgsl = this.kernel.wgsl;
+        for (const [name, format] of changed) {
+            wgsl = wgsl.replace(new RegExp(`(var\\s+${name}\\s*:\\s*texture_storage_\\w+<\\s*)\\w+`), `$1${format}`);
+        }
+        const gpu = this.device.gpuDevice;
+        const module = gpu.createShaderModule({ code: wgsl, label: `${this.kernel.name} (storage formats retargeted)` });
+        this.kernel = { ...this.kernel, wgsl, module };
+        const groupIndices = this.vars.getGroupIndices();
+        const maxGroup = groupIndices.length ? Math.max(...groupIndices) : -1;
+        const layouts: GPUBindGroupLayout[] = [];
+        for (let g = 0; g <= maxGroup; g++) layouts.push(this.vars.getBindGroupLayout(g) ?? gpu.createBindGroupLayout({ entries: [] }));
+        this.pipeline = gpu.createComputePipeline({ layout: gpu.createPipelineLayout({ bindGroupLayouts: layouts }), compute: { module, entryPoint: this.kernel.name } });
+    }
+
     /** Mirrors ComputePass::getRootVar. */
     getRootVar(): ShaderVar {
         this.refresh();
@@ -94,6 +112,7 @@ export class ComputePass {
     /** Mirrors ComputePass::execute(ctx, nThreads): total threads, ceil-divided by group size. */
     execute(ctx: ComputeContext, threadsX: number, threadsY = 1, threadsZ = 1): void {
         this.refresh();
+        this.retargetStorageFormats();
         const [gx, gy, gz] = this.getThreadGroupSize();
         const groups: [number, number, number] = [Math.ceil(threadsX / gx), Math.ceil(threadsY / gy), Math.ceil(threadsZ / gz)];
         const bindGroups = this.vars.getGroupIndices().map((g) => ({ index: g, group: this.vars.getBindGroup(g) }));

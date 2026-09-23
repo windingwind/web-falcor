@@ -82,11 +82,15 @@ export class ParameterBlock {
     /** Reflection element types for cbuffer-slot paths (uniform member lookup). */
     private topLevel = new Map<string, ReflectionVar>();
 
+    /** This block's own copy of the bindings (retargetStorageFormats edits them; kernels are shared). */
+    public readonly wgslBindings: WgslBinding[];
+
     constructor(
         public readonly device: Device,
         public readonly reflection: ProgramReflection,
-        public readonly wgslBindings: WgslBinding[],
+        wgslBindings: WgslBinding[],
     ) {
+        this.wgslBindings = wgslBindings = wgslBindings.map((b) => ({ ...b, layoutEntry: structuredClone(b.layoutEntry) }));
         for (const wb of wgslBindings) this.wgslByName.set(demangle(wb.name), wb);
         for (const p of reflection.json.parameters ?? []) {
             this.topLevel.set(p.name, new ReflectionVar(p.name, p.type ?? { kind: "unknown" }, null));
@@ -310,6 +314,33 @@ export class ParameterBlock {
             g.generation = this.generation;
         }
         return g.bindGroup;
+    }
+
+    /**
+     * Native UAVs take their resource's format; WGSL storage textures declare one (Slang infers
+     * it from the element type, e.g. rgba32float for float4). Moves storage-texture bindings to
+     * the bound textures' formats, within the same texel type (float/uint/sint), and rebuilds the
+     * layouts. Returns the retargeted binding names and formats, or null when nothing changed.
+     */
+    retargetStorageFormats(): Map<string, GPUTextureFormat> | null {
+        const texelType = (f: string) => (f.endsWith("uint") ? "u" : f.endsWith("sint") ? "i" : "f");
+        const changed = new Map<string, GPUTextureFormat>();
+        for (const slot of this.slots.values()) {
+            if (slot.kind !== "resource" || !(slot.resource instanceof Texture)) continue;
+            const st = slot.binding.layoutEntry.storageTexture;
+            const format = slot.resource.gpuFormat;
+            if (!st || !st.format || st.format === format || texelType(st.format) !== texelType(format)) continue;
+            if (st.access === "read-write" && !/^r32(float|uint|sint)$/.test(format)) continue;
+            st.format = format;
+            changed.set(slot.binding.name, format);
+        }
+        if (changed.size === 0) return null;
+        for (const [g, entry] of this.groups) {
+            entry.layout = this.device.gpuDevice.createBindGroupLayout({ entries: this.wgslBindings.filter((b) => b.group === g).map((b) => b.layoutEntry) });
+            entry.bindGroup = null;
+        }
+        this.generation++;
+        return changed;
     }
 
     getBindGroupLayout(group: number): GPUBindGroupLayout | undefined {
