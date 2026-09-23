@@ -26,6 +26,7 @@ import { decodeNormal2x16Host, type Vec3 } from "../Rendering/Lights/LightBVHTyp
 import type { EmissiveTriangleInput } from "../Rendering/Lights/LightBVHBuilder.js";
 import { transformPoint, transformVector } from "../Utils/Math/Matrix.js";
 import { float2, float3, float4, normalize3 } from "../Utils/Math/Vector.js";
+import { float16ToFloat32, float32ToFloat16 } from "../Utils/Math/Float16.js";
 import {
     GeometryType,
     packGeometryInstances,
@@ -36,7 +37,7 @@ import {
     type MeshDescData,
     type StaticVertex,
 } from "./SceneData.js";
-import { packBasicMaterialBlob, packMERLMaterialBlob, packMERLMixMaterialBlob, packRGLMaterialBlob, writeDiffuseSpecularData, kDiffuseSpecularDataSize, AlphaMode, MaterialType, TextureHandleMode, type BasicMaterialDesc, type MaterialHeaderDesc } from "./Material/MaterialData.js";
+import { packBasicMaterialBlob, packMERLMaterialBlob, packMERLMixMaterialBlob, packRGLMaterialBlob, writeDiffuseSpecularData, kDiffuseSpecularDataSize, AlphaMode, MaterialType, ShadingModel, TextureHandleMode, type BasicMaterialDesc, type MaterialHeaderDesc } from "./Material/MaterialData.js";
 import { kMERLAlbedoLUTSize, type MERLBRDF, type MERLMixData } from "./Material/MERLFile.js";
 import { kRGLAlbedoLUTSize, type RGLMeasurement } from "./Material/RGLFile.js";
 import type { LightProfile } from "./Lights/LightProfile.js";
@@ -94,6 +95,33 @@ export interface SceneMaterialDesc {
     rgl?: RGLMeasurement;
     /** Several MERL BRDFs selected per texel by an index map (MERLMixMaterial). */
     merlMix?: MERLMixData;
+}
+
+/**
+ * Mirrors StandardMaterial::updateDeltaSpecularFlag: a material is delta
+ * specular when it has no rough lobe and nothing diffuse (or is fully
+ * transmissive). Only StandardMaterial computes it; the flag feeds the path
+ * tracer's coherence hints.
+ */
+function isDeltaSpecularStandard(header: MaterialHeaderDesc, basic: BasicMaterialDesc): boolean {
+    if ((header.materialType ?? MaterialType.Standard) !== MaterialType.Standard) return false;
+    const hasTexture = (handle: number | undefined) => handle !== undefined && ((handle >>> 29) & 0x3) === TextureHandleMode.Texture;
+    const base = basic.baseColor;
+    let isNonDiffuse = !hasTexture(basic.texBaseColor) && (base ? base.x === 0 && base.y === 0 && base.z === 0 : false) && (basic.diffuseTransmission ?? 0) === 0;
+    const isFullyTransmissive = (basic.specularTransmission ?? 0) >= 1;
+    let isDelta = false;
+    if ((basic.shadingModel ?? ShadingModel.MetalRough) === ShadingModel.MetalRough && !hasTexture(basic.texSpecular)) {
+        // Specular green is roughness and blue is metallic in metal-rough mode.
+        const spec = basic.specular ?? new float4(0, 0.5, 0, 0);
+        isDelta = f16Round(spec.y) === 0;
+        if (f16Round(spec.z) >= 1) isNonDiffuse = true;
+    }
+    return isDelta && (isNonDiffuse || isFullyTransmissive);
+}
+
+/** The value a parameter has after the float16 packing native compares. */
+function f16Round(v: number): number {
+    return float16ToFloat32(float32ToFloat16(v));
 }
 
 export class Scene {
@@ -729,6 +757,7 @@ export class Scene {
             });
         }
         if (header.alphaMode === undefined) header.alphaMode = this.deriveAlphaMode(header, m.basic);
+        if (header.deltaSpecular === undefined) header.deltaSpecular = isDeltaSpecularStandard(header, m.basic);
         return packBasicMaterialBlob(header, m.basic);
     }
 
@@ -1296,7 +1325,11 @@ export class Scene {
             MATERIAL_SYSTEM_BUFFER_DESC_COUNT: 1,
             MATERIAL_SYSTEM_TEXTURE_3D_DESC_COUNT: 1,
             MATERIAL_SYSTEM_UDIM_INDIRECTION_ENABLED: 0,
-            MATERIAL_SYSTEM_HAS_SPEC_GLOSS_MATERIALS: 0,
+            MATERIAL_SYSTEM_HAS_SPEC_GLOSS_MATERIALS: this.materialDescs.some(
+                (m) => (m.header?.materialType ?? MaterialType.Standard) === MaterialType.Standard && m.basic.shadingModel === ShadingModel.SpecGloss,
+            )
+                ? 1
+                : 0,
             MATERIAL_SYSTEM_USE_LIGHT_PROFILE: this.lightProfile ? 1 : 0,
             FALCOR_MATERIAL_INSTANCE_SIZE: 256,
             // Static material dispatch (MaterialFactory override) — mirrors

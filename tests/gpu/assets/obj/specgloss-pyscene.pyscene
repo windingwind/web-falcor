@@ -1,0 +1,17 @@
+# A spec-gloss StandardMaterial built in a scene script: the same parameters as
+# specgloss.mtl, so it must shade like metalrough-equivalent.pyscene. Setting
+# roughness is refused in this mode natively (with a warning), and here too.
+material = StandardMaterial('specGloss', ShadingModel.SpecGloss)
+material.baseColor = float4(0.6, 0.4, 0.2, 1.0)
+material.specularParams = float4(0.04, 0.04, 0.04, 0.75)
+material.roughness = 0.9
+
+quad = TriangleMesh.createQuad(float2(2.0, 2.0))
+node = sceneBuilder.addNode('quad', Transform(rotationEulerDeg=float3(90.0, 0.0, 0.0)))
+sceneBuilder.addMeshInstance(node, sceneBuilder.addTriangleMesh(quad, material))
+
+camera = Camera()
+camera.position = float3(0, 0, 3)
+camera.target = float3(0, 0, 0)
+camera.up = float3(0, 1, 0)
+sceneBuilder.addCamera(camera)

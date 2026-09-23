@@ -18,7 +18,7 @@ import { AssetResolver, withScriptSearchPath } from "../../Core/AssetResolver.js
 import { CameraBridge, GridVolumeBridge, LightBridge, MaterialBridge, SceneBuilderBridge, SceneBuilderFlags, SDFGridBridge, TriangleMesh, kSceneBuilderFlagsPython, makeTransform } from "../../Scene/SceneBuilder.js";
 import type { Scene } from "../../Scene/Scene.js";
 import { LightType, type StaticVertex } from "../../Scene/SceneData.js";
-import { MaterialType } from "../../Scene/Material/MaterialData.js";
+import { MaterialType, ShadingModel } from "../../Scene/Material/MaterialData.js";
 import { buildSphereGrid, buildBoxGrid } from "../../Scene/Volume/VDBLoader.js";
 import { float2, float3, float4 } from "../Math/Vector.js";
 
@@ -232,8 +232,17 @@ class EnvMap:
 # Guard: python setattr on JS proxies silently creates properties, so a typo'd
 # or unimplemented bridge property would be DROPPED. Wrap the factories so
 # unknown attribute writes raise instead (mirrors pybind11 strictness).
-def _guarded(factory, known):
-    def make(*args):
+def _guarded(factory, known, kwnames=()):
+    def make(*args, **kwargs):
+        # Keyword arguments map onto the factory's positional parameters.
+        args = list(args)
+        for i, k in enumerate(kwnames):
+            if k in kwargs:
+                while len(args) < i: args.append(None)
+                if len(args) == i: args.append(kwargs.pop(k))
+                else: args[i] = kwargs.pop(k)
+        if kwargs:
+            raise TypeError(f'unexpected keyword arguments: {sorted(kwargs)} (web bridge)')
         obj = factory(*args)
         class Guard:
             __slots__ = ('_o',)
@@ -254,7 +263,7 @@ _matProps = {'baseColor', 'specularParams', 'transmissionColor', 'emissiveColor'
 _lightProps = {'position', 'intensity', 'direction', 'angle',
                'openingAngle', 'penumbraAngle', 'scaling', 'rotation'}
 _camProps = {'position', 'target', 'up', 'focalLength', 'focalDistance', 'apertureRadius', 'shutterSpeed', 'ISOSpeed'}
-StandardMaterial = _guarded(StandardMaterial, _matProps)
+StandardMaterial = _guarded(StandardMaterial, _matProps, ('name', 'model'))
 Material = StandardMaterial  # PYTHONDEPRECATED alias (upstream SDF/legacy pyscenes)
 ClothMaterial = _guarded(ClothMaterial, _matProps)
 HairMaterial = _guarded(HairMaterial, _matProps)
@@ -436,7 +445,8 @@ async function runSceneScriptInternal(device: Device, source: string, baseUrl: s
         RectLight: (name = "") => new LightBridge(LightType.Rect, name),
         DiscLight: (name = "") => new LightBridge(LightType.Disc, name),
         SphereLight: (name = "") => new LightBridge(LightType.Sphere, name),
-        StandardMaterial: (name = "") => new MaterialBridge(MaterialType.Standard, name),
+        // Mirrors StandardMaterial(name, model = ShadingModel.MetalRough).
+        StandardMaterial: (name = "", model = 0) => new MaterialBridge(MaterialType.Standard, name, Number(model) as ShadingModel),
         ClothMaterial: (name = "") => new MaterialBridge(MaterialType.Cloth, name),
         HairMaterial: (name = "") => new MaterialBridge(MaterialType.Hair, name),
         PBRTDiffuseMaterial: (name = "") => new MaterialBridge(MaterialType.PBRTDiffuse, name),

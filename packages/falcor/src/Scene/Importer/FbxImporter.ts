@@ -18,7 +18,9 @@ import { float2, float3, float4, normalize3, cross, sub3, add3 } from "../../Uti
 import { float4x4, mulMat, transformPoint, transformVector } from "../../Utils/Math/Matrix.js";
 import { RuntimeError } from "../../Core/Error.js";
 import { generateTangents } from "../TangentSpace.js";
-import { packTextureHandle, TextureHandleMode } from "../Material/MaterialData.js";
+import { MaterialType, ShadingModel, packTextureHandle, TextureHandleMode } from "../Material/MaterialData.js";
+import { getTextureSlotSrgb } from "../Material/TextureSlots.js";
+import { decodeTGA } from "../../Utils/Image/TGADecoder.js";
 import { decodeDDSToRGBA } from "./DDSLoader.js";
 import type { SceneMaterialDesc, SceneMeshDesc } from "../Scene.js";
 import { decomposeTRS, type SceneNode, type AnimationChannel, type SkinDesc } from "../Animation/SceneAnimation.js";
@@ -144,17 +146,97 @@ function textureFile(mat: AiMaterial, aiType: number): string | undefined {
     return p ? String(p.value) : undefined;
 }
 
+/** Mirrors AssimpImporter's ImportMode: OBJ gets its own material semantics. */
+enum ImportMode {
+    Default,
+    OBJ,
+}
+
+/** aiTextureType values the texture tables use. */
+const aiTextureType = { DIFFUSE: 1, SPECULAR: 2, EMISSIVE: 4, HEIGHT: 5, NORMALS: 6, DISPLACEMENT: 9 } as const;
+
+/**
+ * Mirrors kTextureMappings (Default and OBJ; glTF has its own importer here).
+ * Later entries win when two map onto the same slot, as they do natively.
+ */
+const kTextureMappings: Record<ImportMode, { aiType: number; slot: "BaseColor" | "Specular" | "Emissive" | "Normal" }[]> = {
+    [ImportMode.Default]: [
+        { aiType: aiTextureType.DIFFUSE, slot: "BaseColor" },
+        { aiType: aiTextureType.SPECULAR, slot: "Specular" },
+        { aiType: aiTextureType.EMISSIVE, slot: "Emissive" },
+        { aiType: aiTextureType.NORMALS, slot: "Normal" },
+    ],
+    [ImportMode.OBJ]: [
+        { aiType: aiTextureType.DIFFUSE, slot: "BaseColor" },
+        { aiType: aiTextureType.SPECULAR, slot: "Specular" },
+        { aiType: aiTextureType.EMISSIVE, slot: "Emissive" },
+        // OBJ has no normal map, so the bump map stands in for it.
+        { aiType: aiTextureType.HEIGHT, slot: "Normal" },
+        { aiType: aiTextureType.DISPLACEMENT, slot: "Normal" },
+    ],
+};
+
+/** Mirrors convertSpecPowerToRoughness (OBJ/MTL Phong exponent -> roughness). */
+export function convertSpecPowerToRoughness(specPower: number): number {
+    return Math.min(Math.max(Math.sqrt(2 / (specPower + 2)), 0), 1);
+}
+
+/**
+ * The extensions AssimpImporter registers, minus glTF (its own TS importer),
+ * USD and pbrt (separate importers here as natively).
+ */
+export const kAssimpSceneExtensions = [
+    "fbx", "obj", "dae", "x", "md5mesh", "ply", "3ds", "blend", "ase", "ifc", "xgl", "zgl", "dxf", "lwo", "lws",
+    "lxo", "stl", "ac", "ms3d", "cob", "scn", "3d", "mdl", "mdl2", "pk3", "smd", "vta", "raw", "ter",
+];
+
+export interface AssimpImportOptions {
+    assumeLinearSpaceTextures?: boolean;
+    /** SceneBuilderFlags::UseSpecGlossMaterials. */
+    useSpecGloss?: boolean;
+    /** SceneBuilderFlags::UseMetalRoughMaterials. */
+    useMetalRough?: boolean;
+    /** The scene file's name; its extension picks assimp's loader and the import mode. */
+    fileName?: string;
+    /** Side files assimp reads next to the scene (an OBJ's `mtllib` files). */
+    extraFiles?: { name: string; bytes: Uint8Array }[];
+}
+
+/** `mtllib` references of an OBJ, which assimp resolves by file name. */
+export function objMaterialLibraries(source: string): string[] {
+    const libs: string[] = [];
+    for (const line of source.split(/\r?\n/)) {
+        const m = /^\s*mtllib\s+(.+?)\s*$/.exec(line);
+        if (m) libs.push(...m[1]!.split(/\s+/));
+    }
+    return libs;
+}
+
 export class FbxImporter {
-    /** Parses an .fbx buffer into scene descs (mirrors AssimpImporter::importInternal, Default mode). */
+    /**
+     * Parses an assimp-readable scene into scene descs (mirrors
+     * AssimpImporter::importInternal). Every format goes through the Default
+     * mode except `.obj`, which gets OBJ mode like it does natively.
+     */
     static async parseToDescs(
         bytes: Uint8Array,
         baseUrl: string,
         textureManager: TextureManager,
-        options: { assumeLinearSpaceTextures?: boolean } = {},
+        options: AssimpImportOptions = {},
     ): Promise<{ meshes: SceneMeshDesc[]; materials: SceneMaterialDesc[]; materialNames: string[]; nodes: SceneNode[]; animations: AnimationChannel[]; lights: AnalyticLight[] }> {
+        if (options.useSpecGloss && options.useMetalRough) {
+            throw new RuntimeError("AssimpImporter: UseSpecGlossMaterials and UseMetalRoughMaterials are mutually exclusive");
+        }
+        const fileName = options.fileName ?? "scene.fbx";
+        const importMode = fileName.toLowerCase().endsWith(".obj") ? ImportMode.OBJ : ImportMode.Default;
+        // MetalRough everywhere except OBJ, unless a flag says otherwise.
+        const shadingModel =
+            options.useSpecGloss || (importMode === ImportMode.OBJ && !options.useMetalRough) ? ShadingModel.SpecGloss : ShadingModel.MetalRough;
+
         const ajs = await getAssimp();
         const files = new ajs.FileList();
-        files.AddFile("scene.fbx", bytes);
+        files.AddFile(fileName, bytes);
+        for (const extra of options.extraFiles ?? []) files.AddFile(extra.name, extra.bytes);
         const result = ajs.ConvertFileList(files, "assjson");
         if (!result.IsSuccess()) throw new RuntimeError(`FbxImporter: assimp failed (${result.GetErrorCode()})`);
         const json = JSON.parse(new TextDecoder().decode(result.GetFile(0).GetContent())) as AiScene;
@@ -175,11 +257,18 @@ export class FbxImporter {
             // BC-compressed DDS (the common game-asset format — Bistro, Sponza,
             // SunTemple) is decoded here on the CPU to RGBA8 at a bounded size
             // (decodeDDSToRGBA caps the mip) so it feeds the existing RGBA8
-            // texture-array path. Other undecodable formats (e.g. TGA) still
-            // skip gracefully so geometry loads with a base-colour fallback.
+            // texture-array path, and TGA goes through the CPU decoder. Other
+            // undecodable formats skip so geometry loads with a base colour.
             let bitmap: ImageBitmap;
             try {
-                if (ext === ".dds") {
+                if (ext === ".tga") {
+                    // Browsers cannot decode TGA; native reads it through FreeImage.
+                    const image = decodeTGA(await res.arrayBuffer());
+                    bitmap = await createImageBitmap(new ImageData(new Uint8ClampedArray(image.rgba), image.width, image.height), {
+                        premultiplyAlpha: "none",
+                        colorSpaceConversion: "none",
+                    });
+                } else if (ext === ".dds") {
                     const { width, height, rgba } = decodeDDSToRGBA(await res.arrayBuffer(), srgb, 512);
                     // ImageData holds raw RGBA already — no colour-space/premultiply
                     // decode step applies, so createImageBitmap needs no options.
@@ -197,7 +286,7 @@ export class FbxImporter {
             return id;
         };
 
-        // Materials (createMaterial, Default mode: shading model MetalRough).
+        // Materials (createMaterial).
         const materials: SceneMaterialDesc[] = [];
         const materialNames: string[] = [];
         for (const mat of json.materials) {
@@ -208,7 +297,10 @@ export class FbxImporter {
             const specular = (findProp(mat, "$clr.specular") as number[] | undefined) ?? [0, 0, 0];
             const emissive = (findProp(mat, "$clr.emissive") as number[] | undefined) ?? [0, 0, 0];
             const opacity = (findProp(mat, "$mat.opacity") as number | undefined) ?? 1;
-            const shininess = (findProp(mat, "$mat.shininess") as number | undefined) ?? 0;
+            const shininessProp = findProp(mat, "$mat.shininess") as number | undefined;
+            // OBJ/MTL carries a Phong exponent; native converts it to glossiness.
+            const shininess =
+                shininessProp === undefined ? 0 : importMode === ImportMode.OBJ ? 1 - convertSpecPowerToRoughness(shininessProp) : shininessProp;
             const refracti = findProp(mat, "$mat.refracti") as number | undefined;
             const twosided = findProp(mat, "$mat.twosided") as number | undefined;
 
@@ -218,16 +310,22 @@ export class FbxImporter {
                 if (token.toLowerCase() === "doublesided") doubleSided = true;
             }
 
-            const texBaseColor = textureFile(mat, 1);
-            const texSpecular = textureFile(mat, 2);
-            const texEmissive = textureFile(mat, 4);
-            const texNormal = textureFile(mat, 6);
-
+            // Texture table per import mode; each slot's colour space comes from
+            // the StandardMaterial slot table for this shading model.
+            const slotFiles: Partial<Record<"BaseColor" | "Specular" | "Emissive" | "Normal", string>> = {};
+            for (const { aiType, slot } of kTextureMappings[importMode]) {
+                const file = textureFile(mat, aiType);
+                if (file) slotFiles[slot] = file;
+            }
+            const load = async (slot: "BaseColor" | "Specular" | "Emissive" | "Normal") => {
+                const file = slotFiles[slot];
+                return file === undefined ? undefined : loadTexture(file, getTextureSlotSrgb(MaterialType.Standard, shadingModel, slot) ?? false);
+            };
             const ids = {
-                baseColor: texBaseColor !== undefined ? await loadTexture(texBaseColor, true) : undefined,
-                specular: texSpecular !== undefined ? await loadTexture(texSpecular, false) : undefined,
-                emissive: texEmissive !== undefined ? await loadTexture(texEmissive, true) : undefined,
-                normal: texNormal !== undefined ? await loadTexture(texNormal, false) : undefined,
+                baseColor: await load("BaseColor"),
+                specular: await load("Specular"),
+                emissive: await load("Emissive"),
+                normal: await load("Normal"),
             };
 
             materials.push({
@@ -240,6 +338,7 @@ export class FbxImporter {
                     // Native writes COLOR_SPECULAR into rgb and raw shininess into a.
                     specular: new float4(specular[0]!, specular[1]!, specular[2]!, shininess),
                     emissive: new float3(emissive[0]!, emissive[1]!, emissive[2]!),
+                    shadingModel,
                     ...(refracti !== undefined ? { indexOfRefraction: refracti } : {}),
                     ...(opacity < 1 ? { specularTransmission: 1 - opacity } : {}),
                     texBaseColor: ids.baseColor !== undefined ? packTextureHandle(TextureHandleMode.Texture, ids.baseColor) : undefined,
@@ -392,9 +491,24 @@ export class FbxImporter {
         }
 
         if (skippedFormats.size > 0) {
-            console.warn(`FbxImporter: skipped textures with undecodable formats [${[...skippedFormats].join(", ")}] (need a DDS/BC or TGA decoder); materials fall back to base color.`);
+            console.warn(`FbxImporter: skipped textures with undecodable formats [${[...skippedFormats].join(", ")}] (no decoder for them); materials fall back to base color.`);
         }
-        return { meshes: meshDescs, materials, materialNames, nodes, animations, lights };
+        // Natively a material enters the scene only when a mesh adds it, in
+        // first-use order; assimp's unused ones (OBJ's DefaultMaterial) never do.
+        const remap = new Map<number, number>();
+        const usedMaterials: SceneMaterialDesc[] = [];
+        const usedNames: string[] = [];
+        for (const mesh of meshDescs) {
+            let id = remap.get(mesh.materialID);
+            if (id === undefined) {
+                id = usedMaterials.length;
+                remap.set(mesh.materialID, id);
+                usedMaterials.push(materials[mesh.materialID]!);
+                usedNames.push(materialNames[mesh.materialID]!);
+            }
+            mesh.materialID = id;
+        }
+        return { meshes: meshDescs, materials: usedMaterials, materialNames: usedNames, nodes, animations, lights };
     }
 
     /** Parses a single mesh asset (.obj/.ply/etc. via assimp) into one merged

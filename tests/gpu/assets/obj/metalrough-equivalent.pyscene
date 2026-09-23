@@ -1,0 +1,17 @@
+# The metal-rough material equivalent to specgloss.mtl: base colour Kd, no
+# metal, roughness 1 - glossiness = 0.25, and IoR 1.5 so F0 equals Ks = 0.04.
+material = StandardMaterial('equivalent')
+material.baseColor = float4(0.6, 0.4, 0.2, 1.0)
+material.roughness = 0.25
+material.metallic = 0.0
+material.indexOfRefraction = 1.5
+
+quad = TriangleMesh.createQuad(float2(2.0, 2.0))
+node = sceneBuilder.addNode('quad', Transform(rotationEulerDeg=float3(90.0, 0.0, 0.0)))
+sceneBuilder.addMeshInstance(node, sceneBuilder.addTriangleMesh(quad, material))
+
+camera = Camera()
+camera.position = float3(0, 0, 3)
+camera.target = float3(0, 0, 0)
+camera.up = float3(0, 1, 0)
+sceneBuilder.addCamera(camera)

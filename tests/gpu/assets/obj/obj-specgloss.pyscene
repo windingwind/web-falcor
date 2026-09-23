@@ -1,0 +1,9 @@
+# OBJ full-scene import (AssimpImporter, OBJ mode): the MTL material becomes a
+# spec-gloss StandardMaterial, as it does natively.
+sceneBuilder.importScene('specgloss.obj')
+
+camera = Camera()
+camera.position = float3(0, 0, 3)
+camera.target = float3(0, 0, 0)
+camera.up = float3(0, 1, 0)
+sceneBuilder.addCamera(camera)

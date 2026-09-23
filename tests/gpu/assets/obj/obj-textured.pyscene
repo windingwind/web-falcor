@@ -1,0 +1,8 @@
+# OBJ import whose map_Kd is a TGA: the assimp path decodes it like FreeImage.
+sceneBuilder.importScene('textured.obj')
+
+camera = Camera()
+camera.position = float3(0, 0, 3)
+camera.target = float3(0, 0, 0)
+camera.up = float3(0, 1, 0)
+sceneBuilder.addCamera(camera)

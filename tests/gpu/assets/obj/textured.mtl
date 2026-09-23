@@ -1,0 +1,5 @@
+newmtl textured
+Kd 1.0 1.0 1.0
+Ks 0.0 0.0 0.0
+Ns 10
+map_Kd orange.tga

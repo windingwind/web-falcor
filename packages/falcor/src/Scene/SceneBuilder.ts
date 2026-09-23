@@ -12,14 +12,15 @@ import type { SceneSDFGridDesc } from "./Scene.js";
 import { Scene, type SceneMaterialDesc, type SceneMeshDesc } from "./Scene.js";
 import type { SceneNode, AnimationChannel, WeightTrack } from "./Animation/SceneAnimation.js";
 import { GltfImporter } from "./Importer/GltfImporter.js";
-import { FbxImporter } from "./Importer/FbxImporter.js";
+import { FbxImporter, kAssimpSceneExtensions, objMaterialLibraries } from "./Importer/FbxImporter.js";
 import { UsdImporter } from "./Importer/UsdImporter.js";
 import { convertToLinearSweptSphere, extractBasisCurvesFromUsda } from "./Curves/CurveTessellation.js";
 import { TextureManager } from "./Material/TextureManager.js";
 import { EnvMap } from "./Lights/EnvMap.js";
 import { generateTangents } from "./TangentSpace.js";
 import { LightType, type AnalyticLight, type StaticVertex } from "./SceneData.js";
-import { MaterialType, packTextureHandle, TextureHandleMode } from "./Material/MaterialData.js";
+import { MaterialType, ShadingModel, packTextureHandle, TextureHandleMode } from "./Material/MaterialData.js";
+import { getTextureSlotSrgb } from "./Material/TextureSlots.js";
 import { float2, float3, float4 } from "../Utils/Math/Vector.js";
 import { float4x4, matrixFromTranslation, matrixFromScaling, mulMat } from "../Utils/Math/Matrix.js";
 import { RuntimeError } from "../Core/Error.js";
@@ -247,7 +248,23 @@ export class MaterialBridge {
     constructor(
         public readonly materialType: MaterialType,
         public readonly name: string,
-    ) {}
+        shadingModel: ShadingModel = ShadingModel.MetalRough,
+    ) {
+        this._shadingModel = shadingModel;
+    }
+
+    /** StandardMaterial's shading model (fixed at construction, like native). */
+    private _shadingModel: ShadingModel;
+    get shadingModel(): ShadingModel {
+        return this._shadingModel;
+    }
+
+    /** Native's metal-rough-only setters refuse spec-gloss StandardMaterials. */
+    private rejectsMetalRoughParam(what: string): boolean {
+        if (this.materialType !== MaterialType.Standard || this._shadingModel === ShadingModel.MetalRough) return false;
+        Logger.warning(`Ignoring set${what}(). Material '${this.name}' does not use the metallic/roughness shading model.`);
+        return true;
+    }
 
     // Deferred texture loads (material.loadTexture(slot, path)); resolved in resolve().
     private _textures: { slot: string; path: string }[] = [];
@@ -261,7 +278,7 @@ export class MaterialBridge {
     private _merlMix: import("./Material/MERLFile.js").MERLMixData | null = null;
     private _bitmaps: { slot: string; bitmap: ImageBitmap; srgb: boolean }[] = [];
     private _indexMap: import("./Material/MERLFile.js").MERLIndexMap | null = null;
-    private _texHandles: { texBaseColor?: number; texSpecular?: number; texEmissive?: number; texNormalMap?: number; texDisplacement?: number } = {};
+    private _texHandles: { texBaseColor?: number; texSpecular?: number; texEmissive?: number; texNormalMap?: number; texDisplacement?: number; texTransmission?: number } = {};
 
     loadTexture(slot: string, path: string): void {
         this._textures.push({ slot: String(slot), path: String(path) });
@@ -283,10 +300,17 @@ export class MaterialBridge {
                 this._indexMap = await loadIndexMap(url, t.path);
                 continue;
             }
+            // Mirrors MaterialTextureLoader::loadTexture: the material's own slot
+            // table decides whether the slot exists and whether it is sRGB.
+            const slotSrgb = getTextureSlotSrgb(this.materialType, this._shadingModel, t.slot);
+            if (slotSrgb === undefined) {
+                Logger.warning(`MaterialTextureLoader::loadTexture() - Material '${this.name}' does not have texture slot '${t.slot}'. Ignoring call.`);
+                continue;
+            }
             try {
                 const res = await fetch(url);
                 if (!res.ok) continue;
-                const srgb = (t.slot === "BaseColor" || t.slot === "Emissive") && !assumeLinearSpaceTextures;
+                const srgb = slotSrgb && !assumeLinearSpaceTextures;
                 const blob = await res.blob();
                 const bytes = new Uint8Array(await blob.arrayBuffer());
                 // Formats the browser cannot decode go through the CPU decoders
@@ -312,6 +336,7 @@ export class MaterialBridge {
         else if (slot === "Normal") this._texHandles.texNormalMap = handle;
         else if (slot === "Emissive") this._texHandles.texEmissive = handle;
         else if (slot === "Displacement") this._texHandles.texDisplacement = handle;
+        else if (slot === "Transmission") this._texHandles.texTransmission = handle;
     }
 
     set baseColor(v: { x: number; y: number; z: number; w: number }) {
@@ -329,6 +354,7 @@ export class MaterialBridge {
 
     /** ClothMaterial/BasicMaterial::setRoughness -> specular.g. */
     set roughness(r: number | { x: number; y: number }) {
+        if (this.rejectsMetalRoughParam("Roughness")) return;
         if (typeof r === "number") {
             this._specularParams = new float4(this._specularParams.x, r, this._specularParams.z, this._specularParams.w);
         } else {
@@ -339,6 +365,7 @@ export class MaterialBridge {
 
     /** StandardMaterial::setMetallic -> specular.b. */
     set metallic(m: number) {
+        if (this.rejectsMetalRoughParam("Metallic")) return;
         this._specularParams = new float4(this._specularParams.x, this._specularParams.y, m, this._specularParams.w);
     }
 
@@ -409,6 +436,7 @@ export class MaterialBridge {
                 volumeScattering: this._volumeScattering,
                 displacementScale: this.displacementScale,
                 displacementOffset: this.displacementOffset,
+                ...(this.materialType === MaterialType.Standard ? { shadingModel: this._shadingModel } : {}),
                 ...this._texHandles,
             },
         };
@@ -964,9 +992,27 @@ export class SceneBuilderBridge {
                             }
                         }
                     }
-                } else if (cmd.path.toLowerCase().endsWith(".fbx")) {
+                } else if (kAssimpSceneExtensions.includes(cmd.path.slice(cmd.path.lastIndexOf(".") + 1).toLowerCase())) {
+                    // Every format AssimpImporter registers except glTF/USD/pbrt,
+                    // which have their own importers (as natively).
                     const dir = url.slice(0, url.lastIndexOf("/"));
-                    const parsed = await FbxImporter.parseToDescs(bytes, dir, textureManager, this.importOptions);
+                    const fileName = cmd.path.slice(cmd.path.lastIndexOf("/") + 1);
+                    // OBJ materials live in side files that assimp opens by name.
+                    const extraFiles: { name: string; bytes: Uint8Array }[] = [];
+                    if (fileName.toLowerCase().endsWith(".obj")) {
+                        for (const lib of objMaterialLibraries(new TextDecoder().decode(bytes))) {
+                            const res = await fetch(`${dir}/${lib}`);
+                            if (res.ok) extraFiles.push({ name: lib, bytes: new Uint8Array(await res.arrayBuffer()) });
+                            else Logger.warning(`AssimpImporter: material library '${lib}' not found next to '${fileName}'.`);
+                        }
+                    }
+                    const parsed = await FbxImporter.parseToDescs(bytes, dir, textureManager, {
+                        ...this.importOptions,
+                        useSpecGloss: this.hasFlag(SceneBuilderFlags.UseSpecGlossMaterials),
+                        useMetalRough: this.hasFlag(SceneBuilderFlags.UseMetalRoughMaterials),
+                        fileName,
+                        extraFiles,
+                    });
                     parsed.materials.forEach((m, i) => (m.name ??= parsed.materialNames[i]));
                     materials.push(...parsed.materials);
                     importedMaterialNames.push(...parsed.materialNames);
