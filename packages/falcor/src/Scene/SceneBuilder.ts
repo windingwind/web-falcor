@@ -4,6 +4,8 @@
  */
 
 import type { Device } from "../Core/API/Device.js";
+import { FormatType, ResourceFormat, getFormatType } from "../Core/API/Formats.js";
+import { ResourceBindFlags } from "../Core/API/Types.js";
 import { Grid } from "./Volume/Grid.js";
 import { GridVolume, type GridSlot } from "./Volume/GridVolume.js";
 import { buildNanoVDBGrid, type ParsedFloatGrid } from "./Volume/VDBLoader.js";
@@ -292,9 +294,10 @@ export class MaterialBridge {
     }
 
     /** Fetches + decodes this material's deferred textures into the TextureManager (MaterialTextureLoader: sRGB for colour slots unless AssumeLinearSpaceTextures). */
-    async resolveTextures(baseUrl: string, tm: TextureManager, resolver = AssetResolver.getDefaultResolver(), assumeLinearSpaceTextures = false): Promise<void> {
+    async resolveTextures(baseUrl: string, tm: TextureManager, resolver = AssetResolver.getDefaultResolver(), assumeLinearSpaceTextures = false, device?: Device): Promise<void> {
         for (const t of this._textures) {
-            const url = await resolveAssetUrl(t.path, baseUrl, AssetCategory.Any, resolver);
+            // Native TextureManager loads a `<MIP>` set from its mip0 file (§9: mips are generated here).
+            const url = await resolveAssetUrl(t.path.replace("<MIP>", "mip0"), baseUrl, AssetCategory.Any, resolver);
             // MERLMix's index map never reaches the texture array: BRDF indices
             // must be point-sampled and the packed array shares a linear sampler,
             // so the bytes go into the material buffer instead (docs §9).
@@ -317,12 +320,16 @@ export class MaterialBridge {
                 const bytes = new Uint8Array(await blob.arrayBuffer());
                 // Formats the browser cannot decode go through the CPU decoders
                 // (native gets these from FreeImage).
-                const bitmap = t.path.toLowerCase().endsWith(".tga")
-                    ? await decodeTgaToBitmap(bytes)
-                    : await createImageBitmap(blob, { colorSpaceConversion: "none" });
+                const ext = t.path.toLowerCase().slice(t.path.lastIndexOf("."));
+                const bitmap =
+                    ext === ".tga"
+                        ? await decodeTgaToBitmap(bytes)
+                        : ext === ".dds"
+                          ? await decodeDdsToBitmap(bytes, url, device)
+                          : await createImageBitmap(blob, { colorSpaceConversion: "none" });
                 this.assignTextureHandle(t.slot, packTextureHandle(TextureHandleMode.Texture, tm.addTexture({ bitmap, srgb, bytes })));
-            } catch {
-                /* undecodable format (e.g. DDS) — material falls back to base color */
+            } catch (e) {
+                Logger.warning(`MaterialTextureLoader: failed to load texture '${t.path}' for material '${this.name}': ${(e as Error).message}`);
             }
         }
         for (const b of this._bitmaps) {
@@ -641,6 +648,35 @@ async function decodeTgaToBitmap(bytes: Uint8Array): Promise<ImageBitmap> {
     pixels.set(image.rgba);
     const data = new ImageData(pixels, image.width, image.height);
     return createImageBitmap(data, { premultiplyAlpha: "none", colorSpaceConversion: "none" });
+}
+
+/**
+ * Decodes a DDS to an ImageBitmap at full resolution (the texture arrays are RGBA8):
+ * on the GPU when a device is at hand (every BC format, decoded as natively), else
+ * with the CPU decoder (BC1/BC3/BC5).
+ */
+async function decodeDdsToBitmap(bytes: Uint8Array, url: string, device?: Device): Promise<ImageBitmap> {
+    const { parseDDS, decodeDDSToRGBA } = await import("./Importer/DDSLoader.js");
+    const buffer = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer;
+    let width: number, height: number, rgba: Uint8Array;
+    if (device) {
+        ({ width, height } = parseDDS(buffer, false));
+        const { createTextureFromFile } = await import("../Core/API/TextureLoading.js");
+        const tex = await createTextureFromFile(device, url, false, false);
+        if (!tex) throw new RuntimeError("DDS failed to load");
+        // Keep the encoded values: an sRGB source blits into an sRGB target.
+        const srgb = getFormatType(tex.format) === FormatType.UnormSrgb;
+        const dst = device.createTexture2D(width, height, srgb ? ResourceFormat.RGBA8UnormSrgb : ResourceFormat.RGBA8Unorm, 1, 1, undefined, ResourceBindFlags.ShaderResource | ResourceBindFlags.RenderTarget);
+        device.renderContext.blit(tex, dst);
+        rgba = await device.renderContext.readTextureSubresource(dst, 0);
+        tex.destroy();
+        dst.destroy();
+    } else {
+        ({ width, height, rgba } = decodeDDSToRGBA(buffer, false, 1 << 16));
+    }
+    const pixels = new Uint8ClampedArray(rgba.length);
+    pixels.set(rgba);
+    return createImageBitmap(new ImageData(pixels, width, height), { premultiplyAlpha: "none", colorSpaceConversion: "none" });
 }
 
 /**
@@ -1177,7 +1213,7 @@ export class SceneBuilderBridge {
 
         // Load deferred material textures (material.loadTexture()).
         for (const mat of new Set(this.meshMaterials)) {
-            await mat.resolveTextures(baseUrl, textureManager, this.assetResolver, this.hasFlag(SceneBuilderFlags.AssumeLinearSpaceTextures));
+            await mat.resolveTextures(baseUrl, textureManager, this.assetResolver, this.hasFlag(SceneBuilderFlags.AssumeLinearSpaceTextures), device);
             await mat.resolveMeasured(baseUrl, this.assetResolver);
         }
 
