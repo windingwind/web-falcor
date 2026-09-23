@@ -15,6 +15,8 @@ import { float2, float3, float4 } from "../../Utils/Math/Vector.js";
 import { float4x4, mulMat } from "../../Utils/Math/Matrix.js";
 import { RuntimeError } from "../../Core/Error.js";
 import { Logger } from "../../Utils/Logger.js";
+import { extractUsdCamerasAndLights, usdaStageInfo, usdStageRootTransform, type UsdaCamera, type UsdaDomeLight } from "./UsdaScene.js";
+import type { AnalyticLight } from "../SceneData.js";
 
 interface UsdNode {
     primName: string;
@@ -122,6 +124,20 @@ function computeSmoothNormals(positions: Float32Array, indices: Uint32Array): Fl
     return n;
 }
 
+/** The USDA text of a USD file: usda as is, usdc/usdz through tinyusdz's layer printer (null if unavailable). */
+function usdLayerText(native: TinyUsdzModule, bytes: Uint8Array): string | null {
+    const head = new TextDecoder().decode(bytes.subarray(0, 5));
+    if (head === "#usda") return new TextDecoder().decode(bytes);
+    try {
+        const layer = new native.TinyUSDZLoaderNative() as unknown as { loadAsLayerFromBinary?(b: Uint8Array, p: string): boolean; layerToString?(): string };
+        if (layer.loadAsLayerFromBinary?.(bytes, "layer.usd") && layer.layerToString) return layer.layerToString();
+    } catch {
+        /* fall through */
+    }
+    Logger.warning("UsdImporter: this USD file's layer text is unavailable; cameras, lights and stage units are not imported.");
+    return null;
+}
+
 export class UsdImporter {
     /** Parses USD (usda/usdc/usdz) into scene descriptors (device-free). */
     static async parseToDescs(
@@ -130,9 +146,13 @@ export class UsdImporter {
         baseUrl = "",
         excludePrims?: Set<string>,
         options: { assumeLinearSpaceTextures?: boolean } = {},
-    ): Promise<{ meshes: SceneMeshDesc[]; materials: SceneMaterialDesc[]; materialNames: string[] }> {
+    ): Promise<{ meshes: SceneMeshDesc[]; materials: SceneMaterialDesc[]; materialNames: string[]; cameras: UsdaCamera[]; lights: AnalyticLight[]; domeLight: UsdaDomeLight | null }> {
         const native = await loadTinyUsdz();
         const usd = new native.TinyUSDZLoaderNative();
+        // Cameras, lights and stage metadata come from the layer's text (RenderScene has none of them).
+        const layerText = usdLayerText(native, bytes);
+        const rootXform = layerText ? usdStageRootTransform(usdaStageInfo(layerText)) : float4x4.identity();
+        const extracted = layerText ? extractUsdCamerasAndLights(layerText) : { cameras: [], lights: [], domeLight: null };
         if (!usd.loadFromBinary(bytes, "scene.usd")) {
             throw new RuntimeError(`UsdImporter: failed to parse USD (${usd.error()})`);
         }
@@ -209,13 +229,14 @@ export class UsdImporter {
                 }
                 generateTangents(vertices, indices);
                 meshes.push({ vertices, indices, materialID: getOrAddMaterial(mesh.materialId), transform: world.clone() });
-            } else if (node.nodeType !== "xform" && node.nodeType !== "") {
+            } else if (node.nodeType !== "xform" && node.nodeType !== "" && !/camera|light/i.test(node.nodeType)) {
                 Logger.warning(`UsdImporter: prim type '${node.nodeType}' ('${node.primName}') not supported (skipped)`);
             }
             for (const child of node.children ?? []) walk(child, world);
         };
 
-        walk(usd.getDefaultRootNode(), float4x4.identity());
+        // Native's stage root transform: meters per unit, Z-up rotated to Y-up.
+        walk(usd.getDefaultRootNode(), rootXform);
 
         // Resolve UsdUVTexture images (URI, embedded-encoded, or pre-decoded).
         if (textureManager) {
@@ -223,7 +244,7 @@ export class UsdImporter {
                 await resolveMaterialTextures(usd, m, desc, textureManager, baseUrl, !!options.assumeLinearSpaceTextures);
             }
         }
-        return { meshes, materials, materialNames };
+        return { meshes, materials, materialNames, ...extracted };
     }
 }
 

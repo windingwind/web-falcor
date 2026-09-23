@@ -2,8 +2,8 @@
  * FEATURE VERIFY — USD import (tinyusdz): oracle-usd.usda (meshes + xform
  * hierarchy + UsdPreviewSurface materials) imported on the web and rendered
  * through the upstream MinimalPathTracer.py graph vs the native USDImporter
- * capture. The camera and SphereLight are hand-set from the .usda values —
- * the tinyusdz RenderScene API does not expose lights/cameras yet (docs §8.4).
+ * capture. The camera (pose, focal length, the USD default film height and clipping
+ * range) and the SphereLight are imported from the .usda, as natively.
  *
  * Regenerate the oracle with:
  *   Falcor/build/linux-gcc/bin/Debug/Mogwai --script tests/oracle/render-native-usd.py --headless
@@ -15,24 +15,8 @@ import "@web-falcor/render-passes";
 import parseExr from "parse-exr";
 import { gpuTest, expectEq, saveArtifact } from "../harness/registry.js";
 
-// Camera/light mirror the .usda prims (not yet exposed by tinyusdz's
-// RenderScene API; values match the native import — probed).
-const kScene = `
-sceneBuilder.importScene('oracle-usd.usda')
-
-camera = Camera()
-camera.position = float3(3.5, 2.5, 4.5)
-camera.target = float3(2.923902, 2.154341, 3.759303)
-camera.up = float3(-0.212214, 0.938360, -0.272846)
-camera.focalLength = 35.0
-sceneBuilder.addCamera(camera)
-
-light = SphereLight('Light')
-light.intensity = float3(15.0, 15.0, 15.0)
-light.scaling = 0.3
-light.position = float3(1.5, 2.5, 2.0)
-sceneBuilder.addLight(light)
-`;
+// The camera and SphereLight come from the .usda itself, as natively (UsdaScene.ts).
+const kScene = `sceneBuilder.importScene('oracle-usd.usda')`;
 
 gpuTest("UsdImport.matchesNativeOracle", async ({ device }) => {
     const size = 256;
@@ -44,8 +28,6 @@ gpuTest("UsdImport.matchesNativeOracle", async ({ device }) => {
         const [vgraph] = await runGraphScript(device, vbufferSource);
         const vscene = await runSceneScript(device, kScene, "/tests/oracle/assets");
         vscene.camera.setAspectRatio(1.0);
-        vscene.camera.setDepthRange(1, 1000000); // USD clippingRange default (native probe)
-        vscene.camera.setFrameHeight(15.2908); // USD vertical-aperture default (native probe)
         vgraph!.onResize(size, size);
         vgraph!.setScene(vscene);
         console.error(`# usdImport.bounds: ${JSON.stringify(vscene.worldBounds)}`);
@@ -89,8 +71,6 @@ gpuTest("UsdImport.matchesNativeOracle", async ({ device }) => {
 
     const scene = await runSceneScript(device, kScene, "/tests/oracle/assets");
     scene.camera.setAspectRatio(1.0);
-    scene.camera.setDepthRange(1, 1000000);
-    scene.camera.setFrameHeight(15.2908);
     expectEq(scene.stats.instances >= 2, true, `meshes imported (${scene.stats.instances})`);
     expectEq(scene.getMaterial(0) !== undefined, true, "materials imported");
 

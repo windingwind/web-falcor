@@ -1,0 +1,266 @@
+/**
+ * UsdGeom cameras and UsdLux lights from a USD layer's text (tinyusdz's RenderScene exposes
+ * neither; its layerToString gives the USDA text of usda/usdc/usdz layers alike). Mirrors
+ * USDImporter: the stage root transform is scale(metersPerUnit), rotated -90 degrees about X
+ * for Z-up stages; lights take their prim's world transform (Distant: -Z direction, Sphere:
+ * radius scaling, Rect: (-w/2, h/2, -1), Disk: (-r, r, -1)), intensity is
+ * 2^exposure * intensity * color, and a DomeLight becomes the environment map. Cameras follow
+ * ImporterContext::createCamera: pose from the USD world transform, focal length in mm, the
+ * aperture from the f-stop, depth range and focus distance in meters, film width when the
+ * horizontal aperture is authored (else the height).
+ */
+
+import { float3, normalize3 } from "../../Utils/Math/Vector.js";
+import { extractEulerAngleXYZ, float4x4, inverse, matrixFromRotationAxisAngle, matrixFromScaling, matrixFromTranslation, mulMat, transformPoint, transformVector } from "../../Utils/Math/Matrix.js";
+import { matrixFromQuat, quatf } from "../../Utils/Math/Quaternion.js";
+import { LightType, type AnalyticLight } from "../SceneData.js";
+import { Logger } from "../../Utils/Logger.js";
+
+export interface UsdaPrim {
+    type: string;
+    name: string;
+    path: string;
+    /** The prim's own properties (nested prims removed). */
+    body: string;
+    children: UsdaPrim[];
+    /** Local-to-world, including the stage root transform. */
+    world: float4x4;
+    /** Local-to-world in USD space (without the root transform). */
+    usdWorld: float4x4;
+}
+
+export interface UsdaCamera {
+    name: string;
+    position: float3;
+    target: float3;
+    up: float3;
+    focalLength: number;
+    focalDistance: number;
+    apertureRadius: number;
+    depthRange: [number, number];
+    frameWidth?: number;
+    frameHeight?: number;
+}
+
+export interface UsdaDomeLight {
+    name: string;
+    /** texture:file as authored (relative to the layer). */
+    file: string;
+    intensity: number;
+    tint: [number, number, number];
+    /** Euler XYZ rotation in degrees (EnvMap::setRotation). */
+    rotationDeg: [number, number, number];
+}
+
+const deg = Math.PI / 180;
+const num = (s: string) => (s.match(/[-+]?(?:\d+\.?\d*|\.\d+)(?:[eE][-+]?\d+)?/g) ?? []).map(Number);
+
+/** Reads an attribute value text (`type name = value`), or undefined. Accepts any of `names`. */
+function attr(body: string, names: string[]): string | undefined {
+    for (const name of names) {
+        const escaped = name.replace(/[.:]/g, (c) => `\\${c}`);
+        const m = body.match(new RegExp(`^\\s*(?:uniform\\s+|custom\\s+)?[\\w\\[\\]]+\\s+${escaped}\\s*=\\s*(.+)$`, "m"));
+        if (m) return m[1]!.trim();
+    }
+    return undefined;
+}
+
+const attrNumber = (body: string, names: string[], fallback: number) => {
+    const v = attr(body, names);
+    if (v === undefined) return fallback;
+    if (/^(true|false)$/.test(v)) return v === "true" ? 1 : 0;
+    return num(v)[0] ?? fallback;
+};
+const attrVector = (body: string, names: string[], fallback: number[]) => {
+    const v = attr(body, names);
+    return v === undefined ? fallback : num(v);
+};
+
+/** The prim's local transform from its xformOpOrder (USD: ops apply right to left). */
+function localTransform(body: string): float4x4 {
+    const orderText = attr(body, ["xformOpOrder"]);
+    if (!orderText) return float4x4.identity();
+    const ops = orderText.match(/"([^"]+)"/g)?.map((s) => s.slice(1, -1)) ?? [];
+    let m = float4x4.identity();
+    for (const op of ops) {
+        const invert = op.startsWith("!invert!");
+        const name = invert ? op.slice(8) : op;
+        const kind = name.split(":")[1] ?? "";
+        const v = num(attr(body, [name]) ?? "");
+        let t = float4x4.identity();
+        if (kind === "translate") t = matrixFromTranslation(new float3(v[0] ?? 0, v[1] ?? 0, v[2] ?? 0));
+        else if (kind === "scale") t = matrixFromScaling(new float3(v[0] ?? 1, v[1] ?? 1, v[2] ?? 1));
+        else if (kind === "rotateX" || kind === "rotateY" || kind === "rotateZ") {
+            const axis = kind === "rotateX" ? new float3(1, 0, 0) : kind === "rotateY" ? new float3(0, 1, 0) : new float3(0, 0, 1);
+            t = matrixFromRotationAxisAngle((v[0] ?? 0) * deg, axis);
+        } else if (/^rotate[XYZ]{3}$/.test(kind)) {
+            // rotateXYZ: X first, then Y, then Z (as column vectors: Rz * Ry * Rx).
+            const axes = { X: new float3(1, 0, 0), Y: new float3(0, 1, 0), Z: new float3(0, 0, 1) } as const;
+            const letters = kind.slice(6).split("") as ("X" | "Y" | "Z")[];
+            const angle = (l: "X" | "Y" | "Z") => (v["XYZ".indexOf(l)] ?? 0) * deg;
+            for (const l of letters) t = mulMat(matrixFromRotationAxisAngle(angle(l), axes[l]), t);
+        } else if (kind === "orient") {
+            t = matrixFromQuat(new quatf(v[1] ?? 0, v[2] ?? 0, v[3] ?? 0, v[0] ?? 1));
+        } else if (kind === "transform") {
+            // USD matrices are row-vector (translation in the last row): transpose.
+            const rows = [0, 1, 2, 3].map((r) => [0, 1, 2, 3].map((c) => v[c * 4 + r] ?? (r === c ? 1 : 0)));
+            t = float4x4.fromRows(rows);
+        } else {
+            Logger.warning(`USDImporter: unsupported xformOp '${op}' ignored.`);
+        }
+        m = mulMat(m, invert ? inverse(t) : t);
+    }
+    return m;
+}
+
+/** Top-level prim blocks of text[start, end) and the text between them (the enclosing prim's own properties). */
+function scanBlocks(text: string, start: number, end: number): { blocks: { type: string; name: string; inner: [number, number] }[]; own: string } {
+    const blocks: { type: string; name: string; inner: [number, number] }[] = [];
+    let own = "";
+    const re = /\b(def|over)\s+(\w+\s+)?"([^"]+)"\s*(\([^)]*\))?\s*\{/g;
+    re.lastIndex = start;
+    let cursor = start;
+    let m: RegExpExecArray | null;
+    while ((m = re.exec(text)) !== null && m.index < end) {
+        own += text.slice(cursor, m.index);
+        let depth = 1;
+        let i = re.lastIndex;
+        while (i < end && depth > 0) {
+            const ch = text[i];
+            if (ch === '"') {
+                i = text.indexOf('"', i + 1) + 1;
+                continue;
+            }
+            if (ch === "{") depth++;
+            else if (ch === "}") depth--;
+            i++;
+        }
+        blocks.push({ type: (m[2] ?? "").trim(), name: m[3]!, inner: [re.lastIndex, i - 1] });
+        cursor = i;
+        re.lastIndex = i;
+    }
+    own += text.slice(cursor, end);
+    return { blocks, own };
+}
+
+/** Parses the prim tree (`def`/`over` blocks, brace matched) of USDA text; `root` is the stage root transform. */
+export function parseUsdaPrims(text: string, root: float4x4): UsdaPrim[] {
+    const build = (start: number, end: number, parentPath: string, parentWorld: float4x4, parentUsd: float4x4): UsdaPrim[] =>
+        scanBlocks(text, start, end).blocks.map(({ type, name, inner }) => {
+            const { own } = scanBlocks(text, inner[0], inner[1]);
+            const local = localTransform(own);
+            const path = `${parentPath}/${name}`;
+            const world = mulMat(parentWorld, local);
+            const usdWorld = mulMat(parentUsd, local);
+            return { type, name, path, body: own, world, usdWorld, children: build(inner[0], inner[1], path, world, usdWorld) };
+        });
+    return build(0, text.length, "", root, float4x4.identity());
+}
+
+/** Stage metadata (metersPerUnit defaults to 0.01, as UsdGeomGetStageMetersPerUnit). */
+export function usdaStageInfo(text: string): { metersPerUnit: number; upAxis: "Y" | "Z" } {
+    const header = text.match(/^#usda[^\n]*\n\s*\(([\s\S]*?)\n\)/)?.[1] ?? "";
+    const mpu = header.match(/metersPerUnit\s*=\s*([-+\d.eE]+)/);
+    const up = header.match(/upAxis\s*=\s*"(\w)"/);
+    return { metersPerUnit: mpu ? Number(mpu[1]) : 0.01, upAxis: up?.[1] === "Z" ? "Z" : "Y" };
+}
+
+/** Mirrors the importer's root transform: scale(metersPerUnit), then -90 degrees about X for Z-up stages. */
+export function usdStageRootTransform(info: { metersPerUnit: number; upAxis: "Y" | "Z" }): float4x4 {
+    let root = matrixFromScaling(new float3(info.metersPerUnit, info.metersPerUnit, info.metersPerUnit));
+    if (info.upAxis === "Z") root = mulMat(matrixFromRotationAxisAngle(-90 * deg, new float3(1, 0, 0)), root);
+    return root;
+}
+
+function lightIntensity(body: string, name: string): float3 {
+    const exposure = attrNumber(body, ["inputs:exposure", "exposure"], 0);
+    const intensity = attrNumber(body, ["inputs:intensity", "intensity"], 1);
+    const color = attrVector(body, ["inputs:color", "color"], [1, 1, 1]);
+    if (attrNumber(body, ["inputs:enableColorTemperature", "enableColorTemperature"], 0)) {
+        Logger.warning(`USDImporter: color temperature of light '${name}' is not supported; using its color only.`);
+    }
+    const k = Math.pow(2, exposure) * intensity;
+    return new float3(k * color[0]!, k * color[1]!, k * color[2]!);
+}
+
+/** Cameras, analytic lights and the dome light of a USD layer's text. */
+export function extractUsdCamerasAndLights(text: string): { cameras: UsdaCamera[]; lights: AnalyticLight[]; domeLight: UsdaDomeLight | null } {
+    const info = usdaStageInfo(text);
+    const prims = parseUsdaPrims(text, usdStageRootTransform(info));
+    const cameras: UsdaCamera[] = [];
+    const lights: AnalyticLight[] = [];
+    let domeLight: UsdaDomeLight | null = null;
+    const visit = (p: UsdaPrim) => {
+        const b = p.body;
+        switch (p.type) {
+            case "Camera": {
+                const focusDistance = Math.max(1, attrNumber(b, ["focusDistance"], 0));
+                const view = p.usdWorld;
+                const focalLength = attrNumber(b, ["focalLength"], 50);
+                const fStop = attrNumber(b, ["fStop"], 0) * (attr(b, ["depthOfField"]) === "false" ? 0 : 1);
+                const clip = attrVector(b, ["clippingRange"], [1, 1000000]);
+                const cam: UsdaCamera = {
+                    name: p.name,
+                    position: transformPoint(view, new float3(0, 0, 0)),
+                    target: transformPoint(view, new float3(0, 0, -focusDistance)),
+                    up: transformVector(view, new float3(0, 1, 0)),
+                    focalLength,
+                    focalDistance: info.metersPerUnit * focusDistance,
+                    apertureRadius: fStop > 0 ? 0.001 * 0.5 * focalLength / fStop : 0,
+                    depthRange: [clip[0]! * info.metersPerUnit, clip[1]! * info.metersPerUnit],
+                };
+                if (attr(b, ["horizontalAperture"]) !== undefined) cam.frameWidth = attrNumber(b, ["horizontalAperture"], 20.955);
+                else cam.frameHeight = attrNumber(b, ["verticalAperture"], 15.2908);
+                cameras.push(cam);
+                break;
+            }
+            case "DistantLight": {
+                const angle = attrNumber(b, ["inputs:angle", "angle"], 0);
+                lights.push({ type: LightType.Distant, name: p.name, intensity: lightIntensity(b, p.name), dirW: normalize3(transformVector(p.world, new float3(0, 0, -1))), angle: 0.5 * angle * deg });
+                break;
+            }
+            case "SphereLight": {
+                const r = attrNumber(b, ["inputs:radius", "radius"], 0.5);
+                lights.push({ type: LightType.Sphere, name: p.name, intensity: lightIntensity(b, p.name), transMat: mulMat(p.world, matrixFromScaling(new float3(r, r, r))) });
+                break;
+            }
+            case "RectLight": {
+                const w = attrNumber(b, ["inputs:width", "width"], 1);
+                const h = attrNumber(b, ["inputs:height", "height"], 1);
+                lights.push({ type: LightType.Rect, name: p.name, intensity: lightIntensity(b, p.name), transMat: mulMat(p.world, matrixFromScaling(new float3(-w / 2, h / 2, -1))) });
+                break;
+            }
+            case "DiskLight": {
+                const r = attrNumber(b, ["inputs:radius", "radius"], 0.5);
+                lights.push({ type: LightType.Disc, name: p.name, intensity: lightIntensity(b, p.name), transMat: mulMat(p.world, matrixFromScaling(new float3(-r, r, -1))) });
+                break;
+            }
+            case "DomeLight": {
+                const file = attr(b, ["inputs:texture:file", "texture:file"])?.match(/@([^@]*)@/)?.[1];
+                if (!file) {
+                    Logger.error(`Failed to resolve environment map path for light '${p.path}'.`);
+                    break;
+                }
+                // USD dome lights are +Z up, Falcor env maps +Y up and offset in longitude.
+                const xform = mulMat(mulMat(matrixFromRotationAxisAngle(90 * deg, new float3(0, 1, 0)), p.world), matrixFromRotationAxisAngle(90 * deg, new float3(1, 0, 0)));
+                const r = extractEulerAngleXYZ(xform);
+                domeLight = {
+                    name: p.name,
+                    file,
+                    intensity: Math.pow(2, attrNumber(b, ["inputs:exposure", "exposure"], 0)) * attrNumber(b, ["inputs:intensity", "intensity"], 1),
+                    tint: attrVector(b, ["inputs:color", "color"], [1, 1, 1]) as [number, number, number],
+                    rotationDeg: [r.x / deg, r.y / deg, r.z / deg],
+                };
+                break;
+            }
+            case "CylinderLight":
+            case "GeometryLight":
+            case "PortalLight":
+                Logger.warning(`USDImporter: unsupported light type '${p.type}' ('${p.path}') ignored.`);
+                break;
+        }
+        p.children.forEach(visit);
+    };
+    prims.forEach(visit);
+    return { cameras, lights, domeLight };
+}

@@ -79,6 +79,11 @@ export interface GltfCameraPose {
     focalLength: number;
     /** Near/far planes, when the importer provides them. */
     depthRange?: [number, number];
+    /** Depth of field and film size, when the importer provides them (USD cameras). */
+    focalDistance?: number;
+    apertureRadius?: number;
+    frameWidth?: number;
+    frameHeight?: number;
     name?: string;
 }
 

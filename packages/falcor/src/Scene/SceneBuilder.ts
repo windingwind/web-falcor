@@ -756,6 +756,8 @@ interface EnvMapRef {
     constantColor?: [number, number, number];
     /** The file is an equal-area octahedral map (pbrt-v4 `infinite` lights). */
     equalAreaOctahedral?: boolean;
+    /** EnvMap::setTint (USD dome light color). */
+    tint?: [number, number, number];
 }
 
 type Command =
@@ -802,6 +804,7 @@ export class SceneBuilderBridge {
                   rotation: v.rotation ? { x: Number(v.rotation.x), y: Number(v.rotation.y), z: Number(v.rotation.z) } : undefined,
                   constantColor: v.constantColor ? [Number(v.constantColor[0]), Number(v.constantColor[1]), Number(v.constantColor[2])] : undefined,
                   equalAreaOctahedral: v.equalAreaOctahedral ? true : undefined,
+                  tint: v.tint ? [Number(v.tint[0]), Number(v.tint[1]), Number(v.tint[2])] : undefined,
               }
             : null;
     }
@@ -1055,6 +1058,18 @@ export class SceneBuilderBridge {
                     materials.push(...parsed.materials);
                     importedMaterialNames.push(...parsed.materialNames);
                     for (const m of parsed.meshes) meshes.push({ ...m, materialID: m.materialID + materialOffset });
+                    // UsdLux lights, UsdGeom cameras and the dome light (native ImporterContext).
+                    importedLights.push(...parsed.lights);
+                    for (const c of parsed.cameras) {
+                        this.importedCameras.push({
+                            name: c.name,
+                            pose: { position: c.position, target: c.target, up: c.up, focalLength: c.focalLength, depthRange: c.depthRange, focalDistance: c.focalDistance, apertureRadius: c.apertureRadius, frameWidth: c.frameWidth, frameHeight: c.frameHeight },
+                        });
+                    }
+                    if (parsed.domeLight && !this._envMap) {
+                        const d = parsed.domeLight;
+                        this._envMap = { path: `${dir}/${d.file}`, intensity: d.intensity, tint: d.tint, rotation: { x: d.rotationDeg[0], y: d.rotationDeg[1], z: d.rotationDeg[2] } };
+                    }
                     // BasisCurves from USDA text (tinyusdz's RenderScene has no curve API).
                     {
                         const strands = curvePrims;
@@ -1348,6 +1363,10 @@ export class SceneBuilderBridge {
             cam.setUpVector(pose.up);
             cam.setFocalLength(pose.focalLength);
             if (pose.depthRange) cam.setDepthRange(...pose.depthRange);
+            if (pose.focalDistance !== undefined) cam.setFocalDistance(pose.focalDistance);
+            if (pose.apertureRadius !== undefined) cam.setApertureRadius(pose.apertureRadius);
+            if (pose.frameWidth !== undefined) cam.setFrameWidth(pose.frameWidth);
+            else if (pose.frameHeight !== undefined) cam.setFrameHeight(pose.frameHeight);
             if (aspectRatio) cam.setAspectRatio(aspectRatio);
             cameraList.push(cam);
         }
@@ -1375,6 +1394,7 @@ export class SceneBuilderBridge {
                   });
             envMap.intensity = this.envMap.intensity;
             if (this.envMap.rotation) envMap.setRotation([this.envMap.rotation.x, this.envMap.rotation.y, this.envMap.rotation.z]);
+            if (this.envMap.tint) envMap.tint = this.envMap.tint;
             scene.setEnvMap(envMap);
         }
         for (const v of this.gridVolumesList) {

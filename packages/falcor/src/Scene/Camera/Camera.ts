@@ -62,6 +62,9 @@ export class Camera {
     private shutterSpeed = 0.004;
     private ISOSpeed = 100.0;
     private frameHeight = 24.0;
+    private frameWidth = 0;
+    /** Native mPreserveHeight: which film dimension stays fixed when the aspect ratio changes. */
+    private preserveHeight = true;
     private aspectRatio = 1.7777;
     private nearZ = 0.1;
     private farZ = 1000;
@@ -108,8 +111,11 @@ export class Camera {
     setFocalLength(mm: number): void { this.focalLength = mm; this.dirty = true; }
     getFocalLength(): number { return this.focalLength; }
     /** Mirrors Camera::setFrameHeight (film-back height in mm; USD cameras author it). */
-    setFrameHeight(mm: number): void { this.frameHeight = mm; this.dirty = true; }
-    getFrameHeight(): number { return this.frameHeight; }
+    setFrameHeight(mm: number): void { this.frameHeight = mm; this.preserveHeight = true; this.dirty = true; }
+    getFrameHeight(): number { return this.preserveHeight ? this.frameHeight : this.frameWidth / this.aspectRatio; }
+    /** Mirrors Camera::setFrameWidth: the width stays fixed and the height follows the aspect ratio. */
+    setFrameWidth(mm: number): void { this.frameWidth = mm; this.preserveHeight = false; this.dirty = true; }
+    getFrameWidth(): number { return this.preserveHeight ? this.frameHeight * this.aspectRatio : this.frameWidth; }
     setFocalDistance(d: number): void { this.focalDistance = d; this.dirty = true; }
     getFocalDistance(): number { return this.focalDistance; }
     setApertureRadius(r: number): void { this.apertureRadius = r; this.dirty = true; }
@@ -128,7 +134,7 @@ export class Camera {
     setJitter(x: number, y: number): void { this.jitter = new float2(x, y); this.dirty = true; }
 
     getFovY(): number {
-        return focalLengthToFovY(this.focalLength, this.frameHeight);
+        return focalLengthToFovY(this.focalLength, this.getFrameHeight());
     }
 
     /** Mirrors Camera::calculateCameraParameters + getData. */
@@ -176,8 +182,8 @@ export class Camera {
                 jitterX: this.jitter.x,
                 cameraW: new float3(fwd.x * this.focalDistance, fwd.y * this.focalDistance, fwd.z * this.focalDistance),
                 jitterY: this.jitter.y,
-                frameHeight: this.frameHeight,
-                frameWidth: this.frameHeight * this.aspectRatio,
+                frameHeight: this.getFrameHeight(),
+                frameWidth: this.getFrameWidth(),
                 focalDistance: this.focalDistance,
                 apertureRadius: this.apertureRadius,
                 shutterSpeed: this.shutterSpeed,
