@@ -19,8 +19,11 @@ gpuTest("CurvesSmoke.sceneBuildsAndRenders", async ({ device }) => {
     const sceneSource = await (await fetch("/Falcor/media/test_scenes/curves/two_curves.pyscene")).text();
     const scene = await runSceneScript(device, sceneSource, "/Falcor/media/test_scenes/curves");
     scene.camera.setAspectRatio(1.0);
-    // 3 spheres + quad + usda tri0 + 2 custom-primitive boxes + 2 curves.
-    expectEq(scene.stats.instances, 9, `instances (${scene.stats.instances})`);
+    // 3 spheres + quad + usda tri0 + 2 curves. The 2 custom primitives are not
+    // geometry instances natively either: they are addressed after them
+    // (Scene::bindShaderData's customPrimitiveInstanceOffset).
+    expectEq(scene.stats.instances, 7, `instances (${scene.stats.instances})`);
+    expectEq(scene.getCustomPrimitiveCount(), 2, "the two custom primitives");
 
     graph!.onResize(size, size);
     graph!.setScene(scene);

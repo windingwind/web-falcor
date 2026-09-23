@@ -834,26 +834,21 @@ export class SceneBuilderBridge {
         else this.meshInstanced.set(meshID, [transform]);
     }
 
-    /** Renders a custom primitive as its AABB box (web approximation: Falcor's
-     *  procedural custom primitives need an app-supplied intersection shader, which
-     *  the software ray tracer has no equivalent for). */
+    /** Recorded SceneBuilder::addCustomPrimitive calls (user ID + AABB). */
+    private customPrimitives: { userID: number; aabb: { min: [number, number, number]; max: [number, number, number] } }[] = [];
+
+    /**
+     * Mirrors SceneBuilder::addCustomPrimitive. Like native, the primitive is an
+     * AABB with a user ID for passes that supply their own intersection code; the
+     * shipped passes have none, so it does not render (it used to be drawn as a
+     * box mesh here).
+     */
     addCustomPrimitive(userID: number, aabb: { min: { x: number; y: number; z: number }; max: { x: number; y: number; z: number } }): void {
         const { min, max } = aabb;
-        const size = new float3(max.x - min.x, max.y - min.y, max.z - min.z);
-        const center = new float3((max.x + min.x) / 2, (max.y + min.y) / 2, (max.z + min.z) / 2);
-        const id = Number(userID);
-        const palette = [
-            [0.9, 0.3, 0.3],
-            [0.3, 0.9, 0.4],
-            [0.3, 0.5, 0.9],
-            [0.9, 0.8, 0.2],
-        ];
-        const c = palette[id % palette.length]!;
-        const mat = new MaterialBridge(MaterialType.Standard, `CustomPrimitive_${id}`);
-        mat.baseColor = { x: c[0]!, y: c[1]!, z: c[2]!, w: 1 };
-        mat.roughness = 0.5;
-        const meshID = this.addTriangleMesh(TriangleMesh.createCube(size), mat);
-        this.addMeshInstance(this.addNode("", matrixFromTranslation(center)), meshID);
+        this.customPrimitives.push({
+            userID: Number(userID),
+            aabb: { min: [Number(min.x), Number(min.y), Number(min.z)], max: [Number(max.x), Number(max.y), Number(max.z)] },
+        });
     }
 
     addLight(light: LightBridge): void {
@@ -1272,6 +1267,7 @@ export class SceneBuilderBridge {
         // its own camera (an explicit pyscene camera wins and stays static).
         const cameraNodeID = this.camera ? undefined : this.importedCameraNodeID;
         const scene = new Scene(device, meshes, materials, lights, textureManager, sdfGrids, nodes, animations, cameraNodeID, weightTracks, curves);
+        for (const c of this.customPrimitives) scene.addCustomPrimitive(c.userID, c.aabb);
         // Snapshot for the scene cache (v4: every scene class; grid volumes are
         // read off scene.gridVolumes after finalize, env map off the scene).
         this.lastSceneArgs = {

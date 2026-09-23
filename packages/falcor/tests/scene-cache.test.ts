@@ -54,6 +54,7 @@ function makeScene(): CacheableScene {
             ],
             instances: [{ gridIndex: 0, materialID: 0, transform: float4x4.identity() }, { gridIndex: 0, materialID: 0 }],
         },
+        customPrimitives: [{ userID: 3, aabb: { min: [0, 0, 0], max: [1, 2, 3] } }],
         gridVolumes: [{ name: "smoke", densityScale: 0.5, emissionScale: 1, albedo: [0.5, 0.5, 0.5], anisotropy: 0.1, emissionTemperature: 0, grids: [{ slot: "density", bytes: new Uint8Array([7, 7, 7, 7, 7, 7, 7]) }] }],
     };
 }
@@ -83,6 +84,7 @@ describe("SceneCache v4 serialization", () => {
         expect(valuesOp.kind).toBe("values");
         expect((valuesOp as { values: Float32Array }).values).toBeInstanceOf(Float32Array);
         expect(json(back.gridVolumes)).toBe(json(scene.gridVolumes));
+        expect(json(back.customPrimitives)).toBe(json(scene.customPrimitives));
         expect(back.meshes.length).toBe(2);
         expect(json(back.meshes[0]!.vertices)).toBe(json(scene.meshes[0]!.vertices));
         expect(Array.from(back.meshes[1]!.indices)).toEqual([2, 1, 0]);

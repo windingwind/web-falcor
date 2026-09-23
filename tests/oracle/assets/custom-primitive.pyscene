@@ -1,0 +1,16 @@
+# A custom primitive (SceneBuilder::addCustomPrimitive) in front of a quad.
+# Natively it is an AABB with a user ID for passes that bring their own
+# intersection shader; the shipped passes have none, so rays pass through.
+material = StandardMaterial('quad')
+material.baseColor = float4(0.5, 0.5, 0.5, 1.0)
+quad = TriangleMesh.createQuad(float2(4.0, 4.0))
+node = sceneBuilder.addNode('quad', Transform(rotationEulerDeg=float3(90.0, 0.0, 0.0)))
+sceneBuilder.addMeshInstance(node, sceneBuilder.addTriangleMesh(quad, material))
+
+sceneBuilder.addCustomPrimitive(7, AABB(float3(-0.5, -0.5, 0.5), float3(0.5, 0.5, 1.5)))
+
+camera = Camera()
+camera.position = float3(0, 0, 5)
+camera.target = float3(0, 0, 0)
+camera.up = float3(0, 1, 0)
+sceneBuilder.addCamera(camera)

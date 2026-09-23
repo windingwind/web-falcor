@@ -64,6 +64,8 @@ export interface CacheableScene {
     sdfGrids: { recipes: SDFGridRecipe[]; instances: { gridIndex: number; materialID: number; transform?: float4x4 }[] };
     /** Grid volumes with their NanoVDB buffers (v4). */
     gridVolumes: CachedGridVolume[];
+    /** SceneBuilder::addCustomPrimitive entries (user ID + AABB). */
+    customPrimitives?: { userID: number; aabb: { min: [number, number, number]; max: [number, number, number] } }[];
 }
 
 export interface CachedGridVolume {
@@ -226,6 +228,7 @@ export function serializeScene(cached: CacheableScene): Uint8Array {
             instances: cached.sdfGrids.instances.map((i) => ({ gridIndex: i.gridIndex, materialID: i.materialID, transform: i.transform ? { __m4: Array.from(i.transform.data) } : undefined })),
         },
         gridVolumes: cached.gridVolumes.map((v) => ({ ...v, grids: v.grids.map((g) => ({ slot: g.slot, byteLength: g.bytes.byteLength })) })),
+        customPrimitives: cached.customPrimitives ?? [],
     };
     const json = new TextEncoder().encode(JSON.stringify(header));
     const jsonPadded = (json.length + 3) & ~3;
@@ -272,6 +275,7 @@ export function deserializeScene(bytes: Uint8Array): CacheableScene {
         weightTracks: TrackMeta[];
         sdfGrids: { recipes: RecipeMeta[]; instances: { gridIndex: number; materialID: number; transform?: { __m4: number[] } }[] };
         gridVolumes: (Omit<CachedGridVolume, "grids"> & { grids: { slot: GridSlot; byteLength: number }[] })[];
+        customPrimitives?: CacheableScene["customPrimitives"];
     };
 
     let off = 12 + ((jsonLen + 3) & ~3);
@@ -381,6 +385,7 @@ export function deserializeScene(bytes: Uint8Array): CacheableScene {
         weightTracks,
         sdfGrids: { recipes: sdfRecipes, instances: header.sdfGrids.instances.map((i) => ({ gridIndex: i.gridIndex, materialID: i.materialID, transform: mat4(i.transform) })) },
         gridVolumes,
+        customPrimitives: header.customPrimitives ?? [],
     };
 }
 
@@ -451,6 +456,7 @@ export async function buildSceneFromCache(device: Device, cached: CacheableScene
     const builtGrids = cached.sdfGrids.recipes.map(buildSDFGridFromRecipe);
     const sdfGrids: SceneSDFGridDesc[] = cached.sdfGrids.instances.map((i) => ({ grid: builtGrids[i.gridIndex]!, materialID: i.materialID, transform: i.transform }));
     const scene = new Scene(device, cached.meshes, cached.materials, cached.lights, textureManager, sdfGrids, cached.nodes, cached.animations, cached.cameraNodeID, cached.weightTracks, cached.curves);
+    for (const c of cached.customPrimitives ?? []) scene.addCustomPrimitive(c.userID, c.aabb);
     for (const v of cached.gridVolumes) {
         const vol = new GridVolume(v.name);
         vol.densityScale = v.densityScale;

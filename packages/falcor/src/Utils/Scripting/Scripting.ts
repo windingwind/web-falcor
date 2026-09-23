@@ -506,6 +506,10 @@ async function runSceneScriptInternal(device: Device, source: string, baseUrl: s
             weightTracks,
             sdfGrids,
             gridVolumes: snapshotGridVolumes(scene),
+            customPrimitives: Array.from({ length: scene.getCustomPrimitiveCount() }, (_v, i) => ({
+                userID: scene.getCustomPrimitive(i).userID,
+                aabb: scene.getCustomPrimitiveAABB(i),
+            })),
         });
     }
     return scene;

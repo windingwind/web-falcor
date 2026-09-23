@@ -40,6 +40,8 @@ import {
     type RenderContext,
     type ShaderVar,
     type UIWidgets,
+    GeometryType,
+    Logger,
 } from "@web-falcor/falcor";
 
 const kGeneratePathsFile = "RenderPasses/PathTracer/GeneratePaths.cs.slang";
@@ -214,6 +216,8 @@ export class PathTracer extends RenderPass {
 
     override setScene(scene: typeof this.scene): void {
         super.setScene(scene);
+        // Mirrors native: custom primitives need an intersection shader this pass lacks.
+        if (scene?.hasGeometryType(GeometryType.Custom)) Logger.warning("PathTracer: This render pass does not support custom primitives.");
         this.generatePass = null;
         this.tracePass = null;
         this.rtxdi = null;

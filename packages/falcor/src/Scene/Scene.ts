@@ -1083,6 +1083,72 @@ export class Scene {
         return this.curveDescs.length > 0;
     }
 
+    /** Mirrors Scene::hasGeometryType. */
+    hasGeometryType(type: GeometryType): boolean {
+        switch (type) {
+            case GeometryType.TriangleMesh:
+                return this.triangleTotal > 0;
+            case GeometryType.DisplacedTriangleMesh:
+                return this.hasDisplaced;
+            case GeometryType.Curve:
+                return this.curveDescs.length > 0;
+            case GeometryType.SDFGrid:
+                return this.sdfGrids.length > 0;
+            case GeometryType.Custom:
+                return this.customPrimitives.length > 0;
+            default:
+                return false;
+        }
+    }
+
+    // ---- Custom primitives (Scene::addCustomPrimitive and friends) ----
+    //
+    // Like native, these are user IDs plus AABBs for passes that bring their
+    // own intersection code; they never enter the triangle BVH, so the shipped
+    // passes (which have no intersection shader for them) pass straight through.
+
+    private customPrimitives: { userID: number; aabb: { min: [number, number, number]; max: [number, number, number] } }[] = [];
+
+    /** Mirrors Scene::getCustomPrimitiveCount. */
+    getCustomPrimitiveCount(): number {
+        return this.customPrimitives.length;
+    }
+
+    /** Mirrors Scene::getCustomPrimitive: each primitive has exactly one AABB, at its own index. */
+    getCustomPrimitive(index: number): { userID: number; aabbOffset: number } {
+        const p = this.customPrimitives[index];
+        if (!p) throw new RuntimeError(`Scene.getCustomPrimitive: 'index' (${index}) is out of range`);
+        return { userID: p.userID, aabbOffset: index };
+    }
+
+    /** Mirrors Scene::getCustomPrimitiveAABB. */
+    getCustomPrimitiveAABB(index: number): { min: [number, number, number]; max: [number, number, number] } {
+        const p = this.customPrimitives[index];
+        if (!p) throw new RuntimeError(`Scene.getCustomPrimitiveAABB: 'index' (${index}) is out of range`);
+        return { min: [...p.aabb.min], max: [...p.aabb.max] };
+    }
+
+    /** Mirrors Scene::addCustomPrimitive; returns the new primitive's index. */
+    addCustomPrimitive(userID: number, aabb: { min: [number, number, number]; max: [number, number, number] }): number {
+        this.customPrimitives.push({ userID, aabb: { min: [...aabb.min], max: [...aabb.max] } });
+        return this.customPrimitives.length - 1;
+    }
+
+    /** Mirrors Scene::removeCustomPrimitives (half-open [first, last)). */
+    removeCustomPrimitives(first: number, last: number): void {
+        if (!(first >= 0 && first <= last && last <= this.customPrimitives.length)) {
+            throw new RuntimeError(`Scene.removeCustomPrimitives: invalid range [${first}, ${last})`);
+        }
+        this.customPrimitives.splice(first, last - first);
+    }
+
+    /** Mirrors Scene::updateCustomPrimitive. */
+    updateCustomPrimitive(index: number, aabb: { min: [number, number, number]; max: [number, number, number] }): void {
+        const p = this.customPrimitives[index];
+        if (!p) throw new RuntimeError(`Scene.updateCustomPrimitive: 'index' (${index}) is out of range`);
+        p.aabb = { min: [...aabb.min], max: [...aabb.max] };
+    }
+
     /**
      * Mirrors Scene::RenderSettings (python `scene.renderSettings.useEnvLight = False`,
      * Mogwai "Render Settings"): master switches ANDed with resource presence below.

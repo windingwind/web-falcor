@@ -21,6 +21,8 @@ import {
     type Device,
     type RenderContext,
     type UIWidgets,
+    GeometryType,
+    Logger,
 } from "@web-falcor/falcor";
 
 const kShaderFile = "RenderPasses/MinimalPathTracer/MinimalPathTracer.rt.slang";
@@ -55,6 +57,8 @@ export class MinimalPathTracer extends RenderPass {
 
     override setScene(scene: typeof this.scene): void {
         super.setScene(scene);
+        // Mirrors native: custom primitives need an intersection shader this pass lacks.
+        if (scene?.hasGeometryType(GeometryType.Custom)) Logger.warning("MinimalPathTracer: This render pass does not support custom primitives.");
         this.pass = null;
         this.frameCount = 0;
     }
