@@ -5,7 +5,7 @@
  * python scripts can combine SceneBuilderFlags like the upstream image tests.
  */
 
-import { GeometryType, SceneBuilderFlags, clearSceneCache, initScripting, runGraphScript, runSceneScript, wasSceneLoadedFromCache } from "@web-falcor/falcor";
+import { GeometryType, RenderGraph, SceneBuilderFlags, clearSceneCache, createPass, initScripting, runGraphScript, runSceneScript, wasSceneLoadedFromCache } from "@web-falcor/falcor";
 import "@web-falcor/render-passes";
 import { gpuTest, expectEq } from "../harness/registry.js";
 
@@ -55,4 +55,42 @@ gpuTest("SceneBuilderFlags.honouredFlags", async ({ device }) => {
         "from falcor import *\nflags = SceneBuilderFlags.NonIndexedVertices | SceneBuilderFlags.Force32BitIndices\nassert flags == 0xC0, flags\nassert SceneBuilderFlags.UseCache == 0x10000000\ng = RenderGraph('F')\ng.addPass(createPass('ImageLoader', {'filename': 'test_images/smoke_puff.png'}), 'I')\ng.markOutput('I.dst')\nm.addGraph(g)\n",
     );
     expectEq(graph !== undefined, true, "SceneBuilderFlags usable from python");
+});
+
+gpuTest("SceneBuilderFlags.nonIndexedVerticesRenderTheSameScene", async ({ device }) => {
+    // NonIndexedVertices gives every triangle its own vertices; the triangles,
+    // their order and their attributes are unchanged, so the G-buffer must be
+    // byte-identical to the indexed build.
+    await initScripting("/node_modules/pyodide");
+    const source = await (await fetch("/Falcor/media/test_scenes/cornell_box.pyscene")).text();
+    const size = 64;
+    const stats: { vertices: number; triangles: number }[] = [];
+    const render = async (flags: number) => {
+        const scene = await runSceneScript(device, source, "/Falcor/media/test_scenes", { flags });
+        scene.camera.setAspectRatio(1);
+        stats.push(scene.stats);
+        const graph = new RenderGraph(device, "NonIndexed");
+        graph.addPass(createPass(device, "GBufferRT", { samplePattern: "Center" }), "GBuffer");
+        graph.markOutput("GBuffer.posW");
+        graph.markOutput("GBuffer.normW");
+        graph.markOutput("GBuffer.texC");
+        graph.onResize(size, size);
+        graph.setScene(scene);
+        await graph.init();
+        graph.execute(device.renderContext);
+        const out: Uint8Array[] = [];
+        for (const name of ["GBuffer.posW", "GBuffer.normW", "GBuffer.texC"]) out.push(await device.renderContext.readTextureSubresource(graph.getOutput(name)!));
+        return out;
+    };
+    const indexed = await render(SceneBuilderFlags.None);
+    const nonIndexed = await render(SceneBuilderFlags.NonIndexedVertices);
+    let diffs = 0;
+    indexed.forEach((a, k) => a.forEach((byte, i) => (diffs += byte === nonIndexed[k]![i] ? 0 : 1)));
+    console.error(`# NonIndexedVertices: ${diffs} differing bytes across posW/normW/texC`);
+    expectEq(diffs, 0, "de-indexed geometry renders byte-identically");
+    // The flag did take effect: three vertices per triangle, none shared.
+    console.error(`# vertices: indexed ${stats[0]!.vertices}, non-indexed ${stats[1]!.vertices} for ${stats[1]!.triangles} triangles`);
+    expectEq(stats[1]!.triangles, stats[0]!.triangles, "same triangles");
+    expectEq(stats[1]!.vertices, 3 * stats[1]!.triangles, "every triangle owns its vertices");
+    expectEq(stats[0]!.vertices < stats[1]!.vertices, true, "the indexed build shares vertices");
 });

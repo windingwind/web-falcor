@@ -159,3 +159,27 @@ describe("SceneAnimation pre/post-infinity behaviors", () => {
         closeTo(g.get(1, 0), Math.sin((135 * Math.PI) / 180), 0.05);
     });
 });
+
+describe("NonIndexedVertices", () => {
+    it("expands vertices and per-vertex data along the index buffer", async () => {
+        const { deindexMesh } = await import("../src/Scene/SceneBuilder.js");
+        const { float2, float3, float4 } = await import("../src/Utils/Math/Vector.js");
+        const vertex = (x: number) => ({ position: new float3(x, 0, 0), normal: new float3(0, 0, 1), tangent: new float4(1, 0, 0, 1), texCrd: new float2(x, 0) });
+        const mesh = {
+            vertices: [vertex(0), vertex(1), vertex(2), vertex(3)],
+            indices: new Uint32Array([0, 1, 2, 2, 1, 3]),
+            materialID: 0,
+            skin: { boneNodeIDs: [0], inverseBind: [], boneIDs: new Uint32Array(16).map((_v, i) => Math.floor(i / 4)), weights: new Float32Array(16).fill(0.25) },
+            morph: { nodeID: 0, baseWeights: [1], targets: [{ position: new Float32Array(12).map((_v, i) => i) }] },
+        };
+        const flat = deindexMesh(mesh);
+        expect(flat.vertices.map((v) => v.position.x)).toEqual([0, 1, 2, 2, 1, 3]);
+        expect([...flat.indices]).toEqual([0, 1, 2, 3, 4, 5]);
+        // Vertex 3 of the expanded mesh is original vertex 2.
+        expect([...flat.skin!.boneIDs.subarray(12, 16)]).toEqual([2, 2, 2, 2]);
+        expect([...flat.morph!.targets[0]!.position.subarray(9, 12)]).toEqual([6, 7, 8]);
+        // Copies, not aliases: editing one expanded vertex leaves its twin alone.
+        flat.vertices[2]!.texCrd = new float2(9, 9);
+        expect(flat.vertices[3]!.texCrd.x).toBe(2);
+    });
+});

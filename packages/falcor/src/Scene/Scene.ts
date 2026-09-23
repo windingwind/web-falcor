@@ -129,8 +129,14 @@ export class Scene {
     readonly gridVolumes: import("./Volume/GridVolume.js").GridVolume[] = [];
 
     /** Scene size counters (diagnostics; mirrors Scene::getSceneStats subset). */
-    get stats(): { instances: number; materials: number; textures: number } {
-        return { instances: this.instanceCount, materials: this.materialCount, textures: this.textureCount };
+    get stats(): { instances: number; materials: number; textures: number; vertices: number; triangles: number } {
+        return {
+            instances: this.instanceCount,
+            materials: this.materialCount,
+            textures: this.textureCount,
+            vertices: this.vertexTotal,
+            triangles: this.triangleTotal,
+        };
     }
 
     /** World-space geometry AABB (BVH root); null for geometry-less scenes. */
@@ -158,6 +164,9 @@ export class Scene {
         return this.materialCount;
     }
     private instanceCount = 0;
+    /** Mesh vertices/triangles uploaded (Scene::getSceneStats meshVertexCount / meshTriangleCount). */
+    private vertexTotal = 0;
+    private triangleTotal = 0;
     private textureCount = 1;
     private drawList: { indexCount: number; firstIndex: number; baseVertex: number; firstInstance: number }[] = [];
 
@@ -284,6 +293,8 @@ export class Scene {
                 flags: mesh.skin || mesh.morph ? 0x2 : 0,
             });
         });
+        this.vertexTotal = allVertices.length;
+        this.triangleTotal = allIndices.length / 3;
         // SDF grid instances append after the triangle instances (they are
         // not in the triangle BVH; SBS/SVS use a separate primitive-AABB BVH).
         this.sdfInstanceFirst = instances.length;

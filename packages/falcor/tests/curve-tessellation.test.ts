@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { readFileSync, existsSync } from "node:fs";
 import { resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
-import { CubicSpline, convertToLinearSweptSphere, extractBasisCurvesFromUsda } from "../src/Scene/Curves/CurveTessellation.js";
+import { CubicSpline, convertToLinearSweptSphere, convertToPolytube, extractBasisCurvesFromUsda, kMeshCompensationScale } from "../src/Scene/Curves/CurveTessellation.js";
 import { float4x4 } from "../src/Utils/Math/Matrix.js";
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../../..");
@@ -62,5 +62,84 @@ describe("CurveTessellation", () => {
         expect(curves[0]!.widths.length).toBe(5);
         expect(curves[0]!.points[3]).toBeCloseTo(0.1, 6);
         expect(curves[0]!.widths[1]).toBeCloseTo(0.2, 6);
+    });
+});
+
+describe("convertToPolytube", () => {
+    // curve0 of Falcor's two_curves.usda.
+    const points = [0, 0, 0, 0.1, 1, 0.2, 1, 2, 0.4, 1.1, 3, 0.6, 2, 4, 0.8];
+    const widths = [0.1, 0.2, 0.15, 0.3, 0.2];
+
+    it("builds a quad tube with one ring per control point", () => {
+        const tube = convertToPolytube(1, [5], points, widths, null, 1, 1, 1, 1, 4);
+        expect(tube.radii.length).toBe(5 * 4);
+        expect(tube.faceVertexIndices.length).toBe(2 * 4 * 4 * 3); // 2 triangles per quad, 4 quads per band, 4 bands
+        expect(tube.texCrds).toBeNull();
+
+        for (let j = 0; j < 5; j++) {
+            // With subdiv 1 the spline passes through the control points, and the
+            // ring radius is half the width scaled by kMeshCompensationScale.
+            const c = [points[j * 3]!, points[j * 3 + 1]!, points[j * 3 + 2]!];
+            const expectedRadius = 0.5 * kMeshCompensationScale * widths[j]!;
+            for (let k = 0; k < 4; k++) {
+                const v = j * 4 + k;
+                const off = [0, 1, 2].map((a) => tube.vertices[v * 3 + a]! - c[a]!);
+                expect(Math.hypot(off[0]!, off[1]!, off[2]!)).toBeCloseTo(expectedRadius, 5);
+                expect(tube.radii[v]).toBeCloseTo(expectedRadius, 5);
+                // The offset is the unit normal times the radius, perpendicular to the curve.
+                const n = [0, 1, 2].map((a) => tube.normals[v * 3 + a]!);
+                expect(Math.hypot(n[0]!, n[1]!, n[2]!)).toBeCloseTo(1, 5);
+                const fwd = [0, 1, 2].map((a) => tube.tangents[v * 4 + a]!);
+                expect(n[0]! * fwd[0]! + n[1]! * fwd[1]! + n[2]! * fwd[2]!).toBeCloseTo(0, 5);
+                expect(tube.tangents[v * 4 + 3]).toBe(1);
+            }
+        }
+    });
+
+    it("only references vertices it created, one band at a time", () => {
+        const tube = convertToPolytube(2, [5, 5], [...points, ...points.map((v, i) => (i % 3 === 0 ? v + 3 : v))], [...widths, ...widths], null, 1, 1, 1, 1, 4);
+        const vertexCount = tube.radii.length;
+        expect(vertexCount).toBe(2 * 5 * 4);
+        for (const idx of tube.faceVertexIndices) expect(idx).toBeLessThan(vertexCount);
+        // No triangle spans the two strands.
+        for (let f = 0; f < tube.faceVertexIndices.length; f += 3) {
+            const strands = new Set([0, 1, 2].map((c) => Math.floor(tube.faceVertexIndices[f + c]! / 20)));
+            expect(strands.size).toBe(1);
+        }
+    });
+
+    it("subdivides and thins like the swept-sphere path", () => {
+        const denser = convertToPolytube(1, [5], points, widths, null, 3, 1, 1, 1, 4);
+        expect(denser.radii.length).toBe((4 * 3 + 1) * 4);
+        const thinned = convertToPolytube(1, [5], points, widths, null, 3, 1, 2, 1, 4);
+        expect(thinned.radii.length).toBe((Math.ceil((4 * 3) / 2) + 1) * 4);
+    });
+});
+
+describe("USDA curve prim paths", () => {
+    it("reports the nesting of each BasisCurves prim", () => {
+        const usda = `#usda 1.0
+(
+    defaultPrim = "Root"
+)
+def "Root"
+{
+    def Mesh "tri0" { int[] faceVertexCounts = [3] }
+    def BasisCurves "curve0"
+    {
+        int[] curveVertexCounts = [2]
+        point3f[] points = [(0, 0, 0), (1, 0, 0)]
+    }
+    def Xform "group"
+    {
+        def BasisCurves "curve1"
+        {
+            int[] curveVertexCounts = [2]
+            point3f[] points = [(0, 0, 0), (0, 1, 0)] ( interpolation = "vertex" )
+        }
+    }
+}`;
+        const curves = extractBasisCurvesFromUsda(usda);
+        expect(curves.map((c) => c.path)).toEqual(["/Root/curve0", "/Root/group/curve1"]);
     });
 });

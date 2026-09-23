@@ -14,7 +14,7 @@ import type { SceneNode, AnimationChannel, WeightTrack } from "./Animation/Scene
 import { GltfImporter } from "./Importer/GltfImporter.js";
 import { FbxImporter, kAssimpSceneExtensions, objMaterialLibraries } from "./Importer/FbxImporter.js";
 import { UsdImporter } from "./Importer/UsdImporter.js";
-import { convertToLinearSweptSphere, extractBasisCurvesFromUsda } from "./Curves/CurveTessellation.js";
+import { convertToLinearSweptSphere, convertToPolytube, extractBasisCurvesFromUsda } from "./Curves/CurveTessellation.js";
 import { TextureManager } from "./Material/TextureManager.js";
 import { EnvMap } from "./Lights/EnvMap.js";
 import { generateTangents } from "./TangentSpace.js";
@@ -596,6 +596,37 @@ export class SDFGridBridge {
     }
 }
 
+/**
+ * Mirrors SceneBuilder::processMesh under Flags::NonIndexedVertices: vertex
+ * data is expanded so vertex i is the one index i referenced. Native then drops
+ * the index buffer; the port keeps an identity one, which addresses the same
+ * vertices in the same order. Per-vertex skinning and morph data expand too.
+ */
+export function deindexMesh(mesh: SceneMeshDesc): SceneMeshDesc {
+    const n = mesh.indices.length;
+    const vertices = Array.from(mesh.indices, (i) => ({ ...mesh.vertices[i]! }));
+    const expand = (data: Float32Array | Uint32Array, lanes: number) => {
+        const out = new (data.constructor as Float32ArrayConstructor | Uint32ArrayConstructor)(n * lanes);
+        for (let v = 0; v < n; v++) out.set(data.subarray(mesh.indices[v]! * lanes, mesh.indices[v]! * lanes + lanes), v * lanes);
+        return out;
+    };
+    return {
+        ...mesh,
+        vertices,
+        indices: Uint32Array.from({ length: n }, (_v, i) => i),
+        skin: mesh.skin ? { ...mesh.skin, boneIDs: expand(mesh.skin.boneIDs, 4) as Uint32Array, weights: expand(mesh.skin.weights, 4) as Float32Array } : undefined,
+        morph: mesh.morph
+            ? {
+                  ...mesh.morph,
+                  targets: mesh.morph.targets.map((t) => ({
+                      position: expand(t.position, 3) as Float32Array,
+                      ...(t.normal ? { normal: expand(t.normal, 3) as Float32Array } : {}),
+                  })),
+              }
+            : undefined,
+    };
+}
+
 /** Decodes a TGA and hands back an ImageBitmap, as the browser decoders do. */
 async function decodeTgaToBitmap(bytes: Uint8Array): Promise<ImageBitmap> {
     const { decodeTGA } = await import("../Utils/Image/TGADecoder.js");
@@ -984,8 +1015,40 @@ export class SceneBuilderBridge {
                                 basic: { baseColor: new float4(0.8, 0.4, 0.05, 1), specular: new float4(0.125, 0.3, 1, 0) },
                             });
                             importedMaterialNames.push("default-curve-0");
+                            // Dynamic import: Scripting imports this module.
+                            const settings = (await import("../Utils/Scripting/Scripting.js")).getGlobalSettings();
                             for (const strand of strands) {
-                                const r = convertToLinearSweptSphere(strand.curveVertexCounts.length, strand.curveVertexCounts, strand.points, strand.widths, null, 1, 1, 1, 1, 1, float4x4.identity());
+                                // Per-prim Settings attributes, keyed by prim path as natively
+                                // (ImporterContext's "curves:*" attributes).
+                                const subdiv = Number(settings.getAttribute(strand.path, "curves:subdivPerSegment", 1));
+                                const keepStrands = Number(settings.getAttribute(strand.path, "curves:keepOneEveryXStrands", 1));
+                                const keepVertices = Number(settings.getAttribute(strand.path, "curves:keepOneEveryXVerticesPerStrand", 1));
+                                // Fewer strands render wider, to keep the perceived density.
+                                const widthScale = Math.sqrt(keepStrands);
+                                let polytube = this.hasFlag(SceneBuilderFlags.TessellateCurvesIntoPolyTubes);
+                                const mode = String(settings.getAttribute<string>(strand.path, "curves:mode", ""));
+                                if (mode === "lss") polytube = false;
+                                else if (mode === "polytube") polytube = true;
+
+                                const strandCount = strand.curveVertexCounts.length;
+                                if (polytube) {
+                                    // CurveTessellationMode::PolyTube: the curve becomes a
+                                    // triangle mesh (4-gon cross sections, as natively).
+                                    const tube = convertToPolytube(strandCount, strand.curveVertexCounts, strand.points, strand.widths, null, subdiv, keepStrands, keepVertices, widthScale, 4);
+                                    const vertices: StaticVertex[] = [];
+                                    for (let v = 0; v < tube.radii.length; v++) {
+                                        vertices.push({
+                                            position: new float3(tube.vertices[v * 3]!, tube.vertices[v * 3 + 1]!, tube.vertices[v * 3 + 2]!),
+                                            normal: new float3(tube.normals[v * 3]!, tube.normals[v * 3 + 1]!, tube.normals[v * 3 + 2]!),
+                                            tangent: new float4(tube.tangents[v * 4]!, tube.tangents[v * 4 + 1]!, tube.tangents[v * 4 + 2]!, tube.tangents[v * 4 + 3]!),
+                                            texCrd: new float2(0, 0),
+                                            curveRadius: tube.radii[v]!,
+                                        });
+                                    }
+                                    meshes.push({ vertices, indices: tube.faceVertexIndices, materialID });
+                                    continue;
+                                }
+                                const r = convertToLinearSweptSphere(strandCount, strand.curveVertexCounts, strand.points, strand.widths, null, 1, subdiv, keepStrands, keepVertices, widthScale, float4x4.identity());
                                 const positionsRadii = new Float32Array(r.points.length * 4);
                                 r.points.forEach((pnt, vi) => positionsRadii.set([pnt.x, pnt.y, pnt.z, r.radius[vi]!], vi * 4));
                                 curves.push({ positionsRadii, texCrds: null, indices: r.indices, materialID });
@@ -1176,6 +1239,8 @@ export class SceneBuilderBridge {
 
         // Flags::DontUseDisplacement: drop displacement maps (meshes stay plain triangles).
         if (this.hasFlag(SceneBuilderFlags.DontUseDisplacement)) for (const m of materials) delete m.basic.texDisplacement;
+        // Flags::NonIndexedVertices: every triangle gets its own vertices.
+        if (this.hasFlag(SceneBuilderFlags.NonIndexedVertices)) meshes.forEach((m, i) => (meshes[i] = deindexMesh(m)));
 
         // Only bind the camera to an imported node when the pyscene doesn't define
         // its own camera (an explicit pyscene camera wins and stays static).

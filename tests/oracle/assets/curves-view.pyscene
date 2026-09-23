@@ -1,0 +1,9 @@
+# Falcor's two_curves.usda on its own, viewed head-on so both strands fill the
+# frame. Tessellation mode comes from the builder flags / Settings.
+sceneBuilder.importScene('curves/two_curves.usda')
+
+camera = Camera()
+camera.position = float3(2.5, 2.0, 6.0)
+camera.target = float3(2.5, 2.0, 0.4)
+camera.up = float3(0, 1, 0)
+sceneBuilder.addCamera(camera)
