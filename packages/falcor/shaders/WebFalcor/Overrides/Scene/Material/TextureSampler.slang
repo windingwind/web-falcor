@@ -2,7 +2,9 @@
  * WebFalcor override of Scene/Material/TextureSampler.slang (docs §4.3).
  * Diff vs upstream: ITextureSampler and all implementations gain a
  * Texture2DArray overload (uv.z = layer) used by the MaterialSystem override's
- * packed texture array (WGSL has no binding arrays).
+ * packed texture array (WGSL has no binding arrays). uv.xy are layer
+ * coordinates and uvScale the texture's share of the layer, so LODs use the
+ * texture's own size and explicit gradients map into layer space.
  */
 /***************************************************************************
  # Copyright (c) 2015-23, NVIDIA CORPORATION. All rights reserved.
@@ -42,7 +44,7 @@ interface ITextureSampler
     */
     float4 sampleTexture(Texture2D t, SamplerState s, float2 uv);
     /// WebFalcor: layered-array variant (uv.z = layer) for the packed material texture array.
-    float4 sampleTexture(Texture2DArray t, SamplerState s, float3 uv);
+    float4 sampleTexture(Texture2DArray t, SamplerState s, float3 uv, float2 uvScale);
 };
 
 /** Texture sampling using implicit gradients from finite differences within quads.
@@ -65,7 +67,7 @@ struct ImplicitLodTextureSampler : ITextureSampler
         return t.Sample(s, uv);
     }
 
-    float4 sampleTexture(Texture2DArray t, SamplerState s, float3 uv)
+    float4 sampleTexture(Texture2DArray t, SamplerState s, float3 uv, float2 uvScale)
     {
         return t.Sample(s, uv);
     }
@@ -87,7 +89,7 @@ struct ExplicitLodTextureSampler : ITextureSampler
         return t.SampleLevel(s, uv, lod);
     }
 
-    float4 sampleTexture(Texture2DArray t, SamplerState s, float3 uv)
+    float4 sampleTexture(Texture2DArray t, SamplerState s, float3 uv, float2 uvScale)
     {
         return t.SampleLevel(s, uv, lod);
     }
@@ -113,12 +115,12 @@ struct ExplicitRayConesLodTextureSampler : ITextureSampler
         return t.SampleLevel(s, uv, lambda);
     }
 
-    float4 sampleTexture(Texture2DArray t, SamplerState s, float3 uv)
+    float4 sampleTexture(Texture2DArray t, SamplerState s, float3 uv, float2 uvScale)
     {
         uint txw, txh;
         uint _elems;
         t.GetDimensions(txw, txh, _elems);
-        float lambda = 0.5 * log2(txw * txh) + rayconesLODWithoutTexDims;
+        float lambda = 0.5 * log2(txw * uvScale.x * txh * uvScale.y) + rayconesLODWithoutTexDims;
         return t.SampleLevel(s, uv, lambda);
     }
 };
@@ -169,11 +171,12 @@ struct ExplicitRayDiffsIsotropicTextureSampler : ITextureSampler
         return float4(0.f);
     }
 
-    float4 sampleTexture(Texture2DArray t, SamplerState s, float3 uv)
+    float4 sampleTexture(Texture2DArray t, SamplerState s, float3 uv, float2 uvScale)
     {
-        uint2 dim;
+        uint2 arrayDim;
         uint _elems;
-        t.GetDimensions(dim.x, dim.y, _elems);
+        t.GetDimensions(arrayDim.x, arrayDim.y, _elems);
+        const float2 dim = arrayDim * uvScale;
 
         switch (kMode)
         {
@@ -216,9 +219,9 @@ struct ExplicitGradientTextureSampler : ITextureSampler
         return t.SampleGrad(s, uv, gradX, gradY);
     }
 
-    float4 sampleTexture(Texture2DArray t, SamplerState s, float3 uv)
+    float4 sampleTexture(Texture2DArray t, SamplerState s, float3 uv, float2 uvScale)
     {
-        return t.SampleGrad(s, uv, gradX, gradY);
+        return t.SampleGrad(s, uv, gradX * uvScale, gradY * uvScale);
     }
 };
 
@@ -279,11 +282,12 @@ struct StochasticTextureSampler : ITextureSampler
         return t.SampleLevel(s, uv, lod);
     }
 
-    float4 sampleTexture(Texture2DArray t, SamplerState s, float3 uv)
+    float4 sampleTexture(Texture2DArray t, SamplerState s, float3 uv, float2 uvScale)
     {       
-        uint2 dim;
+        uint2 arrayDim;
         uint _elems;
-        t.GetDimensions(dim.x, dim.y, _elems);    
+        t.GetDimensions(arrayDim.x, arrayDim.y, _elems);
+        const float2 dim = arrayDim * uvScale;
         let dudx = dim.x * gradX.x;
         let dvdx = dim.y * gradX.y;
         let dudy = dim.x * gradY.x;
@@ -310,8 +314,8 @@ struct StochasticTextureSampler : ITextureSampler
         // No need to clamp to min and max lod levels, as HW should do it for free.
         let lod = log2(minAxisLength) + lodJitter;
 
-        uv.xy = uv.xy * dim + uvJitter;
-        uv.xy = (floor(uv.xy) + 0.5) / dim;        
+        uv.xy = uv.xy * arrayDim + uvJitter;
+        uv.xy = (floor(uv.xy) + 0.5) / arrayDim;
 
         return t.SampleLevel(s, uv, lod);
     }

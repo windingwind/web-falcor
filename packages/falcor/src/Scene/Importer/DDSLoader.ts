@@ -7,8 +7,9 @@
  * requests 'texture-compression-bc'), so nothing is decompressed on the CPU.
  *
  * Supported FourCC: DXT1 (BC1), DXT3 (BC2), DXT5 (BC3), ATI1/BC4U (BC4),
- * ATI2/BC5U (BC5), and the DX10 extension header for BC7 and the sRGB
- * variants. Uncompressed DDS (RGBA masks) is not handled (rare for assets).
+ * ATI2/BC5U (BC5), BC4S/BC5S, and the DX10 extension header (BC1-BC7 incl.
+ * BC6H and the sRGB variants). As natively, an sRGB format stored in the file
+ * stays sRGB whatever `srgb` says; the flag only promotes linear color formats.
  */
 
 import { ResourceFormat } from "../../Core/API/Formats.js";
@@ -26,7 +27,7 @@ export interface DDSImage {
 
 /** Block byte size for a BC ResourceFormat (BC1/BC4 = 8, others = 16). */
 function blockBytes(format: ResourceFormat): number {
-    return format === ResourceFormat.BC1Unorm || format === ResourceFormat.BC1UnormSrgb || format === ResourceFormat.BC4Unorm ? 8 : 16;
+    return format === ResourceFormat.BC1Unorm || format === ResourceFormat.BC1UnormSrgb || format === ResourceFormat.BC4Unorm || format === ResourceFormat.BC4Snorm ? 8 : 16;
 }
 
 /**
@@ -35,7 +36,8 @@ function blockBytes(format: ResourceFormat): number {
  */
 export function parseDDS(buffer: ArrayBuffer, srgb: boolean): DDSImage {
     const dv = new DataView(buffer);
-    if (dv.getUint32(0, true) !== DDS_MAGIC) throw new Error("DDSLoader: not a DDS file");
+    if (buffer.byteLength < 128 || dv.getUint32(0, true) !== DDS_MAGIC) throw new Error("DDSLoader: not a DDS file");
+    if (dv.getUint32(4, true) !== 124) throw new Error("DDSLoader: invalid header size");
 
     const height = dv.getUint32(12, true);
     const width = dv.getUint32(16, true);
@@ -53,6 +55,7 @@ export function parseDDS(buffer: ArrayBuffer, srgb: boolean): DDSImage {
 
     if (pfFourCC === fourCC("DX10")) {
         // DDS_HEADER_DXT10 (20 bytes) follows the base header.
+        if (buffer.byteLength < 148) throw new Error("DDSLoader: truncated DX10 header");
         const dxgi = dv.getUint32(128, true);
         dataOffset = 148;
         format = dxgiToFormat(dxgi, srgb);
@@ -66,6 +69,10 @@ export function parseDDS(buffer: ArrayBuffer, srgb: boolean): DDSImage {
         format = ResourceFormat.BC4Unorm;
     } else if (pfFourCC === fourCC("ATI2") || pfFourCC === fourCC("BC5U")) {
         format = ResourceFormat.BC5Unorm;
+    } else if (pfFourCC === fourCC("BC4S")) {
+        format = ResourceFormat.BC4Snorm;
+    } else if (pfFourCC === fourCC("BC5S")) {
+        format = ResourceFormat.BC5Snorm;
     } else {
         throw new Error(`DDSLoader: unsupported FourCC 0x${pfFourCC.toString(16)} (only BC/DXT compressed DDS)`);
     }
@@ -131,21 +138,33 @@ function parseUncompressed(dv: DataView, buffer: ArrayBuffer, width: number, hei
 function dxgiToFormat(dxgi: number, srgb: boolean): ResourceFormat {
     switch (dxgi) {
         case 71: // BC1_UNORM
-        case 72: // BC1_UNORM_SRGB
             return srgb ? ResourceFormat.BC1UnormSrgb : ResourceFormat.BC1Unorm;
+        case 72: // BC1_UNORM_SRGB
+            return ResourceFormat.BC1UnormSrgb;
         case 74: // BC2_UNORM
-        case 75: // BC2_UNORM_SRGB
             return srgb ? ResourceFormat.BC2UnormSrgb : ResourceFormat.BC2Unorm;
+        case 75: // BC2_UNORM_SRGB
+            return ResourceFormat.BC2UnormSrgb;
         case 77: // BC3_UNORM
-        case 78: // BC3_UNORM_SRGB
             return srgb ? ResourceFormat.BC3UnormSrgb : ResourceFormat.BC3Unorm;
+        case 78: // BC3_UNORM_SRGB
+            return ResourceFormat.BC3UnormSrgb;
         case 80: // BC4_UNORM
             return ResourceFormat.BC4Unorm;
+        case 81: // BC4_SNORM
+            return ResourceFormat.BC4Snorm;
         case 83: // BC5_UNORM
             return ResourceFormat.BC5Unorm;
+        case 84: // BC5_SNORM
+            return ResourceFormat.BC5Snorm;
+        case 95: // BC6H_UF16
+            return ResourceFormat.BC6HU16;
+        case 96: // BC6H_SF16
+            return ResourceFormat.BC6HS16;
         case 98: // BC7_UNORM
-        case 99: // BC7_UNORM_SRGB
             return srgb ? ResourceFormat.BC7UnormSrgb : ResourceFormat.BC7Unorm;
+        case 99: // BC7_UNORM_SRGB
+            return ResourceFormat.BC7UnormSrgb;
         default:
             throw new Error(`DDSLoader: unsupported DXGI format ${dxgi}`);
     }

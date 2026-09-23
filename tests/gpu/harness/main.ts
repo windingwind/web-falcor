@@ -74,7 +74,7 @@ async function run() {
 
     // Name-substring filter (dev-only: `npm run test:gpu -- --filter <substr>`).
     const filter = new URLSearchParams(location.search).get("filter");
-    const selected = filter ? tests.filter((t) => t.name.includes(filter)) : tests;
+    const selected = filter ? tests.filter((t) => filter.split("|").some((f) => t.name.includes(f))) : tests;
 
     const device = await Device.create();
     const info = device.adapter.info;

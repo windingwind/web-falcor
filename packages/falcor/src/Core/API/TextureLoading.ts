@@ -2,13 +2,15 @@
  * Mirrors Texture::createFromFile / Texture::createMippedFromFiles: images load
  * through Bitmap (DDS through the DDS parser) and upload with the bitmap's format.
  * Paths are URLs. §9: formats WebGPU lacks are widened on upload — BGRX8 becomes
- * BGRA8 (alpha is already 255) and 16-bit unorm becomes 32-bit float.
+ * BGRA8 (alpha is already 255) and 16-bit unorm becomes 32-bit float — and BC
+ * textures not sized in whole blocks are allocated padded to a multiple of 4
+ * (WebGPU requires it), so their width/height report the padded size.
  */
 
 import type { Device } from "./Device.js";
 import { Texture, kMaxPossible } from "./Texture.js";
 import { ResourceBindFlags, ResourceType } from "./Types.js";
-import { ResourceFormat, toGpuTextureFormat } from "./Formats.js";
+import { ResourceFormat, getFormatBytesPerBlock, isCompressedFormat, toGpuTextureFormat } from "./Formats.js";
 import { Logger } from "../../Utils/Logger.js";
 import { Bitmap, BitmapImportFlags } from "../../Utils/Image/Bitmap.js";
 import { parseDDS } from "../../Scene/Importer/DDSLoader.js";
@@ -67,7 +69,13 @@ async function loadLevels(url: string, loadAsSrgb: boolean, importFlags: BitmapI
     if (/\.dds(\?|#|$)/i.test(url)) {
         const bytes = await fetchBytes(url);
         if (!bytes) return null;
-        const dds = parseDDS(bytes.slice().buffer, loadAsSrgb);
+        let dds;
+        try {
+            dds = parseDDS(bytes.slice().buffer, loadAsSrgb);
+        } catch (e) {
+            Logger.warning(`Failed to load DDS image from '${url}': ${(e as Error).message}`);
+            return null;
+        }
         return { width: dds.width, height: dds.height, format: dds.format, levels: dds.levels.map((l) => l.data) };
     }
     const bmp = await Bitmap.createFromFile(url, true, importFlags);
@@ -75,11 +83,26 @@ async function loadLevels(url: string, loadAsSrgb: boolean, importFlags: BitmapI
     return { width: bmp.width, height: bmp.height, format: loadAsSrgb ? linearToSrgbFormat(bmp.format) : bmp.format, levels: [bmp.data] };
 }
 
+/** Copies a level's block rows into the (larger) block grid of a padded mip. */
+function padBlocks(data: Uint8Array, bpb: number, from: [number, number], to: [number, number]): Uint8Array {
+    if (from[0] === to[0] && from[1] === to[1]) return data;
+    const out = new Uint8Array(to[0] * to[1] * bpb);
+    for (let y = 0; y < from[1]; y++) out.set(data.subarray(y * from[0] * bpb, (y + 1) * from[0] * bpb), y * to[0] * bpb);
+    return out;
+}
+
 function createTexture(device: Device, img: LoadedLevels, mipLevels: number, bindFlags: ResourceBindFlags): Texture {
     const first = uploadable(img.format, img.levels[0]!);
-    const tex = new Texture(device, { type: ResourceType.Texture2D, width: img.width, height: img.height, format: first.format, mipLevels, bindFlags });
+    const compressed = isCompressedFormat(first.format);
+    const pad = (v: number) => (compressed ? Math.ceil(v / 4) * 4 : v);
+    const tex = new Texture(device, { type: ResourceType.Texture2D, width: pad(img.width), height: pad(img.height), format: first.format, mipLevels, bindFlags });
+    const blocks = (w: number, h: number, m: number): [number, number] => [Math.ceil(Math.max(1, w >> m) / 4), Math.ceil(Math.max(1, h >> m) / 4)];
     img.levels.forEach((level, m) => {
-        if (m < tex.mipCount) tex.setSubresourceBlob(m, 0, uploadable(img.format, level).data);
+        if (m >= tex.mipCount) return;
+        const data = uploadable(img.format, level).data;
+        if (!compressed) return tex.setSubresourceBlob(m, 0, data);
+        const bytes = new Uint8Array(data.buffer, data.byteOffset, data.byteLength);
+        tex.setSubresourceBlob(m, 0, padBlocks(bytes, getFormatBytesPerBlock(first.format), blocks(img.width, img.height, m), blocks(tex.width, tex.height, m)));
     });
     return tex;
 }

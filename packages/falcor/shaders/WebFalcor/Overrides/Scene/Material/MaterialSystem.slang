@@ -306,7 +306,7 @@ struct MaterialSystem
             {
                 uint elements;
                 const float4 texInfo = materialTextureUvScale[handle.getTextureID()];
-                if (texInfo.z > 0.5f)
+                if (frac(texInfo.z * 0.5f) > 0.25f)
                     materialTexturesArrayLinear.GetDimensions(0, info.width, info.height, elements, info.mipLevels);
                 else
                     materialTexturesArray.GetDimensions(0, info.width, info.height, elements, info.mipLevels);
@@ -351,19 +351,20 @@ struct MaterialSystem
         case TextureHandle::Mode::Texture:
             {
                 const uint textureID = handle.getTextureID();
-                // Per-texture info: uvScale.xy (textures smaller than the
-                // layer sit top-left), array selector, layer. WRAP addressing
-                // must apply in TEXTURE space before the layer scale (out of
-                // range UVs would otherwise land in the layer's padding);
-                // frac() replicates repeat addressing.
+                // Per-texture info: uvScale.xy (the texture's share of its layer,
+                // which it tiles), array selector (+2 when the tiles fill the
+                // layer exactly), layer. Exact tiling repeats like WRAP addressing
+                // with continuous derivatives; otherwise frac() wraps in texture
+                // space so UVs don't land in the partial tiles.
                 const float4 texInfo = materialTextureUvScale[textureID];
+                const bool linearArray = frac(texInfo.z * 0.5f) > 0.25f;
                 float2 wrappedUV = uv;
-                if (any(texInfo.xy < float2(1.f)))
+                if (texInfo.z < 1.5f && any(texInfo.xy < float2(1.f)))
                     wrappedUV = frac(uv);
                 const float2 scaledUV = wrappedUV * texInfo.xy;
-                if (texInfo.z > 0.5f)
-                    return lod.sampleTexture(materialTexturesArrayLinear, s, float3(scaledUV, texInfo.w));
-                return lod.sampleTexture(materialTexturesArray, s, float3(scaledUV, texInfo.w));
+                if (linearArray)
+                    return lod.sampleTexture(materialTexturesArrayLinear, s, float3(scaledUV, texInfo.w), texInfo.xy);
+                return lod.sampleTexture(materialTexturesArray, s, float3(scaledUV, texInfo.w), texInfo.xy);
             }
         default:
             return float4(0.f);

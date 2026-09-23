@@ -4,7 +4,7 @@
  * (hardware WebGPU via Vulkan; requires an X display — run under `xvfb-run -a`),
  * executes the browser-side runner, reports results.
  *
- * Usage: xvfb-run -a node tests/gpu/harness/run.mjs [--swiftshader] [--filter <substring>]
+ * Usage: xvfb-run -a node tests/gpu/harness/run.mjs [--swiftshader] [--filter <substring>[|<substring>...]]
  */
 
 import { createServer } from "vite";

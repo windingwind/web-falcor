@@ -3,10 +3,11 @@
  * role, adapted to the §6.2 packing design: WGSL has no binding arrays, so all
  * material textures live in one texture_2d_array (layer == textureID).
  *
- * v1: single rgba8unorm-srgb array sized to the largest texture; smaller
- * textures are blit-resized to the layer size (uvScale stays 1 so wrap
- * addressing keeps working; slight resample divergence recorded). Mip chains
- * and size-class arrays are follow-ups.
+ * Two arrays (sRGB and linear) sized to their largest texture, with full mip
+ * chains. A smaller texture tiles its layer, so bilinear filtering at its edges
+ * wraps like repeat addressing and, when the tiles fill the layer exactly
+ * (power-of-two sizes), the layer's mips are the texture's own mips; samplers
+ * take LODs from the texture's own size (texInfo uvScale).
  */
 
 import type { Device } from "../../Core/API/Device.js";
@@ -124,13 +125,14 @@ export class TextureManager {
                 );
             }
             sources.forEach(({ source }, layer) => {
-                const w = Math.min(source.bitmap.width, width);
-                const h = Math.min(source.bitmap.height, height);
-                device.gpuDevice.queue.copyExternalImageToTexture(
-                    { source: source.bitmap },
-                    { texture: array.gpuTexture, origin: { x: 0, y: 0, z: layer } },
-                    { width: w, height: h, depthOrArrayLayers: 1 },
-                );
+                const { width: tw, height: th } = source.bitmap;
+                for (let y = 0; y < height; y += th)
+                    for (let x = 0; x < width; x += tw)
+                        device.gpuDevice.queue.copyExternalImageToTexture(
+                            { source: source.bitmap },
+                            { texture: array.gpuTexture, origin: { x, y, z: layer } },
+                            { width: Math.min(tw, width - x), height: Math.min(th, height - y), depthOrArrayLayers: 1 },
+                        );
             });
             return { array, width, height };
         };
@@ -141,19 +143,22 @@ export class TextureManager {
         const linArr = makeArray(linearSources, false, "TextureManager::materialTexturesArrayLinear");
 
         // Per-texture info (indexed by textureID): uvScale.xy, arraySelector
-        // (0 = sRGB, 1 = linear), layer index within its array.
+        // (0 = sRGB, 1 = linear; +2 when the tiles fill the layer exactly),
+        // layer index within its array.
+        const exact = (source: TextureSource, arr: { width: number; height: number }) =>
+            arr.width % source.bitmap.width === 0 && arr.height % source.bitmap.height === 0 ? 2 : 0;
         const texInfo = new Float32Array(Math.max(this.sources.length, 1) * 4);
         texInfo.set([1, 1, 0, 0]);
         srgbSources.forEach(({ source, id }, layer) => {
             texInfo[id * 4] = source.bitmap.width / srgbArr.width;
             texInfo[id * 4 + 1] = source.bitmap.height / srgbArr.height;
-            texInfo[id * 4 + 2] = 0;
+            texInfo[id * 4 + 2] = exact(source, srgbArr);
             texInfo[id * 4 + 3] = layer;
         });
         linearSources.forEach(({ source, id }, layer) => {
             texInfo[id * 4] = source.bitmap.width / linArr.width;
             texInfo[id * 4 + 1] = source.bitmap.height / linArr.height;
-            texInfo[id * 4 + 2] = 1;
+            texInfo[id * 4 + 2] = 1 + exact(source, linArr);
             texInfo[id * 4 + 3] = layer;
         });
         return { array: srgbArr.array, arrayLinear: linArr.array, texInfo };
