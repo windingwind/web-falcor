@@ -47,6 +47,8 @@ export class ProgramVersion {
 
 export class Program {
     private versions = new Map<string, ProgramVersion>();
+    /** Shader generation the cached versions were compiled in. */
+    private generation = 0;
 
     constructor(
         public readonly device: Device,
@@ -57,6 +59,11 @@ export class Program {
     /** Mirrors Program::getActiveVersion: compile-on-miss per define-set. */
     getActiveVersion(): ProgramVersion {
         const manager = this.device.programManager;
+        // A shader reload invalidates everything compiled before it.
+        if (manager.generation !== this.generation) {
+            this.versions.clear();
+            this.generation = manager.generation;
+        }
         const key = this.defines.key();
         let version = this.versions.get(key);
         if (!version) {
@@ -112,15 +119,19 @@ function shaderTypeToVisibility(type: ShaderType): GPUShaderStageFlags {
 export class ProgramManager {
     readonly globalDefines = new DefineList();
     private compiler: SlangCompiler;
+    private resolveSource: ShaderSourceResolver;
+    private filePaths: string[];
+    /** Bumped by reloadAllPrograms; Programs drop cached versions when it moves. */
+    private reloadGeneration = 0;
 
     constructor(
         private readonly device: Device,
         resolveSource: ShaderSourceResolver,
         filePaths: string[],
     ) {
-        // Substitute WGSL-incompatible upstream files with WebFalcor overrides (docs §4.3).
-        const resolveWithOverrides: ShaderSourceResolver = (path) => resolveSource(kShaderOverrides[path] ?? path);
-        this.compiler = new SlangCompiler(resolveWithOverrides, filePaths);
+        this.resolveSource = resolveSource;
+        this.filePaths = filePaths;
+        this.compiler = this.createCompiler();
 
         // f16 demotion: when the device lacks shader-f16, map half types to f32 at
         // the token level (WGSL 'enable f16' would fail validation otherwise).
@@ -144,6 +155,42 @@ export class ProgramManager {
             uint16_t4: "uint4",
             int16_t: "int",
         });
+    }
+
+    /** Substitutes WGSL-incompatible upstream files with WebFalcor overrides (docs §4.3). */
+    private createCompiler(): SlangCompiler {
+        const resolveWithOverrides: ShaderSourceResolver = (path) => this.resolveSource(kShaderOverrides[path] ?? path);
+        return new SlangCompiler(resolveWithOverrides, this.filePaths);
+    }
+
+    /** The shader sources in use; wrap these to patch a file and reload. */
+    getSourceProvider(): { resolveSource: ShaderSourceResolver; filePaths: string[] } {
+        return { resolveSource: this.resolveSource, filePaths: this.filePaths };
+    }
+
+    /** Counter identifying the current shader generation (see reloadAllPrograms). */
+    get generation(): number {
+        return this.reloadGeneration;
+    }
+
+    /**
+     * Mirrors ProgramManager::reloadAllPrograms: throws away every compiled
+     * version so the next use recompiles from the current sources. Passes pick
+     * the new kernels up on their next `getRootVar`/`execute`, which is where
+     * render passes already re-bind, so a live render graph keeps running.
+     *
+     * The shader sources live in the app (it fetches them), so pass `source`
+     * after re-fetching them; without it the existing resolver is re-read,
+     * which is enough when the app mutates its own source map in place.
+     */
+    reloadAllPrograms(source?: { resolveSource: ShaderSourceResolver; filePaths: string[] }): void {
+        if (source) {
+            this.resolveSource = source.resolveSource;
+            this.filePaths = source.filePaths;
+        }
+        this.compiler.dispose();
+        this.compiler = this.createCompiler();
+        this.reloadGeneration++;
     }
 
     createProgram(desc: ProgramDesc, defines = new DefineList()): Program {

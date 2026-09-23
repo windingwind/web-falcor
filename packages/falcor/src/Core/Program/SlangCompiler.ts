@@ -202,6 +202,13 @@ export class SlangCompiler {
      *  recent sessions and delete() evicted ones (embind teardown). */
     private static readonly kMaxSessions = 6;
 
+    /** Releases every cached session (embind teardown); used by shader reload. */
+    dispose(): void {
+        for (const session of this.sessions.values()) (session as { delete?: () => void }).delete?.();
+        this.sessions.clear();
+        this.fsOwnerKey = null;
+    }
+
     private getSession(defines: DefineList): SlangSessionApi {
         const key = defines.key();
         let session = this.sessions.get(key) ?? null;

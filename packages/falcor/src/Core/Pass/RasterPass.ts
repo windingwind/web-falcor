@@ -30,10 +30,13 @@ export interface RasterPassDesc {
 export class RasterPass {
     readonly program: Program;
     readonly state: GraphicsState;
-    protected version: ProgramVersion;
-    protected vars: ParameterBlock;
-    protected root: ShaderVar;
-    protected pipelineLayout: GPUPipelineLayout;
+    // Assigned by build(), which the constructor calls.
+    protected version!: ProgramVersion;
+    protected vars!: ParameterBlock;
+    protected root!: ShaderVar;
+    protected pipelineLayout!: GPUPipelineLayout;
+    private readonly vsEntry: string;
+    private readonly psEntry: string;
 
     static create(device: Device, desc: RasterPassDesc): RasterPass {
         return new RasterPass(device, desc);
@@ -56,27 +59,43 @@ export class RasterPass {
             },
             defines,
         );
+        this.vsEntry = vsEntry;
+        this.psEntry = psEntry;
+        this.state = new GraphicsState(device);
+        this.build();
+    }
+
+    /** Builds kernels, bindings and the pipeline layout from the live version. */
+    private build(): void {
         this.version = this.program.getActiveVersion();
-        const vs = this.version.getKernel(vsEntry, ShaderType.Vertex);
-        const ps = this.version.getKernel(psEntry, ShaderType.Pixel);
-        this.vars = new ParameterBlock(device, this.version.reflection, mergeWgslBindings(vs.bindings, ps.bindings));
+        const vs = this.version.getKernel(this.vsEntry, ShaderType.Vertex);
+        const ps = this.version.getKernel(this.psEntry, ShaderType.Pixel);
+        this.vars = new ParameterBlock(this.device, this.version.reflection, mergeWgslBindings(vs.bindings, ps.bindings));
         this.root = makeRootVar(this.vars);
-        this.state = new GraphicsState(device).setKernels(vs, ps);
+        this.state.setKernels(vs, ps);
 
         const groupIndices = this.vars.getGroupIndices();
         const maxGroup = groupIndices.length ? Math.max(...groupIndices) : -1;
         const layouts: GPUBindGroupLayout[] = [];
         for (let g = 0; g <= maxGroup; g++) {
-            layouts.push(this.vars.getBindGroupLayout(g) ?? device.gpuDevice.createBindGroupLayout({ entries: [] }));
+            layouts.push(this.vars.getBindGroupLayout(g) ?? this.device.gpuDevice.createBindGroupLayout({ entries: [] }));
         }
-        this.pipelineLayout = device.gpuDevice.createPipelineLayout({ bindGroupLayouts: layouts });
+        this.pipelineLayout = this.device.gpuDevice.createPipelineLayout({ bindGroupLayouts: layouts });
+    }
+
+    /** Rebuilds after a shader reload (see ProgramManager.reloadAllPrograms). */
+    protected refresh(): void {
+        if (this.program.getActiveVersion() === this.version) return;
+        this.build();
     }
 
     getRootVar(): ShaderVar {
+        this.refresh();
         return this.root;
     }
 
     getParameterBlock(): ParameterBlock {
+        this.refresh();
         return this.vars;
     }
 
@@ -122,6 +141,7 @@ export class RasterPass {
     }
 
     private drawCommon(ctx: RenderContext, fbo: Fbo, emit: (pass: GPURenderPassEncoder, vao: Vao | null) => void): void {
+        this.refresh();
         const gso = this.state.getGSO(this.pipelineLayout);
         const vao = this.state.getVao();
         // Resolve bind groups (and flush dirty cbuffer uploads onto the encoder)

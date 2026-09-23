@@ -106,6 +106,24 @@ function buildDefaultGraph(device: Device, width: number, height: number, scene:
  * device; without it device.programManager is undefined and any pass throws.
  */
 async function initProgramSystem(device: Device): Promise<void> {
+    const sources = await fetchShaderSources();
+    await initSlang("/tools/slang-wasm/slang-wasm.js");
+    device.setProgramManager(new ProgramManager(device, (p) => sources.get(p), [...sources.keys()]));
+}
+
+/**
+ * Re-fetches every shader and recompiles all programs in place (native F5).
+ * The scene, the camera and the render graph stay as they are; passes pick the
+ * new kernels up on their next frame.
+ */
+async function reloadShaders(device: Device): Promise<void> {
+    const sources = await fetchShaderSources();
+    device.programManager.reloadAllPrograms({ resolveSource: (p) => sources.get(p), filePaths: [...sources.keys()] });
+    Logger.info("Shaders reloaded.");
+}
+
+/** Fetches the Falcor shader tree into a path -> source map. */
+async function fetchShaderSources(): Promise<Map<string, string>> {
     const list = (await (await fetch("/packages/falcor/shaders/generated/shader-file-list.json")).json()) as {
         falcorFiles: string[];
         renderPassFiles: string[];
@@ -138,8 +156,7 @@ async function initProgramSystem(device: Device): Promise<void> {
     if (missing.length > 0) {
         Logger.warning(`shader registry: ${missing.length} files failed to fetch; first: ${missing.slice(0, 3).join(", ")}`);
     }
-    await initSlang("/tools/slang-wasm/slang-wasm.js");
-    device.setProgramManager(new ProgramManager(device, (p) => sources.get(p), [...sources.keys()]));
+    return sources;
 }
 
 /**
@@ -239,7 +256,14 @@ async function main() {
     const profilerPanel = document.getElementById("profiler") as HTMLDivElement;
     const profilerUI = new ProfilerUI(profiler, profilerPanel);
     window.addEventListener("keydown", (ev) => {
-        if ((ev.key === "p" || ev.key === "P") && !(ev.target instanceof HTMLInputElement)) profilerPanel.hidden = !profilerPanel.hidden;
+        if (ev.target instanceof HTMLInputElement || ev.target instanceof HTMLTextAreaElement) return;
+        if (ev.key === "p" || ev.key === "P") profilerPanel.hidden = !profilerPanel.hidden;
+        // Reload shaders in place. Native binds this to F5, which the browser
+        // owns, so the viewer uses F6 (docs §9).
+        if (ev.key === "F6") {
+            ev.preventDefault();
+            void reloadShaders(state.device).then(() => (state.frame = 0));
+        }
     });
     (window as unknown as { mogwaiProfiler: { profiler: Profiler; ui: ProfilerUI } }).mogwaiProfiler = { profiler, ui: profilerUI };
     const pixelZoom = wirePixelZoom();
