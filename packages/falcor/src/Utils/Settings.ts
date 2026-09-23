@@ -20,6 +20,25 @@ function flattenDictionary(dict: Record<string, SettingsValue>, prefix = "", out
     return out;
 }
 
+/** Mirrors Settings::TypeError (stored value can't convert to the requested type). */
+export class SettingsTypeError extends Error {}
+
+/** Mirrors Attributes::get<T>: the default's type picks the conversion (bool <-> number allowed). */
+function convertLike<T extends SettingsValue>(value: SettingsValue | undefined, def: T): T {
+    if (value === undefined || value === null) return def;
+    const arithmetic = (v: SettingsValue) => typeof v === "number" || typeof v === "boolean";
+    if (typeof def === "boolean" || typeof def === "number") {
+        if (!arithmetic(value)) throw new SettingsTypeError("Attribute's type does not match the requested type.");
+        if (typeof def === "boolean") return (typeof value === "boolean" ? value : value !== 0) as T;
+        return (typeof value === "boolean" ? (value ? 1 : 0) : value) as T;
+    }
+    if (typeof def === "string" && typeof value !== "string") throw new SettingsTypeError("Attribute's type does not match the requested type.");
+    if (Array.isArray(def) && !(Array.isArray(value) && value.length === def.length && value.every((v, i) => typeof v === typeof def[i] || (arithmetic(v) && arithmetic(def[i]!))))) {
+        throw new SettingsTypeError("Attribute's type does not match the requested type.");
+    }
+    return value as T;
+}
+
 interface FilterRecord {
     name: string;
     regex: RegExp;
@@ -42,6 +61,8 @@ export class Settings {
     /** Mirrors Settings::addOptions (nested dicts flatten with ':'). */
     addOptions(options: Record<string, SettingsValue>): void {
         const flattened = flattenDictionary(options);
+        // Attributes::removePrefix: setting "a" drops stale "a:*" (and "a") keys.
+        for (const k of Object.keys(flattened)) for (const old of [...this.options.keys()]) if (old.startsWith(k)) this.options.delete(old);
         for (const [k, v] of Object.entries(flattened)) this.options.set(k, v);
         this.updateSearchPaths(flattened);
     }
@@ -73,7 +94,7 @@ export class Settings {
 
     /** Mirrors Settings::getOption (flattened name, e.g. "PipedOutput:enable"). */
     getOption<T extends SettingsValue>(name: string, defaultValue: T): T {
-        return (this.options.get(name) as T) ?? defaultValue;
+        return convertLike(this.options.get(name), defaultValue);
     }
 
     getOptions(): Record<string, SettingsValue> {
@@ -161,6 +182,6 @@ export class Settings {
 
     /** Mirrors Settings::getAttribute. */
     getAttribute<T extends SettingsValue>(shapeName: string, attributeName: string, defaultValue: T): T {
-        return (this.getAttributes(shapeName)[attributeName] as T) ?? defaultValue;
+        return convertLike(this.getAttributes(shapeName)[attributeName], defaultValue);
     }
 }

@@ -19,19 +19,21 @@ const kMemberRe = /(@align\(\d+\)\s*)?(\w+)\s*:\s*(bool|vec([234])<bool>)\s*,/g;
 function chainStart(src: string, end: number): number {
     let i = end;
     for (;;) {
-        // `[...]` groups directly before the current position
-        while (i > 0 && src[i - 1] === "]") {
+        // `[...]` / `(...)` groups directly before the current position (index, deref, call)
+        while (i > 0 && (src[i - 1] === "]" || src[i - 1] === ")")) {
+            const close = src[i - 1]!;
+            const open = close === "]" ? "[" : "(";
             let depth = 0;
             let k = i - 1;
             for (; k >= 0; k--) {
-                if (src[k] === "]") depth++;
-                else if (src[k] === "[" && --depth === 0) break;
+                if (src[k] === close) depth++;
+                else if (src[k] === open && --depth === 0) break;
             }
             i = k;
         }
         let j = i;
         while (j > 0 && /\w/.test(src[j - 1]!)) j--;
-        if (j === i) return end === i ? end : i;
+        if (j === i) return i;
         i = j;
         if (i > 0 && src[i - 1] === ".") {
             i--;

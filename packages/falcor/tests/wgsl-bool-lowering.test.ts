@@ -56,3 +56,10 @@ describe("relaxSubgroupUniformity", () => {
         expect(relaxSubgroupUniformity("fn f() {}")).toBe("fn f() {}");
     });
 });
+
+describe("lowerHostShareableBools: pointer and call chains", () => {
+    it("wraps accesses through a parenthesized deref", () => {
+        const src = "struct T_std140_0\n{\n    @align(4) v_0 : bool,\n};\nfn f(p : ptr<function, T_std140_0>) { if((*p).v_0) { } }";
+        expect(lowerHostShareableBools(src)).toContain("if(((*p).v_0 != 0u))");
+    });
+});

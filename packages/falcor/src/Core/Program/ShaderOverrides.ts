@@ -86,7 +86,10 @@ export const kShaderOverrides: Readonly<Record<string, string>> = {
     "Tests/Slang/Atomics.cs.slang": "WebFalcor/Overrides/Tests/Slang/Atomics.cs.slang",
     "Tests/Slang/SlangInheritance.cs.slang": "WebFalcor/Overrides/Tests/Slang/SlangInheritance.cs.slang",
     "Tests/Slang/SlangTests.cs.slang": "WebFalcor/Overrides/Tests/Slang/SlangTests.cs.slang",
+    // Avoids a 0/0 that upstream masks with isnan() (WGSL may assume no NaNs).
+    "Rendering/Materials/HairChiang16.slang": "WebFalcor/Overrides/Rendering/Materials/HairChiang16.slang",
     "Tests/Slang/WaveOps.cs.slang": "WebFalcor/Overrides/Tests/Slang/WaveOps.cs.slang",
+    "Tests/Rendering/Materials/MicrofacetTests.cs.slang": "WebFalcor/Overrides/Tests/Rendering/Materials/MicrofacetTests.cs.slang",
     // Atomic<uint> histogram; WaveMatch emulated (no WGSL builtin).
     "Utils/Debug/WarpProfiler.slang": "WebFalcor/Overrides/Utils/Debug/WarpProfiler.slang",
     "Utils/Sampling/UniformSampleGenerator.slang": "WebFalcor/Overrides/Utils/Sampling/UniformSampleGenerator.slang",
