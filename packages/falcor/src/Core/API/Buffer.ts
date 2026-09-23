@@ -91,9 +91,14 @@ export class Buffer extends Resource {
      * asynchronously on the web — use getBlob().
      */
     map(): Uint8Array {
-        if (this.memoryType !== MemoryType.Upload) throw new RuntimeError("Buffer::map is only synchronous for upload buffers on the web; use getBlob() to read back");
+        if (this.memoryType !== MemoryType.Upload) throw new RuntimeError("Buffer::map is only synchronous for upload buffers on the web; use mapAsync() or getBlob() to read back");
         this.mapped = true;
         return this.shadow!;
+    }
+
+    /** Buffer::map for readback buffers: WebGPU mapping is asynchronous, so this resolves to the contents. */
+    async mapAsync(): Promise<Uint8Array> {
+        return this.getBlob();
     }
 
     /** Mirrors Buffer::unmap: uploads the mapped CPU copy. */

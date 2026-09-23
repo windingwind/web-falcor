@@ -7,10 +7,12 @@ import type { ComputeContext } from "../API/ComputeContext.js";
 import { DefineList } from "../Program/DefineList.js";
 import { ShaderType } from "../Program/SlangCompiler.js";
 import { ParameterBlock, makeRootVar, type ShaderVar } from "../Program/ParameterBlock.js";
-import type { Program, ProgramVersion, EntryPointKernel } from "../Program/Program.js";
+import type { Program, ProgramVersion, EntryPointKernel, ShaderModuleDesc } from "../Program/Program.js";
 
 export interface ComputePassDesc {
-    path: string;
+    path?: string;
+    /** ProgramDesc shader modules (files and strings), after `path`. */
+    modules?: ShaderModuleDesc[];
     csEntry?: string;
     defines?: DefineList | Record<string, string | number | boolean>;
 }
@@ -35,7 +37,7 @@ export class ComputePass {
     ) {
         const defines = desc.defines instanceof DefineList ? desc.defines : new DefineList().addAll(desc.defines ?? {});
         const entry = desc.csEntry ?? "main";
-        this.program = device.programManager.createProgram({ path: desc.path, entryPoints: [{ name: entry, type: ShaderType.Compute }] }, defines);
+        this.program = device.programManager.createProgram({ path: desc.path, modules: desc.modules, entryPoints: [{ name: entry, type: ShaderType.Compute }] }, defines);
         this.entry = entry;
         ({ version: this.version, kernel: this.kernel, vars: this.vars, root: this.root, pipeline: this.pipeline } = this.build());
     }

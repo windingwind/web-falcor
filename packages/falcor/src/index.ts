@@ -108,6 +108,8 @@ export * from "./Scene/SDFs/SDF3DPrimitive.js";
 export * from "./Scene/SDFs/SDFGridPrimitives.js";
 export * from "./Scene/Curves/CurveTessellation.js";
 export * from "./Utils/Color/Spectrum.js";
+export * from "./Utils/Color/SampledSpectrum.js";
+export * from "./Utils/Color/SpectrumUtils.js";
 export * from "./Scene/Lights/EnvMapConverter.js";
 export * from "./Utils/Image/PFMDecoder.js";
 export * from "./Scene/Material/RGLFile.js";

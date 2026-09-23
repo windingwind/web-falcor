@@ -76,6 +76,13 @@ export interface SlangReflectionType {
     [key: string]: unknown;
 }
 
+/** A compile unit: shader-root path (for #line / relative imports), optional module name, and its sources. */
+export interface CompileModule {
+    path: string;
+    name?: string;
+    sources: ({ file: string } | { string: string; path?: string })[];
+}
+
 /** Source-file registry: shader path (Falcor-style, e.g. "Utils/Math/MathHelpers.slang") -> source. */
 export type ShaderSourceResolver = (path: string) => string | undefined;
 
@@ -240,18 +247,26 @@ export class SlangCompiler {
      * multiple modules cover Falcor's multi-translation-unit programs (e.g.
      * FullScreenPass.vs.slang + user pixel shader).
      */
-    compile(modulePaths: string | string[], entryPoints: EntryPointDesc[], defines = new DefineList()): CompileResult {
-        const paths = typeof modulePaths === "string" ? [modulePaths] : modulePaths;
+    compile(modulesIn: string | string[] | CompileModule[], entryPoints: EntryPointDesc[], defines = new DefineList()): CompileResult {
+        const list: CompileModule[] = (typeof modulesIn === "string" ? [modulesIn] : modulesIn).map((m) => (typeof m === "string" ? { path: m, sources: [{ file: m }] } : m));
+        const paths = list.map((m) => m.path);
         const slang = slangInstance!;
         const session = this.getSession(defines);
         const header = defines.toHeader();
 
-        const modules: (SlangModuleApi & SlangComponentApi)[] = paths.map((path) => {
-            const source = this.resolveSource(path);
-            if (source === undefined) throw new RuntimeError(`Shader source not found: ${path}`);
-            const rewritten = this.rewriteIncludes(source, path);
-            const moduleName = path.replace(/[/.]/g, "_");
-            const module = session.loadModuleFromSource(`${header}#line 1 "${path}"\n${rewritten}`, moduleName, `/${path}`);
+        const modules: (SlangModuleApi & SlangComponentApi)[] = list.map(({ path, name, sources }) => {
+            // One translation unit per module: its files and strings in order (ProgramDesc::ShaderModule).
+            const parts = sources.map((src) => {
+                if ("file" in src) {
+                    const text = this.resolveSource(src.file);
+                    if (text === undefined) throw new RuntimeError(`Shader source not found: ${src.file}`);
+                    return `#line 1 "${src.file}"\n${this.rewriteIncludes(text, src.file)}`;
+                }
+                return `#line 1 "${src.path ?? path}"\n${src.string}`;
+            });
+            const rewritten = parts.join("\n");
+            const moduleName = name ?? path.replace(/[/.]/g, "_");
+            const module = session.loadModuleFromSource(`${header}${rewritten}`, moduleName, `/${path}`);
             if (!module) {
                 const err = slang.getLastError();
                 throw new RuntimeError(`Slang compilation failed for ${path}:\n${err.type}: ${err.message}`);
@@ -260,8 +275,14 @@ export class SlangCompiler {
         });
 
         const eps: SlangComponentApi[] = entryPoints.map((ep) => {
-            const moduleIndex = ep.moduleIndex ?? 0;
-            const found = modules[moduleIndex]!.findAndCheckEntryPoint(ep.name, ep.type);
+            // Without a module index the entry point belongs to the last module that has it
+            // (native csEntry applies to the most recently added module).
+            let moduleIndex = ep.moduleIndex ?? modules.length - 1;
+            let found = modules[moduleIndex]!.findAndCheckEntryPoint(ep.name, ep.type);
+            for (let i = modules.length - 2; !found && ep.moduleIndex === undefined && i >= 0; i--) {
+                found = modules[i]!.findAndCheckEntryPoint(ep.name, ep.type);
+                if (found) moduleIndex = i;
+            }
             if (!found) {
                 const err = slang.getLastError();
                 throw new RuntimeError(`Entry point '${ep.name}' not found in ${paths[moduleIndex]}:\n${err.type}: ${err.message}`);

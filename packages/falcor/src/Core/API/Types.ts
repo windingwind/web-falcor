@@ -45,7 +45,8 @@ export function bindFlagsToBufferUsage(bindFlags: ResourceBindFlags, memoryType:
             usage |= GPUBufferUsage.COPY_SRC | GPUBufferUsage.COPY_DST;
             break;
         case MemoryType.ReadBack:
-            usage |= GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST;
+            // MAP_READ excludes other usages too; reads go through getBlob()/mapAsync() staging.
+            usage |= GPUBufferUsage.COPY_SRC | GPUBufferUsage.COPY_DST;
             break;
     }
     return usage;

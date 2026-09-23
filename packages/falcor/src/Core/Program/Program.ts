@@ -7,10 +7,19 @@
 
 import { Device } from "../API/Device.js";
 import { DefineList } from "./DefineList.js";
-import { SlangCompiler, ShaderType, type ShaderSourceResolver, type EntryPointDesc } from "./SlangCompiler.js";
+import { SlangCompiler, ShaderType, type CompileModule, type ShaderSourceResolver, type EntryPointDesc } from "./SlangCompiler.js";
 import { kShaderOverrides } from "./ShaderOverrides.js";
 import { ProgramReflection, parseWgslBindings, type WgslBinding } from "./ProgramReflection.js";
 import { RuntimeError } from "../Error.js";
+
+/** Mirrors ProgramDesc::ShaderSource: a file (shader-root path) or a code string. */
+export type ShaderSourceDesc = { file: string } | { string: string; path?: string };
+
+/** Mirrors ProgramDesc::ShaderModule: one translation unit from files and strings; a named module can be imported by name. */
+export interface ShaderModuleDesc {
+    name?: string;
+    sources: ShaderSourceDesc[];
+}
 
 export interface ProgramDesc {
     /**
@@ -19,7 +28,9 @@ export interface ProgramDesc {
      * Falcor's multi-translation-unit programs; entry points reference modules
      * via moduleIndex.
      */
-    path: string | string[];
+    path?: string | string[];
+    /** Modules composed of files and strings (ProgramDesc::addShaderModule); appended after `path`. */
+    modules?: ShaderModuleDesc[];
     entryPoints: EntryPointDesc[];
 }
 
@@ -29,6 +40,18 @@ export interface EntryPointKernel {
     wgsl: string;
     module: GPUShaderModule;
     bindings: WgslBinding[];
+}
+
+/** Flattens a ProgramDesc into the compiler's module list. */
+function programModules(desc: ProgramDesc): CompileModule[] {
+    const paths = desc.path === undefined ? [] : typeof desc.path === "string" ? [desc.path] : desc.path;
+    const out: CompileModule[] = paths.map((path) => ({ path, sources: [{ file: path }] }));
+    (desc.modules ?? []).forEach((m, i) => {
+        const first = m.sources[0];
+        const path = first && "file" in first ? first.file : (first && "string" in first && first.path) || `${m.name ?? `ShaderStringModule${i}`}.slang`;
+        out.push({ path, name: m.name, sources: m.sources });
+    });
+    return out;
 }
 
 /** Compiled program for one define-set (mirrors Falcor::ProgramVersion/ProgramKernels). */
@@ -199,14 +222,14 @@ export class ProgramManager {
 
     compileProgram(desc: ProgramDesc, defines: DefineList): ProgramVersion {
         const allDefines = this.globalDefines.clone().addAll(defines);
-        const result = this.compiler.compile(desc.path, desc.entryPoints, allDefines);
+        const result = this.compiler.compile(programModules(desc), desc.entryPoints, allDefines);
         const kernels = desc.entryPoints.map((ep, i) => {
             const wgsl = fixupWgsl(result.entryPointCode[i]!);
             return {
                 name: ep.name,
                 type: ep.type,
                 wgsl,
-                module: this.device.gpuDevice.createShaderModule({ label: `${String(desc.path)}:${ep.name}`, code: wgsl }),
+                module: this.device.gpuDevice.createShaderModule({ label: `${String(desc.path ?? desc.modules?.[0]?.name ?? "")}:${ep.name}`, code: wgsl }),
                 bindings: parseWgslBindings(wgsl, shaderTypeToVisibility(ep.type)),
             };
         });
