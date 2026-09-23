@@ -116,3 +116,20 @@ export function relaxSubgroupUniformity(wgsl: string): string {
     const m = /^(\s*(?:enable[^;]*;\s*)*)/.exec(wgsl)!;
     return `${m[1]}diagnostic(off, subgroup_uniformity);\n${wgsl.slice(m[1]!.length)}`;
 }
+
+/** Storage formats WGSL allows read_write access to (core, without texture-format tiers). */
+const kReadWriteFormats = new Set(["r32float", "r32uint", "r32sint"]);
+
+/**
+ * WGSL allows read_write storage textures only in r32 formats, but Slang emits every
+ * RWTexture as read_write. A texture the module never reads is write-only in effect, so
+ * its access becomes `write` (what the per-shader overrides do by hand). Textures that
+ * are read keep read_write, and WebGPU reports them.
+ */
+export function lowerWriteOnlyStorageTextures(wgsl: string): string {
+    return wgsl.replace(/(var\s+(\w+)\s*:\s*texture_storage_\w+<\s*(\w+)\s*,\s*)read_write(\s*>)/g, (m, pre: string, name: string, format: string, post: string) => {
+        if (kReadWriteFormats.has(format)) return m;
+        const read = new RegExp(`textureLoad\\s*\\(\\s*${name}\\b`).test(wgsl);
+        return read ? m : `${pre}write${post}`;
+    });
+}

@@ -72,6 +72,8 @@ export * from "./Utils/UI/DomWidgets.js";
 export * from "./Utils/UI/InputTypes.js";
 export * from "./Core/Program/ShaderSources.js";
 export * from "./Core/SampleApp.js";
+export * from "./Utils/Scripting/Testbed.js";
+export * from "./Utils/Scripting/TestbedScripting.js";
 export * from "./Utils/Image/ImageProcessing.js";
 export * from "./Utils/Scripting/Scripting.js";
 export * from "./Scene/Camera/Camera.js";

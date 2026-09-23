@@ -31,13 +31,17 @@ interface PyodideApi {
 
 let pyodide: PyodideApi | null = null;
 
+/** Where scripts/setup-web.mjs puts the pinned Pyodide packages. */
+export const kPyodidePackagesUrl = "/tools/pyodide-packages/";
+
 /** Loads Pyodide (idempotent). indexURL points at the pyodide distribution. */
 export async function initScripting(indexURL: string): Promise<void> {
     if (pyodide) return;
     const mod = (await import(/* @vite-ignore */ `${indexURL}/pyodide.mjs`)) as {
-        loadPyodide(options: { indexURL: string }): Promise<PyodideApi>;
+        loadPyodide(options: { indexURL: string; packageBaseUrl?: string }): Promise<PyodideApi>;
     };
-    pyodide = await mod.loadPyodide({ indexURL });
+    // Packages (numpy) come from tools/pyodide-packages/, provisioned by scripts/setup-web.mjs.
+    pyodide = await mod.loadPyodide({ indexURL, packageBaseUrl: new URL(kPyodidePackagesUrl, globalThis.location?.href ?? "http://localhost/").href });
 }
 
 /** Shared Settings instance (native: SampleApp::getSettings()). */
@@ -45,6 +49,12 @@ const globalSettings = new Settings();
 
 export function getGlobalSettings(): Settings {
     return globalSettings;
+}
+
+/** @internal The Pyodide instance (for the Testbed scripting layer). */
+export function getPyodide(): unknown {
+    if (!pyodide) throw new RuntimeError("Call initScripting() first");
+    return pyodide;
 }
 
 export function isScriptingInitialized(): boolean {

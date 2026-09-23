@@ -46,6 +46,9 @@ function demangle(name: string): string {
     return name.replace(/_\d+$/, "");
 }
 
+/** Slot key of Slang's implicit buffer for loose global uniforms. */
+const kGlobalParamsKey = "$globalParams";
+
 function computeStructSize(type: SlangReflectionType): number {
     let size = 16;
     for (const f of type.fields ?? []) {
@@ -88,6 +91,13 @@ export class ParameterBlock {
         for (const p of reflection.json.parameters ?? []) {
             this.topLevel.set(p.name, new ReflectionVar(p.name, p.type ?? { kind: "unknown" }, null));
             this.registerParameter(p, [p.name]);
+        }
+        // Loose global uniforms (`uniform uint g_count;`) live in Slang's implicit globalParams buffer.
+        const globals = (reflection.json.parameters ?? []).filter((p) => (p.binding as { kind?: string } | undefined)?.kind === "uniform");
+        const globalsBinding = this.lookupWgsl("globalParams");
+        if (globals.length > 0 && globalsBinding) {
+            const size = Math.max(...globals.map((p) => ((p.binding as { offset?: number }).offset ?? 0) + ((p.binding as { size?: number }).size ?? 0)));
+            this.addCBufferSlot(kGlobalParamsKey, globalsBinding, { kind: "struct", fields: globals as never }, size);
         }
 
         const groupIndices = new Set(wgslBindings.map((b) => b.group));
@@ -193,9 +203,11 @@ export class ParameterBlock {
 
     /** Uniform write: longest slot prefix is the containing cbuffer; rest addresses members. */
     setUniformByPath(path: string[], value: unknown): void {
-        for (let prefixLen = path.length - 1; prefixLen >= 1; prefixLen--) {
-            const key = path.slice(0, prefixLen).join(".");
+        for (let prefixLen = path.length - 1; prefixLen >= 0; prefixLen--) {
+            // Prefix length 0: a loose global uniform, in the implicit globalParams buffer.
+            const key = prefixLen === 0 ? kGlobalParamsKey : path.slice(0, prefixLen).join(".");
             const slot = this.slots.get(key);
+            if (prefixLen === 0 && slot?.kind === "cbuffer" && !slot.elementType.fields?.some((f) => f.name === path[0])) break;
             if (slot?.kind === "cbuffer") {
                 let v: ReflectionVar | undefined = new ReflectionVar(key, { kind: "struct", fields: slot.elementType.fields }, null);
                 for (const part of path.slice(prefixLen)) {

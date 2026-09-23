@@ -12,7 +12,7 @@
 
 import { DefineList } from "./DefineList.js";
 import { RuntimeError } from "../Error.js";
-import { lowerHostShareableBools, relaxSubgroupUniformity } from "./WgslBoolLowering.js";
+import { lowerHostShareableBools, lowerWriteOnlyStorageTextures, relaxSubgroupUniformity } from "./WgslBoolLowering.js";
 
 /** Slang stage ids (slang.h SlangStage). */
 export enum ShaderType {
@@ -217,17 +217,21 @@ export class SlangCompiler {
         // slash, so their imports resolve relative to their own directory.
         // Falcor imports are shader-root-relative: symlink each top-level root
         // into every directory so dir-relative resolution lands at the root.
+        for (const dir of dirs) this.linkShaderRoots(dir);
+        this.fsOwnerKey = defines.key();
+    }
+
+    /** Links every top-level shader root into `dir`, so root-relative imports resolve from it. */
+    private linkShaderRoots(dir: string): void {
+        const slang = slangInstance!;
         const roots = new Set(this.registeredFiles.map((f) => f.split("/")[0]!).filter((r) => !r.includes(".")));
-        for (const dir of dirs) {
-            for (const root of roots) {
-                try {
-                    slang.FS.symlink(`/${root}`, `/${dir}/${root}`);
-                } catch {
-                    // Path already exists (real directory or prior link) — fine.
-                }
+        for (const root of roots) {
+            try {
+                slang.FS.symlink(`/${root}`, `/${dir}/${root}`);
+            } catch {
+                // Path already exists (real directory or prior link) — fine.
             }
         }
-        this.fsOwnerKey = defines.key();
     }
 
     /** Sessions hold compiled-module caches that grow the wasm heap; past
@@ -299,7 +303,14 @@ export class SlangCompiler {
             // Sessions cache modules by name: a conformance-lowered variant needs its own name.
             const variant = rewritten === joined ? "" : `__tc_${typeConformances.map((c) => `${c.typeName}_${c.id}`).join("_")}`;
             const moduleName = (name ?? path.replace(/[/.]/g, "_")) + variant;
-            const module = session.loadModuleFromSource(`${header}${rewritten}`, moduleName, `/${variant ? path.replace(/(\.[^./]*)?$/, `${variant}$1`) : path}`);
+            const loadPath = `/${variant ? path.replace(/(\.[^./]*)?$/, `${variant}$1`) : path}`.replace(/^\/+/, "/");
+            // A module outside the shader tree (e.g. a script's own shader) still imports Falcor modules.
+            const loadDir = loadPath.split("/").slice(1, -1).join("/");
+            if (loadDir && !this.registeredFiles.some((f) => f.startsWith(`${loadDir}/`))) {
+                slang.FS.createPath("/", loadDir, true, true);
+                this.linkShaderRoots(loadDir);
+            }
+            const module = session.loadModuleFromSource(`${header}${rewritten}`, moduleName, loadPath);
             if (!module) {
                 const err = slang.getLastError();
                 throw new RuntimeError(`Slang compilation failed for ${path}:\n${err.type}: ${err.message}`);
@@ -326,7 +337,8 @@ export class SlangCompiler {
         const composite = session.createCompositeComponentType([...modules, ...eps]);
         const linked = composite.link();
         // Bools in cbuffer/structured-buffer layouts aren't host-shareable in WGSL; lower them to u32.
-        const entryPointCode = entryPoints.map((_ep, i) => relaxSubgroupUniformity(lowerHostShareableBools(linked.getEntryPointCode(i, 0))));
+        // RWTextures that are only written become write-only (WGSL's read_write is r32-only).
+        const entryPointCode = entryPoints.map((_ep, i) => lowerWriteOnlyStorageTextures(relaxSubgroupUniformity(lowerHostShareableBools(linked.getEntryPointCode(i, 0)))));
         // slang-wasm can abort WGSL emission silently (e.g. fp64 internal
         // errors return an empty string with no diagnostics) — fail loudly.
         for (const code of entryPointCode) {

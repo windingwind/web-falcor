@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { lowerHostShareableBools } from "../src/Core/Program/WgslBoolLowering.js";
+import { lowerHostShareableBools, lowerWriteOnlyStorageTextures } from "../src/Core/Program/WgslBoolLowering.js";
 
 const kSource = `struct S2_std140_0
 {
@@ -61,5 +61,19 @@ describe("lowerHostShareableBools: pointer and call chains", () => {
     it("wraps accesses through a parenthesized deref", () => {
         const src = "struct T_std140_0\n{\n    @align(4) v_0 : bool,\n};\nfn f(p : ptr<function, T_std140_0>) { if((*p).v_0) { } }";
         expect(lowerHostShareableBools(src)).toContain("if(((*p).v_0 != 0u))");
+    });
+});
+
+describe("lowerWriteOnlyStorageTextures", () => {
+    const decl = (name: string, format: string) => `@binding(0) @group(0) var ${name} : texture_storage_2d<${format}, read_write>;`;
+    it("makes unread non-r32 storage textures write-only", () => {
+        const wgsl = `${decl("g_output_0", "rgba32float")}\nfn main() { textureStore(g_output_0, vec2<u32>(0), vec4<f32>(1)); }`;
+        expect(lowerWriteOnlyStorageTextures(wgsl)).toContain("texture_storage_2d<rgba32float, write>");
+    });
+    it("keeps read_write when the texture is read or the format allows it", () => {
+        const read = `${decl("t_0", "rgba16float")}\nfn f() -> vec4<f32> { return textureLoad(t_0, vec2<u32>(0)); }`;
+        expect(lowerWriteOnlyStorageTextures(read)).toBe(read);
+        const r32 = `${decl("u_0", "r32float")}\nfn g() { textureStore(u_0, vec2<u32>(0), vec4<f32>(1)); }`;
+        expect(lowerWriteOnlyStorageTextures(r32)).toBe(r32);
     });
 });

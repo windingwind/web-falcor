@@ -18,10 +18,13 @@
  *      in by Scene.slang, i.e. by EVERY scene-bound pass) and the RTXDI SDK
  *      headers — from their public repos at Falcor's pinned versions, into the
  *      packman link paths the dev server serves (manifest `externalFiles`).
+ *   4. The Pyodide packages Falcor's Python scripts import (numpy), pinned by the
+ *      pyodide-lock.json of the installed pyodide and checked against its sha256,
+ *      into tools/pyodide-packages/ (Scripting loads packages from there).
  *
  * What this does NOT fetch: media/test scenes (see scripts/download-scenes.mjs).
  *
- * Usage: node scripts/setup-web.mjs [--skip-slang] [--skip-shaders]
+ * Usage: node scripts/setup-web.mjs [--skip-slang] [--skip-shaders] [--skip-pyodide-packages]
  */
 
 import { readFileSync, writeFileSync, mkdirSync, existsSync, rmSync, readdirSync, statSync, copyFileSync } from "node:fs";
@@ -29,6 +32,7 @@ import { resolve, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { execFileSync } from "node:child_process";
 import { tmpdir } from "node:os";
+import { createHash } from "node:crypto";
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 
@@ -176,10 +180,44 @@ async function fetchSlangWasm() {
     console.log(`  slang-wasm ready under tools/slang-wasm/ (${copied} files)`);
 }
 
+/** Pyodide packages used by Falcor's Python scripts (and their dependencies from the lock). */
+const PYODIDE_PACKAGES = ["numpy"];
+
+async function fetchPyodidePackages() {
+    const pyodideDir = join(repoRoot, "node_modules/pyodide");
+    const lock = JSON.parse(readFileSync(join(pyodideDir, "pyodide-lock.json"), "utf8"));
+    const version = JSON.parse(readFileSync(join(pyodideDir, "package.json"), "utf8")).version;
+    const outDir = join(repoRoot, "tools/pyodide-packages");
+    mkdirSync(outDir, { recursive: true });
+    const wanted = new Set();
+    const visit = (name) => {
+        if (wanted.has(name)) return;
+        const pkg = lock.packages[name];
+        if (!pkg) throw new Error(`pyodide-lock.json has no package '${name}'`);
+        wanted.add(name);
+        for (const d of pkg.depends ?? []) visit(d);
+    };
+    PYODIDE_PACKAGES.forEach(visit);
+    for (const name of wanted) {
+        const { file_name: file, sha256 } = lock.packages[name];
+        const dst = join(outDir, file);
+        const digest = (buf) => createHash("sha256").update(buf).digest("hex");
+        if (existsSync(dst) && digest(readFileSync(dst)) === sha256) {
+            console.log(`pyodide package ${file} already present — skipping`);
+            continue;
+        }
+        const buf = await fetchBuffer(`https://cdn.jsdelivr.net/pyodide/v${version}/full/${file}`);
+        if (digest(buf) !== sha256) throw new Error(`${file}: sha256 mismatch with pyodide-lock.json`);
+        writeFileSync(dst, buf);
+        console.log(`  ${file} (${(buf.length / 1e6).toFixed(1)} MB) -> tools/pyodide-packages/`);
+    }
+}
+
 const t0 = Date.now();
 if (!args.has("--skip-shaders")) {
     await fetchShaders();
     await fetchExternalHeaders();
 }
 if (!args.has("--skip-slang")) await fetchSlangWasm();
+if (!args.has("--skip-pyodide-packages")) await fetchPyodidePackages();
 console.log(`\nWeb setup complete in ${((Date.now() - t0) / 1000).toFixed(1)}s. Next: npm run typecheck && npm run dev`);
