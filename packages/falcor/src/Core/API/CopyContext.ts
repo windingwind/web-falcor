@@ -201,7 +201,8 @@ export class CopyContext {
         this.getEncoder().copyTextureToBuffer(
             { texture: texture.gpuTexture, mipLevel, origin: { x: 0, y: 0, z: arraySlice } },
             { buffer: staging, bytesPerRow: alignedBytesPerRow, rowsPerImage: blocksH },
-            { width: w, height: h, depthOrArrayLayers: d },
+            // Compressed tail mips (2x2, 1x1) copy as one whole block, like the upload path.
+            { width: blocksW * blockDim, height: blocksH * blockDim, depthOrArrayLayers: d },
         );
         this.submit();
         await staging.mapAsync(GPUMapMode.READ);

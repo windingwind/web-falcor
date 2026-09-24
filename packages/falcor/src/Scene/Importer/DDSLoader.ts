@@ -12,7 +12,7 @@
  * stays sRGB whatever `srgb` says; the flag only promotes linear color formats.
  */
 
-import { ResourceFormat, isCompressedFormat } from "../../Core/API/Formats.js";
+import { ResourceFormat, getFormatBytesPerBlock, isCompressedFormat } from "../../Core/API/Formats.js";
 
 const DDS_MAGIC = 0x20534444; // "DDS "
 const fourCC = (a: string) => a.charCodeAt(0) | (a.charCodeAt(1) << 8) | (a.charCodeAt(2) << 16) | (a.charCodeAt(3) << 24);
@@ -77,15 +77,14 @@ export function parseDDS(buffer: ArrayBuffer, srgb: boolean): DDSImage {
         throw new Error(`DDSLoader: unsupported FourCC 0x${pfFourCC.toString(16)} (only BC/DXT compressed DDS)`);
     }
 
-    const bb = blockBytes(format);
+    const compressed = isCompressedFormat(format);
+    const bb = compressed ? blockBytes(format) : getFormatBytesPerBlock(format);
     const levels: DDSImage["levels"] = [];
     let offset = dataOffset;
     let w = width;
     let h = height;
     for (let m = 0; m < mipCount; m++) {
-        const blocksW = Math.max(1, Math.ceil(w / 4));
-        const blocksH = Math.max(1, Math.ceil(h / 4));
-        const size = blocksW * blocksH * bb;
+        const size = compressed ? Math.max(1, Math.ceil(w / 4)) * Math.max(1, Math.ceil(h / 4)) * bb : w * h * bb;
         if (offset + size > buffer.byteLength) break; // truncated / no full mip chain
         levels.push({ data: new Uint8Array(buffer, offset, size), width: w, height: h });
         offset += size;
@@ -165,6 +164,31 @@ function dxgiToFormat(dxgi: number, srgb: boolean): ResourceFormat {
             return srgb ? ResourceFormat.BC7UnormSrgb : ResourceFormat.BC7Unorm;
         case 99: // BC7_UNORM_SRGB
             return ResourceFormat.BC7UnormSrgb;
+        // Uncompressed DX10 surfaces (ImageIO.saveToDDS writes these for float data).
+        case 2:
+            return ResourceFormat.RGBA32Float;
+        case 10:
+            return ResourceFormat.RGBA16Float;
+        case 16:
+            return ResourceFormat.RG32Float;
+        case 34:
+            return ResourceFormat.RG16Float;
+        case 41:
+            return ResourceFormat.R32Float;
+        case 54:
+            return ResourceFormat.R16Float;
+        case 28:
+            return srgb ? ResourceFormat.RGBA8UnormSrgb : ResourceFormat.RGBA8Unorm;
+        case 29:
+            return ResourceFormat.RGBA8UnormSrgb;
+        case 49:
+            return ResourceFormat.RG8Unorm;
+        case 61:
+            return ResourceFormat.R8Unorm;
+        case 87:
+            return srgb ? ResourceFormat.BGRA8UnormSrgb : ResourceFormat.BGRA8Unorm;
+        case 91:
+            return ResourceFormat.BGRA8UnormSrgb;
         default:
             throw new Error(`DDSLoader: unsupported DXGI format ${dxgi}`);
     }
