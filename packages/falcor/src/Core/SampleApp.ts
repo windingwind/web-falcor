@@ -250,6 +250,8 @@ export abstract class SampleApp {
     renderFrame(): void {
         const device = this.getDevice();
         const ctx = device.renderContext;
+        // Check clock exit condition.
+        if (this.clock.shouldExit()) this.shutdown();
         this.clock.tick();
         this.frameRate.newFrame();
         const target = this.getTargetFbo();

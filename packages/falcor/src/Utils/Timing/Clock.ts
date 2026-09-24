@@ -7,6 +7,7 @@
  */
 
 // 14400 is a common multiple of the supported frame rates; 2^16 gives headroom (Clock.cpp).
+import { ScriptWriter } from "../Scripting/ScriptWriter.js";
 const kTicksPerSecond = 14400 * (1 << 16);
 
 function timeFromFrame(frame: number, ticksPerFrame: number): number {
@@ -27,6 +28,9 @@ export class Clock {
     private delta = 0;
     private startTime = 0;
     private endTime = -1;
+    /** Mirrors Clock's exit time/frame (0 = none): the app quits once reached. */
+    private exitTime = 0;
+    private exitFrame = 0;
     private deferredTime: number | null = null;
     private deferredFrame: number | null = null;
     private lastRealTime: number;
@@ -170,6 +174,39 @@ export class Clock {
 
     isPaused(): boolean {
         return this.paused;
+    }
+
+    /** Mirrors Clock::setExitTime (seconds; 0 disables). */
+    setExitTime(seconds: number): this {
+        this.exitTime = seconds;
+        return this;
+    }
+    getExitTime(): number {
+        return this.exitTime;
+    }
+    /** Mirrors Clock::setExitFrame (0 disables). */
+    setExitFrame(frame: number): this {
+        this.exitFrame = frame;
+        return this;
+    }
+    getExitFrame(): number {
+        return this.exitFrame;
+    }
+    /** Mirrors Clock::shouldExit. */
+    shouldExit(): boolean {
+        return (this.exitTime > 0 && this.now >= this.exitTime) || (this.exitFrame > 0 && this.frames >= this.exitFrame);
+    }
+
+    /** Mirrors Clock::getScript: the settings as script lines on `variable`. */
+    getScript(variable: string): string {
+        let s = ScriptWriter.makeSetProperty(variable, "time", 0);
+        s += ScriptWriter.makeSetProperty(variable, "framerate", this.fps);
+        if (this.exitTime) s += ScriptWriter.makeSetProperty(variable, "exitTime", this.exitTime);
+        if (this.exitFrame) s += ScriptWriter.makeSetProperty(variable, "exitFrame", this.exitFrame);
+        s += "# If framerate is not zero, you can use the frame property to set the start frame\n";
+        s += `# ${ScriptWriter.makeSetProperty(variable, "frame", 0)}`;
+        if (this.paused) s += ScriptWriter.makeMemberFunc(variable, "pause");
+        return s;
     }
 
     /** Python-facing property surface (mirrors the native pybind names). */

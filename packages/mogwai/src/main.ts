@@ -9,6 +9,7 @@ import "@web-falcor/render-passes";
 import { CameraController, kCameraControllerTypes, kUpDirectionNames } from "./CameraController.js";
 import { buildUIPanel } from "./UIPanel.js";
 import { GraphEditor } from "./GraphEditor.js";
+import { saveConfig } from "./SaveConfig.js";
 
 const canvas = document.getElementById("canvas") as HTMLCanvasElement;
 const status = document.getElementById("status") as HTMLDivElement;
@@ -31,6 +32,8 @@ interface ViewerState {
     animateScene: boolean;
     /** Last graph execute error (graph edits can leave inputs unconnected); cleared on the next edit. */
     graphError: string | null;
+    /** The loaded scene's path (Save Config's m.loadScene argument). */
+    scenePath: string | null;
 }
 
 /** Mirrors the Mogwai TimingCapture extension. Web divergence (docs §9):
@@ -84,6 +87,7 @@ async function loadScene(state: ViewerState, url: string, baseUrl: string): Prom
           : await runSceneScript(state.device, source, baseUrl, { cache: true }); // OPFS scene cache: fast reloads
     scene.camera.setAspectRatio(canvas.width / canvas.height);
     state.scene = scene;
+    state.scenePath = url;
     if (state.graph) state.graph.setScene(scene);
     state.frame = 0;
 }
@@ -216,7 +220,7 @@ async function main() {
     await initProgramSystem(device);
     await initScripting("/node_modules/pyodide");
 
-    const state: ViewerState = { device, context, format, graph: null, scene: null, output: null, frame: 0, playing: true, clock: new Clock(), timingCapture: new TimingCapture(), frameCapture: null, animateScene: true, graphError: null };
+    const state: ViewerState = { device, context, format, graph: null, scene: null, output: null, frame: 0, playing: true, clock: new Clock(), timingCapture: new TimingCapture(), frameCapture: null, animateScene: true, graphError: null, scenePath: null };
     state.frameCapture = new FrameCaptureExtension(device, () => state.graph, (name) => (state.graph?.name === name ? state.graph : null), () => state.clock.getFrame());
 
     // Initial content from URL params (?scene=/?graph=/?output=), or the default
@@ -535,6 +539,15 @@ function wireControls(state: ViewerState, rebuildUI: () => void): void {
     });
     ($("capture") as HTMLButtonElement | null)?.addEventListener("click", () => {
         void captureFrame(state);
+    });
+    // Mirrors Mogwai's File > Save Config: the viewer state as a replayable Mogwai script.
+    ($("saveConfig") as HTMLButtonElement | null)?.addEventListener("click", () => {
+        const script = saveConfig({ graphs: state.graph ? [state.graph] : [], scene: state.scene, scenePath: state.scenePath, width: canvas.width, height: canvas.height, showUI: true, clock: state.clock, frameCapture: state.frameCapture });
+        const a = document.createElement("a");
+        a.href = URL.createObjectURL(new Blob([script], { type: "text/x-python" }));
+        a.download = "MogwaiConfig.py";
+        a.click();
+        URL.revokeObjectURL(a.href);
     });
     ($("play") as HTMLButtonElement | null)?.addEventListener("click", () => {
         state.playing = !state.playing;

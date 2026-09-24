@@ -6,6 +6,7 @@
  * parameter block (upstream Scene.slang via WebFalcor overrides).
  */
 
+import { ScriptWriter } from "../Utils/Scripting/ScriptWriter.js";
 import type { Device } from "../Core/API/Device.js";
 import { Buffer } from "../Core/API/Buffer.js";
 import { Texture } from "../Core/API/Texture.js";
@@ -951,22 +952,51 @@ export class Scene {
         this.emissiveVersion++;
     }
 
-    /** True if the scene has keyframe animations (and thus responds to animate()). */
-    isAnimated(): boolean {
+    /** Mirrors Scene::hasAnimation: the scene has keyframe animations. */
+    hasAnimation(): boolean {
         return this.animData !== null;
+    }
+
+    /** Mirrors Scene::isAnimated: it has animations and they are enabled (setIsAnimated). */
+    isAnimated(): boolean {
+        return this.hasAnimation() && this.animationEnabled;
+    }
+
+    /** Mirrors Scene::setIsAnimated (python `scene.animated`): pauses or resumes the animations. */
+    setIsAnimated(animated: boolean): void {
+        this.animationEnabled = animated;
+    }
+    get animated(): boolean {
+        return this.animationEnabled;
+    }
+    set animated(v: boolean) {
+        this.setIsAnimated(v);
+    }
+
+    private animationEnabled = true;
+    /** Mirrors Scene::setCameraSpeed (the camera controller's speed). */
+    cameraSpeed = 1;
+
+    /** Mirrors Scene::getScript: render settings, animation state, camera selection and pose, camera speed. */
+    getScript(sceneVar: string): string {
+        let c = "";
+        for (const [k, v] of Object.entries(this.renderSettings)) c += ScriptWriter.makeSetProperty(`${sceneVar}.renderSettings`, k, v);
+        if (this.hasAnimation() && !this.animationEnabled) c += ScriptWriter.makeSetProperty(sceneVar, "animated", false);
+        if (this.activeCameraIndex !== 0) c += `${sceneVar}.camera = ${sceneVar}.cameras[${this.activeCameraIndex}]\n`;
+        c += this.camera.getScript(`${sceneVar}.camera`);
+        c += ScriptWriter.makeSetProperty(sceneVar, "cameraSpeed", this.cameraSpeed);
+        return c;
     }
 
     /**
      * Advances keyframe animation to `timeSec` (looped over the clip duration),
      * re-uploading node world matrices and rebuilding the software-RT BVH over the
      * new world-space triangles. Returns true if the scene animated (so the caller
-     * can reset accumulation); no-op for static scenes.
-     *
-     * Costs a full CPU BVH rebuild each call (no hardware/refit path yet), so it's
-     * intended for the small animated test scenes, not large static ones.
+     * can reset accumulation); no-op for static scenes and while animations are
+     * disabled (setIsAnimated). The software-RT BVH is refit (see refitBvh).
      */
     animate(timeSec: number): boolean {
-        if (!this.animData || !this.sourceMeshes) return false;
+        if (!this.animData || !this.sourceMeshes || !this.animationEnabled) return false;
         const meshes = this.sourceMeshes;
         // Mirrors AnimationController: loop raw time over the clip length.
         // Clips needn't start at t=0 (e.g. FBX): before the first key the

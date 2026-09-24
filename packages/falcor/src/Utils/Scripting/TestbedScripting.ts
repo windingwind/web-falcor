@@ -132,6 +132,8 @@ function makeJsModule(device: Device, testbedOptions: TestbedOptions, fsRead: (p
 const kFalcorPython = String.raw`
 import sys, types, enum
 from pyodide.ffi import run_sync, to_js
+# registerJsModule doesn't replace an imported module: drop the previous script's first.
+sys.modules.pop("_falcor_testbed_js", None)
 import _falcor_testbed_js as _js
 
 falcor = types.ModuleType("falcor")

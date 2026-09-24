@@ -12,6 +12,7 @@ import {
     ImageProcessing,
     Logger,
     ResourceBindFlags,
+    ScriptWriter,
     ResourceFormat,
     TextureChannelFlags,
     getFormatChannelCount,
@@ -140,6 +141,20 @@ export class FrameCaptureExtension {
             if (start <= s + c - 1 && s <= start + count - 1) throw new Error("This range overlaps an existing range!");
         }
         ranges.push([start, count]);
+    }
+
+    /** Mirrors FrameCapture::getScriptVar. */
+    getScriptVar(): string {
+        return "frameCapture";
+    }
+
+    /** Mirrors FrameCapture::getScript: output settings and the frames registered per graph. */
+    getScript(variable: string): string {
+        let s = "# Frame Capture\n";
+        s += ScriptWriter.makeSetProperty(variable, "outputDir", ScriptWriter.getPathString(this.outputDir));
+        s += ScriptWriter.makeSetProperty(variable, "baseFilename", this.baseFilename);
+        for (const [graph, ranges] of this.ranges) s += ScriptWriter.makeMemberFunc(variable, "addFrames", graph.name, ranges.map((r) => r[0]));
+        return s;
     }
 
     /** Mirrors reset(graph = None). */

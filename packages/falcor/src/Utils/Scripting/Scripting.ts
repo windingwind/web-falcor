@@ -714,7 +714,8 @@ export function recordMogwaiScript(device: Device, source: string, files: Record
     });
     // A real module object: scripts probe it (e.g. `"IMAGE_TEST_RUN_ONLY" in falcor.__dict__`).
     pyodide.runPython(
-        `import sys, types, _falcor_js\n_falcor = types.ModuleType("falcor")\nfor _k in dir(_falcor_js):\n    if not _k.startswith("__"): setattr(_falcor, _k, getattr(_falcor_js, _k))\nsys.modules["falcor"] = _falcor`,
+        // registerJsModule doesn't replace an imported module: drop the previous run's first.
+        `import sys, types\nsys.modules.pop("_falcor_js", None)\nimport _falcor_js\n_falcor = types.ModuleType("falcor")\nfor _k in dir(_falcor_js):\n    if not _k.startswith("__"): setattr(_falcor, _k, getattr(_falcor_js, _k))\nsys.modules["falcor"] = _falcor`,
     );
     pyodide.globals.set("m", {
         addGraph: (g: RenderGraph) => {

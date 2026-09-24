@@ -41,10 +41,14 @@ export interface MogwaiRunResult {
 
 /** Records and replays the Mogwai script at `scriptUrl` (served path, e.g. /Falcor/tests/...). */
 export async function runMogwaiScript(device: Device, scriptUrl: string, opts: { download?: boolean } = {}): Promise<MogwaiRunResult> {
+    return runMogwaiSource(device, await (await fetch(scriptUrl)).text(), scriptUrl.slice(0, scriptUrl.lastIndexOf("/")), opts);
+}
+
+/** Records and replays a Mogwai script's `source`, with local imports resolved against `dirUrl`. */
+export async function runMogwaiSource(device: Device, source: string, dirUrl: string, opts: { download?: boolean } = {}): Promise<MogwaiRunResult> {
     const root = "/mogwai";
-    const source = await (await fetch(scriptUrl)).text();
-    const files = await fetchLocalPythonModules(scriptUrl.slice(0, scriptUrl.lastIndexOf("/")), source, root);
-    const cwd = `${root}${scriptUrl.slice(0, scriptUrl.lastIndexOf("/"))}`;
+    const files = await fetchLocalPythonModules(dirUrl, source, root);
+    const cwd = `${root}${dirUrl}`;
     const commands: MogwaiCommand[] = recordMogwaiScript(device, source, files, cwd);
 
     const clock = new Clock();

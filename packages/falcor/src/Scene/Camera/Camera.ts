@@ -5,6 +5,7 @@
  * (Falcor convention); depth range is [0,1], right-handed view space.
  */
 
+import { ScriptWriter } from "../../Utils/Scripting/ScriptWriter.js";
 import { float2, float3 } from "../../Utils/Math/Vector.js";
 import {
     float4x4,
@@ -108,6 +109,15 @@ export class Camera {
     getTarget(): float3 { return this.target.clone(); }
     setUpVector(u: float3): void { this.up = u.clone(); this.dirty = true; }
     getUpVector(): float3 { return this.up.clone(); }
+    /** Mirrors Camera::getScript: the pose as script lines on `cameraVar`. */
+    getScript(cameraVar: string): string {
+        return (
+            ScriptWriter.makeSetProperty(cameraVar, "position", this.position) +
+            ScriptWriter.makeSetProperty(cameraVar, "target", this.target) +
+            ScriptWriter.makeSetProperty(cameraVar, "up", this.up)
+        );
+    }
+
     setFocalLength(mm: number): void { this.focalLength = mm; this.dirty = true; }
     getFocalLength(): number { return this.focalLength; }
     /** Mirrors Camera::setFrameHeight (film-back height in mm; USD cameras author it). */

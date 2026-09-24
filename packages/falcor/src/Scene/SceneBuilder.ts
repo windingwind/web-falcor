@@ -1385,6 +1385,7 @@ export class SceneBuilderBridge {
         }
         const selected = this.camera ? this._cameras.indexOf(this.camera) : -1;
         scene.setCameraList(cameraList, selected >= 0 ? selected + this.importedCameras.length : 0, Math.max(animatedCamera, 0));
+        scene.cameraSpeed = this.cameraSpeed;
         if (this.envMap) {
             const constant = this.envMap.constantColor;
             const envMap = constant

@@ -19,6 +19,7 @@ import type { Properties } from "../Utils/Properties.js";
 import { Field, FieldType, RenderPassReflection, resourceTypeToFieldType } from "./RenderPassReflection.js";
 import { ArgumentError, RuntimeError } from "../Core/Error.js";
 import { Logger } from "../Utils/Logger.js";
+import { pyRepr } from "../Utils/Scripting/ScriptWriter.js";
 
 /** One graph edge, srcPass.srcField -> dstPass.dstField (native: RenderGraph::EdgeData). */
 export interface RenderGraphEdge {
@@ -464,24 +465,6 @@ export class RenderGraph {
 }
 
 /** Python literal for a property value (vectors as floatN(...) factory calls). */
-function pyRepr(v: unknown): string {
-    if (typeof v === "boolean") return v ? "True" : "False";
-    if (typeof v === "number") return Number.isFinite(v) ? String(v) : `float("${v > 0 ? "inf" : v < 0 ? "-inf" : "nan"}")`;
-    if (typeof v === "string") return JSON.stringify(v);
-    if (Array.isArray(v)) return `[${v.map(pyRepr).join(", ")}]`;
-    if (v && typeof v === "object") {
-        const o = v as Record<string, unknown>;
-        const comps = ["x", "y", "z", "w"].filter((c) => typeof o[c] === "number");
-        if (comps.length >= 2 && Object.keys(o).length === comps.length) {
-            return `float${comps.length}(${comps.map((c) => o[c]).join(", ")})`;
-        }
-        return `{${Object.entries(o)
-            .map(([k, val]) => `${JSON.stringify(k)}: ${pyRepr(val)}`)
-            .join(", ")}}`;
-    }
-    return "None";
-}
-
 function splitFieldRef(ref: string): [string, string] {
     const idx = ref.lastIndexOf(".");
     if (idx <= 0) throw new ArgumentError(`Invalid field reference '${ref}' (expected "pass.field")`);
