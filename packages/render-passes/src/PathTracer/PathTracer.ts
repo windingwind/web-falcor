@@ -52,6 +52,37 @@ const kResolvePassFile = "RenderPasses/PathTracer/ResolvePass.cs.slang";
 const kEmissiveSamplerTypes: Record<string, number> = { Uniform: 0, LightBVH: 1, Power: 2 };
 
 const kScreenTileDim = 16;
+
+/**
+ * NRD outputs (native kOutputChannels). §9: RGB10A2Unorm and R16Float aren't storage formats in
+ * WebGPU; those outputs use RGBA16Float / R32Float like GBufferRT's normWRoughnessMaterialID.
+ * Resolve-side outputs are written by the resolve pass, the others by the path tracer.
+ */
+const kNRDOutputs: [name: string, member: string, desc: string, format: ResourceFormat, additional: boolean, resolved: boolean][] = [
+    ["nrdDiffuseRadianceHitDist", "outputNRDDiffuseRadianceHitDist", "Output demodulated diffuse color (linear) and hit distance", ResourceFormat.RGBA32Float, false, true],
+    ["nrdSpecularRadianceHitDist", "outputNRDSpecularRadianceHitDist", "Output demodulated specular color (linear) and hit distance", ResourceFormat.RGBA32Float, false, true],
+    ["nrdEmission", "primaryHitEmission", "Output primary surface emission", ResourceFormat.RGBA32Float, false, false],
+    ["nrdDiffuseReflectance", "primaryHitDiffuseReflectance", "Output primary surface diffuse reflectance", ResourceFormat.RGBA16Float, false, false],
+    ["nrdSpecularReflectance", "primaryHitSpecularReflectance", "Output primary surface specular reflectance", ResourceFormat.RGBA16Float, false, false],
+    ["nrdDeltaReflectionRadianceHitDist", "outputNRDDeltaReflectionRadianceHitDist", "Output demodulated delta reflection color (linear)", ResourceFormat.RGBA32Float, true, true],
+    ["nrdDeltaReflectionReflectance", "deltaReflectionReflectance", "Output delta reflection reflectance color (linear)", ResourceFormat.RGBA16Float, true, false],
+    ["nrdDeltaReflectionEmission", "deltaReflectionEmission", "Output delta reflection emission color (linear)", ResourceFormat.RGBA32Float, true, false],
+    ["nrdDeltaReflectionNormWRoughMaterialID", "deltaReflectionNormWRoughMaterialID", "Output delta reflection world normal, roughness, and material ID", ResourceFormat.RGBA16Float, true, false],
+    ["nrdDeltaReflectionPathLength", "deltaReflectionPathLength", "Output delta reflection path length", ResourceFormat.R32Float, true, false],
+    ["nrdDeltaReflectionHitDist", "deltaReflectionHitDist", "Output delta reflection hit distance", ResourceFormat.R32Float, true, false],
+    ["nrdDeltaTransmissionRadianceHitDist", "outputNRDDeltaTransmissionRadianceHitDist", "Output demodulated delta transmission color (linear)", ResourceFormat.RGBA32Float, true, true],
+    ["nrdDeltaTransmissionReflectance", "deltaTransmissionReflectance", "Output delta transmission reflectance color (linear)", ResourceFormat.RGBA16Float, true, false],
+    ["nrdDeltaTransmissionEmission", "deltaTransmissionEmission", "Output delta transmission emission color (linear)", ResourceFormat.RGBA32Float, true, false],
+    ["nrdDeltaTransmissionNormWRoughMaterialID", "deltaTransmissionNormWRoughMaterialID", "Output delta transmission world normal, roughness, and material ID", ResourceFormat.RGBA16Float, true, false],
+    ["nrdDeltaTransmissionPathLength", "deltaTransmissionPathLength", "Output delta transmission path length", ResourceFormat.R32Float, true, false],
+    ["nrdDeltaTransmissionPosW", "deltaTransmissionPosW", "Output delta transmission position", ResourceFormat.RGBA32Float, true, false],
+    ["nrdResidualRadianceHitDist", "outputNRDResidualRadianceHitDist", "Output residual color (linear) and hit distance", ResourceFormat.RGBA32Float, false, true],
+];
+/** The primary-hit outputs that drive OUTPUT_NRD_DATA (native beginFrame); the rest drive OUTPUT_NRD_ADDITIONAL_DATA. */
+const kNRDDataOutputs = ["nrdDiffuseRadianceHitDist", "nrdSpecularRadianceHitDist", "nrdResidualRadianceHitDist", "nrdEmission", "nrdDiffuseReflectance", "nrdSpecularReflectance"];
+/** NRDSampleData stride in WGSL (NRDBuffers override): NRDRadiance is 32 bytes (float3 aligns to 16). */
+const kNRDSampleDataSize = 96;
+const kNoRegion = 0xffffffff;
 /** UI range for the bounce sliders (Params.slang kMaxBounces). */
 const kMaxBounces = 254;
 
@@ -59,6 +90,14 @@ export class PathTracer extends RenderPass {
     private generatePass: ComputePass | null = null;
     private resolvePass: ComputePass | null = null;
     private outputGuideData = false;
+    private outputNRDData = false;
+    private outputNRDAdditionalData = false;
+    private useNRDDemodulation = true;
+    /** Pixel-buffer region per connected NRD output (NRDBuffers override). */
+    private nrdRegions = new Map<string, number>();
+    private nrdSampleData: Buffer | null = null;
+    private nrdPixelData: Buffer | null = null;
+    private nrdCopyPasses = new Map<string, ComputePass>();
     private fixedSampleCount = true;
     private sampleGuideData: Buffer | null = null;
     private sampleColor: Buffer | null = null;
@@ -73,6 +112,9 @@ export class PathTracer extends RenderPass {
     /** Mirrors mpPixelDebug (shader print()/assert() for one selected pixel; UI in "Debugging"). */
     readonly pixelDebug = new PixelDebug(this.device);
     private tracePass: ComputePass | null = null;
+    /** Mirrors mpTraceDeltaReflectionPass / mpTraceDeltaTransmissionPass (NRD additional data). */
+    private traceDeltaReflectionPass: ComputePass | null = null;
+    private traceDeltaTransmissionPass: ComputePass | null = null;
     private frameCount = 0;
     private sampleGenerator: SampleGenerator;
     // Dummies for optional members that survive dead-code elimination
@@ -113,6 +155,7 @@ export class PathTracer extends RenderPass {
     constructor(device: Device, props: Properties) {
         super(device);
         this.samplesPerPixel = props.get("samplesPerPixel", 1);
+        this.useNRDDemodulation = props.get("useNRDDemodulation", true);
         this.maxSurfaceBounces = props.get("maxSurfaceBounces", 3);
         this.maxDiffuseBounces = props.get("maxDiffuseBounces", 3);
         this.maxSpecularBounces = props.get("maxSpecularBounces", 3);
@@ -204,7 +247,7 @@ export class PathTracer extends RenderPass {
             ["rayCount", "Per-pixel ray count", ResourceFormat.R32Uint],
             ["pathLength", "Per-pixel path length", ResourceFormat.R32Uint],
         ];
-        for (const [name, desc, format] of guide) {
+        for (const [name, desc, format] of [...guide, ...kNRDOutputs.map(([n, , d, f]) => [n, d, f] as const)]) {
             r.addOutput(name, desc)
                 .texture2D(w, h)
                 .format(format)
@@ -238,6 +281,7 @@ export class PathTracer extends RenderPass {
         const lodNames = ["Mip0", "RayCones", "RayDiffs"];
         return new Properties({
             samplesPerPixel: this.samplesPerPixel,
+            useNRDDemodulation: this.useNRDDemodulation,
             maxSurfaceBounces: this.maxSurfaceBounces,
             maxDiffuseBounces: this.maxDiffuseBounces,
             maxSpecularBounces: this.maxSpecularBounces,
@@ -326,7 +370,7 @@ export class PathTracer extends RenderPass {
             USE_LIGHTS_IN_DIELECTRIC_VOLUMES: 0,
             DISABLE_CAUSTICS: 0,
             PRIMARY_LOD_MODE: this.primaryLodMode,
-            USE_NRD_DEMODULATION: 1,
+            USE_NRD_DEMODULATION: this.useNRDDemodulation ? 1 : 0,
             USE_SER: 0,
             COLOR_FORMAT: 1, // ColorFormat::LogLuvHDR (native default; unused at spp==1)
             MIS_HEURISTIC: this.misHeuristic,
@@ -349,8 +393,8 @@ export class PathTracer extends RenderPass {
             USE_HAIR_MATERIAL: 0,
             USE_VIEW_DIR: this.useViewDir ? 1 : 0,
             OUTPUT_GUIDE_DATA: this.outputGuideData ? 1 : 0,
-            OUTPUT_NRD_DATA: 0,
-            OUTPUT_NRD_ADDITIONAL_DATA: 0,
+            OUTPUT_NRD_DATA: this.outputNRDData ? 1 : 0,
+            OUTPUT_NRD_ADDITIONAL_DATA: this.outputNRDAdditionalData ? 1 : 0,
             ...(this.statsEnabled ? { _PIXEL_STATS_ENABLED: 1 } : {}),
             ...(this.pixelDebug.enabled ? PixelDebug.getDefines() : {}),
         })
@@ -390,6 +434,66 @@ export class PathTracer extends RenderPass {
         var_["sampleOffset"] = this.sampleOffset ?? this.dummyTexUint;
         var_["sampleColor"] = this.sampleColor ?? this.dummyBufferA;
         var_["sampleGuideData"] = this.outputGuideData ? this.sampleGuideData! : this.dummyBufferB;
+    }
+
+    /**
+     * Binds the NRDBuffers views (region, width, pixel count per output) and the two shared buffers.
+     * `member` is the NRDBuffers field of `var_`, or null for the resolve pass's flat members.
+     */
+    private bindNRD(root: ShaderVar, var_: ShaderVar, member: string | null, frameDim: [number, number]): void {
+        this.trySet(root, "gNRDSampleData", this.nrdSampleData ?? this.dummyBufferA!);
+        this.trySet(root, "gNRDPixelData", this.nrdPixelData ?? this.dummyBufferB!);
+        let target: ShaderVar;
+        try {
+            target = member ? (var_[member] as ShaderVar) : var_;
+        } catch {
+            return; // NRD members stripped in this variant
+        }
+        for (const [name, field] of kNRDOutputs) {
+            const view = { region: this.nrdRegions.get(name) ?? kNoRegion, width: frameDim[0], pixelCount: frameDim[0] * frameDim[1] };
+            try {
+                const v = target[field] as ShaderVar;
+                v["region"] = view.region;
+                v["width"] = view.width;
+                v["pixelCount"] = view.pixelCount;
+            } catch {
+                /* not a member of this kernel (tracer vs resolve outputs) or stripped */
+            }
+        }
+    }
+
+    /** Copies the connected NRD outputs out of the pixel buffer, 8 storage textures per dispatch. */
+    private copyNRDOutputs(ctx: RenderContext, renderData: RenderData, frameDim: [number, number]): void {
+        const outputs = kNRDOutputs.filter(([name]) => renderData.getTexture(name) !== undefined);
+        const kFormat: Partial<Record<ResourceFormat, [string, string]>> = {
+            [ResourceFormat.RGBA32Float]: ["rgba32f", "float4"],
+            [ResourceFormat.RGBA16Float]: ["rgba16f", "float4"],
+            [ResourceFormat.R32Float]: ["r32f", "float"],
+        };
+        for (let first = 0; first < outputs.length; first += 8) {
+            const chunk = outputs.slice(first, first + 8);
+            const key = chunk.map(([, , , f]) => f).join(",");
+            let pass = this.nrdCopyPasses.get(key);
+            if (!pass) {
+                const decls = chunk.map(([, , , f], i) => `[format("${kFormat[f]![0]}")] RWTexture2D<${kFormat[f]![1]}> gOut${i};`).join("\n");
+                const writes = chunk
+                    .map(([, , , f], i) => `    if (${i} < gCount) { float4 v = gNRDPixelData[gRegion[${i >> 2}][${i & 3}] * pixels + p.y * gFrameDim.x + p.x]; gOut${i}[p] = ${kFormat[f]![1] === "float" ? "v.x" : "v"}; }`)
+                    .join("\n");
+                const source = `StructuredBuffer<float4> gNRDPixelData;\n${decls}\ncbuffer CB { uint2 gFrameDim; uint gCount; uint4 gRegion[2]; };\n[numthreads(16, 16, 1)]\nvoid main(uint3 id: SV_DispatchThreadID)\n{\n    const uint2 p = id.xy;\n    if (any(p >= gFrameDim)) return;\n    const uint pixels = gFrameDim.x * gFrameDim.y;\n${writes}\n}\n`;
+                pass = ComputePass.create(this.device, { modules: [{ sources: [{ string: source, path: "WebFalcor/NRDOutputCopy.cs.slang" }] }], csEntry: "main" });
+                this.nrdCopyPasses.set(key, pass);
+            }
+            const root = pass.getRootVar();
+            root["gNRDPixelData"] = this.nrdPixelData!;
+            const cb = root["CB"] as ShaderVar;
+            cb["gFrameDim"] = frameDim;
+            cb["gCount"] = chunk.length;
+            const regions = chunk.map(([name]) => this.nrdRegions.get(name)!);
+            while (regions.length < 8) regions.push(0);
+            cb["gRegion"] = [regions.slice(0, 4), regions.slice(4, 8)];
+            chunk.forEach(([name], i) => (root[`gOut${i}`] = renderData.getTexture(name)!));
+            pass.execute(ctx, frameDim[0], frameDim[1]);
+        }
     }
 
     /** Binds the pixel-stats globals (module scope, present when enabled). */
@@ -438,8 +542,23 @@ export class PathTracer extends RenderPass {
         // Mirrors native USE_VIEW_DIR: DoF needs the per-pixel thin-lens dirs from the viewW input.
         this.viewDirInput = renderData.getTexture("viewW") ?? null;
         const useViewDir = this.scene.camera.getApertureRadius() > 0 && this.viewDirInput !== null;
-        if (outputGuideData !== this.outputGuideData || fixedSampleCount !== this.fixedSampleCount || statsEnabled !== this.statsEnabled || useViewDir !== this.useViewDir) {
+        // Mirrors beginFrame's mOutputNRDData / mOutputNRDAdditionalData.
+        const outputNRDData = kNRDDataOutputs.some((name) => renderData.getTexture(name) !== undefined);
+        const outputNRDAdditionalData = kNRDOutputs.some(([name, , , , additional]) => additional && renderData.getTexture(name) !== undefined);
+        this.nrdRegions = new Map(kNRDOutputs.filter(([name]) => renderData.getTexture(name) !== undefined).map(([name], i, arr) => [name, arr.findIndex(([n]) => n === name)]));
+        // The resolve reads the primary-hit diffuse reflectance, so it always gets a region with NRD data.
+        if (outputNRDData && !this.nrdRegions.has("nrdDiffuseReflectance")) this.nrdRegions.set("nrdDiffuseReflectance", this.nrdRegions.size);
+        if (
+            outputGuideData !== this.outputGuideData ||
+            outputNRDData !== this.outputNRDData ||
+            outputNRDAdditionalData !== this.outputNRDAdditionalData ||
+            fixedSampleCount !== this.fixedSampleCount ||
+            statsEnabled !== this.statsEnabled ||
+            useViewDir !== this.useViewDir
+        ) {
             this.outputGuideData = outputGuideData;
+            this.outputNRDData = outputNRDData;
+            this.outputNRDAdditionalData = outputNRDAdditionalData;
             this.fixedSampleCount = fixedSampleCount;
             this.statsEnabled = statsEnabled;
             this.useViewDir = useViewDir;
@@ -479,8 +598,10 @@ export class PathTracer extends RenderPass {
             const defines = this.getStaticDefines();
             this.generatePass = ComputePass.create(this.device, { path: kGeneratePathsFile, defines });
             this.tracePass = ComputePass.create(this.device, { path: kTracePassFile, defines });
+            this.traceDeltaReflectionPass = this.outputNRDAdditionalData ? ComputePass.create(this.device, { path: kTracePassFile, defines: defines.clone().add("DELTA_REFLECTION_PASS", "") }) : null;
+            this.traceDeltaTransmissionPass = this.outputNRDAdditionalData ? ComputePass.create(this.device, { path: kTracePassFile, defines: defines.clone().add("DELTA_TRANSMISSION_PASS", "") }) : null;
             this.resolvePass =
-                this.outputGuideData || !this.fixedSampleCount || this.samplesPerPixel > 1
+                this.outputGuideData || this.outputNRDData || !this.fixedSampleCount || this.samplesPerPixel > 1
                     ? ComputePass.create(this.device, { path: kResolvePassFile, defines })
                     : null;
         }
@@ -499,6 +620,16 @@ export class PathTracer extends RenderPass {
                     memoryType: MemoryType.DeviceLocal,
                     name: "PathTracer::sampleGuideData",
                 });
+            }
+        }
+        if (this.outputNRDData || this.outputNRDAdditionalData) {
+            const storage = ResourceBindFlags.ShaderResource | ResourceBindFlags.UnorderedAccess;
+            if (!this.nrdSampleData || this.nrdSampleData.size < sampleCount * kNRDSampleDataSize) {
+                this.nrdSampleData = new Buffer(this.device, { size: sampleCount * kNRDSampleDataSize, structSize: kNRDSampleDataSize, bindFlags: storage, memoryType: MemoryType.DeviceLocal, name: "PathTracer::nrdSampleData" });
+            }
+            const pixelBytes = Math.max(1, this.nrdRegions.size) * frameDim[0] * frameDim[1] * 16;
+            if (!this.nrdPixelData || this.nrdPixelData.size < pixelBytes) {
+                this.nrdPixelData = new Buffer(this.device, { size: pixelBytes, structSize: 16, bindFlags: storage, memoryType: MemoryType.DeviceLocal, name: "PathTracer::nrdPixelData" });
             }
         }
         if (this.statsEnabled) {
@@ -566,6 +697,7 @@ export class PathTracer extends RenderPass {
             if (this.rtxdi) this.rtxdi.setShaderData(root, mvec);
             this.bindStats(root, frameDim);
             this.bindPathTracerData(root["CB"]["gPathGenerator"] as ShaderVar, vbuffer, color, frameDim);
+            this.bindNRD(root, (root["CB"]["gPathGenerator"] as ShaderVar), "outputNRD", frameDim);
             // One thread per pixel, padded to whole tiles (numthreads(256,1,1)).
             this.generatePass.execute(ctx, tiles[0]! * kScreenTileDim * kScreenTileDim, tiles[1]!);
         }
@@ -573,31 +705,36 @@ export class PathTracer extends RenderPass {
         // RTXDI resampling over the surface data written by the path generator.
         if (this.rtxdi) this.rtxdi.update(ctx, mvec!);
 
-        // Trace paths (compute megakernel).
-        {
-            const root = this.tracePass!.getRootVar();
-            this.scene.bindShaderData(root);
+        // Trace paths (compute megakernel); with NRD additional data native launches two more
+        // trace passes for the delta reflection / transmission guide buffers.
+        const trace = (pass: ComputePass) => {
+            const root = pass.getRootVar();
+            this.scene!.bindShaderData(root);
             if (this.rtxdi) this.rtxdi.setShaderData(root, mvec);
             this.bindStats(root, frameDim);
             const block = root["gPathTracer"] as ShaderVar;
             this.bindPathTracerData(block, vbuffer, color, frameDim);
-            this.pixelDebug.prepareProgram(root, this.tracePass!);
-            if (this.emissiveSampler === "Power" && this.scene.useEmissiveLights) {
-                if (!this.powerSampler) this.powerSampler = new EmissivePowerSampler(this.device, this.scene.getEmissiveFluxes());
+            this.bindNRD(root, block, "outputNRD", frameDim);
+            this.pixelDebug.prepareProgram(root, pass);
+            if (this.emissiveSampler === "Power" && this.scene!.useEmissiveLights) {
+                if (!this.powerSampler) this.powerSampler = new EmissivePowerSampler(this.device, this.scene!.getEmissiveFluxes());
                 this.powerSampler.bindShaderData(block["emissiveSampler"] as ShaderVar);
             }
             if (this.lightBVHSampler) this.lightBVHSampler.bindShaderData(block["emissiveSampler"] as ShaderVar);
             const envSampler = block["envMapSampler"] as ShaderVar;
-            if (this.scene.useEnvLight) {
-                if (!this.envMapSampler) this.envMapSampler = new EnvMapSampler(this.device, ctx, this.scene.getEnvMap()!);
+            if (this.scene!.useEnvLight) {
+                if (!this.envMapSampler) this.envMapSampler = new EnvMapSampler(this.device, ctx, this.scene!.getEnvMap()!);
                 this.envMapSampler.bindShaderData(envSampler);
             } else {
                 // Env map sampler members can survive DCE with env light off.
                 envSampler["importanceSampler"] = this.dummySampler!;
                 envSampler["importanceMap"] = this.dummyTexFloat!;
             }
-            this.tracePass!.execute(ctx, frameDim[0], frameDim[1]);
-        }
+            pass.execute(ctx, frameDim[0], frameDim[1]);
+        };
+        trace(this.tracePass!);
+        if (this.traceDeltaReflectionPass) trace(this.traceDeltaReflectionPass);
+        if (this.traceDeltaTransmissionPass) trace(this.traceDeltaTransmissionPass);
 
         // Resolve guide data / multi-sample color into the connected outputs
         // (mirrors resolvePass; with fixed spp == 1 the color loop is compiled out).
@@ -617,13 +754,7 @@ export class PathTracer extends RenderPass {
             this.trySet(cb, "sampleColor", this.sampleColor ?? this.dummyBufferA!);
             this.trySet(cb, "sampleCount", this.sampleCountInput ?? this.dummyTexUint!);
             this.trySet(cb, "sampleOffset", this.sampleOffset ?? this.dummyTexUint!);
-            // NRD-only members that survive DCE with OUTPUT_NRD_DATA=0.
-            this.trySet(cb, "primaryHitDiffuseReflectance", this.dummyTexFloat!);
-            this.trySet(cb, "sampleNRDRadiance", this.dummyBufferA!);
-            this.trySet(cb, "sampleNRDHitDist", this.dummyBufferA!);
-            this.trySet(cb, "sampleNRDEmission", this.dummyBufferA!);
-            this.trySet(cb, "sampleNRDReflectance", this.dummyBufferA!);
-            this.trySet(cb, "sampleNRDPrimaryHitNeeOnDelta", this.dummyBufferA!);
+            this.bindNRD(root, cb, null, frameDim);
             // Unconnected resolve outputs bind format-matched 1x1 dummies —
             // one PER OUTPUT: native binds null UAVs (writes dropped); WebGPU
             // storage bindings must match the kernel's static format and must
@@ -662,6 +793,7 @@ export class PathTracer extends RenderPass {
             this.trySet(cb, "outputColor", this.fixedSampleCount && this.samplesPerPixel === 1 ? outputDummy("color") : color);
             this.resolvePass.execute(ctx, frameDim[0], frameDim[1]);
         }
+        if (this.outputNRDData || this.outputNRDAdditionalData) this.copyNRDOutputs(ctx, renderData, frameDim);
 
         // Resolve pixel stats into the connected outputs (native copies its
         // stats textures in endFrame; the web resolve reads the packed

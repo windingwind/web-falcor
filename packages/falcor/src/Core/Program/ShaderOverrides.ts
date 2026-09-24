@@ -64,6 +64,9 @@ export const kShaderOverrides: Readonly<Record<string, string>> = {
     "RenderPasses/PathTracer/GeneratePaths.cs.slang": "WebFalcor/Overrides/RenderPasses/PathTracer/GeneratePaths.cs.slang",
     "RenderPasses/PathTracer/PathTracer.slang": "WebFalcor/Overrides/RenderPasses/PathTracer/PathTracer.slang",
     "RenderPasses/PathTracer/TracePass.rt.slang": "WebFalcor/Overrides/RenderPasses/PathTracer/TracePass.rt.slang",
+    // NRD outputs as views over one pixel buffer + one sample buffer (8 storage textures per stage).
+    "RenderPasses/PathTracer/ResolvePass.cs.slang": "WebFalcor/Overrides/RenderPasses/PathTracer/ResolvePass.cs.slang",
+    "RenderPasses/Shared/Denoising/NRDBuffers.slang": "WebFalcor/Overrides/RenderPasses/Shared/Denoising/NRDBuffers.slang",
     // Newer-Slang nested brace-init fix.
     "Rendering/Materials/PBRT/PBRTConductorMaterial.slang": "WebFalcor/Overrides/Rendering/Materials/PBRT/PBRTConductorMaterial.slang",
     // 64-bit traversal bitmask kept as uint2 (no 64-bit ints in WGSL).
