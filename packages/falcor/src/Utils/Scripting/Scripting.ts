@@ -660,6 +660,7 @@ export type MogwaiCommand =
     | { op: "addGraph"; graph: RenderGraph }
     | { op: "removeGraph"; graph: RenderGraph }
     | { op: "loadScene"; path: string; flags: number }
+    | { op: "unloadScene" }
     | { op: "resizeFrameBuffer"; width: number; height: number }
     | { op: "renderFrame" }
     | { op: "set"; target: "clock" | "frameCapture" | "scene"; key: string; value: unknown }
@@ -753,14 +754,30 @@ export function recordMogwaiScript(device: Device, source: string, files: Record
         // registerJsModule doesn't replace an imported module: drop the previous run's first.
         `import sys, types\nsys.modules.pop("_falcor_js", None)\nimport _falcor_js\n_falcor = types.ModuleType("falcor")\nfor _k in dir(_falcor_js):\n    if not _k.startswith("__"): setattr(_falcor, _k, getattr(_falcor_js, _k))\nsys.modules["falcor"] = _falcor`,
     );
+    // Graphs in m (Renderer::mGraphs order), for getGraph / removeGraph(name) / activeGraph.
+    const graphList: RenderGraph[] = [];
+    const byName = (g: RenderGraph | string) => (typeof g === "string" ? graphList.find((x) => x.name === g) : (targets.get(g) ?? g));
     pyodide.globals.set("m", {
         addGraph: (g: RenderGraph) => {
             const graph = targets.get(g) ?? g;
             added.add(graph);
+            graphList.push(graph);
             commands.push({ op: "addGraph", graph });
         },
+        /** Mirrors Renderer::getGraph (None when no graph has that name: JS undefined, not null). */
+        getGraph: (name: string) => graphList.find((x) => x.name === String(name)),
+        get activeGraph() {
+            return graphList.at(-1);
+        },
+        unloadScene: () => void commands.push({ op: "unloadScene" }),
         loadScene: (path: string, flags?: number) => void commands.push({ op: "loadScene", path: String(path), flags: Number(flags ?? 0) }),
-        removeGraph: (g: RenderGraph) => void commands.push({ op: "removeGraph", graph: targets.get(g) ?? g }),
+        // Mirrors Renderer::removeGraph: a graph or its name.
+        removeGraph: (g: RenderGraph | string) => {
+            const graph = byName(g);
+            if (!graph) return;
+            graphList.splice(graphList.indexOf(graph), 1);
+            commands.push({ op: "removeGraph", graph });
+        },
         resizeFrameBuffer: (width: number, height: number) => void commands.push({ op: "resizeFrameBuffer", width: Number(width), height: Number(height) }),
         renderFrame: () => void commands.push({ op: "renderFrame" }),
         clock: recorder("clock"),

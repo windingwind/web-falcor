@@ -1407,10 +1407,10 @@ export class Scene {
     }
 
     /** Mirrors Scene::getGridVolume / getGridVolumeByName (python also `getVolume`). */
-    getGridVolume(ref: number | string): import("./Volume/GridVolume.js").GridVolume | null {
-        return (typeof ref === "number" ? this.gridVolumes[ref] : this.gridVolumes.find((v) => v.name === ref)) ?? null;
+    getGridVolume(ref: number | string): import("./Volume/GridVolume.js").GridVolume | undefined {
+        return typeof ref === "number" ? this.gridVolumes[ref] : this.gridVolumes.find((v) => v.name === ref);
     }
-    getVolume(ref: number | string): import("./Volume/GridVolume.js").GridVolume | null {
+    getVolume(ref: number | string): import("./Volume/GridVolume.js").GridVolume | undefined {
         return this.getGridVolume(ref);
     }
     /** Python `scene.volumes` (deprecated alias of gridVolumes). */
@@ -1614,6 +1614,19 @@ export class Scene {
         remake("emissiveMeshData", lc.meshData, 16);
         remake("emissivePerMeshInstanceOffset", lc.perMeshInstanceOffset, 4);
         this.emissiveVersion++;
+    }
+
+    /** Python `scene.updateCallback`: called as (scene, time) at the start of every frame's update (Scene::update). */
+    updateCallback: ((scene: Scene, time: number) => void) | null = null;
+    /** Runs updateCallback for this frame; the frame loops call it before animate(). */
+    runUpdateCallback(time: number): void {
+        try {
+            this.updateCallback?.(this, time);
+        } catch (e) {
+            // A failing script callback is dropped (logged once) rather than stopping every frame.
+            Logger.error(`Scene.updateCallback failed and was removed: ${String(e).split("\n").slice(-2).join(" ")}`);
+            this.updateCallback = null;
+        }
     }
 
     /** Mirrors Scene::hasAnimation: the scene has keyframe animations. */
@@ -1951,12 +1964,26 @@ export class Scene {
      * Mogwai "Render Settings"): master switches ANDed with resource presence below.
      * The RenderGraph recompiles passes when these change (native RenderSettingsChanged).
      */
-    readonly renderSettings = { useEnvLight: true, useAnalyticLights: true, useEmissiveLights: true, useGridVolumes: true };
+    private _renderSettings = { useEnvLight: true, useAnalyticLights: true, useEmissiveLights: true, useGridVolumes: true, diffuseAlbedoMultiplier: 1 };
+    get renderSettings(): { useEnvLight: boolean; useAnalyticLights: boolean; useEmissiveLights: boolean; useGridVolumes: boolean; diffuseAlbedoMultiplier: number } {
+        return this._renderSettings;
+    }
+    /** Mirrors Scene::setRenderSettings (python `scene.renderSettings = SceneRenderSettings(...)`). */
+    set renderSettings(v: Partial<{ useEnvLight: boolean; useAnalyticLights: boolean; useEmissiveLights: boolean; useGridVolumes: boolean; diffuseAlbedoMultiplier: number }>) {
+        const r = this._renderSettings;
+        for (const k of Object.keys(r) as (keyof typeof r)[]) {
+            const x = (v as Record<string, unknown>)[k];
+            if (x !== undefined) (r as Record<string, unknown>)[k] = k === "diffuseAlbedoMultiplier" ? Number(x) : Boolean(x);
+        }
+    }
+    setRenderSettings(v: Partial<Scene["renderSettings"]>): void {
+        this.renderSettings = v;
+    }
 
     /** Snapshot key for change detection (native compares mRenderSettings != mPrevRenderSettings). */
     getRenderSettingsKey(): string {
         const r = this.renderSettings;
-        return `${+r.useEnvLight}${+r.useAnalyticLights}${+r.useEmissiveLights}${+r.useGridVolumes}`;
+        return `${+r.useEnvLight}${+r.useAnalyticLights}${+r.useEmissiveLights}${+r.useGridVolumes}|${r.diffuseAlbedoMultiplier}`;
     }
 
     /** Mirrors Scene::useAnalyticLights(). */
@@ -2278,7 +2305,8 @@ export class Scene {
             WEBFALCOR_MTL_PBRT_DIELECTRIC: this.materialTypes.has(MaterialType.PBRTDielectric) ? 1 : 0,
             WEBFALCOR_MTL_PBRT_COATED_CONDUCTOR: this.materialTypes.has(MaterialType.PBRTCoatedConductor) ? 1 : 0,
             WEBFALCOR_MTL_PBRT_COATED_DIFFUSE: this.materialTypes.has(MaterialType.PBRTCoatedDiffuse) ? 1 : 0,
-            SCENE_DIFFUSE_ALBEDO_MULTIPLIER: "1.0",
+            // std::to_string(float), as natively.
+            SCENE_DIFFUSE_ALBEDO_MULTIPLIER: this.renderSettings.diffuseAlbedoMultiplier.toFixed(6),
             FALCOR_NVAPI_AVAILABLE: 0,
             SAMPLE_GENERATOR_TYPE: 0, // TinyUniform (SampleGeneratorType.slangh)
         });

@@ -86,6 +86,7 @@ export class HelloDXR extends SampleApp {
         renderContext.clearFbo(targetFbo, kClearColor, 1.0, 0, FboAttachmentType.All);
         if (this.scene) {
             this.camControl?.update(performance.now() / 1000);
+            this.scene.runUpdateCallback(this.getGlobalClock().getTime());
             if (this.scene.isAnimated()) this.scene.animate(this.getGlobalClock().getTime());
             if (this.rayTrace) this.renderRT(renderContext, targetFbo);
             else this.renderRaster(renderContext, targetFbo);

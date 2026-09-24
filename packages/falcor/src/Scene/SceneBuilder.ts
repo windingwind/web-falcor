@@ -1052,11 +1052,11 @@ export class SceneBuilderBridge {
      * Mirrors SceneBuilder::createAnimation: binds a light or camera to a new identity node (unless
      * it has one) and returns an Animation for that node, or null when it is already animated.
      */
-    createAnimation(animatable: LightBridge | CameraBridge, name: string, duration: number): AnimationBridge | null {
+    createAnimation(animatable: LightBridge | CameraBridge, name: string, duration: number): AnimationBridge | undefined {
         const target = unwrapGuard(animatable) as LightBridge | CameraBridge;
         if (target.nodeID !== undefined && this.builderAnimations.some((a) => a.nodeID === target.nodeID)) {
             Logger.warning("Animatable object is already animated.");
-            return null;
+            return undefined; // python None
         }
         target.nodeID ??= this.addNode(String(name), float4x4.identity());
         const animation = new AnimationBridge(String(name), target.nodeID, Number(duration));
@@ -1106,6 +1106,45 @@ export class SceneBuilderBridge {
     addLight(light: LightBridge): void {
         this.lights.push(unwrapGuard(light));
     }
+
+    /** Mirrors SceneBuilder::getLight (python None when absent). */
+    getLight(name: string): LightBridge | undefined {
+        return this.lights.find((l) => l.name === String(name));
+    }
+    /** Mirrors SceneBuilder::getGridVolume / getVolume by name. */
+    getGridVolume(name: string): GridVolumeBridge | undefined {
+        return this.gridVolumesList.find((v) => v.name === String(name));
+    }
+    getVolume(name: string): GridVolumeBridge | undefined {
+        return this.getGridVolume(name);
+    }
+    get gridVolumes(): GridVolumeBridge[] {
+        return this.gridVolumesList;
+    }
+    get volumes(): GridVolumeBridge[] {
+        return this.gridVolumesList;
+    }
+
+    /** Materials added by addMaterial, placed before the builder meshes' materials in resolve. */
+    private addedMaterials: MaterialBridge[] = [];
+    /**
+     * Mirrors SceneBuilder::addMaterial. §9: imports resolve later on the web, so the returned ID
+     * counts the builder's own added materials only.
+     */
+    addMaterial(material: MaterialBridge): number {
+        const m = unwrapGuard(material);
+        if (!this.addedMaterials.includes(m)) this.addedMaterials.push(m);
+        return this.addedMaterials.indexOf(m);
+    }
+    /** Mirrors SceneBuilder::loadMaterialTexture (the web loads it with the material in resolve). */
+    loadMaterialTexture(material: MaterialBridge, slot: string, path: string): void {
+        unwrapGuard(material).loadTexture(slot, path);
+    }
+    /** Mirrors SceneBuilder::waitForMaterialTextureLoading (texture loads complete in resolve). */
+    waitForMaterialTextureLoading(): void {}
+
+    /** Mirrors SceneBuilder::getRenderSettings; applied to the scene in resolve. */
+    renderSettings = { useEnvLight: true, useAnalyticLights: true, useEmissiveLights: true, useGridVolumes: true, diffuseAlbedoMultiplier: 1 };
 
     /** Deferred material edits from getMaterial() (imports resolve later). */
     materialEdits: { name: string; prop: string; value: unknown }[] = [];
@@ -1480,7 +1519,7 @@ export class SceneBuilderBridge {
         }
 
         // Load deferred material textures (material.loadTexture()).
-        for (const mat of new Set(this.meshMaterials)) {
+        for (const mat of new Set([...this.addedMaterials, ...this.meshMaterials])) {
             await mat.resolveTextures(baseUrl, textureManager, this.assetResolver, this.hasFlag(SceneBuilderFlags.AssumeLinearSpaceTextures), device);
             await mat.resolveMeasured(baseUrl, this.assetResolver);
         }
@@ -1488,8 +1527,12 @@ export class SceneBuilderBridge {
         // Scripted animations: builder nodes join the scene graph so their subtrees can animate.
         const builderNodeIDs = this.appendAnimatedBuilderNodes(nodes, animations);
 
-        // Builder-added meshes (instanced via nodes).
+        // Builder-added meshes (instanced via nodes); addMaterial's materials come first.
         const materialIDs = new Map<MaterialBridge, number>();
+        for (const mat of this.addedMaterials) {
+            materialIDs.set(mat, materials.length);
+            materials.push(mat.toDesc());
+        }
         this.meshGeometry.forEach((geo, meshID) => {
             const transforms = this.meshInstanced.get(meshID);
             if (!transforms) return; // mesh never instanced
@@ -1660,6 +1703,7 @@ export class SceneBuilderBridge {
         }
         const selected = this.camera ? this._cameras.indexOf(this.camera) : -1;
         scene.setCameraList(cameraList, selected >= 0 ? selected + this.importedCameras.length : 0, Math.max(animatedCamera, 0));
+        scene.setRenderSettings(this.renderSettings);
         scene.cameraSpeed = this.cameraSpeed;
         scene.metadata = { ...this.metadata };
         if (this.envMap) {

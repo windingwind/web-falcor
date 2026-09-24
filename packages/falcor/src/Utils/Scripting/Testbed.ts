@@ -156,6 +156,7 @@ export class Testbed {
                 await this.renderGraph.init();
                 this.graphNeedsInit = false;
             }
+            this.scene?.runUpdateCallback(this.clock.getTime());
             if (this.scene?.isAnimated()) this.scene.animate(this.clock.getTime());
             this.renderGraph.execute(ctx);
             const names = this.renderGraph.getOutputNames();

@@ -312,6 +312,8 @@ async function main() {
     let lastNow = -1;
     function frame(now: number) {
         const cam = state.scene?.camera;
+        // Scene::update runs every frame: the scene's python updateCallback first.
+        state.scene?.runUpdateCallback(state.clock.getTime());
         let dirty = cam ? camControl.update(cam, now) : false;
         // Scene::onKeyEvent: moving the camera by hand stops its animation.
         if (dirty && cam) cam.animated = false;

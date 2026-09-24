@@ -50,4 +50,9 @@ gpuTest("Scripting.liveScenePythonProperties", async ({ device }) => {
     expectEq(script.length === 3 && script[2]!.startsWith("30, Transform(position = float3("), true, `viewpoints script ${script.join(" | ")}`);
     run("m.scene.removeViewpoint()");
     expectEq(scene.getViewpointCount(), 1, "removeViewpoint");
+
+    // updateCallback(scene, time) runs at each frame's scene update.
+    run("def _update(scene, time):\n    scene.camera.position = float3(time, 0, 0)\nm.scene.updateCallback = _update");
+    scene.runUpdateCallback(2.5);
+    expectEq(scene.camera.getPosition().x, 2.5, "updateCallback ran with the frame time");
 });

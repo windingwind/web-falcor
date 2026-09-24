@@ -232,6 +232,7 @@ export function buildScenePanel(container: HTMLElement, scene: Scene | null, hoo
         g.checkbox("Use analytic lights", rs.useAnalyticLights, (v) => (rs.useAnalyticLights = v));
         g.checkbox("Use emissive", rs.useEmissiveLights, (v) => (rs.useEmissiveLights = v));
         g.checkbox("Use grid volumes", rs.useGridVolumes, (v) => (rs.useGridVolumes = v));
+        g.num("Diffuse albedo multiplier", rs.diffuseAlbedoMultiplier, 0.01, (v) => (rs.diffuseAlbedoMultiplier = v), 0, 1);
     }
 
     // Lights (mirrors Light::renderUI + per-type controls). Color/intensity split like native getColorForUI/getIntensityForUI.

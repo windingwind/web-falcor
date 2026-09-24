@@ -99,6 +99,11 @@ export async function runMogwaiSource(device: Device, source: string, dirUrl: st
                 for (const g of graphs) g.setScene(scene);
                 break;
             }
+            case "unloadScene":
+                // Mirrors Renderer::unloadScene.
+                scene = null;
+                for (const g of graphs) g.setScene(null);
+                break;
             case "resizeFrameBuffer":
                 size = [cmd.width, cmd.height];
                 scene?.camera.setAspectRatio(size[0] / size[1]);
@@ -134,6 +139,7 @@ export async function runMogwaiSource(device: Device, source: string, dirUrl: st
                 // Mogwai::renderFrame: clock, extensions' beginFrame, scene update, graph, endFrame.
                 clock.tick();
                 fc.beginFrame();
+                scene?.runUpdateCallback(clock.getTime());
                 if (scene?.isAnimated()) scene.animate(clock.getTime());
                 active?.execute(device.renderContext);
                 await fc.endFrame();
