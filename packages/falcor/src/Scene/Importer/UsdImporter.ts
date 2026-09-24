@@ -15,7 +15,8 @@ import { float2, float3, float4 } from "../../Utils/Math/Vector.js";
 import { float4x4, mulMat, transformPoint } from "../../Utils/Math/Matrix.js";
 import { RuntimeError } from "../../Core/Error.js";
 import { Logger } from "../../Utils/Logger.js";
-import { extractUsdCamerasAndLights, extractUsdDisplayColors, extractUsdMaterialBindings, extractUsdMaterialTextures, extractUsdPointInstancers, usdRenderSettings, usdaStageInfo, usdChannelIndex, usdStageRootTransform, usdTexCoordTransform, type UsdaCamera, type UsdaDomeLight, type UsdaTextureInput } from "./UsdaScene.js";
+import { loadOpenSubdiv, tessellateUsdMesh, type TessellatedMesh } from "./Subdivision.js";
+import { extractUsdCamerasAndLights, extractUsdDisplayColors, extractUsdMaterialBindings, extractUsdMaterialTextures, extractUsdPointInstancers, extractUsdMeshes, usdRenderSettings, usdaStageInfo, usdChannelIndex, usdStageRootTransform, usdTexCoordTransform, type UsdaCamera, type UsdaDomeLight, type UsdaSubdivMesh, type UsdaTextureInput } from "./UsdaScene.js";
 import type { AnalyticLight } from "../SceneData.js";
 
 interface UsdNode {
@@ -96,35 +97,6 @@ function usdToWebMatrix(a: ArrayLike<number>): float4x4 {
     return m;
 }
 
-/** Area-weighted smooth normals for meshes without authored normals. */
-function computeSmoothNormals(positions: Float32Array, indices: Uint32Array): Float32Array {
-    const n = new Float32Array(positions.length);
-    for (let t = 0; t < indices.length; t += 3) {
-        const [i0, i1, i2] = [indices[t]!, indices[t + 1]!, indices[t + 2]!];
-        const ax = positions[i1 * 3]! - positions[i0 * 3]!;
-        const ay = positions[i1 * 3 + 1]! - positions[i0 * 3 + 1]!;
-        const az = positions[i1 * 3 + 2]! - positions[i0 * 3 + 2]!;
-        const bx = positions[i2 * 3]! - positions[i0 * 3]!;
-        const by = positions[i2 * 3 + 1]! - positions[i0 * 3 + 1]!;
-        const bz = positions[i2 * 3 + 2]! - positions[i0 * 3 + 2]!;
-        const cx = ay * bz - az * by;
-        const cy = az * bx - ax * bz;
-        const cz = ax * by - ay * bx;
-        for (const i of [i0, i1, i2]) {
-            n[i * 3] = n[i * 3]! + cx;
-            n[i * 3 + 1] = n[i * 3 + 1]! + cy;
-            n[i * 3 + 2] = n[i * 3 + 2]! + cz;
-        }
-    }
-    for (let i = 0; i < n.length; i += 3) {
-        const len = Math.hypot(n[i]!, n[i + 1]!, n[i + 2]!) || 1;
-        n[i]! /= len;
-        n[i + 1]! /= len;
-        n[i + 2]! /= len;
-    }
-    return n;
-}
-
 /** The USDA text of a USD file: usda as is, usdc/usdz through tinyusdz's layer printer (null if unavailable). */
 function usdLayerText(native: TinyUsdzModule, bytes: Uint8Array): string | null {
     const head = new TextDecoder().decode(bytes.subarray(0, 5));
@@ -137,6 +109,67 @@ function usdLayerText(native: TinyUsdzModule, bytes: Uint8Array): string | null 
     }
     Logger.warning("UsdImporter: this USD file's layer text is unavailable; cameras, lights and stage units are not imported.");
     return null;
+}
+
+/**
+ * Splits a triangulated mesh per corner with flat normals: per coarse polygon (the normalized
+ * sum of its fan's cross products, as native's triangulate()) when the authored topology matches
+ * tinyusdz's fan triangulation, else per triangle.
+ */
+function flatNormals(points: Float32Array, indices: Uint32Array, uvs: Float32Array | undefined, usda: UsdaSubdivMesh | undefined): { positions: Float32Array; indices: Uint32Array; normals: Float32Array; uvs: Float32Array | undefined } {
+    const triCount = indices.length / 3;
+    const faceOfTri = new Int32Array(triCount).map((_, t) => t);
+    let faceCount = triCount;
+    if (usda && usda.faceVertexCounts.reduce((n, c) => n + Math.max(0, c - 2), 0) === triCount) {
+        let t = 0;
+        usda.faceVertexCounts.forEach((c, f) => {
+            for (let k = 0; k < c - 2; k++) faceOfTri[t++] = f;
+        });
+        faceCount = usda.faceVertexCounts.length;
+    }
+    const faceNormal = new Float32Array(faceCount * 3);
+    for (let t = 0; t < triCount; t++) {
+        const [a, b, c] = [indices[t * 3]!, indices[t * 3 + 1]!, indices[t * 3 + 2]!].map((i) => [points[i * 3]!, points[i * 3 + 1]!, points[i * 3 + 2]!]);
+        const e1 = [b![0]! - a![0]!, b![1]! - a![1]!, b![2]! - a![2]!];
+        const e2 = [c![0]! - a![0]!, c![1]! - a![1]!, c![2]! - a![2]!];
+        const f = faceOfTri[t]!;
+        faceNormal[f * 3]! += e1[1]! * e2[2]! - e1[2]! * e2[1]!;
+        faceNormal[f * 3 + 1]! += e1[2]! * e2[0]! - e1[0]! * e2[2]!;
+        faceNormal[f * 3 + 2]! += e1[0]! * e2[1]! - e1[1]! * e2[0]!;
+    }
+    const positions = new Float32Array(indices.length * 3);
+    const normals = new Float32Array(indices.length * 3);
+    const outUvs = uvs && uvs.length === points.length / 3 * 2 ? new Float32Array(indices.length * 2) : undefined;
+    for (let c = 0; c < indices.length; c++) {
+        const i = indices[c]!;
+        const f = faceOfTri[Math.floor(c / 3)]!;
+        const len = Math.hypot(faceNormal[f * 3]!, faceNormal[f * 3 + 1]!, faceNormal[f * 3 + 2]!) || 1;
+        for (let k = 0; k < 3; k++) {
+            positions[c * 3 + k] = points[i * 3 + k]!;
+            normals[c * 3 + k] = faceNormal[f * 3 + k]! / len;
+        }
+        if (outUvs) outUvs.set([uvs![i * 2]!, uvs![i * 2 + 1]!], c * 2);
+    }
+    return { positions, indices: Uint32Array.from(indices.keys()), normals, uvs: outUvs };
+}
+
+/** Static vertices of a refined mesh; face-varying and uniform texcoords split vertices per triangle corner. */
+function refinedVertices(m: TessellatedMesh, toTexCrd: (s: number, t: number) => [number, number]): { vertices: StaticVertex[]; indices: Uint32Array } {
+    const vertex = (p: number, uv: number | null): StaticVertex => ({
+        position: new float3(m.positions[p * 3]!, m.positions[p * 3 + 1]!, m.positions[p * 3 + 2]!),
+        normal: new float3(m.normals[p * 3]!, m.normals[p * 3 + 1]!, m.normals[p * 3 + 2]!),
+        tangent: new float4(0, 0, 0, 0),
+        texCrd: uv !== null && m.uvs ? new float2(...toTexCrd(m.uvs[uv * 2]!, m.uvs[uv * 2 + 1]!)) : new float2(0, 0),
+    });
+    if (m.uvInterp !== "faceVarying" && m.uvInterp !== "uniform") {
+        const vertices = Array.from({ length: m.positions.length / 3 }, (_, p) => vertex(p, m.uvs ? p : null));
+        return { vertices, indices: m.indices };
+    }
+    // Uniform texcoords: one per coarse face, in the order the faces were tessellated.
+    const faceUv = new Map<number, number>();
+    for (const f of m.coarseFaces) if (!faceUv.has(f)) faceUv.set(f, faceUv.size);
+    const vertices = Array.from(m.indices, (p, c) => vertex(p, m.uvInterp === "faceVarying" ? c : faceUv.get(m.coarseFaces[Math.floor(c / 3)]!)!));
+    return { vertices, indices: Uint32Array.from(vertices.keys()) };
 }
 
 /** tinyusdz's layer API (composition), on the same loader class. */
@@ -231,7 +264,11 @@ export class UsdImporter {
         textureManager?: TextureManager,
         baseUrl = "",
         excludePrims?: Set<string>,
-        options: { assumeLinearSpaceTextures?: boolean } = {},
+        options: {
+            assumeLinearSpaceTextures?: boolean;
+            /** Per-prim Settings attributes (native's "refinementLevel" override by mesh path). */
+            settings?: { getAttribute(path: string, name: string, fallback: number): unknown };
+        } = {},
     ): Promise<{ meshes: SceneMeshDesc[]; materials: SceneMaterialDesc[]; materialNames: string[]; cameras: UsdaCamera[]; lights: AnalyticLight[]; domeLight: UsdaDomeLight | null; stage: UsdStageBounds | null; metadata: SceneMetadata | null }> {
         const native = await loadTinyUsdz();
         let usd = new native.TinyUSDZLoaderNative();
@@ -317,8 +354,9 @@ export class UsdImporter {
             materials.push(desc);
             materialNames.push(name);
             materialIndex.set(key, index);
-            // Native pre-transforms texcoords by its texture transform (at least a V flip).
-            texCoordTransforms.push(usdTexCoordTransform(texTransform));
+            // Native pre-transforms texcoords by the material's texture transform: a V flip (and
+            // any UsdTransform2d) for UsdPreviewSurface materials, none for the default material.
+            texCoordTransforms.push(id >= 0 ? usdTexCoordTransform(texTransform) : (s, t) => [s, t]);
             return index;
         };
 
@@ -331,6 +369,20 @@ export class UsdImporter {
             (n.children ?? []).forEach(indexNodes);
         };
         indexNodes(usd.getDefaultRootNode());
+        // Subdivision surfaces (convertMeshGeomData's refinement level, then tessellate()).
+        const usdaMeshes = layerText ? extractUsdMeshes(layerText) : new Map<string, UsdaSubdivMesh>();
+        const stageRefinement = layerText ? (usdRenderSettings(layerText)?.refinementLevel ?? 0) : 0;
+        const refinementLevels = new Map<string, number>();
+        for (const [path, m] of usdaMeshes) {
+            if (m.scheme === "none") continue;
+            let level = Number(options.settings?.getAttribute(path, "refinementLevel", m.refinementLevel ?? stageRefinement) ?? m.refinementLevel ?? stageRefinement);
+            if (level > 0 && m.skinned) {
+                Logger.warning(`Skipping subdividing skinned mesh '${path}'.`);
+                level = 0;
+            }
+            if (level > 0) refinementLevels.set(path, Number(level));
+        }
+        const osd = refinementLevels.size > 0 ? await loadOpenSubdiv() : null;
         // Stage bounds in USD space (UsdGeomBBoxCache's world bound, without the root transform).
         const lo = [Infinity, Infinity, Infinity];
         const hi = [-Infinity, -Infinity, -Infinity];
@@ -367,10 +419,26 @@ export class UsdImporter {
             }
             if (node.nodeType === "mesh" && !excludePrims?.has(node.primName)) {
                 const mesh = usd.getMesh(node.contentId);
-                const positions = mesh.points;
-                const indices = new Uint32Array(mesh.faceVertexIndices);
-                const normals = mesh.normals && mesh.normals.length === positions.length ? mesh.normals : computeSmoothNormals(positions, indices);
-                const uvs = mesh.texcoords;
+                const level = node.absPath ? refinementLevels.get(node.absPath) : undefined;
+                const refined = level && osd ? tessellateUsdMesh(osd, node.absPath!, usdaMeshes.get(node.absPath!)!, level) : null;
+                if (refined) {
+                    const materialID = getOrAddMaterial(mesh.materialId, bindings.get(node.absPath!), node.absPath);
+                    const { vertices, indices } = refinedVertices(refined, texCoordTransforms[materialID]!);
+                    generateTangents(vertices, indices);
+                    meshes.push({ vertices, indices, materialID, transform: world.clone() });
+                    for (const child of node.children ?? []) walk(child, world, usdWorld);
+                    return;
+                }
+                let positions: Float32Array = mesh.points;
+                let indices: Uint32Array = new Uint32Array(mesh.faceVertexIndices);
+                const usdaMesh = node.absPath ? usdaMeshes.get(node.absPath) : undefined;
+                let normals = mesh.normals && mesh.normals.length === positions.length && usdaMesh?.hasNormals !== false ? mesh.normals : null;
+                let uvs = mesh.texcoords;
+                if (!normals) {
+                    // No authored normals: native's triangulate() generates flat per-face normals.
+                    const flat = flatNormals(positions, indices, uvs, usdaMesh);
+                    ({ positions, indices, normals, uvs } = flat);
+                }
                 const vertexCount = positions.length / 3;
                 const vertices: StaticVertex[] = new Array(vertexCount);
                 const materialID = getOrAddMaterial(mesh.materialId, node.absPath ? bindings.get(node.absPath) : undefined, node.absPath);
@@ -380,8 +448,7 @@ export class UsdImporter {
                         position: new float3(positions[i * 3]!, positions[i * 3 + 1]!, positions[i * 3 + 2]!),
                         normal: new float3(normals[i * 3]!, normals[i * 3 + 1]!, normals[i * 3 + 2]!),
                         tangent: new float4(0, 0, 0, 0),
-                        // USD st has a bottom-left origin; Falcor samples top-down
-                        // images: flip V (s, -t), times any UsdTransform2d, as natively.
+                        // The material's texcoord transform (V flip for UsdPreviewSurface), as natively.
                         texCrd: uvs && uvs.length === vertexCount * 2 ? new float2(...toTexCrd(uvs[i * 2]!, uvs[i * 2 + 1]!)) : new float2(0, 0),
                     };
                 }

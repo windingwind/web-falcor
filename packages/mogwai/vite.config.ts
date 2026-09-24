@@ -20,6 +20,8 @@ try {
 
 export default defineConfig({
     root: repoRoot,
+    // The app entry lives under the repo root; `vite build` writes packages/mogwai/dist.
+    build: { rollupOptions: { input: resolve(here, "index.html") }, outDir: resolve(here, "dist"), emptyOutDir: true },
     server: {
         port: 5173,
         fs: {

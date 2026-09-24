@@ -1,0 +1,61 @@
+#usda 1.0
+(
+    customLayerData = {
+        dictionary renderSettings = {
+            int "rtx:hydra:refinementLevel" = 1
+        }
+    }
+    defaultPrim = "World"
+    metersPerUnit = 1
+    upAxis = "Y"
+)
+# Subdivision surfaces refined through OpenSubdiv like native's tessellate(): a
+# Catmull-Clark cube (the default scheme) at its own refinementLevel 2 with
+# face-varying texcoords, a Loop tetrahedron at level 1, a bilinear quad strip at
+# the stage's rtx:hydra:refinementLevel 1, an unrefined floor (scheme none), and an
+# unrefined pyramid without normals (native generates flat per-face normals).
+def Xform "World"
+{
+    def Mesh "Cube"
+    {
+        int refinementLevel = 2
+        int[] faceVertexCounts = [4, 4, 4, 4, 4, 4]
+        int[] faceVertexIndices = [0, 3, 2, 1, 4, 5, 6, 7, 0, 1, 5, 4, 1, 2, 6, 5, 2, 3, 7, 6, 3, 0, 4, 7]
+        point3f[] points = [(-2.6, -0.6, -0.6), (-1.4, -0.6, -0.6), (-1.4, 0.6, -0.6), (-2.6, 0.6, -0.6), (-2.6, -0.6, 0.6), (-1.4, -0.6, 0.6), (-1.4, 0.6, 0.6), (-2.6, 0.6, 0.6)]
+        texCoord2f[] primvars:st = [(0, 0), (0, 1), (1, 1), (1, 0), (0, 0), (1, 0), (1, 1), (0, 1), (0, 0), (1, 0), (1, 1), (0, 1), (0, 0), (1, 0), (1, 1), (0, 1), (0, 0), (1, 0), (1, 1), (0, 1), (0, 0), (1, 0), (1, 1), (0, 1)] (
+            interpolation = "faceVarying"
+        )
+    }
+    def Mesh "Tetra"
+    {
+        uniform token subdivisionScheme = "loop"
+        int refinementLevel = 1
+        int[] faceVertexCounts = [3, 3, 3, 3]
+        int[] faceVertexIndices = [0, 1, 2, 0, 3, 1, 1, 3, 2, 2, 3, 0]
+        point3f[] points = [(-0.7, -0.6, 0.5), (0.7, -0.6, 0.5), (0, -0.6, -0.7), (0, 0.8, 0)]
+    }
+    def Mesh "Strip"
+    {
+        uniform token subdivisionScheme = "bilinear"
+        int[] faceVertexCounts = [4, 4]
+        int[] faceVertexIndices = [0, 1, 4, 3, 1, 2, 5, 4]
+        point3f[] points = [(1.4, -0.6, 0), (2.0, -0.6, 0.4), (2.6, -0.6, 0), (1.4, 0.6, 0), (2.0, 0.6, 0.4), (2.6, 0.6, 0)]
+        texCoord2f[] primvars:st = [(0, 0), (0.5, 0), (1, 0), (0, 1), (0.5, 1), (1, 1)] (
+            interpolation = "vertex"
+        )
+    }
+    def Mesh "Pyramid"
+    {
+        uniform token subdivisionScheme = "none"
+        int[] faceVertexCounts = [3, 3, 3, 3]
+        int[] faceVertexIndices = [0, 1, 4, 1, 2, 4, 2, 3, 4, 3, 0, 4]
+        point3f[] points = [(-0.4, -0.6, 1.2), (0.4, -0.6, 1.2), (0.4, -0.6, 2.0), (-0.4, -0.6, 2.0), (0, -0.1, 1.6)]
+    }
+    def Mesh "Floor"
+    {
+        uniform token subdivisionScheme = "none"
+        int[] faceVertexCounts = [4]
+        int[] faceVertexIndices = [0, 1, 2, 3]
+        point3f[] points = [(-4, -0.6, -2), (4, -0.6, -2), (4, -0.6, 2), (-4, -0.6, 2)]
+    }
+}

@@ -500,3 +500,75 @@ export function usdRenderSettings(text: string): { metadata: SceneMetadata; refi
         refinementLevel: Math.floor(get("rtx:hydra:refinementLevel", 0)),
     };
 }
+
+/** An attribute's value text, following bracketed arrays across lines, and its (metadata) block. */
+function attrMultiline(body: string, names: string[]): { value: string; metadata: string } | undefined {
+    for (const name of names) {
+        const escaped = name.replace(/[.:]/g, (c) => `\\${c}`);
+        const m = new RegExp(`^\\s*(?:uniform\\s+|custom\\s+)?[\\w\\[\\]]+\\s+${escaped}\\s*=\\s*`, "m").exec(body);
+        if (!m) continue;
+        const start = m.index + m[0].length;
+        const end = body[start] === "[" ? body.indexOf("]", start) + 1 : body.indexOf("\n", start);
+        const value = body.slice(start, end > 0 ? end : undefined);
+        const metadata = /^\s*\(([^)]*)\)/.exec(body.slice(end > 0 ? end : body.length))?.[1] ?? "";
+        return { value, metadata };
+    }
+    return undefined;
+}
+
+/** A UsdGeomMesh's authored topology and subdivision settings (what native's tessellate() reads). */
+export interface UsdaSubdivMesh {
+    scheme: string;
+    orientation: string;
+    interpolateBoundary: string;
+    faceVaryingLinearInterpolation: string;
+    points: number[];
+    faceVertexCounts: number[];
+    faceVertexIndices: number[];
+    /** primvars:st (flattened through its :indices) and its interpolation. */
+    st?: { values: number[]; interpolation: string };
+    /** The prim's refinementLevel unless refinementEnableOverride is false. */
+    refinementLevel?: number;
+    skinned: boolean;
+    /** normals or primvars:normals is authored (tinyusdz generates smooth ones otherwise). */
+    hasNormals: boolean;
+}
+
+/** Every Mesh prim's topology and subdivision settings (USD's default scheme is catmullClark), by path. */
+export function extractUsdMeshes(text: string): Map<string, UsdaSubdivMesh> {
+    const out = new Map<string, UsdaSubdivMesh>();
+    const token = (b: string, name: string, fallback: string) => attr(b, [name])?.match(/"([^"]*)"/)?.[1] ?? fallback;
+    const visit = (p: UsdaPrim) => {
+        const b = p.body;
+        const scheme = token(b, "subdivisionScheme", "catmullClark");
+        if (p.type === "Mesh") {
+            const mesh: UsdaSubdivMesh = {
+                scheme,
+                orientation: token(b, "orientation", "rightHanded"),
+                interpolateBoundary: token(b, "interpolateBoundary", "edgeAndCorner"),
+                faceVaryingLinearInterpolation: token(b, "faceVaryingLinearInterpolation", "cornersPlus1"),
+                points: num(attrMultiline(b, ["points"])?.value ?? ""),
+                faceVertexCounts: num(attrMultiline(b, ["faceVertexCounts"])?.value ?? ""),
+                faceVertexIndices: num(attrMultiline(b, ["faceVertexIndices"])?.value ?? ""),
+                skinned: attr(b, ["primvars:skel:jointIndices"]) !== undefined && attr(b, ["primvars:skel:jointWeights"]) !== undefined,
+                hasNormals: attrMultiline(b, ["normals", "primvars:normals"]) !== undefined,
+            };
+            // getTexCoordPrimvar: primvars:st, primvars:st_0, else a texCoord2-typed primvar.
+            const typed = b.match(/^\s*texCoord2[fdh]\[\]\s+(primvars:[\w:]+?)\s*=/m)?.[1];
+            for (const name of ["primvars:st", "primvars:st_0", ...(typed ? [typed] : [])]) {
+                const values = attrMultiline(b, [name]);
+                if (values === undefined) continue;
+                let st = num(values.value);
+                const indices = attrMultiline(b, [`${name}:indices`]);
+                if (indices !== undefined) st = num(indices.value).flatMap((i) => [st[i * 2]!, st[i * 2 + 1]!]);
+                mesh.st = { values: st, interpolation: values.metadata.match(/interpolation\s*=\s*"(\w+)"/)?.[1] ?? "constant" };
+                break;
+            }
+            if (attr(b, ["refinementEnableOverride"]) !== "false" && attr(b, ["refinementLevel"]) !== undefined) mesh.refinementLevel = attrNumber(b, ["refinementLevel"], 0);
+            out.set(p.path, mesh);
+        }
+        p.children.forEach(visit);
+    };
+    parseUsdaPrims(text, float4x4.identity()).forEach(visit);
+    return out;
+}

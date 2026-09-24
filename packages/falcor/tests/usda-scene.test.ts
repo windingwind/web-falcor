@@ -3,7 +3,7 @@
  * conversions of native's USDImporter.
  */
 import { describe, expect, it } from "vitest";
-import { extractUsdCamerasAndLights, extractUsdDisplayColors, extractUsdMaterialTextures, extractUsdPointInstancers, parseUsdaPrims, usdaStageInfo, usdBlackbodyTemperatureAsRgb, usdStageRootTransform, usdTexCoordTransform } from "../src/Scene/Importer/UsdaScene.js";
+import { extractUsdCamerasAndLights, extractUsdDisplayColors, extractUsdMeshes, extractUsdMaterialTextures, extractUsdPointInstancers, parseUsdaPrims, usdaStageInfo, usdBlackbodyTemperatureAsRgb, usdRenderSettings, usdStageRootTransform, usdTexCoordTransform } from "../src/Scene/Importer/UsdaScene.js";
 import { readFileSync } from "node:fs";
 import { LightType } from "../src/Scene/SceneData.js";
 import { float3 } from "../src/Utils/Math/Vector.js";
@@ -181,5 +181,19 @@ def SphereLight "S"
     it("reads display colors", () => {
         const text = readFileSync(new URL("../../../tests/oracle/assets/usd-compose/floor.usda", import.meta.url), "utf8");
         expect(extractUsdDisplayColors(text).get("/World/Floor")).toEqual([0.2, 0.6, 0.3]);
+    });
+
+    it("reads mesh topology, subdivision settings and texcoords", () => {
+        const text = readFileSync(new URL("../../../tests/oracle/assets/usd-subdiv.usda", import.meta.url), "utf8");
+        const meshes = extractUsdMeshes(text);
+        const cube = meshes.get("/World/Cube")!;
+        expect(cube).toMatchObject({ scheme: "catmullClark", refinementLevel: 2, interpolateBoundary: "edgeAndCorner", hasNormals: false });
+        expect(cube.faceVertexCounts).toEqual([4, 4, 4, 4, 4, 4]);
+        expect(cube.st!.interpolation).toBe("faceVarying");
+        expect(cube.st!.values.length).toBe(48);
+        expect(meshes.get("/World/Tetra")).toMatchObject({ scheme: "loop", refinementLevel: 1 });
+        expect(meshes.get("/World/Strip")!.st!.interpolation).toBe("vertex");
+        expect(meshes.get("/World/Floor")!.scheme).toBe("none");
+        expect(usdRenderSettings(text)!.refinementLevel).toBe(1);
     });
 });

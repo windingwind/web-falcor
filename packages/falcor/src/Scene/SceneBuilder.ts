@@ -1067,7 +1067,8 @@ export class SceneBuilderBridge {
                     const curvePrims = cmd.path.toLowerCase().endsWith(".usda")
                         ? extractBasisCurvesFromUsda(new TextDecoder().decode(bytes))
                         : [];
-                    const parsed = await UsdImporter.parseToDescs(bytes, textureManager, dir, new Set(curvePrims.map((c) => c.name)), this.importOptions);
+                    const settings = (await import("../Utils/Scripting/Scripting.js")).getGlobalSettings();
+                    const parsed = await UsdImporter.parseToDescs(bytes, textureManager, dir, new Set(curvePrims.map((c) => c.name)), { ...this.importOptions, settings });
                     materials.push(...parsed.materials);
                     importedMaterialNames.push(...parsed.materialNames);
                     for (const m of parsed.meshes) meshes.push({ ...m, materialID: m.materialID + materialOffset });
