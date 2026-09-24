@@ -489,23 +489,40 @@ export class UsdImporter {
         // Stage bounds in USD space (UsdGeomBBoxCache's world bound, without the root transform).
         const lo = [Infinity, Infinity, Infinity];
         const hi = [-Infinity, -Infinity, -Infinity];
-        const walk = (node: UsdNode, parentWorld: float4x4, parentUsd: float4x4, instanced = false): void => {
+        // Animated point instances: prototype subtrees become node chains below each instance's node.
+        const walk = (node: UsdNode, parentWorld: float4x4, parentUsd: float4x4, instanced = false, parentNode?: number): void => {
             const instancer = node.absPath ? instancers.get(node.absPath) : undefined;
             if (instancer) {
-                for (const { proto, transform } of instancer.instances) {
+                const anim = instancer.animation;
+                const baseNode = anim ? nodes.push({ parent: -1, ...decomposeTRS(mulMat(rootXform, instancer.usdWorld)) }) - 1 : undefined;
+                instancer.instances.forEach(({ proto, transform }, i) => {
                     const protoPath = instancer.prototypes[proto];
                     const protoNode = protoPath ? nodesByPath.get(protoPath) : undefined;
                     if (!protoNode) {
                         Logger.error(`Point instancer '${instancer.path}' references nonexistent prim '${protoPath}'. Ignoring.`);
-                        continue;
+                        return;
+                    }
+                    let instanceNode: number | undefined;
+                    if (anim) {
+                        // One animation per instance on its root node (createPointInstanceKeyframes).
+                        instanceNode = nodes.push({ parent: baseNode!, ...decomposeTRS(transform) }) - 1;
+                        const clip = new Set(animations.map((c) => c.clip)).size;
+                        const times = Float32Array.from(anim.times.map((t) => t / tcps));
+                        const trs = anim.transforms.map((frame) => decomposeTRS(frame[i]!));
+                        const channel = (path: AnimationChannel["path"], values: number[]) => animations.push({ nodeID: instanceNode!, path, times, values: Float32Array.from(values), interp: "LINEAR", clip });
+                        channel("translation", trs.flatMap((k) => [k.t.x, k.t.y, k.t.z]));
+                        channel("rotation", trs.flatMap((k) => [k.r.x, k.r.y, k.r.z, k.r.w]));
+                        channel("scale", trs.flatMap((k) => [k.s.x, k.s.y, k.s.z]));
                     }
                     const usdWorld = mulMat(instancer.usdWorld, transform);
-                    walk(protoNode, mulMat(rootXform, usdWorld), usdWorld, true);
-                }
+                    walk(protoNode, mulMat(rootXform, usdWorld), usdWorld, true, instanceNode);
+                });
                 return;
             }
             let world = parentWorld;
             let usdWorld = parentUsd;
+            const ownNode = parentNode !== undefined ? nodes.push({ parent: parentNode, ...decomposeTRS(node.localMatrix?.length === 16 ? usdToWebMatrix(node.localMatrix) : float4x4.identity()) }) - 1 : undefined;
+            const meshNodeID = () => ownNode ?? (!instanced && isAnimated(node.absPath) ? nodeFor(node.absPath!) : undefined);
             if (node.localMatrix && node.localMatrix.length === 16) {
                 world = mulMat(parentWorld, usdToWebMatrix(node.localMatrix));
                 usdWorld = mulMat(parentUsd, usdToWebMatrix(node.localMatrix));
@@ -539,7 +556,7 @@ export class UsdImporter {
                     const indices = Uint32Array.from(vertices.keys());
                     generateTangents(vertices, indices);
                     meshes.push({ vertices, indices, materialID, transform: world.clone(), skin: usdSkin(usdaMesh, skel, corners.pointIndices!, world, node.absPath!) });
-                    for (const child of node.children ?? []) walk(child, world, usdWorld, instanced);
+                    for (const child of node.children ?? []) walk(child, world, usdWorld, instanced, ownNode);
                     return;
                 }
                 const motion = samples && samples.length > 1 && options.settings?.getAttribute(node.absPath!, "usdImporter:enableMotion", 1) !== false && options.settings?.getAttribute(node.absPath!, "usdImporter:enableMotion", 1) !== 0;
@@ -560,10 +577,10 @@ export class UsdImporter {
                         indices: Uint32Array.from(frames[0]!.keys()),
                         materialID,
                         transform: world.clone(),
-                        nodeID: !instanced && isAnimated(node.absPath) ? nodeFor(node.absPath!) : undefined,
+                        nodeID: meshNodeID(),
                         vertexCache: { times: samples.map((s) => s.time / tcps), frames },
                     });
-                    for (const child of node.children ?? []) walk(child, world, usdWorld, instanced);
+                    for (const child of node.children ?? []) walk(child, world, usdWorld, instanced, ownNode);
                     return;
                 }
                 const refined = level && osd ? tessellateUsdMesh(osd, node.absPath!, usdaMeshes.get(node.absPath!)!, level) : null;
@@ -571,8 +588,8 @@ export class UsdImporter {
                     const materialID = getOrAddMaterial(mesh.materialId, bindings.get(node.absPath!), node.absPath);
                     const { vertices, indices } = refinedVertices(refined, texCoordTransforms[materialID]!);
                     generateTangents(vertices, indices);
-                    meshes.push({ vertices, indices, materialID, transform: world.clone(), nodeID: !instanced && isAnimated(node.absPath) ? nodeFor(node.absPath!) : undefined });
-                    for (const child of node.children ?? []) walk(child, world, usdWorld, instanced);
+                    meshes.push({ vertices, indices, materialID, transform: world.clone(), nodeID: meshNodeID() });
+                    for (const child of node.children ?? []) walk(child, world, usdWorld, instanced, ownNode);
                     return;
                 }
                 let positions: Float32Array = mesh.points;
@@ -598,11 +615,11 @@ export class UsdImporter {
                     };
                 }
                 generateTangents(vertices, indices);
-                meshes.push({ vertices, indices, materialID, transform: world.clone(), nodeID: !instanced && isAnimated(node.absPath) ? nodeFor(node.absPath!) : undefined });
+                meshes.push({ vertices, indices, materialID, transform: world.clone(), nodeID: meshNodeID() });
             } else if (node.nodeType !== "xform" && node.nodeType !== "" && !/camera|light/i.test(node.nodeType)) {
                 Logger.warning(`UsdImporter: prim type '${node.nodeType}' ('${node.primName}') not supported (skipped)`);
             }
-            for (const child of node.children ?? []) walk(child, world, usdWorld, instanced);
+            for (const child of node.children ?? []) walk(child, world, usdWorld, instanced, ownNode);
         };
 
         // Native's stage root transform: meters per unit, Z-up rotated to Y-up.

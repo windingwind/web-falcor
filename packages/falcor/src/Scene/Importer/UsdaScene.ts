@@ -411,6 +411,8 @@ export interface UsdaPointInstancer {
     prototypes: string[];
     /** translate * orient * scale (ComputeInstanceTransformsAtTime, ExcludeProtoXform). */
     instances: { proto: number; transform: float4x4 }[];
+    /** Time-sampled positions (2+ samples): per-instance transforms at those time codes (createPointInstanceKeyframes). */
+    animation?: { times: number[]; transforms: float4x4[][] };
 }
 
 /** The PointInstancers of a USD layer's text (velocities and time samples are not applied). */
@@ -429,7 +431,39 @@ export function extractUsdPointInstancers(text: string): UsdaPointInstancer[] {
                 const positions = attrVector(b, ["positions"], []);
                 const orientations = attrVector(b, ["orientations"], []);
                 const scales = attrVector(b, ["scales"], []);
-                if (positions.length !== indices.length * 3) {
+                const instanceMatrix = (pos: number[], ori: number[], sc: number[], i: number) => {
+                    let m = matrixFromTranslation(new float3(pos[i * 3]!, pos[i * 3 + 1]!, pos[i * 3 + 2]!));
+                    if (ori.length >= (i + 1) * 4) {
+                        // Authored (real, i, j, k); GfRotation normalizes.
+                        const [w, x, y, z] = ori.slice(i * 4, i * 4 + 4) as [number, number, number, number];
+                        const len = Math.hypot(w, x, y, z) || 1;
+                        m = mulMat(m, matrixFromQuat(new quatf(x / len, y / len, z / len, w / len)));
+                    }
+                    if (sc.length >= (i + 1) * 3) m = mulMat(m, matrixFromScaling(new float3(sc[i * 3]!, sc[i * 3 + 1]!, sc[i * 3 + 2]!)));
+                    return m;
+                };
+                const posSamples = attrTimeSamples(b, "positions");
+                if (posSamples && posSamples.length >= 2) {
+                    const [oriSamples, scSamples] = [attrTimeSamples(b, "orientations"), attrTimeSamples(b, "scales")];
+                    const oriAt = (t: number): number[] => {
+                        if (!oriSamples?.length) return orientations;
+                        const k = oriSamples.findIndex((x) => x.time >= t);
+                        if (k <= 0) return oriSamples[k < 0 ? oriSamples.length - 1 : 0]!.value;
+                        const [a, c] = [oriSamples[k - 1]!, oriSamples[k]!];
+                        const u = (t - a.time) / (c.time - a.time);
+                        return a.value.flatMap((_, i) => {
+                            if (i % 4) return [];
+                            const q = slerp(new quatf(a.value[i + 1]!, a.value[i + 2]!, a.value[i + 3]!, a.value[i]!), new quatf(c.value[i + 1]!, c.value[i + 2]!, c.value[i + 3]!, c.value[i]!), u);
+                            return [q.w, q.x, q.y, q.z];
+                        });
+                    };
+                    const animation = {
+                        times: posSamples.map((x) => x.time),
+                        transforms: posSamples.map((x) => indices.map((_, i) => instanceMatrix(x.value, oriAt(x.time), scSamples?.length ? sampleAt(scSamples, x.time) : scales, i))),
+                    };
+                    const first = animation.transforms[0]!;
+                    out.push({ path: p.path, usdWorld: p.usdWorld, prototypes, instances: indices.map((proto, i) => ({ proto, transform: first[i]! })), animation });
+                } else if (positions.length !== indices.length * 3) {
                     Logger.error(`Point instancer '${p.path}' has ${indices.length} prototype indices but ${positions.length / 3} transforms.`);
                 } else {
                     const instances = indices.map((proto, i) => {

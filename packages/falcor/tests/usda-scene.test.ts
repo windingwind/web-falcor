@@ -239,4 +239,15 @@ def SphereLight "S"
         expect(re.anim!.rotation[1]![0]!.z).toBeCloseTo(Math.SQRT1_2, 6);
         close(transformPoint(re.rest[1]!, new float3(0, 0, 0)), [0, 1, 0]);
     });
+
+    it("reads time-sampled PointInstancer positions and orientations", () => {
+        const text = readFileSync(new URL("../../../tests/oracle/assets/usd-instancer-anim.usda", import.meta.url), "utf8");
+        const [inst] = extractUsdPointInstancers(text);
+        expect(inst!.animation!.times).toEqual([0, 24, 48]);
+        // Instance 1 at 24: position (-1.5, -0.3, 0.5), orientation halfway (slerp) from 45 degrees about Z to identity.
+        const m = inst!.animation!.transforms[1]![1]!;
+        close(transformPoint(m, new float3(0, 0, 0)), [-1.5, -0.3, 0.5]);
+        const s = 0.5 * Math.cos(Math.PI / 8);
+        close(transformPoint(m, new float3(1, 0, 0)), [-1.5 + s, -0.3 + 0.5 * Math.sin(Math.PI / 8), 0.5]);
+    });
 });
