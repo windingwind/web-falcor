@@ -2,7 +2,8 @@
 /**
  * Builds packages/falcor/wasm/assimp.{mjs,wasm}: Assimp 5.2.5 (the version Falcor's
  * AssimpImporter links) compiled with Emscripten, wrapped by scripts/assimp/import.cpp so
- * callers pass native's post-process flags and get the scene as assjson. The heap may
+ * callers pass native's post-process flags and get the scene as assjson, with the mesh arrays
+ * as a binary blob. The heap may
  * grow to 4 GB (BistroExterior needs more than 2). The outputs are committed; rerun this
  * only to rebuild them. Needs git, curl, tar, cmake and Python >= 3.10 (EMSDK_PYTHON).
  *
@@ -49,7 +50,7 @@ run(`${env} emcmake cmake ${src} ${cmakeOptions.join(" ")}`, build);
 run(`${env} emmake make -j8 assimp`, build);
 mkdirSync(join(build, "out"), { recursive: true });
 
-const exported = ["clear_files", "add_file", "import", "result", "result_size", "error", "free_result"].map((f) => `_ai_${f}`);
+const exported = ["clear_files", "add_file", "import", "result", "result_size", "mesh_blob", "mesh_blob_size", "error", "free_result"].map((f) => `_ai_${f}`);
 run(
     [
         env,

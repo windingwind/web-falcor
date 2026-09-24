@@ -257,24 +257,66 @@ export function buildBvh(triangles: BvhTriangle[]): BvhBuildResult {
         nodesU32[at * 8 + 7] = count;
     };
 
-    /** Stable merge sort of index[lo, hi) by centroid on `axis` (ties keep order). */
+    // Sort keys: each float64 centroid as two uint32 words ordered like the number (sign-flipped
+    // IEEE bits), so a stable radix sort gives the same permutation as a stable comparison sort.
+    const keyLo = new Uint32Array(n * 3);
+    const keyHi = new Uint32Array(n * 3);
+    {
+        const bits = new Uint32Array(cent.buffer);
+        for (let i = 0; i < n * 3; i++) {
+            const lo = bits[i * 2]!;
+            const hi = bits[i * 2 + 1]!;
+            const negative = hi >>> 31 !== 0;
+            keyLo[i] = negative ? ~lo >>> 0 : lo;
+            keyHi[i] = negative ? ~hi >>> 0 : (hi | 0x80000000) >>> 0;
+        }
+    }
+    const counts = new Uint32Array(1 << 11);
+
+    /** Stable sort of index[lo, hi) by centroid on `axis` (ties keep order): LSD radix, 11-bit digits. */
     const sortRange = (lo: number, hi: number, axis: number) => {
         const count = hi - lo;
         if (count < 2) return;
-        const mid = lo + (count >> 1);
-        sortRange(lo, mid, axis);
-        sortRange(mid, hi, axis);
-        let i = lo;
-        let j = mid;
-        let k = lo;
-        while (i < mid && j < hi) {
-            const a = index[i]!;
-            const b = index[j]!;
-            scratch[k++] = cent[a * 3 + axis]! <= cent[b * 3 + axis]! ? ((i++, a)) : ((j++, b));
+        if (count <= 32) {
+            // Stable insertion sort.
+            for (let i = lo + 1; i < hi; i++) {
+                const v = index[i]!;
+                const vh = keyHi[v * 3 + axis]!;
+                const vl = keyLo[v * 3 + axis]!;
+                let j = i - 1;
+                while (j >= lo) {
+                    const u = index[j]!;
+                    const uh = keyHi[u * 3 + axis]!;
+                    if (uh < vh || (uh === vh && keyLo[u * 3 + axis]! <= vl)) break;
+                    index[j + 1] = u;
+                    j--;
+                }
+                index[j + 1] = v;
+            }
+            return;
         }
-        while (i < mid) scratch[k++] = index[i++]!;
-        while (j < hi) scratch[k++] = index[j++]!;
-        index.set(scratch.subarray(lo, hi), lo);
+        let src = index.subarray(lo, hi);
+        let dst = scratch.subarray(lo, hi);
+        for (let pass = 0; pass < 6; pass++) {
+            const words = pass < 3 ? keyLo : keyHi;
+            const shift = (pass % 3) * 11;
+            counts.fill(0);
+            for (let i = 0; i < count; i++) counts[(words[src[i]! * 3 + axis]! >>> shift) & 0x7ff]!++;
+            // A digit shared by every key leaves the order unchanged.
+            if (counts[(words[src[0]! * 3 + axis]! >>> shift) & 0x7ff] === count) continue;
+            let sum = 0;
+            for (let d = 0; d < counts.length; d++) {
+                const c = counts[d]!;
+                counts[d] = sum;
+                sum += c;
+            }
+            for (let i = 0; i < count; i++) {
+                const v = src[i]!;
+                dst[counts[(words[v * 3 + axis]! >>> shift) & 0x7ff]!++] = v;
+            }
+            [src, dst] = [dst, src];
+        }
+        if (src.buffer === scratch.buffer) index.set(src, lo);
     };
 
     const kLeafSize = 4;

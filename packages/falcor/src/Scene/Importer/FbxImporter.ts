@@ -59,11 +59,14 @@ interface AiBone {
 interface AiMesh {
     name: string;
     materialindex: number;
-    vertices: number[];
-    normals?: number[];
-    texturecoords?: number[][];
-    faces: number[][];
     bones?: AiBone[];
+    // From the binary mesh blob (import.cpp packMeshes), not the assjson text.
+    vertices: Float32Array;
+    normals?: Float32Array;
+    texturecoords?: Float32Array[];
+    numuvcomponents?: number[];
+    /** Indices of the mesh's 3-index faces. */
+    triangles: Uint32Array;
 }
 
 interface AiNode {
@@ -123,6 +126,8 @@ interface AssimpModule {
     _ai_import(mainFile: number, flags: number, removeComponents: number): number;
     _ai_result(): number;
     _ai_result_size(): number;
+    _ai_mesh_blob(): number;
+    _ai_mesh_blob_size(): number;
     _ai_error(): number;
     _ai_free_result(): void;
     UTF8ToString(ptr: number): string;
@@ -171,8 +176,33 @@ async function assimpImport(files: { name: string; bytes: Uint8Array }[], flags:
     ai._ai_clear_files();
     if (!ok) throw new RuntimeError(`${what}: assimp failed (${ai.UTF8ToString(ai._ai_error())})`);
     const json = new TextDecoder().decode(ai.HEAPU8.subarray(ai._ai_result(), ai._ai_result() + ai._ai_result_size()));
+    // Copy the mesh blob out of the wasm heap before freeing it.
+    const blob = new Uint32Array(ai.HEAPU8.buffer.slice(ai._ai_mesh_blob(), ai._ai_mesh_blob() + ai._ai_mesh_blob_size() * 4));
     ai._ai_free_result();
-    return JSON.parse(json) as AiScene;
+    const scene = JSON.parse(json) as AiScene;
+    attachMeshArrays(scene, blob);
+    return scene;
+}
+
+/** Attaches the binary mesh arrays (layout: import.cpp packMeshes) as views into `blob`. */
+function attachMeshArrays(scene: AiScene, blob: Uint32Array): void {
+    const floats = new Float32Array(blob.buffer, blob.byteOffset, blob.length);
+    let at = 0;
+    const meshCount = blob[at++]!;
+    for (let m = 0; m < meshCount; m++) {
+        const n = blob[at++]!;
+        const hasNormals = blob[at++]! !== 0;
+        const channels = blob[at++]!;
+        const comps = Array.from(blob.subarray(at, at + channels));
+        at += channels;
+        const triIndices = blob[at++]!;
+        const mesh = scene.meshes[m]!;
+        mesh.vertices = floats.subarray(at, (at += n * 3));
+        mesh.normals = hasNormals ? floats.subarray(at, (at += n * 3)) : undefined;
+        mesh.texturecoords = comps.map((c) => floats.subarray(at, (at += n * c)));
+        mesh.numuvcomponents = comps;
+        mesh.triangles = blob.subarray(at, (at += triIndices));
+    }
 }
 
 function decodeProp(p: AiProperty): unknown {
@@ -301,11 +331,46 @@ export class FbxImporter {
         // Textures (loaded per unique path; slot decides sRGB like loadMaterialTexture).
         const textureIDs = new Map<string, number>();
         const skippedFormats = new Set<string>();
-        const loadTexture = async (path: string, slotSrgb: boolean): Promise<number | undefined> => {
+        type DecodedTexture = Parameters<TextureManager["addTexture"]>[0];
+        // Fetch + decode run concurrently (a few at a time); registration below stays in load order,
+        // so texture IDs match a sequential load.
+        const decodes = new Map<string, Promise<DecodedTexture | undefined>>();
+        let inFlight = 0;
+        const waiting: (() => void)[] = [];
+        const limited = async <T>(job: () => Promise<T>): Promise<T> => {
+            if (inFlight >= 8) await new Promise<void>((resolve) => waiting.push(resolve));
+            inFlight++;
+            try {
+                return await job();
+            } finally {
+                inFlight--;
+                waiting.shift()?.();
+            }
+        };
+        const textureKey = (path: string, slotSrgb: boolean) => {
             const srgb = slotSrgb && !options.assumeLinearSpaceTextures;
             const norm = path.replace(/\\/g, "/");
-            const key = `${norm}|${srgb}`;
+            return { norm, srgb, key: `${norm}|${srgb}` };
+        };
+        const decodeTexture = (path: string, slotSrgb: boolean): Promise<DecodedTexture | undefined> => {
+            const { norm, srgb, key } = textureKey(path, slotSrgb);
+            let pending = decodes.get(key);
+            if (!pending) {
+                pending = limited(() => fetchAndDecode(norm, srgb));
+                decodes.set(key, pending);
+            }
+            return pending;
+        };
+        const loadTexture = async (path: string, slotSrgb: boolean): Promise<number | undefined> => {
+            const { key } = textureKey(path, slotSrgb);
             if (textureIDs.has(key)) return textureIDs.get(key);
+            const decoded = await decodeTexture(path, slotSrgb);
+            if (!decoded) return undefined;
+            const id = textureManager.addTexture(decoded);
+            textureIDs.set(key, id);
+            return id;
+        };
+        const fetchAndDecode = async (norm: string, srgb: boolean): Promise<DecodedTexture | undefined> => {
             const url = baseUrl ? `${baseUrl}/${norm}` : norm;
             const res = await fetch(url);
             if (!res.ok) return undefined;
@@ -344,10 +409,16 @@ export class FbxImporter {
                 skippedFormats.add(ext);
                 return undefined;
             }
-            const id = textureManager.addTexture({ bitmap, srgb, compressed, bytes: ddsBytes, dds: ddsBytes !== undefined });
-            textureIDs.set(key, id);
-            return id;
+            return { bitmap, srgb, compressed, bytes: ddsBytes, dds: ddsBytes !== undefined };
         };
+
+        // Start every material texture's fetch + decode up front.
+        for (const mat of json.materials) {
+            for (const { aiType, slot } of kTextureMappings[importMode]) {
+                const file = textureFile(mat, aiType);
+                if (file) void decodeTexture(file, getTextureSlotSrgb(MaterialType.Standard, shadingModel, slot) ?? false);
+            }
+        }
 
         // Materials (createMaterial).
         const materials: SceneMaterialDesc[] = [];
@@ -421,6 +492,7 @@ export class FbxImporter {
                 const mesh = json.meshes[mi]!;
                 const count = mesh.vertices.length / 3;
                 const uvs = mesh.texturecoords?.[0];
+                const uvStride = mesh.numuvcomponents?.[0] ?? 2;
                 const vertices: StaticVertex[] = [];
                 for (let i = 0; i < count; i++) {
                     vertices.push({
@@ -430,14 +502,10 @@ export class FbxImporter {
                             : new float3(0, 0, 1),
                         tangent: new float4(0, 0, 0, 0),
                         // aiProcess_FlipUVs already flipped V.
-                        texCrd: uvs ? new float2(uvs[i * 2]!, uvs[i * 2 + 1]!) : new float2(0, 0),
+                        texCrd: uvs ? new float2(uvs[i * uvStride]!, uvs[i * uvStride + 1]!) : new float2(0, 0),
                     });
                 }
-                const indices: number[] = [];
-                for (const face of mesh.faces) {
-                    if (face.length === 3) indices.push(face[0]!, face[1]!, face[2]!);
-                }
-                const idx = new Uint32Array(indices);
+                const idx = new Uint32Array(mesh.triangles);
                 generateTangents(vertices, idx);
                 cached = { vertices, indices: idx };
                 meshVertices.set(mi, cached);
@@ -643,6 +711,7 @@ export class FbxImporter {
             const base = vertices.length;
             const count = mesh.vertices.length / 3;
             const uvs = mesh.texturecoords?.[0];
+            const uvStride = mesh.numuvcomponents?.[0] ?? 2;
             const world = meshWorld.get(mi) ?? float4x4.identity();
             for (let i = 0; i < count; i++) {
                 const p = transformPoint(world, new float3(mesh.vertices[i * 3]!, mesh.vertices[i * 3 + 1]!, mesh.vertices[i * 3 + 2]!));
@@ -654,10 +723,10 @@ export class FbxImporter {
                     normal: n,
                     tangent: new float4(0, 0, 0, 0),
                     // aiProcess_FlipUVs already flipped V.
-                    texCrd: uvs ? new float2(uvs[i * 2]!, uvs[i * 2 + 1]!) : new float2(0, 0),
+                    texCrd: uvs ? new float2(uvs[i * uvStride]!, uvs[i * uvStride + 1]!) : new float2(0, 0),
                 });
             }
-            for (const face of mesh.faces) if (face.length === 3) indices.push(base + face[0]!, base + face[1]!, base + face[2]!);
+            for (const i of mesh.triangles) indices.push(base + i);
         });
         if (vertices.length === 0) throw new RuntimeError(`TriangleMesh.createFromFile('${filename}'): no geometry`);
 

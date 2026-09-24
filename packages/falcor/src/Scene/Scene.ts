@@ -489,13 +489,18 @@ export class Scene {
         this.sdfGrids = sdfGrids;
         // Vertices normalize to f32 up front (native holds f32 StaticVertexData):
         // vertex packing, the BVH build, and the scene cache then agree bit-exactly.
+        // In place, once per shared vertex array (instances share theirs); fround is idempotent.
         const fr = Math.fround;
+        const rounded = new Set<StaticVertex[]>();
         for (const mesh of meshes) {
+            if (rounded.has(mesh.vertices)) continue;
+            rounded.add(mesh.vertices);
             for (const v of mesh.vertices) {
-                v.position = new float3(fr(v.position.x), fr(v.position.y), fr(v.position.z));
-                v.normal = new float3(fr(v.normal.x), fr(v.normal.y), fr(v.normal.z));
-                v.tangent = new float4(fr(v.tangent.x), fr(v.tangent.y), fr(v.tangent.z), fr(v.tangent.w));
-                v.texCrd = new float2(fr(v.texCrd.x), fr(v.texCrd.y));
+                const { position: p, normal: n, tangent: t, texCrd: uv } = v;
+                p.x = fr(p.x); p.y = fr(p.y); p.z = fr(p.z);
+                n.x = fr(n.x); n.y = fr(n.y); n.z = fr(n.z);
+                t.x = fr(t.x); t.y = fr(t.y); t.z = fr(t.z); t.w = fr(t.w);
+                uv.x = fr(uv.x); uv.y = fr(uv.y);
                 if (v.curveRadius !== undefined) v.curveRadius = fr(v.curveRadius);
             }
         }
@@ -656,6 +661,7 @@ export class Scene {
             }
         });
         const bvh = buildBvh(bvhTris);
+
         // Whole-scene AABB = BVH root node bounds (nodes[0] = [min.xyz, _][max.xyz, _]).
         if (bvhTris.length > 0) {
             this.worldBounds = {
@@ -862,6 +868,7 @@ export class Scene {
         this.textureBuckets = packed.buckets.map((b) => b.texture);
         // Mip chains for texture-LOD (uploads are queue-ordered before the blits); BC arrays carry theirs.
         for (const b of packed.buckets) if (b.generateMips) b.texture.generateMips(this.device.renderContext);
+
         this.textureCount = Math.max(textureManager.count, 1);
         // 1-row texture (16-storage-buffer budget: frees a slot in every scene-bound kernel).
         this.texInfoTexture = new Texture(this.device, {

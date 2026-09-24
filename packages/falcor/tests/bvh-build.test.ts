@@ -116,7 +116,7 @@ const bytes = (a: Float32Array) => new Uint8Array(a.buffer, a.byteOffset, a.byte
 
 describe("buildBvh", () => {
     it("matches the reference build byte for byte", () => {
-        for (const count of [1, 4, 5, 17, 64, 1000]) {
+        for (const count of [1, 4, 5, 17, 64, 1000, 20000]) {
             const triangles = makeTriangles(count, 1234 + count);
             const fast = buildBvh(triangles);
             const reference = buildBvhReference(triangles);
@@ -129,11 +129,14 @@ describe("buildBvh", () => {
     it("keeps the same split when centroids tie", () => {
         // A coarse lattice makes many centroids equal, so an unstable partition
         // would send different triangles left and produce a different tree.
-        const triangles = makeTriangles(600, 77, 4);
-        const fast = buildBvh(triangles);
-        const reference = buildBvhReference(triangles);
-        expect(bytes(fast.nodes)).toEqual(bytes(reference.nodes));
-        expect(bytes(fast.tris)).toEqual(bytes(reference.tris));
+        // The radix sort must be stable too: ties keep their incoming order.
+        for (const [count, seed] of [[600, 77], [5000, 78]] as const) {
+            const triangles = makeTriangles(count, seed, 4);
+            const fast = buildBvh(triangles);
+            const reference = buildBvhReference(triangles);
+            expect(bytes(fast.nodes)).toEqual(bytes(reference.nodes));
+            expect(bytes(fast.tris)).toEqual(bytes(reference.tris));
+        }
     });
 
     it("emits the degenerate leaf for an empty scene", () => {
