@@ -881,6 +881,11 @@ export class SceneBuilderBridge {
         meshes.forEach((m, i) => {
             const mode = m.tangentSpace;
             if (!mode || mode === "keep" || (mode === "asset" && keepAsset)) return;
+            if (mode === "noTexCrds") {
+                Logger.warning("Can't generate tangent space. The mesh doesn't have positions/normals/texCrd/indices.");
+                meshes[i] = { ...m, vertices: m.vertices.map((v) => ({ ...v, tangent: new float4(0, 0, 0, 0) })) };
+                return;
+            }
             const list = done.get(m.vertices) ?? [];
             done.set(m.vertices, list);
             let entry = list.find((e) => e.indices === m.indices);

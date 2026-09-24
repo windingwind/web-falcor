@@ -10,7 +10,7 @@
  *   xvfb-run -a Falcor/build/linux-gcc/bin/Debug/Mogwai --script tests/oracle/render-native-anim-behaviors.py --headless
  */
 
-import { initScripting, runGraphScript, runSceneScript, type RenderGraph, type Scene, type Device } from "@web-falcor/falcor";
+import { float16ToFloat32, float32ToFloat16, initScripting, runGraphScript, runSceneScript, type RenderGraph, type Scene, type Device } from "@web-falcor/falcor";
 import "@web-falcor/render-passes";
 import parseExr from "parse-exr";
 import { gpuTest, expectEq } from "../harness/registry.js";
@@ -62,12 +62,53 @@ gpuTest("AnimBehaviors.preInfinityMatchesNative", async ({ device }) => {
             }
         }
         const mean = sum / (size * size);
-        console.error(`# anim-behaviors t=${time}: mean=${mean.toExponential(2)} bad@1e-2=${bad} webHits=${webHits} natHits=${natHits}`);
+        const silhouette = await depthBad(device, graph, `/tests/oracle/out-native/oracle-anim-behaviors.VBufferRT.depth.${frame}.exr`);
+        console.error(`# anim-behaviors t=${time}: mean=${mean.toExponential(2)} bad@1e-2=${bad} webHits=${webHits} natHits=${natHits} silhouette diff ${silhouette}`);
+        // The half-rounded depth tells poses apart (a frame's motion moves 300-400 pixels; the floor is ~140).
+        expectEq(silhouette <= 200, true, `silhouette pixels ${silhouette}`);
         // Both sides must show the behavior-displaced cubes (a Constant-only web
         // render parks all cubes at the first key -> thousands of bad pixels).
         expectEq(webHits > 1000, true, `cubes visible (webHits ${webHits})`);
         expectEq(Math.abs(webHits - natHits) < 300, true, `coverage matches (web ${webHits} vs native ${natHits})`);
         expectEq(bad <= 300, true, `depth bad pixels ${bad}`);
         expectEq(mean < 1e-3, true, `depth mean ${mean}`);
+    }
+});
+
+/**
+ * Pixels whose depth differs from a native capture. The captures store depth as half floats (steps
+ * of 2^-11 near 1), so the web depth is rounded to half first; any remaining difference is a moved
+ * silhouette (renders a frame apart differ in 300-400 pixels).
+ */
+async function depthBad(device: Device, graph: RenderGraph, oracle: string): Promise<number> {
+    const web = new Float32Array((await device.renderContext.readTextureSubresource(graph.getOutput("VBufferRT.depth")!)).buffer);
+    const comps = web.length / (size * size);
+    const { data, width, height } = parseExr(await (await fetch(oracle)).arrayBuffer(), 1015) as { data: Float32Array; width: number; height: number };
+    let bad = 0;
+    for (let y = 0; y < size; y++)
+        for (let x = 0; x < size; x++) if (Math.abs(float16ToFloat32(float32ToFloat16(web[(y * size + x) * comps]!)) - data[((height - 1 - y) * width + x) * 4]!) > 1e-4) bad++;
+    return bad;
+}
+
+// Scene.loopAnimations = False (test_AnimationBehavior's last section): past the keys' end each
+// clip follows its own post-infinity behavior instead of wrapping (tests/oracle/render-native-anim-loop.py).
+gpuTest("AnimBehaviors.loopAnimationsFalseMatchesNative", async ({ device }) => {
+    const { graph, scene } = await setup(device);
+    for (const [time, frame] of [
+        [12.5, 125],
+        [14, 140],
+    ] as const) {
+        const oracle = `/tests/oracle/out-native/oracle-anim-loop.VBufferRT.depth.${frame}.exr`;
+        scene.loopAnimations = true;
+        scene.animate(time);
+        graph.execute(device.renderContext);
+        const looped = await depthBad(device, graph, oracle);
+        scene.loopAnimations = false;
+        scene.animate(time);
+        graph.execute(device.renderContext);
+        const bad = await depthBad(device, graph, oracle);
+        console.error(`# anim-loop t=${time}: silhouette diff unlooped ${bad}, looped ${looped}`);
+        expectEq(looped > 300, true, `looping changes the poses (${looped} px differ)`);
+        expectEq(bad <= 200, true, `silhouette pixels ${bad}`);
     }
 });

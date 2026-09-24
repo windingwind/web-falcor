@@ -486,7 +486,7 @@ export class FbxImporter {
 
         // Node hierarchy -> mesh instances (aiMatrix4x4 is row-major).
         const meshDescs: SceneMeshDesc[] = [];
-        const meshVertices = new Map<number, { vertices: StaticVertex[]; indices: Uint32Array }>();
+        const meshVertices = new Map<number, { vertices: StaticVertex[]; indices: Uint32Array; hasTexCrds: boolean }>();
         const getMesh = (mi: number) => {
             let cached = meshVertices.get(mi);
             if (!cached) {
@@ -507,7 +507,7 @@ export class FbxImporter {
                     });
                 }
                 const idx = new Uint32Array(mesh.triangles);
-                cached = { vertices, indices: idx };
+                cached = { vertices, indices: idx, hasTexCrds: !!uvs };
                 meshVertices.set(mi, cached);
             }
             return cached;
@@ -530,8 +530,8 @@ export class FbxImporter {
                 nameToWorld.set(node.name, world);
             }
             for (const mi of node.meshes ?? []) {
-                const { vertices, indices } = getMesh(mi);
-                meshDescs.push({ vertices, indices, materialID: json.meshes[mi]!.materialindex, transform: world, nodeID, tangentSpace: "generate" });
+                const { vertices, indices, hasTexCrds } = getMesh(mi);
+                meshDescs.push({ vertices, indices, materialID: json.meshes[mi]!.materialindex, transform: world, nodeID, tangentSpace: hasTexCrds ? "generate" : "noTexCrds" });
                 skinnedDescs.push({ desc: meshDescs[meshDescs.length - 1]!, mi });
             }
             for (const child of node.children ?? []) visit(child, world, nodeID);

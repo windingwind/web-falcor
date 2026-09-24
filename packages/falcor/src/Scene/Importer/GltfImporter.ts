@@ -464,7 +464,7 @@ export class GltfImporter {
                         morph = { targets, nodeID: nodeIndex, baseWeights };
                     }
                     // SceneBuilder generates MikkTSpace tangents unless UseOriginalTangentSpace keeps the asset's.
-                    meshDescs.push({ vertices, indices, materialID: prim.material ?? 0, transform: world, nodeID: nodeIndex, skin, morph, tangentSpace: tangents ? "asset" : "generate" });
+                    meshDescs.push({ vertices, indices, materialID: prim.material ?? 0, transform: world, nodeID: nodeIndex, skin, morph, tangentSpace: tangents ? "asset" : uvs ? "generate" : "noTexCrds" });
                 }
             }
             for (const child of node.children ?? []) await visit(child, world);

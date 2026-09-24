@@ -125,6 +125,7 @@ export function buildScenePanel(container: HTMLElement, scene: Scene | null, hoo
     const ui = new Dom(container, hooks.notify);
 
     if (scene.isAnimated()) ui.checkbox("Animate Scene", hooks.getAnimate(), hooks.setAnimate);
+    if (scene.hasAnimation()) ui.checkbox("Loop Animations", scene.isLooped(), (v) => scene.setIsLooped(v));
     if (hooks.cameraControl) {
         const cc = hooks.cameraControl;
         ui.dropdown("Up Direction", cc.upNames, cc.upNames[cc.getUp()] ?? cc.upNames[2]!, (v) => cc.setUp(Math.max(0, cc.upNames.indexOf(v))));

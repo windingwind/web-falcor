@@ -617,7 +617,7 @@ export class UsdImporter {
                         texCrd: uvs && uvs.length === vertexCount * 2 ? new float2(...toTexCrd(uvs[i * 2]!, uvs[i * 2 + 1]!)) : new float2(0, 0),
                     };
                 }
-                meshes.push({ vertices, indices, materialID, transform: world.clone(), nodeID: meshNodeID(), tangentSpace: "generate" });
+                meshes.push({ vertices, indices, materialID, transform: world.clone(), nodeID: meshNodeID(), tangentSpace: uvs && uvs.length === vertexCount * 2 ? "generate" : "noTexCrds" });
             } else if (node.nodeType !== "xform" && node.nodeType !== "" && !/camera|light/i.test(node.nodeType)) {
                 Logger.warning(`UsdImporter: prim type '${node.nodeType}' ('${node.primName}') not supported (skipped)`);
             }

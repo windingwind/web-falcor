@@ -198,13 +198,14 @@ function sampleCurveCache(curve: SceneCurveDesc, time: number, preCycle: boolean
  * past the last sample, held or cycled before the first; positions and tangents lerp, normals and
  * tangent directions renormalize, texcoords stay the base mesh's.
  */
-export function sampleVertexCache(cache: { times: number[]; frames: StaticVertex[][] }, time: number, preCycle: boolean, base: StaticVertex[]): StaticVertex[] {
+export function sampleVertexCache(cache: { times: number[]; frames: StaticVertex[][] }, time: number, preCycle: boolean, base: StaticVertex[], loop = true): StaticVertex[] {
     const ts = cache.times;
     let [a, b, t] = [0, 0, 0];
     if (Number.isFinite(time)) {
         time = Math.max(time, 0);
         const last = ts[ts.length - 1]!;
-        if (time > last) time = time % last;
+        // Post-infinity: Cycle while looping, else Constant (AnimatedVertexCache::updateMeshInterpolation).
+        if (time > last) time = loop ? time % last : last;
         if (time <= ts[0]!) {
             if (preCycle) [a, b, t] = [ts.length - 1, 0, time / ts[0]!];
         } else {
@@ -1531,6 +1532,15 @@ export class Scene {
     }
 
     private animationEnabled = true;
+
+    /** Mirrors Scene::setIsLooped (python `scene.loopAnimations`): time wraps at the longest animation. */
+    loopAnimations = true;
+    setIsLooped(looped: boolean): void {
+        this.loopAnimations = looped;
+    }
+    isLooped(): boolean {
+        return this.loopAnimations;
+    }
     /** Mirrors Scene::setCameraSpeed (the camera controller's speed). */
     cameraSpeed = 1;
     /** Mirrors Scene::getMetadata (camera and render settings from the imported asset). */
@@ -1560,7 +1570,7 @@ export class Scene {
         // Mirrors AnimationController: loop raw time over the clip length.
         // Clips needn't start at t=0 (e.g. FBX): before the first key the
         // samplers clamp to it (native Constant pre-behavior).
-        const sampleTime = this.animData.duration > 0 ? timeSec % this.animData.duration : 0;
+        const sampleTime = this.animData.duration > 0 ? (this.loopAnimations ? timeSec % this.animData.duration : timeSec) : 0;
         const globals = evaluateGlobals(this.animData, sampleTime);
         // AnimationController: vertex caches take the looped time, or the raw time without node animations,
         // and cycle before their first sample when they are shorter than the node animations.
@@ -1572,7 +1582,7 @@ export class Scene {
             this.sceneCurves.reduce((d, c) => Math.max(d, c.vertexCache?.times.at(-1) ?? 0), 0),
             meshes.reduce((d, m) => Math.max(d, m.polytubeCache?.times.at(-1) ?? 0), 0),
         );
-        const curveTime = curveLength > 0 ? cacheTime % curveLength : cacheTime;
+        const curveTime = curveLength > 0 && this.loopAnimations ? cacheTime % curveLength : cacheTime;
 
         // Animatable camera/lights: rederive their pose from the node globals
         // (glTF cameras/lights aim down local -Z; up is local +Y).
@@ -1594,7 +1604,7 @@ export class Scene {
             const base = mesh.polytubeCache
                 ? posePolytube(mesh, curveTime, curveLength < this.animData.duration)
                 : mesh.vertexCache
-                ? sampleVertexCache(mesh.vertexCache, cacheTime, cachePreCycle, mesh.vertices)
+                ? sampleVertexCache(mesh.vertexCache, cacheTime, cachePreCycle, mesh.vertices, this.loopAnimations)
                 : mesh.morph
                   ? applyMorph(mesh.vertices, mesh.morph, sampleMorphWeights(mesh.morph, this.animData.weightTracks, sampleTime))
                   : mesh.vertices;

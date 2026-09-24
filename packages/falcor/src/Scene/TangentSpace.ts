@@ -13,9 +13,10 @@ import { Logger } from "../Utils/Logger.js";
 
 /**
  * How a mesh's tangents are produced: "generate" (none supplied), "asset" (supplied, but native
- * regenerates them unless Flags::UseOriginalTangentSpace), "keep" (Mesh::useOriginalTangentSpace).
+ * regenerates them unless Flags::UseOriginalTangentSpace), "keep" (Mesh::useOriginalTangentSpace),
+ * "noTexCrds" (no texture coordinates: native skips MikkTSpace and leaves the tangents zero).
  */
-export type TangentSpaceMode = "generate" | "asset" | "keep";
+export type TangentSpaceMode = "generate" | "asset" | "keep" | "noTexCrds";
 
 interface MikkExports {
     memory: WebAssembly.Memory;
