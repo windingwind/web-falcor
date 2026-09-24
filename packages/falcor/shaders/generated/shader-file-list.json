@@ -435,6 +435,7 @@
     "WebFalcor/Overrides/Tests/Core/BufferTests.cs.slang",
     "WebFalcor/Overrides/Tests/Core/ParamBlockDefinition.slang",
     "WebFalcor/Overrides/Tests/Core/RootBufferParamBlockTests.cs.slang",
+    "WebFalcor/Overrides/Tests/DiffRendering/Material/DiffMaterialTests.cs.slang",
     "WebFalcor/Overrides/Tests/Rendering/Materials/MicrofacetTests.cs.slang",
     "WebFalcor/Overrides/Tests/Sampling/PseudorandomTests.cs.slang",
     "WebFalcor/Overrides/Tests/Scene/Material/BSDFTests.cs.slang",

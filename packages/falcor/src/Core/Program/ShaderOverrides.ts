@@ -75,6 +75,8 @@ export const kShaderOverrides: Readonly<Record<string, string>> = {
     "Utils/Sampling/Pseudorandom/SplitMix64.slang": "WebFalcor/Overrides/Utils/Sampling/Pseudorandom/SplitMix64.slang",
     // FalcorTest kernels (transplanted GPU unit tests): no typed buffers / 64-bit ints in WGSL.
     "Tests/Utils/HashUtilsTests.cs.slang": "WebFalcor/Overrides/Tests/Utils/HashUtilsTests.cs.slang",
+    // The pinned autodiff Slang fails on ShadingData set up inside a [Differentiable] function.
+    "Tests/DiffRendering/Material/DiffMaterialTests.cs.slang": "WebFalcor/Overrides/Tests/DiffRendering/Material/DiffMaterialTests.cs.slang",
     "Tests/Sampling/PseudorandomTests.cs.slang": "WebFalcor/Overrides/Tests/Sampling/PseudorandomTests.cs.slang",
     "Tests/Slang/Atomics.cs.slang": "WebFalcor/Overrides/Tests/Slang/Atomics.cs.slang",
     "Tests/Slang/SlangTests.cs.slang": "WebFalcor/Overrides/Tests/Slang/SlangTests.cs.slang",

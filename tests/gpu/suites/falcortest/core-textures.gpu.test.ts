@@ -4,7 +4,7 @@
  * WebGPU has neither BGRX8 nor unorm-as-uint views.
  */
 
-import { Mt19937, ResourceBindFlags, ResourceFormat, createMippedTextureFromFiles, kMaxPossible } from "@web-falcor/falcor";
+import { Mt19937, ResourceBindFlags, ResourceFormat, TextureManager, createMippedTextureFromFiles, kMaxPossible } from "@web-falcor/falcor";
 import { gpuTest } from "../../harness/registry.js";
 import { GPUUnitTestContext } from "../../harness/unit-test-context.js";
 import { Expect, uniformFloat } from "../../harness/expect.js";
@@ -119,3 +119,19 @@ gpuTest("FalcorTest.BlitFloatNoFilter", async ({ device }) => testBlit(new GPUUn
 gpuTest("FalcorTest.BlitFloatFilter", async ({ device }) => testBlit(new GPUUnitTestContext(device), true, 32, 64, 2));
 gpuTest("FalcorTest.BlitUintNoFilter", async ({ device }) => testBlit(new GPUUnitTestContext(device), false, 33, 63, 1));
 gpuTest("FalcorTest.BlitUintFilter", async ({ device }) => testBlit(new GPUUnitTestContext(device), false, 32, 64, 2));
+
+// Utils/Image/TextureManagerTests: a `<MIP>` path loads the tiny_mip0..2 files as one 4x4 texture with 3 levels.
+gpuTest("FalcorTest.TextureManager_LoadMips", async ({ device }) => {
+    const tm = new TextureManager();
+    const id = await tm.loadTexture("/Falcor/data/tests/tiny_<MIP>.png", false, false);
+    const e = new Expect();
+    e.check(id !== undefined, () => "handle is valid");
+    const { buckets, texInfo } = tm.build(device);
+    const tex = buckets[texInfo[id! * 4 + 2]! >> 1]!.texture;
+    e.check(tex.width === 4 && tex.height === 4 && tex.depth === 1 && tex.mipCount === 3 && tex.arraySize === 1, () => `${tex.width}x${tex.height}x${tex.depth}, ${tex.mipCount} mips, ${tex.arraySize} slices`);
+    e.check(buckets[0]!.generateMips === false, () => "the file levels are kept, not regenerated");
+    // Each file is one flat color (as Texture2D_LoadMips reads them): red, green, blue.
+    const texels = await Promise.all([0, 1, 2].map(async (mip) => Array.from((await device.renderContext.readTextureSubresource(tex, mip)).subarray(0, 4)).join()));
+    e.check(texels.join("|") === "255,0,0,255|0,255,0,255|0,0,255,255", () => `mip texels ${texels.join(" | ")}`);
+    e.done("TextureManager_LoadMips");
+});

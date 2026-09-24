@@ -297,7 +297,7 @@ export class MaterialBridge {
     /** Fetches + decodes this material's deferred textures into the TextureManager (MaterialTextureLoader: sRGB for colour slots unless AssumeLinearSpaceTextures). */
     async resolveTextures(baseUrl: string, tm: TextureManager, resolver = AssetResolver.getDefaultResolver(), assumeLinearSpaceTextures = false, device?: Device): Promise<void> {
         for (const t of this._textures) {
-            // Native TextureManager loads a `<MIP>` set from its mip0 file (§9: mips are generated here).
+            // `<MIP>` sets are resolved per level by TextureManager.loadTexture below.
             const url = await resolveAssetUrl(t.path.replace("<MIP>", "mip0"), baseUrl, AssetCategory.Any, resolver);
             // MERLMix's index map never reaches the texture array: BRDF indices
             // must be point-sampled and the packed array shares a linear sampler,
@@ -311,6 +311,13 @@ export class MaterialBridge {
             const slotSrgb = getTextureSlotSrgb(this.materialType, this._shadingModel, t.slot);
             if (slotSrgb === undefined) {
                 Logger.warning(`MaterialTextureLoader::loadTexture() - Material '${this.name}' does not have texture slot '${t.slot}'. Ignoring call.`);
+                continue;
+            }
+            if (t.path.includes("<MIP>")) {
+                const srgb = slotSrgb && !assumeLinearSpaceTextures;
+                const decode = (bytes: Uint8Array, blob: Blob, u: string) => (u.toLowerCase().endsWith(".tga") ? decodeTgaToBitmap(bytes) : u.toLowerCase().endsWith(".dds") ? decodeDdsToBitmap(bytes, u, device) : createImageBitmap(blob, { colorSpaceConversion: "none" }));
+                const id = await tm.loadTexture(t.path, true, srgb, resolver, baseUrl, decode);
+                if (id !== undefined) this.assignTextureHandle(t.slot, packTextureHandle(TextureHandleMode.Texture, id));
                 continue;
             }
             try {

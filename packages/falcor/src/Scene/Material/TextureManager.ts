@@ -20,6 +20,12 @@ import { Texture } from "../../Core/API/Texture.js";
 import { ResourceBindFlags, ResourceType } from "../../Core/API/Types.js";
 import { ResourceFormat } from "../../Core/API/Formats.js";
 import { RuntimeError } from "../../Core/Error.js";
+import { AssetCategory, AssetResolver } from "../../Core/AssetResolver.js";
+import { Logger } from "../../Utils/Logger.js";
+
+/** Decodes one image file; the default handles what createImageBitmap reads. */
+export type ImageDecoder = (bytes: Uint8Array, blob: Blob, url: string) => Promise<ImageBitmap>;
+const decodeWithBrowser: ImageDecoder = (_bytes, blob) => createImageBitmap(blob, { colorSpaceConversion: "none" });
 
 export interface TextureSource {
     /** Decoded image (CPU consumers: alpha analysis, readback; the GPU fallback for compressed data). */
@@ -31,6 +37,8 @@ export interface TextureSource {
     compressed?: { format: ResourceFormat; width: number; height: number; levels: Uint8Array[] };
     /** The source file was a DDS (the SceneCache stores `bytes` as DDS, not PNG). */
     dds?: boolean;
+    /** Mip levels 1.. of a `<MIP>` file set (bitmap is mip 0), uploaded as is. */
+    mips?: ImageBitmap[];
 }
 
 /** TextureAnalyzer::Result subset: constancy per channel mask (R 1, G 2, B 4, A 8) and the value. */
@@ -59,6 +67,33 @@ export class TextureManager {
     addTexture(source: TextureSource): number {
         this.sources.push(source);
         return this.sources.length - 1;
+    }
+
+    /**
+     * Mirrors TextureManager::loadTexture: a `<MIP>` path loads mip0, mip1, ... until a file is
+     * missing, as one texture with those levels. Returns the texture ID, or undefined (with native's
+     * warning) when nothing is found. §9: single images always get generated mips (texture-LOD).
+     */
+    async loadTexture(path: string, _generateMipLevels: boolean, loadAsSRGB: boolean, resolver = AssetResolver.getDefaultResolver(), baseUrl = "", decode = decodeWithBrowser): Promise<number | undefined> {
+        const load = async (p: string): Promise<ImageBitmap | null> => {
+            const url = (await resolver.resolvePath(p, AssetCategory.Any)) || (baseUrl ? `${baseUrl}/${p}` : p);
+            const res = await fetch(url).catch(() => null);
+            if (!res?.ok) return null;
+            const blob = await res.blob();
+            return decode(new Uint8Array(await blob.arrayBuffer()), blob, url);
+        };
+        const levels: ImageBitmap[] = [];
+        if (path.includes("<MIP>")) {
+            for (let bitmap; (bitmap = await load(path.replace("<MIP>", `mip${levels.length}`))); ) levels.push(bitmap);
+        } else {
+            const bitmap = await load(path);
+            if (bitmap) levels.push(bitmap);
+        }
+        if (levels.length === 0) {
+            Logger.warning(`Can't find texture file '${path}'.`);
+            return undefined;
+        }
+        return this.addTexture({ bitmap: levels[0]!, srgb: loadAsSRGB, mips: levels.length > 1 ? levels.slice(1) : undefined });
     }
 
     get count(): number {
@@ -155,26 +190,28 @@ export class TextureManager {
      */
     build(device: Device): { buckets: TextureBucket[]; texInfo: Float32Array } {
         const maxLayers = device.gpuDevice.limits.maxTextureArrayLayers;
-        type Bucket = { key: string; compressed: boolean; format: ResourceFormat; width: number; height: number; mips: number; members: number[] };
+        // compressed: a DDS chain; mipSet: a `<MIP>` file set. Both keep their own levels at their exact size.
+        type Bucket = { key: string; compressed: boolean; mipSet: boolean; format: ResourceFormat; width: number; height: number; mips: number; members: number[] };
         const byKey = new Map<string, Bucket[]>();
         const place = (id: number, useCompressed: boolean) => {
             const src = this.sources[id]!;
             const c = useCompressed ? src.compressed : undefined;
+            const m = useCompressed && !c ? src.mips : undefined;
             const pow2 = (n: number) => 1 << Math.ceil(Math.log2(Math.max(1, n)));
-            const size = c ? [Math.ceil(c.width / 4) * 4, Math.ceil(c.height / 4) * 4] : [pow2(Math.max(src.bitmap.width, src.bitmap.height)), 0];
+            const size = c ? [Math.ceil(c.width / 4) * 4, Math.ceil(c.height / 4) * 4] : m ? [src.bitmap.width, src.bitmap.height] : [pow2(Math.max(src.bitmap.width, src.bitmap.height)), 0];
             const format = c ? c.format : src.srgb ? ResourceFormat.RGBA8UnormSrgb : ResourceFormat.RGBA8Unorm;
-            const mips = c ? c.levels.length : 0;
-            const key = `${format}|${size[0]}x${size[1]}|${mips}`;
+            const mips = c ? c.levels.length : m ? m.length + 1 : 0;
+            const key = `${format}|${size[0]}x${size[1]}|${mips}${m ? "|set" : ""}`;
             const list = byKey.get(key) ?? [];
             byKey.set(key, list);
             let b = list.at(-1);
             if (!b || b.members.length >= maxLayers) {
-                b = { key, compressed: !!c, format, width: size[0]!, height: size[1]!, mips, members: [] };
+                b = { key, compressed: !!c, mipSet: !!m, format, width: size[0]!, height: size[1]!, mips, members: [] };
                 list.push(b);
             }
             b.members.push(id);
         };
-        this.sources.forEach((s, id) => place(id, !!s.compressed));
+        this.sources.forEach((s, id) => place(id, !!s.compressed || !!s.mips));
         // Over the binding budget: move the smallest compressed buckets to the decoded images.
         const all = () => [...byKey.values()].flat();
         const remove = (b: Bucket) => {
@@ -183,14 +220,14 @@ export class TextureManager {
             if (list.length === 0) byKey.delete(b.key);
         };
         while (all().length > kMaxTextureBuckets) {
-            const smallest = all().filter((b) => b.compressed).sort((a, b) => a.members.length - b.members.length)[0];
+            const smallest = all().filter((b) => b.compressed || b.mipSet).sort((a, b) => a.members.length - b.members.length)[0];
             if (smallest) {
                 remove(smallest);
                 for (const id of smallest.members) place(id, false);
                 continue;
             }
             // Then fold the smallest RGBA size class into the next larger one of its format (tiled).
-            const rgba = all().sort((a, b) => a.width - b.width);
+            const rgba = all().filter((b) => !b.compressed && !b.mipSet).sort((a, b) => a.width - b.width);
             const from = rgba.find((b) => rgba.some((o) => o !== b && o.format === b.format && o.width > b.width && o.members.length + b.members.length <= maxLayers));
             if (!from) break;
             const into = rgba.find((o) => o !== from && o.format === from.format && o.width > from.width && o.members.length + from.members.length <= maxLayers)!;
@@ -204,8 +241,9 @@ export class TextureManager {
         texInfo.set([1, 1, 0, 0]);
         const out: TextureBucket[] = buckets.map((b, bucketIndex) => {
             // RGBA buckets: the size class's square layer; tiles repeat smaller textures.
-            const width = b.compressed ? b.width : b.width;
-            const height = b.compressed ? b.height : b.width;
+            const own = b.compressed || b.mipSet;
+            const width = b.width;
+            const height = own ? b.height : b.width;
             const texture = new Texture(device, {
                 type: ResourceType.Texture2D,
                 width,
@@ -213,8 +251,9 @@ export class TextureManager {
                 arraySize: b.members.length,
                 // Compressed: the file's own chain. RGBA: the full chain, generated post-upload
                 // (texture-LOD modes need real mips).
-                mipLevels: b.compressed ? b.mips : Math.floor(Math.log2(Math.max(width, height))) + 1,
+                mipLevels: own ? b.mips : Math.floor(Math.log2(Math.max(width, height))) + 1,
                 format: b.format,
+                // Image uploads (copyExternalImageToTexture) need RenderAttachment.
                 bindFlags: b.compressed ? ResourceBindFlags.ShaderResource : ResourceBindFlags.ShaderResource | ResourceBindFlags.RenderTarget,
                 name: `TextureManager::materialTextures${bucketIndex}`,
             });
@@ -224,6 +263,13 @@ export class TextureManager {
                     const c = src.compressed!;
                     c.levels.forEach((data, mip) => texture.setSubresourceBlob(mip, layer, data));
                     texInfo.set([c.width / width, c.height / height, bucketIndex * 2 + (c.width === width && c.height === height ? 1 : 0), layer], id * 4);
+                    return;
+                }
+                if (b.mipSet) {
+                    [src.bitmap, ...src.mips!].forEach((bitmap, mip) =>
+                        device.gpuDevice.queue.copyExternalImageToTexture({ source: bitmap }, { texture: texture.gpuTexture, mipLevel: mip, origin: { x: 0, y: 0, z: layer } }, { width: bitmap.width, height: bitmap.height, depthOrArrayLayers: 1 }),
+                    );
+                    texInfo.set([1, 1, bucketIndex * 2 + 1, layer], id * 4);
                     return;
                 }
                 const { width: tw, height: th } = src.bitmap;
@@ -237,7 +283,7 @@ export class TextureManager {
                 const exact = width % tw === 0 && height % th === 0;
                 texInfo.set([tw / width, th / height, bucketIndex * 2 + (exact ? 1 : 0), layer], id * 4);
             });
-            return { texture, generateMips: !b.compressed };
+            return { texture, generateMips: !own };
         });
         if (out.length === 0) {
             const texture = new Texture(device, { type: ResourceType.Texture2D, width: 1, height: 1, arraySize: 1, mipLevels: 1, format: ResourceFormat.RGBA8UnormSrgb, bindFlags: ResourceBindFlags.ShaderResource, name: "TextureManager::materialTextures0" });

@@ -8,6 +8,8 @@ import {
     extractEulerAngleXYZ,
     float4x4,
     inverse,
+    matrixFromColumns,
+    matrixFromDiagonal,
     matrixFromLookAt,
     matrixFromRotationAxisAngle,
     matrixFromRotationXYZ,
@@ -199,6 +201,16 @@ describe("MatrixTests", () => {
 
     it("Matrix_matrixFromScaling", () => {
         expectRows(matrixFromScaling(new float3(2, 3, 4)), [[2, 0, 0, 0], [0, 3, 0, 0], [0, 0, 4, 0], [0, 0, 0, 1]]);
+    });
+
+    // 4x4 only: the web port has no 2x4/4x2/3x3 matrix types.
+    it("Matrix_matrixFromColumns", () => {
+        const m = matrixFromColumns(new float4(1, 2, 3, 4), new float4(5, 6, 7, 8), new float4(9, 10, 11, 12), new float4(13, 14, 15, 16));
+        expect(Array.from(m.data)).toEqual([1, 5, 9, 13, 2, 6, 10, 14, 3, 7, 11, 15, 4, 8, 12, 16]);
+    });
+
+    it("Matrix_matrixFromDiagonal", () => {
+        expect(Array.from(matrixFromDiagonal(new float4(1, 2, 3, 4)).data)).toEqual([1, 0, 0, 0, 0, 2, 0, 0, 0, 0, 3, 0, 0, 0, 0, 4]);
     });
 
     // Right-handed only: the web matrixFromLookAt has no handedness parameter.

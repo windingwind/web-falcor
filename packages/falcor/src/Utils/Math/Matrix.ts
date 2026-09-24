@@ -227,6 +227,20 @@ export function matrixFromRotationXYZ(angleX: number, angleY: number, angleZ: nu
     return m;
 }
 
+/** Mirrors math::matrixFromColumns (4x4). */
+export function matrixFromColumns(c0: float4, c1: float4, c2: float4, c3: float4): float4x4 {
+    const m = new float4x4();
+    [c0, c1, c2, c3].forEach((c, col) => [c.x, c.y, c.z, c.w].forEach((v, row) => m.set(row, col, v)));
+    return m;
+}
+
+/** Mirrors math::matrixFromDiagonal (4x4). */
+export function matrixFromDiagonal(d: float4): float4x4 {
+    const m = new float4x4();
+    [d.x, d.y, d.z, d.w].forEach((v, i) => m.set(i, i, v));
+    return m;
+}
+
 /** Mirrors math::extractEulerAngleXYZ (radians), the inverse of matrixFromRotationXYZ. */
 export function extractEulerAngleXYZ(m: float4x4): float3 {
     const at = (r: number, c: number) => m.get(r, c);

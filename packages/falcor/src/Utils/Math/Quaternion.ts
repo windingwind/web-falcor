@@ -108,3 +108,96 @@ export function slerp(a: quatf, b: quatf, t: number): quatf {
     const wb = Math.sin(t * theta) / sinTheta;
     return new quatf(wa * a.x + wb * bx, wa * a.y + wb * by, wa * a.z + wb * bz, wa * a.w + wb * bw);
 }
+
+/** Mirrors dot(quat, quat). */
+export function dotQuat(a: quatf, b: quatf): number {
+    return a.x * b.x + a.y * b.y + a.z * b.z + a.w * b.w;
+}
+
+/** Mirrors cross(quat, quat): the Hamilton product, as native defines it. */
+export const crossQuat = mulQuat;
+
+export function lengthQuat(q: quatf): number {
+    return Math.sqrt(dotQuat(q, q));
+}
+
+export function conjugateQuat(q: quatf): quatf {
+    return new quatf(-q.x, -q.y, -q.z, q.w);
+}
+
+export function inverseQuat(q: quatf): quatf {
+    const d = dotQuat(q, q);
+    return new quatf(-q.x / d, -q.y / d, -q.z / d, q.w / d);
+}
+
+/** Mirrors lerp(quat, quat, t): componentwise, not normalized. */
+export function lerpQuat(a: quatf, b: quatf, t: number): quatf {
+    return new quatf(a.x + (b.x - a.x) * t, a.y + (b.y - a.y) * t, a.z + (b.z - a.z) * t, a.w + (b.w - a.w) * t);
+}
+
+/** Mirrors isfinite/isinf/isnan(quat): per component, x y z w. */
+export const isfiniteQuat = (q: quatf): boolean[] => [q.x, q.y, q.z, q.w].map(Number.isFinite);
+export const isinfQuat = (q: quatf): boolean[] => [q.x, q.y, q.z, q.w].map((v) => v === Infinity || v === -Infinity);
+export const isnanQuat = (q: quatf): boolean[] => [q.x, q.y, q.z, q.w].map(Number.isNaN);
+
+const kFloatEpsilon = 2 ** -23;
+
+/** Mirrors pitch(quat), in radians. */
+export function pitch(q: quatf): number {
+    const y = 2 * (q.y * q.z + q.w * q.x);
+    const x = q.w * q.w - q.x * q.x - q.y * q.y + q.z * q.z;
+    // Singularity: avoid atan2(0, 0).
+    if (Math.abs(x) < kFloatEpsilon && Math.abs(y) < kFloatEpsilon) return 2 * Math.atan2(q.x, q.w);
+    return Math.atan2(y, x);
+}
+
+/** Mirrors yaw(quat), in radians. */
+export function yaw(q: quatf): number {
+    return Math.asin(Math.min(Math.max(-2 * (q.x * q.z - q.w * q.y), -1), 1));
+}
+
+/** Mirrors roll(quat), in radians. */
+export function roll(q: quatf): number {
+    return Math.atan2(2 * (q.x * q.y + q.w * q.z), q.w * q.w + q.x * q.x - q.y * q.y - q.z * q.z);
+}
+
+/** Mirrors eulerAngles(quat): (pitch, yaw, roll) in radians. */
+export function eulerAngles(q: quatf): float3 {
+    return new float3(pitch(q), yaw(q), roll(q));
+}
+
+/** Mirrors math::quatFromEulerAngles (pitch, yaw, roll in radians). */
+export function quatFromEulerAngles(e: float3): quatf {
+    const [cx, cy, cz] = [Math.cos(e.x * 0.5), Math.cos(e.y * 0.5), Math.cos(e.z * 0.5)];
+    const [sx, sy, sz] = [Math.sin(e.x * 0.5), Math.sin(e.y * 0.5), Math.sin(e.z * 0.5)];
+    return new quatf(sx * cy * cz - cx * sy * sz, cx * sy * cz + sx * cy * sz, cx * cy * sz - sx * sy * cz, cx * cy * cz + sx * sy * sz);
+}
+
+/** Mirrors math::quatFromMatrix, from the rotation in the upper-left 3x3. */
+export function quatFromMatrix(m: float4x4): quatf {
+    const g = (r: number, c: number) => m.get(r, c);
+    const candidates = [g(0, 0) + g(1, 1) + g(2, 2), g(0, 0) - g(1, 1) - g(2, 2), g(1, 1) - g(0, 0) - g(2, 2), g(2, 2) - g(0, 0) - g(1, 1)];
+    let biggestIndex = 0;
+    for (let i = 1; i < 4; i++) if (candidates[i]! > candidates[biggestIndex]!) biggestIndex = i;
+    const biggestVal = Math.sqrt(candidates[biggestIndex]! + 1) * 0.5;
+    const mult = 0.25 / biggestVal;
+    switch (biggestIndex) {
+        case 0: return new quatf((g(2, 1) - g(1, 2)) * mult, (g(0, 2) - g(2, 0)) * mult, (g(1, 0) - g(0, 1)) * mult, biggestVal);
+        case 1: return new quatf(biggestVal, (g(1, 0) + g(0, 1)) * mult, (g(0, 2) + g(2, 0)) * mult, (g(2, 1) - g(1, 2)) * mult);
+        case 2: return new quatf((g(1, 0) + g(0, 1)) * mult, biggestVal, (g(2, 1) + g(1, 2)) * mult, (g(0, 2) - g(2, 0)) * mult);
+        default: return new quatf((g(0, 2) + g(2, 0)) * mult, (g(2, 1) + g(1, 2)) * mult, biggestVal, (g(1, 0) - g(0, 1)) * mult);
+    }
+}
+
+/** Mirrors math::quatFromLookAt (dir and up normalized); right-handed maps forward onto -Z. */
+export function quatFromLookAt(dir: float3, up: float3, rightHanded = true): quatf {
+    const cross = (a: float3, b: float3) => new float3(a.y * b.z - a.z * b.y, a.z * b.x - a.x * b.z, a.x * b.y - a.y * b.x);
+    const c2 = rightHanded ? new float3(-dir.x, -dir.y, -dir.z) : dir;
+    const r = cross(up, c2);
+    const l = Math.hypot(r.x, r.y, r.z);
+    const c0 = new float3(r.x / l, r.y / l, r.z / l);
+    const c1 = cross(c2, c0);
+    const m = float4x4.identity();
+    [c0, c1, c2].forEach((c, col) => { m.set(0, col, c.x); m.set(1, col, c.y); m.set(2, col, c.z); });
+    return quatFromMatrix(m);
+}

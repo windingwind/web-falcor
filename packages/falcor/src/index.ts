@@ -44,6 +44,7 @@ export * from "./Core/Program/ShaderOverrides.js";
 export * from "./Scene/SceneCache.js";
 export * from "./Utils/Settings.js";
 export * from "./Utils/PathResolving.js";
+export * from "./Utils/StringUtils.js";
 export * from "./Utils/Timing/Clock.js";
 export * from "./Utils/Timing/ProfilerUI.js";
 export * from "./Utils/Timing/TimeReport.js";
