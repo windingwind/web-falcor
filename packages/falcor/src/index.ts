@@ -130,3 +130,4 @@ export * from "./Scene/Material/RGLFile.js";
 export * from "./Scene/Lights/LightProfile.js";
 export * from "./Scene/Material/MaterialParamLayout.js";
 export * from "./DiffRendering/SceneGradients.js";
+export * from "./RenderPasses/Shared/Denoising/NRDLibrary.js";

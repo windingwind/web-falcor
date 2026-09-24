@@ -109,8 +109,7 @@ verified-vs-native or has a specific, documented blocker:
   and the small-pass suite (ToneMapping, Composite, CrossFade, GaussianBlur,
   ColorMap, SideBySide, SplitScreen, ModulateIllumination, SimplePostFX, FLIP,
   Whitted). **102 GPU + 40 unit tests green.**
-- **Asset-blocked** (missing from this Falcor drop, unloadable natively too):
-  NRDPass (NRD SDK shaders absent).
+- **Verified behaviourally** (native NRDPass is D3D12-only): NRDPass. `nrd.gpu.test.ts` runs PathTracerNRD.py's graph without DLSS: denoised output is 25–30× closer (MSE) to a 256-frame reference than the raw frame, and motion vectors are still for a static camera.
 - **Verified by finite differences** (native can't build it on this machine): BSDFOptimizer (`bsdf-optimizer.gpu.test.ts`). Its autodiff gradients match central differences to ≤ 8.3e-3 relative for three material types, and optimization reduces the loss 2600× to 10⁵×.
 - **Compiler-pinned**: WARDiffPathTracerTranslationBwd compiles with slang-wasm 2026.5.2. Slang 2026.7's autodiff refactor (#9808) segfaults transposing its nested fwd_diff; bisected over release builds, 2026.5.2 is the last good one. It is verified vs native like the forward graphs.
 - **Runtime-impractical without new infra**: SVS/SVO SDF grids (one AABB per

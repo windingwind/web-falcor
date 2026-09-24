@@ -143,6 +143,8 @@ export const kShaderOverrides: Readonly<Record<string, string>> = {
     "RenderPasses/BSDFOptimizer/BSDFOptimizer.cs.slang": "WebFalcor/Overrides/RenderPasses/BSDFOptimizer/BSDFOptimizer.cs.slang",
     // grads as Atomic<uint> with a compare-exchange float add (no float atomics in WGSL).
     "DiffRendering/AggregateGradients.cs.slang": "WebFalcor/Overrides/DiffRendering/AggregateGradients.cs.slang",
+    // Out-of-place radiance packing (WGSL can't read-write rgba32float storage textures).
+    "RenderPasses/NRDPass/PackRadiance.cs.slang": "WebFalcor/Overrides/RenderPasses/NRDPass/PackRadiance.cs.slang",
     // UINT32_MAX as 0xffffffffu (the un-suffixed literal is i64, which WGSL lacks).
     "Utils/Math/MathConstants.slangh": "WebFalcor/Overrides/Utils/Math/MathConstants.slangh",
 };

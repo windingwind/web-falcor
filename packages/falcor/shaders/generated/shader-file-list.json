@@ -376,6 +376,7 @@
     "WebFalcor/Overrides/RenderPasses/GBuffer/GBuffer/GBufferRaster.3d.slang",
     "WebFalcor/Overrides/RenderPasses/GBuffer/VBuffer/VBufferRaster.3d.slang",
     "WebFalcor/Overrides/RenderPasses/MinimalPathTracer/MinimalPathTracer.rt.slang",
+    "WebFalcor/Overrides/RenderPasses/NRDPass/PackRadiance.cs.slang",
     "WebFalcor/Overrides/RenderPasses/PathTracer/GeneratePaths.cs.slang",
     "WebFalcor/Overrides/RenderPasses/PathTracer/PathTracer.slang",
     "WebFalcor/Overrides/RenderPasses/PathTracer/ResolvePass.cs.slang",

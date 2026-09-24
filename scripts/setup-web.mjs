@@ -18,13 +18,19 @@
  *      in by Scene.slang, i.e. by EVERY scene-bound pass) and the RTXDI SDK
  *      headers — from their public repos at Falcor's pinned versions, into the
  *      packman link paths the dev server serves (manifest `externalFiles`).
- *   4. The Pyodide packages Falcor's Python scripts import (numpy, pillow), pinned by the
+ *   4. The NRD 3.1.0 SDK shaders NRDPass compiles (the version Falcor pins), cloned into
+ *      tools/nrd-3.1.0/ with the MathLib submodule; their HLSL register bindings are dropped
+ *      (WGSL numbers bindings per group; the pass binds by reflected name), `unorm` texture
+ *      element types are stripped (no WGSL form), read-modify-write outputs are split into a
+ *      write target and a read copy (WGSL read_write storage is r32-only), and the file list the pass loads is written next
+ *      to them.
+ *   5. The Pyodide packages Falcor's Python scripts import (numpy, pillow), pinned by the
  *      pyodide-lock.json of the installed pyodide and checked against its sha256,
  *      into tools/pyodide-packages/ (Scripting loads packages from there).
  *
  * What this does NOT fetch: media/test scenes (see scripts/download-scenes.mjs).
  *
- * Usage: node scripts/setup-web.mjs [--skip-slang] [--skip-shaders] [--skip-pyodide-packages]
+ * Usage: node scripts/setup-web.mjs [--skip-slang] [--skip-shaders] [--skip-nrd] [--skip-pyodide-packages]
  */
 
 import { readFileSync, writeFileSync, mkdirSync, existsSync, rmSync, readdirSync, statSync, copyFileSync } from "node:fs";
@@ -183,6 +189,99 @@ async function fetchSlangWasm(version, dir) {
     console.log(`  slang-wasm ready under ${dir}/ (${copied} files)`);
 }
 
+const NRD_TAG = "v3.1.0";
+
+/** Fetches the NRD shader sources NRDPass compiles in the browser (see header, item 4). */
+function fetchNRD() {
+    const outDir = join(repoRoot, "tools/nrd-3.1.0");
+    if (existsSync(join(outDir, "shader-files.json"))) {
+        console.log("NRD shaders already present — skipping (delete tools/nrd-3.1.0 to refetch)");
+        return;
+    }
+    console.log(`Cloning NRD ${NRD_TAG} (shaders + MathLib)…`);
+    rmSync(outDir, { recursive: true, force: true });
+    execFileSync("git", ["clone", "-q", "--depth", "1", "--branch", NRD_TAG, "--recurse-submodules", "--shallow-submodules", "https://github.com/NVIDIAGameWorks/RayTracingDenoiser", outDir], { stdio: "inherit" });
+    // FXC/DXC register bindings would collide in WGSL (t0/u0/s0 all map to binding 0).
+    const hlsli = join(outDir, "Shaders/Include/NRD.hlsli");
+    const src = readFileSync(hlsli, "utf8");
+    const start = src.indexOf("#elif( defined NRD_COMPILER_FXC || defined NRD_COMPILER_DXC )");
+    const end = src.indexOf("#elif( defined NRD_COMPILER_PSSLC )");
+    if (start < 0 || end < 0) throw new Error("NRD.hlsli: DXC macro block not found");
+    const block = src.slice(start, end).replace("cbuffer globalConstants : register( b0 ) {", "cbuffer globalConstants {").replaceAll(": register( regName ## bindingIndex );", ";");
+    writeFileSync(hlsli, src.slice(0, start) + block + src.slice(end));
+    // `RWTexture2D<unorm float4>` has no WGSL form; the bound unorm format clamps on store anyway.
+    const resources = join(outDir, "Shaders/Resources");
+    for (const name of readdirSync(resources)) {
+        const p = join(resources, name);
+        const text = readFileSync(p, "utf8");
+        let patched = text.replaceAll("<unorm ", "<");
+        // Read-modify-write outputs (gInOut_*): WGSL read_write storage takes only r32 formats, so
+        // each becomes a write target plus a read copy NRDPass fills before the dispatch, behind
+        // a view with the original name (the __out keeps its register position).
+        patched = patched.replace(/NRD_OUTPUT_TEXTURE\( RWTexture2D<([\w ]+)>, (gInOut_\w+), u, (\d+) \)/g, (_m, type, name, reg) =>
+            [
+                `NRD_OUTPUT_TEXTURE( RWTexture2D<${type}>, ${name}__out, u, ${reg} )`,
+                `        Texture2D<${type}> ${name}__in; // WebFalcor: read copy of ${name}`,
+                `        struct WebFalcorRW_${name} {`,
+                `            __subscript(uint2 p) -> ${type} { get { return ${name}__in[p]; } [nonmutating] set { ${name}__out[p] = newValue; } }`,
+                `            __subscript(int2 p) -> ${type} { get { return ${name}__in[p]; } [nonmutating] set { ${name}__out[p] = newValue; } }`,
+                `        };`,
+                `        static WebFalcorRW_${name} ${name};`,
+            ].join("\n"),
+        );
+        // Output blocks with more than 8 storage textures (REBLUR's MipGen, which writes mips 1-3 of three
+        // textures): WebGPU allows 8 per stage, so the mip outputs (_x2/_x4/_x8) become storage buffers
+        // behind views with the original names; NRDPass copies each into its mip after the dispatch.
+        patched = patched.replace(/NRD_OUTPUT_TEXTURE_START([\s\S]*?)NRD_OUTPUT_TEXTURE_END/g, (block) => {
+            if ((block.match(/NRD_OUTPUT_TEXTURE\(/g) ?? []).length <= 8) return block;
+            return block.replace(/NRD_OUTPUT_TEXTURE\( RWTexture2D<(\w+)>, (\w+_x\d), u, (\d+) \)/g, (_m, type, name) => {
+                const get = type === "float" ? ".x" : type === "float2" ? ".xy" : "";
+                const set = type === "float" ? "float4(newValue, 0, 0, 0)" : type === "float2" ? "float4(newValue, 0, 0)" : "newValue";
+                return [
+                    `RWStructuredBuffer<float4> ${name}__buf; // WebFalcor: buffer-backed ${name}`,
+                    `        struct WebFalcorBuf_${name} {`,
+                    `            __subscript(uint2 p) -> ${type} { get { return ${name}__buf[p.y * gWebFalcorBufStride + p.x]${get}; } [nonmutating] set { ${name}__buf[p.y * gWebFalcorBufStride + p.x] = ${set}; } }`,
+                    `            __subscript(int2 p) -> ${type} { get { return ${name}__buf[p.y * gWebFalcorBufStride + p.x]${get}; } [nonmutating] set { ${name}__buf[p.y * gWebFalcorBufStride + p.x] = ${set}; } }`,
+                    `        };`,
+                    `        static WebFalcorBuf_${name} ${name};`,
+                ].join("\n");
+            });
+        });
+        if (patched.includes("gWebFalcorBufStride")) patched = `uniform uint gWebFalcorBufStride; // WebFalcor: row stride of the buffer-backed outputs\n${patched}`;
+        // REBLUR HistoryFix reads its float4 outputs' previous values in ReconstructHistory: same
+        // read copy, passed as an extra argument (see REBLUR_Common.hlsli below).
+        if (name.includes("HistoryFix")) patched = patched.replace(/NRD_OUTPUT_TEXTURE\( RWTexture2D<float4>, (gOut_\w+), u, (\d+) \)/g, (m, out) => `${m}\n        Texture2D<float4> ${out}__in; // WebFalcor: read copy of ${out}`);
+        if (patched !== text) writeFileSync(p, patched);
+    }
+    const common = join(outDir, "Shaders/Include/REBLUR/REBLUR_Common.hlsli");
+    const commonSrc = readFileSync(common, "utf8");
+    const commonPatched = commonSrc
+        .replace("RWTexture2D<float4> texOut, Texture2D<float4> texIn, Texture2D<float> texScaledViewZ )", "RWTexture2D<float4> texOut, Texture2D<float4> texIn, Texture2D<float> texScaledViewZ, Texture2D<float4> texOutPrev )")
+        .replace("    float4 c0 = texOut[ pixelPos ];", "    float4 c0 = texOutPrev[ pixelPos ];");
+    if (commonPatched === commonSrc) throw new Error("REBLUR_Common.hlsli: ReconstructHistory not found");
+    writeFileSync(common, commonPatched);
+    const includes = join(outDir, "Shaders/Include/REBLUR");
+    for (const name of readdirSync(includes).filter((n) => n.includes("HistoryFix"))) {
+        const p = join(includes, name);
+        const text = readFileSync(p, "utf8");
+        const patched = text.replace(/(gOut_\w+), (gIn_\w+), gIn_ScaledViewZ \)/g, "$1, $2, gIn_ScaledViewZ, $1__in )");
+        if (patched !== text) writeFileSync(p, patched);
+    }
+    // Registry keys: NRD's own tree under nrd/ (as Falcor's packman link), MathLib's STL.hlsli at the root.
+    const files = [];
+    const walk = (dir, rel) => {
+        for (const name of readdirSync(dir)) {
+            const p = join(dir, name);
+            if (statSync(p).isDirectory()) walk(p, `${rel}/${name}`);
+            else if (/\.(hlsl|hlsli)$/.test(name)) files.push({ path: `nrd${rel}/${name}`, url: `/tools/nrd-3.1.0${rel}/${name}` });
+        }
+    };
+    walk(join(outDir, "Shaders"), "/Shaders");
+    files.push({ path: "STL.hlsli", url: "/tools/nrd-3.1.0/External/MathLib/STL.hlsli" });
+    writeFileSync(join(outDir, "shader-files.json"), JSON.stringify(files, null, 1) + "\n");
+    console.log(`  NRD shaders ready under tools/nrd-3.1.0/ (${files.length} files)`);
+}
+
 /** Pyodide packages used by Falcor's Python scripts (and their dependencies from the lock). */
 const PYODIDE_PACKAGES = ["numpy", "pillow"];
 
@@ -225,5 +324,6 @@ if (!args.has("--skip-slang")) {
     await fetchSlangWasm(SLANG_VERSION, "tools/slang-wasm");
     await fetchSlangWasm(SLANG_AUTODIFF_VERSION, `tools/slang-wasm-${SLANG_AUTODIFF_VERSION}`);
 }
+if (!args.has("--skip-nrd")) fetchNRD();
 if (!args.has("--skip-pyodide-packages")) await fetchPyodidePackages();
 console.log(`\nWeb setup complete in ${((Date.now() - t0) / 1000).toFixed(1)}s. Next: npm run typecheck && npm run dev`);

@@ -38,6 +38,12 @@ export interface TextureDesc {
     name?: string;
 }
 
+/** Format of each view Texture.getView made (GPUTextureView doesn't expose it; storage retargeting needs it). */
+const kViewFormats = new WeakMap<GPUTextureView, GPUTextureFormat>();
+export function textureViewFormat(view: GPUTextureView): GPUTextureFormat | undefined {
+    return kViewFormats.get(view);
+}
+
 export class Texture extends Resource {
     readonly gpuTexture: GPUTexture;
     readonly gpuFormat: GPUTextureFormat;
@@ -114,6 +120,7 @@ export class Texture extends Resource {
                 dimension: dim,
             });
             this.viewCache.set(key, view);
+            kViewFormats.set(view, this.gpuFormat);
         }
         return view;
     }

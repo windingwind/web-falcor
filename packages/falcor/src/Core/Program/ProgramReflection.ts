@@ -175,6 +175,28 @@ export function parseWgslBindings(wgsl: string, visibility: GPUShaderStageFlags)
         }
         bindings.push({ group: Number(groupStr), binding: Number(bindingStr), name: name!, layoutEntry: entry });
     }
+    // A sampler used with an integer texture (e.g. textureGather on u32) must be bound as
+    // non-filtering; point samplers are valid there (NRD's gNearestClamp over uint pools).
+    const intTextures = new Set(bindings.filter((b) => b.layoutEntry.texture?.sampleType === "uint" || b.layoutEntry.texture?.sampleType === "sint").map((b) => b.name));
+    if (intTextures.size > 0) {
+        const samplers = new Map(bindings.filter((b) => b.layoutEntry.sampler?.type === "filtering").map((b) => [b.name, b]));
+        for (const call of wgsl.matchAll(/\btexture\w*\(/g)) {
+            // The call's arguments, up to its balanced closing parenthesis.
+            const start = call.index! + call[0].length;
+            let depth = 1;
+            let end = start;
+            for (; end < wgsl.length && depth > 0; end++) {
+                if (wgsl[end] === "(") depth++;
+                else if (wgsl[end] === ")") depth--;
+            }
+            const ids = wgsl.slice(start, end).match(/[A-Za-z_][A-Za-z0-9_]*/g) ?? [];
+            if (!ids.some((id) => intTextures.has(id))) continue;
+            for (const id of ids) {
+                const sb = samplers.get(id);
+                if (sb) sb.layoutEntry.sampler = { type: "non-filtering" };
+            }
+        }
+    }
     return bindings;
 }
 

@@ -13,7 +13,7 @@
 
 import type { Device } from "../API/Device.js";
 import { Buffer } from "../API/Buffer.js";
-import { Texture } from "../API/Texture.js";
+import { Texture, textureViewFormat } from "../API/Texture.js";
 import { Sampler } from "../API/Sampler.js";
 import { ResourceBindFlags, MemoryType } from "../API/Types.js";
 import { ProgramReflection, ReflectionVar, type WgslBinding } from "./ProgramReflection.js";
@@ -228,6 +228,20 @@ export class ParameterBlock {
         throw new ArgumentError(`No constant buffer containing '${path.join(".")}'`);
     }
 
+    /**
+     * Mirrors ShaderVar::setBlob on a whole constant buffer: copies `data` over its contents
+     * (e.g. NRD's per-dispatch constants, laid out by the library). Returns false without one.
+     */
+    setCBufferBlob(name: string, data: Uint8Array): boolean {
+        const slot = this.slots.get(name);
+        if (slot?.kind !== "cbuffer") return false;
+        const n = Math.min(data.byteLength, slot.cpuData.byteLength);
+        new Uint8Array(slot.cpuData).set(data.subarray(0, n));
+        slot.dirty = true;
+        this.generation++;
+        return true;
+    }
+
     /** Legacy flat API used by earlier passes. */
     setResource(name: string, resource: BindableResource): void {
         this.setResourceByPath([name], resource);
@@ -336,9 +350,10 @@ export class ParameterBlock {
         const texelType = (f: string) => (f.endsWith("uint") ? "u" : f.endsWith("sint") ? "i" : "f");
         const changed = new Map<string, GPUTextureFormat>();
         for (const slot of this.slots.values()) {
-            if (slot.kind !== "resource" || !(slot.resource instanceof Texture)) continue;
+            if (slot.kind !== "resource") continue;
+            const format = slot.resource instanceof Texture ? slot.resource.gpuFormat : typeof GPUTextureView !== "undefined" && slot.resource instanceof GPUTextureView ? textureViewFormat(slot.resource) : undefined;
+            if (!format) continue;
             const st = slot.binding.layoutEntry.storageTexture;
-            const format = slot.resource.gpuFormat;
             if (!st || !st.format || st.format === format || texelType(st.format) !== texelType(format)) continue;
             if (st.access === "read-write" && !/^r32(float|uint|sint)$/.test(format)) continue;
             st.format = format;

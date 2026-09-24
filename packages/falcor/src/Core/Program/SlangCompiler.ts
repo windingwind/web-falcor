@@ -241,7 +241,13 @@ export class SlangCompiler {
         return lowerTypedBuffers(this.transform(source)).replace(/^(\s*#\s*include\s+")([^"]+)(")/gm, (_m, pre: string, target: string, post: string) => {
             if (target.startsWith("/")) return `${pre}${target}${post}`;
             if (known.has(target)) return `${pre}/${target}${post}`;
-            const relative = dir ? `${dir}/${target}` : target;
+            // Same-directory relative, with `..` segments resolved (NRD's "../Include/NRD.hlsli").
+            const parts: string[] = [];
+            for (const seg of (dir ? `${dir}/${target}` : target).split("/")) {
+                if (seg === "..") parts.pop();
+                else if (seg !== ".") parts.push(seg);
+            }
+            const relative = parts.join("/");
             if (known.has(relative)) return `${pre}/${relative}${post}`;
             return `${pre}${target}${post}`; // leave unresolved; slang reports the error
         });
