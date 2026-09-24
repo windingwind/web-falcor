@@ -89,3 +89,12 @@ describe("SlangCompiler", () => {
         expect(a.entryPointCode[0]).not.toEqual(b.entryPointCode[0]);
     });
 });
+
+describe("parenthesizeNegations", () => {
+    it("wraps the operand of Slang's vector negation, leaving user zeros alone", async () => {
+        const { parenthesizeNegations } = await import("../src/Core/Program/SlangCompiler.js");
+        expect(parenthesizeNegations("x = (vec4<f32>(0) - a[i32(0)] + b);")).toBe("x = (vec4<f32>(0) - (a[i32(0)] + b));");
+        expect(parenthesizeNegations("y = (mat4x4<f32>(0) - f(a, b) - (vec2<i32>(0) - c + d))[i32(0)];")).toBe("y = (mat4x4<f32>(0) - (f(a, b) - (vec2<i32>(0) - (c + d))))[i32(0)];");
+        expect(parenthesizeNegations("z = (vec4<f32>(0.0f) - a + b);")).toBe("z = (vec4<f32>(0.0f) - a + b);");
+    });
+});

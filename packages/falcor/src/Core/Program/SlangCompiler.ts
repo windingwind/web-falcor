@@ -111,6 +111,31 @@ export function lowerTypedBuffers(source: string): string {
     return source.replace(/\b(RW)?Buffer\s*</g, (_m, rw: string | undefined) => `${rw ?? ""}StructuredBuffer<`);
 }
 
+/**
+ * Wraps the operand of Slang's vector/matrix negation `(vecN<T>(0) - x)` in parentheses.
+ * The bare `(0)` constructor only comes from negation (user zeros emit `(0.0f)`/`(i32(0))`).
+ */
+export function parenthesizeNegations(wgsl: string): string {
+    const re = /\((?:vec[234]|mat[234]x[234])<(?:f32|f16|i32|u32)>\(0\) - /g;
+    const starts = [...wgsl.matchAll(re)].map((m) => m.index! + m[0].length);
+    let out = wgsl;
+    // Last first: inner negations sit later in the text, and edits there keep earlier offsets valid.
+    for (const start of starts.reverse()) {
+        let depth = 0;
+        let end = start;
+        for (; end < out.length; end++) {
+            const c = out[end];
+            if (c === "(" || c === "[") depth++;
+            else if (c === ")" || c === "]") {
+                if (depth === 0) break;
+                depth--;
+            }
+        }
+        out = `${out.slice(0, start)}(${out.slice(start, end)})${out.slice(end)}`;
+    }
+    return out;
+}
+
 /** A compile unit: shader-root path (for #line / relative imports), optional module name, and its sources. */
 export interface CompileModule {
     path: string;

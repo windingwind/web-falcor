@@ -153,6 +153,15 @@ lower to plain compute code, so it compiles to WGSL. **The primitive is VERIFIED
 on-device** (M8 feasibility gate): the `autodiff-feasibility` GPU test runs a
 `bwd_diff`/`fwd_diff` kernel through the real WebGPU device and both produce the exact
 analytic gradient (f(x)=x²k+sin(x) → 2xk+cos(x) = 11.58385 at x=2,k=3).
+Falcor's TinyBC.py (a BC7 mode-6 encoder trained by `__bwd_diff` over 16-element weight
+arrays) runs unmodified and prints native's PSNR exactly at every tested step count. Getting
+there exposed a Slang 2026.12.2 WGSL emitter bug: vector/matrix negation is written as
+`(vecN<T>(0) - x)` without parentheses around `x`, so `-(a + b)` became `0 - a + b`.
+Autodiff emits that pattern for every `dot`/subtraction chain, which zeroed TinyBC's
+gradients. User code hit it too. `parenthesizeNegations` (SlangCompiler.ts) now wraps
+the operand of every negation. That fix also cleared older unexplained residuals:
+skinned motion-vector depth (409 → 0 bad pixels), quantized/Draco geometry normal
+outliers (p99 114° → 0.3°), and tutorial-material emissive (44 → 0 bad pixels).
 
 **BUT the full WARDiffPathTracer is blocked by a compiler crash** (🟠, tooling, not a
 web limitation). Porting the pass past the mechanical steps —

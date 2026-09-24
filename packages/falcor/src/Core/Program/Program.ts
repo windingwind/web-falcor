@@ -7,7 +7,7 @@
 
 import { Device } from "../API/Device.js";
 import { DefineList } from "./DefineList.js";
-import { SlangCompiler, ShaderType, type CompileModule, type ShaderSourceResolver, type EntryPointDesc } from "./SlangCompiler.js";
+import { SlangCompiler, ShaderType, parenthesizeNegations, type CompileModule, type ShaderSourceResolver, type EntryPointDesc } from "./SlangCompiler.js";
 import { kShaderOverrides } from "./ShaderOverrides.js";
 import { ProgramReflection, parseWgslBindings, type WgslBinding } from "./ProgramReflection.js";
 import { RuntimeError } from "../Error.js";
@@ -121,10 +121,12 @@ export class Program {
  * - '@interpolate' is only valid on IO members with '@location'; Slang keeps it
  *   on internal copies of varying structs (Tint rejects them);
  * - conversely, integral entry-IO varyings lose their required
- *   '@interpolate(flat)' in the flattened IO structs.
+ *   '@interpolate(flat)' in the flattened IO structs;
+ * - vector/matrix negation is emitted as `(vecN<T>(0) - x)` without parenthesizing x,
+ *   so `-(a + b)` became `0 - a + b` (see parenthesizeNegations).
  */
 function fixupWgsl(wgsl: string): string {
-    return wgsl
+    return parenthesizeNegations(wgsl)
         .split("\n")
         .map((line) => {
             if (line.includes("@interpolate") && !line.includes("@location") && !line.includes("@builtin")) {
@@ -223,6 +225,16 @@ export class ProgramManager {
         this.compiler.dispose();
         this.compiler = this.createCompiler();
         this.reloadGeneration++;
+    }
+
+    /** Adds shader files (e.g. a script's own modules) so imports resolve them; reloads programs if any changed. */
+    addShaderFiles(files: Record<string, string>): void {
+        const changed = Object.entries(files).filter(([path, source]) => this.resolveSource(path) !== source);
+        if (changed.length === 0) return;
+        const extra = new Map(changed);
+        const prev = this.resolveSource;
+        const known = new Set(this.filePaths);
+        this.reloadAllPrograms({ resolveSource: (path) => extra.get(path) ?? prev(path), filePaths: [...this.filePaths, ...[...extra.keys()].filter((p) => !known.has(p))] });
     }
 
     createProgram(desc: ProgramDesc, defines = new DefineList()): Program {

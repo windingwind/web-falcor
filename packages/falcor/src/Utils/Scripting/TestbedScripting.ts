@@ -125,6 +125,10 @@ function makeJsModule(device: Device, testbedOptions: TestbedOptions, fsRead: (p
         createRenderGraph: (t: Testbed, name: string) => t.createRenderGraph(name),
         graphCreatePass: (g: RenderGraph, name: string, type: string, props: unknown) => g.addPass(createPass(device, type, new Properties((toJs(props) as Record<string, never>) ?? {})), name),
         setLogVerbosity: (level: number) => (Logger.level = level),
+        submit: async (wait: boolean) => {
+            device.renderContext.submit();
+            if (wait) await device.gpuDevice.queue.onSubmittedWorkDone();
+        },
     };
 }
 
@@ -250,6 +254,15 @@ class Device:
     @property
     def profiler(self):
         return _profiler
+    @property
+    def render_context(self):
+        return _render_context
+
+class RenderContext:
+    def submit(self, wait=False):
+        run_sync(_js.submit(bool(wait)))
+
+_render_context = RenderContext()
 
 class _ProfilerEvent:
     def __init__(self, name): self.name = name
@@ -543,7 +556,11 @@ export interface TestbedScriptResult {
  * `extraFiles` names files next to the script to copy into Pyodide's FS; string literals
  * ending in .slang/.py/.json are found automatically.
  */
-export async function runTestbedScript(device: Device, scriptUrl: string, options: TestbedOptions & { extraFiles?: string[] } = {}): Promise<TestbedScriptResult> {
+export async function runTestbedScript(
+    device: Device,
+    scriptUrl: string,
+    options: TestbedOptions & { extraFiles?: string[]; files?: Record<string, Uint8Array>; argv?: string[] } = {},
+): Promise<TestbedScriptResult> {
     const py = getPyodide() as Pyodide;
     const source = await (await fetch(scriptUrl)).text();
     const dirUrl = scriptUrl.slice(0, scriptUrl.lastIndexOf("/"));
@@ -554,14 +571,21 @@ export async function runTestbedScript(device: Device, scriptUrl: string, option
     py.FS.writeFile(scriptPath, source);
     const names = new Set(options.extraFiles ?? []);
     for (const m of source.matchAll(/["']([\w./-]+\.(?:slang|slangh|py|json))["']/g)) names.add(m[1]!);
+    const shaderFiles: Record<string, string> = {};
     for (const name of names) {
         const res = await fetch(`${dirUrl}/${name}`);
         if (!res.ok) continue;
         const path = `${fsDir}/${name}`;
+        const data = new Uint8Array(await res.arrayBuffer());
         py.FS.mkdirTree(path.slice(0, path.lastIndexOf("/")));
-        py.FS.writeFile(path, new Uint8Array(await res.arrayBuffer()));
+        py.FS.writeFile(path, data);
+        if (/\.slangh?$/.test(name)) shaderFiles[path.slice(1)] = new TextDecoder().decode(data);
     }
-    if (/^\s*import numpy|^\s*from numpy|^\s*import numpy as/m.test(source)) await py.loadPackage("numpy");
+    // Script shaders import their siblings (native: the script's directory is a search path).
+    device.programManager.addShaderFiles(shaderFiles);
+    for (const [name, data] of Object.entries(options.files ?? {})) py.FS.writeFile(`${fsDir}/${name}`, data);
+    if (/^\s*(import|from) numpy/m.test(source)) await py.loadPackage("numpy");
+    if (/^\s*(import|from) PIL/m.test(source)) await py.loadPackage("pillow");
 
     const testbeds: Testbed[] = [];
     const enumMembers = (e: Record<string, string | number>) => Object.fromEntries(Object.entries(e).filter(([k, v]) => typeof v === "number" && isNaN(Number(k))));
@@ -574,8 +598,9 @@ export async function runTestbedScript(device: Device, scriptUrl: string, option
         "_js_device = None",
     ].join("\n");
     await py.runPythonAsync(`${prelude}\n${kFalcorPython}`);
+    (py as unknown as { globals: { set(k: string, v: unknown): void } }).globals.set("_falcor_stdout", (line: string) => stdout.push(line));
     await py.runPythonAsync(
-        `import sys, runpy\nsys.path.insert(0, ${JSON.stringify(fsDir)})\ntry:\n    runpy.run_path(${JSON.stringify(scriptPath)}, run_name="__main__")\nexcept SystemExit:\n    pass\nfinally:\n    sys.path.remove(${JSON.stringify(fsDir)})\n    sys.modules.pop("falcor", None)\n    sys.modules.pop("falcor.ui", None)\n`,
+        `import sys, runpy, os\nclass _Tee:\n    def __init__(self, out): self.out, self.buf = out, ""\n    def write(self, s):\n        self.buf += s\n        *lines, self.buf = self.buf.split("\\n")\n        for l in lines: _falcor_stdout(l)\n        return self.out.write(s)\n    def flush(self): self.out.flush()\n_stdout0 = sys.stdout\nsys.stdout = _Tee(_stdout0)\nsys.path.insert(0, ${JSON.stringify(fsDir)})\nsys.argv = ${JSON.stringify([scriptPath, ...(options.argv ?? [])])}\nos.chdir(${JSON.stringify(fsDir)})\ntry:\n    runpy.run_path(${JSON.stringify(scriptPath)}, run_name="__main__")\nexcept SystemExit:\n    pass\nfinally:\n    sys.stdout = _stdout0\n    sys.path.remove(${JSON.stringify(fsDir)})\n    sys.modules.pop("falcor", None)\n    sys.modules.pop("falcor.ui", None)\n`,
     );
     return { testbeds, stdout };
 }

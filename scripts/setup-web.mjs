@@ -18,7 +18,7 @@
  *      in by Scene.slang, i.e. by EVERY scene-bound pass) and the RTXDI SDK
  *      headers — from their public repos at Falcor's pinned versions, into the
  *      packman link paths the dev server serves (manifest `externalFiles`).
- *   4. The Pyodide packages Falcor's Python scripts import (numpy), pinned by the
+ *   4. The Pyodide packages Falcor's Python scripts import (numpy, pillow), pinned by the
  *      pyodide-lock.json of the installed pyodide and checked against its sha256,
  *      into tools/pyodide-packages/ (Scripting loads packages from there).
  *
@@ -181,7 +181,7 @@ async function fetchSlangWasm() {
 }
 
 /** Pyodide packages used by Falcor's Python scripts (and their dependencies from the lock). */
-const PYODIDE_PACKAGES = ["numpy"];
+const PYODIDE_PACKAGES = ["numpy", "pillow"];
 
 async function fetchPyodidePackages() {
     const pyodideDir = join(repoRoot, "node_modules/pyodide");
