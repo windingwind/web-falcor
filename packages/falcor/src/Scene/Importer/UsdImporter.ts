@@ -15,8 +15,9 @@ import { float2, float3, float4 } from "../../Utils/Math/Vector.js";
 import { float4x4, mulMat, transformPoint } from "../../Utils/Math/Matrix.js";
 import { RuntimeError } from "../../Core/Error.js";
 import { Logger } from "../../Utils/Logger.js";
+import { decomposeTRS, type AnimationChannel, type SceneNode } from "../Animation/SceneAnimation.js";
 import { loadOpenSubdiv, tessellateUsdMesh, type TessellatedMesh } from "./Subdivision.js";
-import { extractUsdCamerasAndLights, extractUsdDisplayColors, extractUsdMaterialBindings, extractUsdMaterialTextures, extractUsdPointInstancers, extractUsdMeshes, usdRenderSettings, usdaStageInfo, usdChannelIndex, usdStageRootTransform, usdTexCoordTransform, type UsdaCamera, type UsdaDomeLight, type UsdaSubdivMesh, type UsdaTextureInput } from "./UsdaScene.js";
+import { extractUsdCamerasAndLights, extractUsdDisplayColors, extractUsdMaterialBindings, extractUsdMaterialTextures, extractUsdPointInstancers, extractUsdMeshes, extractUsdXformAnimations, usdRenderSettings, usdaStageInfo, usdChannelIndex, usdStageRootTransform, usdTexCoordTransform, type UsdaCamera, type UsdaDomeLight, type UsdaSubdivMesh, type UsdaTextureInput, type UsdaXformAnimation } from "./UsdaScene.js";
 import type { AnalyticLight } from "../SceneData.js";
 
 interface UsdNode {
@@ -269,7 +270,7 @@ export class UsdImporter {
             /** Per-prim Settings attributes (native's "refinementLevel" override by mesh path). */
             settings?: { getAttribute(path: string, name: string, fallback: number): unknown };
         } = {},
-    ): Promise<{ meshes: SceneMeshDesc[]; materials: SceneMaterialDesc[]; materialNames: string[]; cameras: UsdaCamera[]; lights: AnalyticLight[]; domeLight: UsdaDomeLight | null; stage: UsdStageBounds | null; metadata: SceneMetadata | null }> {
+    ): Promise<{ meshes: SceneMeshDesc[]; materials: SceneMaterialDesc[]; materialNames: string[]; cameras: UsdaCamera[]; lights: AnalyticLight[]; domeLight: UsdaDomeLight | null; stage: UsdStageBounds | null; metadata: SceneMetadata | null; nodes: SceneNode[]; animations: AnimationChannel[] }> {
         const native = await loadTinyUsdz();
         let usd = new native.TinyUSDZLoaderNative();
         // Files with composition arcs are composed first; the rest load directly.
@@ -383,10 +384,39 @@ export class UsdImporter {
             if (level > 0) refinementLevels.set(path, Number(level));
         }
         const osd = refinementLevels.size > 0 ? await loadOpenSubdiv() : null;
+        // Time-sampled xforms (createAnimation): meshes below one get a node chain from the stage root.
+        const xformAnims = layerText ? extractUsdXformAnimations(layerText) : new Map<string, UsdaXformAnimation>();
+        const nodes: SceneNode[] = [];
+        const animations: AnimationChannel[] = [];
+        const nodeIds = new Map<string, number>();
+        const nodeFor = (path: string): number => {
+            const existing = nodeIds.get(path);
+            if (existing !== undefined) return existing;
+            const parent = path === "" ? -1 : nodeFor(path.slice(0, path.lastIndexOf("/")));
+            const n = path === "" ? undefined : nodesByPath.get(path);
+            const local = path === "" ? rootXform : n?.localMatrix?.length === 16 ? usdToWebMatrix(n.localMatrix) : float4x4.identity();
+            const id = nodes.length;
+            nodes.push({ parent, ...decomposeTRS(local) });
+            const anim = xformAnims.get(path);
+            if (anim) {
+                const clip = new Set(animations.map((c) => c.clip)).size;
+                const times = Float32Array.from(anim.times);
+                const channel = (p: AnimationChannel["path"], values: number[]) => animations.push({ nodeID: id, path: p, times, values: Float32Array.from(values), interp: "LINEAR", clip });
+                channel("translation", anim.translation.flatMap((v) => [v.x, v.y, v.z]));
+                channel("rotation", anim.rotation.flatMap((q) => [q.x, q.y, q.z, q.w]));
+                channel("scale", anim.scaling.flatMap((v) => [v.x, v.y, v.z]));
+            }
+            nodeIds.set(path, id);
+            return id;
+        };
+        const isAnimated = (path: string | undefined) => {
+            for (let p = path ?? ""; p !== ""; p = p.slice(0, p.lastIndexOf("/"))) if (xformAnims.has(p)) return true;
+            return false;
+        };
         // Stage bounds in USD space (UsdGeomBBoxCache's world bound, without the root transform).
         const lo = [Infinity, Infinity, Infinity];
         const hi = [-Infinity, -Infinity, -Infinity];
-        const walk = (node: UsdNode, parentWorld: float4x4, parentUsd: float4x4): void => {
+        const walk = (node: UsdNode, parentWorld: float4x4, parentUsd: float4x4, instanced = false): void => {
             const instancer = node.absPath ? instancers.get(node.absPath) : undefined;
             if (instancer) {
                 for (const { proto, transform } of instancer.instances) {
@@ -397,7 +427,7 @@ export class UsdImporter {
                         continue;
                     }
                     const usdWorld = mulMat(instancer.usdWorld, transform);
-                    walk(protoNode, mulMat(rootXform, usdWorld), usdWorld);
+                    walk(protoNode, mulMat(rootXform, usdWorld), usdWorld, true);
                 }
                 return;
             }
@@ -425,8 +455,8 @@ export class UsdImporter {
                     const materialID = getOrAddMaterial(mesh.materialId, bindings.get(node.absPath!), node.absPath);
                     const { vertices, indices } = refinedVertices(refined, texCoordTransforms[materialID]!);
                     generateTangents(vertices, indices);
-                    meshes.push({ vertices, indices, materialID, transform: world.clone() });
-                    for (const child of node.children ?? []) walk(child, world, usdWorld);
+                    meshes.push({ vertices, indices, materialID, transform: world.clone(), nodeID: !instanced && isAnimated(node.absPath) ? nodeFor(node.absPath!) : undefined });
+                    for (const child of node.children ?? []) walk(child, world, usdWorld, instanced);
                     return;
                 }
                 let positions: Float32Array = mesh.points;
@@ -453,11 +483,11 @@ export class UsdImporter {
                     };
                 }
                 generateTangents(vertices, indices);
-                meshes.push({ vertices, indices, materialID, transform: world.clone() });
+                meshes.push({ vertices, indices, materialID, transform: world.clone(), nodeID: !instanced && isAnimated(node.absPath) ? nodeFor(node.absPath!) : undefined });
             } else if (node.nodeType !== "xform" && node.nodeType !== "" && !/camera|light/i.test(node.nodeType)) {
                 Logger.warning(`UsdImporter: prim type '${node.nodeType}' ('${node.primName}') not supported (skipped)`);
             }
-            for (const child of node.children ?? []) walk(child, world, usdWorld);
+            for (const child of node.children ?? []) walk(child, world, usdWorld, instanced);
         };
 
         // Native's stage root transform: meters per unit, Z-up rotated to Y-up.
@@ -473,7 +503,7 @@ export class UsdImporter {
             }
         }
         const metadata = layerText ? (usdRenderSettings(layerText)?.metadata ?? null) : null;
-        return { meshes, materials, materialNames, ...extracted, stage, metadata };
+        return { meshes, materials, materialNames, ...extracted, stage, metadata, nodes, animations };
     }
 }
 

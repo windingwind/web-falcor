@@ -1071,7 +1071,12 @@ export class SceneBuilderBridge {
                     const parsed = await UsdImporter.parseToDescs(bytes, textureManager, dir, new Set(curvePrims.map((c) => c.name)), { ...this.importOptions, settings });
                     materials.push(...parsed.materials);
                     importedMaterialNames.push(...parsed.materialNames);
-                    for (const m of parsed.meshes) meshes.push({ ...m, materialID: m.materialID + materialOffset });
+                    // Time-sampled xforms: node animations, one clip per animated prim.
+                    const nodeOffset = nodes.length;
+                    for (const n of parsed.nodes) nodes.push({ ...n, parent: n.parent >= 0 ? n.parent + nodeOffset : -1 });
+                    for (const ch of parsed.animations) animations.push({ ...ch, nodeID: ch.nodeID + nodeOffset, clip: ch.clip !== undefined ? ch.clip + clipOffset : undefined });
+                    clipOffset += parsed.animations.reduce((mx, c) => Math.max(mx, (c.clip ?? -1) + 1), 0);
+                    for (const m of parsed.meshes) meshes.push({ ...m, materialID: m.materialID + materialOffset, nodeID: m.nodeID !== undefined ? m.nodeID + nodeOffset : undefined });
                     // UsdLux lights, UsdGeom cameras and the dome light (native ImporterContext).
                     importedLights.push(...parsed.lights);
                     for (const c of parsed.cameras) {

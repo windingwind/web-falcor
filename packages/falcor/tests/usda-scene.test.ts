@@ -3,11 +3,12 @@
  * conversions of native's USDImporter.
  */
 import { describe, expect, it } from "vitest";
-import { extractUsdCamerasAndLights, extractUsdDisplayColors, extractUsdMeshes, extractUsdMaterialTextures, extractUsdPointInstancers, parseUsdaPrims, usdaStageInfo, usdBlackbodyTemperatureAsRgb, usdRenderSettings, usdStageRootTransform, usdTexCoordTransform } from "../src/Scene/Importer/UsdaScene.js";
+import { extractUsdCamerasAndLights, extractUsdDisplayColors, extractUsdMeshes, extractUsdXformAnimations, usdTimeCodesPerSecond, extractUsdMaterialTextures, extractUsdPointInstancers, parseUsdaPrims, usdaStageInfo, usdBlackbodyTemperatureAsRgb, usdRenderSettings, usdStageRootTransform, usdTexCoordTransform } from "../src/Scene/Importer/UsdaScene.js";
 import { readFileSync } from "node:fs";
 import { LightType } from "../src/Scene/SceneData.js";
 import { float3 } from "../src/Utils/Math/Vector.js";
 import { float4x4, transformPoint, transformVector } from "../src/Utils/Math/Matrix.js";
+import { matrixFromQuat } from "../src/Utils/Math/Quaternion.js";
 
 const close = (a: { x: number; y: number; z: number }, b: number[], eps = 1e-5) => {
     expect(a.x).toBeCloseTo(b[0]!, 5);
@@ -195,5 +196,28 @@ def SphereLight "S"
         expect(meshes.get("/World/Strip")!.st!.interpolation).toBe("vertex");
         expect(meshes.get("/World/Floor")!.scheme).toBe("none");
         expect(usdRenderSettings(text)!.refinementLevel).toBe(1);
+    });
+
+    it("reads time-sampled xformOps as keyframes", () => {
+        const text = readFileSync(new URL("../../../tests/oracle/assets/usd-anim.usda", import.meta.url), "utf8");
+        expect(usdTimeCodesPerSecond(text)).toBe(24);
+        const anims = extractUsdXformAnimations(text);
+        expect([...anims.keys()]).toEqual(["/World/Spinner", "/World/Parent/Child"]);
+        const spin = anims.get("/World/Spinner")!;
+        expect(spin.times).toEqual([0, 1, 2]);
+        close(spin.translation[1]!, [-1.5, 0.8, 0]);
+        // rotateXYZ (15, 90, 45) at time code 24 (halfway): X first, then Y, then Z.
+        const [x, y, z] = [15, 90, 45].map((d) => (d * Math.PI) / 180);
+        const q = spin.rotation[1]!;
+        const v = transformVector(matrixFromQuat(q), new float3(1, 0, 0));
+        // Rz * Ry * Rx applied to +X.
+        const rx = [1, 0, 0];
+        const ry = [Math.cos(y!) * rx[0]!, 0, -Math.sin(y!) * rx[0]!];
+        const rz = [Math.cos(z!) * ry[0]! - Math.sin(z!) * ry[1]!, Math.sin(z!) * ry[0]! + Math.cos(z!) * ry[1]!, ry[2]!];
+        void x;
+        close(v, rz);
+        const child = anims.get("/World/Parent/Child")!;
+        expect(child.times).toEqual([0, 1.5]);
+        close(child.scaling[1]!, [0.5, 1.5, 0.8]);
     });
 });

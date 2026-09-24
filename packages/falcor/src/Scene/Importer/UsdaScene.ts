@@ -13,7 +13,7 @@
 
 import { float3, normalize3 } from "../../Utils/Math/Vector.js";
 import { extractEulerAngleXYZ, float4x4, inverse, matrixFromRotationAxisAngle, matrixFromScaling, matrixFromTranslation, mulMat, transformPoint, transformVector } from "../../Utils/Math/Matrix.js";
-import { matrixFromQuat, quatf } from "../../Utils/Math/Quaternion.js";
+import { matrixFromQuat, mulQuat, quatFromAngleAxis, quatf } from "../../Utils/Math/Quaternion.js";
 import { LightType, type AnalyticLight } from "../SceneData.js";
 import type { SceneMetadata } from "../Scene.js";
 import { Logger } from "../../Utils/Logger.js";
@@ -566,6 +566,99 @@ export function extractUsdMeshes(text: string): Map<string, UsdaSubdivMesh> {
             }
             if (attr(b, ["refinementEnableOverride"]) !== "false" && attr(b, ["refinementLevel"]) !== undefined) mesh.refinementLevel = attrNumber(b, ["refinementLevel"], 0);
             out.set(p.path, mesh);
+        }
+        p.children.forEach(visit);
+    };
+    parseUsdaPrims(text, float4x4.identity()).forEach(visit);
+    return out;
+}
+
+/** An attribute's time samples (`name.timeSamples = { time: value, ... }`), ascending, or undefined. */
+function attrTimeSamples(body: string, name: string): { time: number; value: number[] }[] | undefined {
+    const escaped = name.replace(/[.:]/g, (c) => `\\${c}`);
+    const m = new RegExp(`^\\s*(?:uniform\\s+|custom\\s+)?[\\w\\[\\]]+\\s+${escaped}\\.timeSamples\\s*=\\s*\\{`, "m").exec(body);
+    if (!m) return undefined;
+    let i = m.index + m[0].length;
+    const from = i;
+    for (let depth = 1; i < body.length && depth > 0; i++) depth += body[i] === "{" ? 1 : body[i] === "}" ? -1 : 0;
+    const samples = [...body.slice(from, i - 1).matchAll(/([-+]?[\d.]+(?:[eE][-+]?\d+)?)\s*:\s*(\([^)]*\)|[-+\w.]+)/g)].map((s) => ({ time: Number(s[1]), value: num(s[2]!) }));
+    return samples.sort((a, b) => a.time - b.time);
+}
+
+/** USD's linear interpolation of time samples (held outside the range). */
+function sampleAt(samples: { time: number; value: number[] }[], t: number): number[] {
+    if (t <= samples[0]!.time) return samples[0]!.value;
+    const last = samples[samples.length - 1]!;
+    if (t >= last.time) return last.value;
+    const k = samples.findIndex((s) => s.time > t);
+    const [a, b] = [samples[k - 1]!, samples[k]!];
+    const u = (t - a.time) / (b.time - a.time);
+    return a.value.map((v, c) => v + (b.value[c]! - v) * u);
+}
+
+/** An animated xformable's keyframes (ImporterContext::createKeyframe), times in seconds. */
+export interface UsdaXformAnimation {
+    times: number[];
+    translation: float3[];
+    rotation: quatf[];
+    scaling: float3[];
+}
+
+/** Stage timeCodesPerSecond (else framesPerSecond, else 24, as UsdStage::GetTimeCodesPerSecond). */
+export function usdTimeCodesPerSecond(text: string): number {
+    const header = text.slice(0, text.search(/^\s*(def|over|class)\s/m) >>> 0);
+    const get = (key: string) => num(header.match(new RegExp(`\\b${key}\\s*=\\s*([-+\\d.eE]+)`))?.[1] ?? "")[0];
+    return get("timeCodesPerSecond") ?? get("framesPerSecond") ?? 24;
+}
+
+/**
+ * Prims whose xformOps are time-sampled, keyed by path: keyframes at the union of the ops'
+ * sample times, from the XformCommonAPI vectors (translate, one rotate op with its order,
+ * scale; pivots ignored with a warning, as natively).
+ */
+export function extractUsdXformAnimations(text: string): Map<string, UsdaXformAnimation> {
+    const tcps = usdTimeCodesPerSecond(text);
+    const out = new Map<string, UsdaXformAnimation>();
+    const axes = { X: new float3(1, 0, 0), Y: new float3(0, 1, 0), Z: new float3(0, 0, 1) } as const;
+    const visit = (p: UsdaPrim) => {
+        const b = p.body;
+        const ops = attr(b, ["xformOpOrder"])?.match(/"([^"]+)"/g)?.map((s) => s.slice(1, -1)) ?? [];
+        const sampled = ops.map((op) => attrTimeSamples(b, op.replace(/^!invert!/, "")));
+        if (sampled.some((s) => s && s.length > 0)) {
+            const times = [...new Set(sampled.flatMap((s) => s?.map((x) => x.time) ?? []))].sort((x, y) => x - y);
+            const value = (op: string, i: number, t: number) => {
+                const s = sampled[i];
+                return s && s.length > 0 ? sampleAt(s, t) : num(attr(b, [op]) ?? "");
+            };
+            const anim: UsdaXformAnimation = { times: times.map((t) => t / tcps), translation: [], rotation: [], scaling: [] };
+            let warnedPivot = false;
+            for (const t of times) {
+                let tr = new float3(0, 0, 0);
+                let sc = new float3(1, 1, 1);
+                let rot = new quatf(0, 0, 0, 1);
+                ops.forEach((op, i) => {
+                    if (op.startsWith("!invert!")) return;
+                    const kind = op.split(":")[1] ?? "";
+                    const v = value(op, i, t);
+                    if (kind === "translate" && op.split(":")[2] === "pivot") {
+                        if (!warnedPivot && v.some((x) => x !== 0)) Logger.warning(`Ignoring non-zero pivot extracted from '${p.path}'.`);
+                        warnedPivot = true;
+                    } else if (kind === "translate") tr = new float3(v[0] ?? 0, v[1] ?? 0, v[2] ?? 0);
+                    else if (kind === "scale") sc = new float3(v[0] ?? 1, v[1] ?? 1, v[2] ?? 1);
+                    else if (/^rotate[XYZ]{1,3}$/.test(kind)) {
+                        const letters = kind.slice(6).split("") as ("X" | "Y" | "Z")[];
+                        const angle = (l: "X" | "Y" | "Z") => (letters.length === 1 ? (v[0] ?? 0) : (v["XYZ".indexOf(l)] ?? 0)) * deg;
+                        // The first axis applies first: q = q_last * ... * q_first (native's order table).
+                        rot = letters.reduce((q, l) => mulQuat(quatFromAngleAxis(angle(l), axes[l]), q), new quatf(0, 0, 0, 1));
+                    } else {
+                        Logger.warning(`USDImporter: time-sampled xformOp '${op}' on '${p.path}' is not an XformCommonAPI op; ignored.`);
+                    }
+                });
+                anim.translation.push(tr);
+                anim.rotation.push(rot);
+                anim.scaling.push(sc);
+            }
+            out.set(p.path, anim);
         }
         p.children.forEach(visit);
     };

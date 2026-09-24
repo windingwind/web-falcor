@@ -1,0 +1,66 @@
+#usda 1.0
+(
+    defaultPrim = "World"
+    metersPerUnit = 1
+    upAxis = "Y"
+    timeCodesPerSecond = 24
+    startTimeCode = 0
+    endTimeCode = 48
+)
+# Time-sampled xformOps become node animations like native's createAnimation: a
+# spinner with animated translate and rotateXYZ, and a static parent whose child
+# animates its scale and a rotateYXZ (another rotation order). 24 time codes per second.
+def Xform "World"
+{
+    def Xform "Spinner"
+    {
+        double3 xformOp:translate.timeSamples = {
+            0: (-1.5, 0, 0),
+            24: (-1.5, 0.8, 0),
+            48: (-1.5, 0, 0),
+        }
+        float3 xformOp:rotateXYZ.timeSamples = {
+            0: (0, 0, 0),
+            48: (30, 180, 90),
+        }
+        uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:rotateXYZ"]
+        def Mesh "Cube"
+        {
+            uniform token subdivisionScheme = "none"
+            int[] faceVertexCounts = [4, 4, 4, 4, 4, 4]
+            int[] faceVertexIndices = [0, 3, 2, 1, 4, 5, 6, 7, 0, 1, 5, 4, 1, 2, 6, 5, 2, 3, 7, 6, 3, 0, 4, 7]
+            point3f[] points = [(-0.4, -0.4, -0.4), (0.4, -0.4, -0.4), (0.4, 0.4, -0.4), (-0.4, 0.4, -0.4), (-0.4, -0.4, 0.4), (0.4, -0.4, 0.4), (0.4, 0.4, 0.4), (-0.4, 0.4, 0.4)]
+        }
+    }
+    def Xform "Parent"
+    {
+        double3 xformOp:translate = (1.5, 0.2, 0)
+        uniform token[] xformOpOrder = ["xformOp:translate"]
+        def Xform "Child"
+        {
+            float3 xformOp:rotateYXZ.timeSamples = {
+                0: (0, 0, 0),
+                36: (40, 90, 20),
+            }
+            float3 xformOp:scale.timeSamples = {
+                0: (1, 1, 1),
+                36: (0.5, 1.5, 0.8),
+            }
+            uniform token[] xformOpOrder = ["xformOp:rotateYXZ", "xformOp:scale"]
+            def Mesh "Cube"
+            {
+                uniform token subdivisionScheme = "none"
+            int[] faceVertexCounts = [4, 4, 4, 4, 4, 4]
+            int[] faceVertexIndices = [0, 3, 2, 1, 4, 5, 6, 7, 0, 1, 5, 4, 1, 2, 6, 5, 2, 3, 7, 6, 3, 0, 4, 7]
+            point3f[] points = [(-0.4, -0.4, -0.4), (0.4, -0.4, -0.4), (0.4, 0.4, -0.4), (-0.4, 0.4, -0.4), (-0.4, -0.4, 0.4), (0.4, -0.4, 0.4), (0.4, 0.4, 0.4), (-0.4, 0.4, 0.4)]
+            }
+        }
+    }
+    def Mesh "Floor"
+    {
+        uniform token subdivisionScheme = "none"
+        int[] faceVertexCounts = [4]
+        int[] faceVertexIndices = [0, 3, 2, 1]
+        point3f[] points = [(-4, -0.8, -2), (4, -0.8, -2), (4, -0.8, 2), (-4, -0.8, 2)]
+    }
+}
