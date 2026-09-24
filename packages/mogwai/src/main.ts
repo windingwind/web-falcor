@@ -507,6 +507,10 @@ function wireGraphEditor(state: ViewerState, rebuildUI: () => void, resetAccum: 
             rebuildUI();
             resetAccum();
         },
+        onPassPropertiesChanged: () => {
+            rebuildUI();
+            resetAccum();
+        },
     });
     toggle.addEventListener("click", () => {
         panel.hidden = !panel.hidden;

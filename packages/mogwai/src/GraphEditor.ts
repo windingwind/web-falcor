@@ -1,13 +1,17 @@
 // Render-graph editor panel (DOM/SVG analog of Falcor's RenderGraphEditor): passes laid out by
 // dependency depth with input/output ports, edges as curves, and the graph's editing API
-// (addPass/removePass, addEdge/removeEdge, markOutput/unmarkOutput) wired to clicks.
-import { createPass, getRegisteredRenderPasses, type RenderGraph, type RenderGraphEdge, type RenderPass } from "@web-falcor/falcor";
+// (addPass/removePass, addEdge/removeEdge, markOutput/unmarkOutput) wired to clicks. Nodes can be
+// dragged; clicking a node shows its pass UI (renderUI) under the canvas, like the editor's
+// node properties window.
+import { DomWidgets, createPass, getRegisteredRenderPasses, type RenderGraph, type RenderGraphEdge, type RenderPass } from "@web-falcor/falcor";
 
 export interface GraphEditorHooks {
     /** Called after any edit (viewer: refresh outputs, rebuild pass panels, restart accumulation). */
     onGraphChanged: () => void;
     /** Graph output dimensions (reflection needs them). */
     defaultTexDims: () => [number, number];
+    /** Called when the selected pass's UI changes a property (viewer: restart accumulation). */
+    onPassPropertiesChanged?: () => void;
 }
 
 type Edge = RenderGraphEdge;
@@ -30,6 +34,11 @@ export class GraphEditor {
     private readonly svg: SVGSVGElement;
     private readonly toolbar: HTMLDivElement;
     private readonly status: HTMLDivElement;
+    private readonly properties: HTMLDivElement;
+    /** Node positions set by dragging (override the layered layout). */
+    private readonly positions = new Map<string, { x: number; y: number }>();
+    private selected: string | null = null;
+    private drag: { name: string; x0: number; y0: number; px: number; py: number; moved: boolean } | null = null;
 
     constructor(
         private readonly container: HTMLElement,
@@ -77,24 +86,73 @@ export class GraphEditor {
         this.toolbar.append(typeSel, nameInput, addBtn, saveBtn);
         const hint = doc.createElement("span");
         hint.className = "ui-text";
-        hint.textContent = "click an output port then an input port to connect · click an edge to remove it · ★ marks a graph output · × removes a pass";
+        hint.textContent = "drag a node to move it · click a node for its properties · click an output port then an input port to connect · click an edge to remove it · ★ marks a graph output · × removes a pass";
         this.toolbar.appendChild(hint);
         this.svg = doc.createElementNS("http://www.w3.org/2000/svg", "svg");
         this.svg.classList.add("graph-canvas");
         this.status = doc.createElement("div");
         this.status.className = "ui-text";
-        container.append(this.toolbar, this.svg, this.status);
+        this.properties = doc.createElement("div");
+        this.properties.className = "graph-properties";
+        container.append(this.toolbar, this.svg, this.status, this.properties);
+        // Dragging moves a node; a press without movement selects it.
+        const view = doc.defaultView ?? window;
+        view.addEventListener("pointermove", (e) => {
+            const d = this.drag;
+            if (!d) return;
+            const dx = e.clientX - d.x0;
+            const dy = e.clientY - d.y0;
+            if (!d.moved && Math.hypot(dx, dy) < 3) return;
+            d.moved = true;
+            this.positions.set(d.name, { x: Math.max(0, d.px + dx), y: Math.max(0, d.py + dy) });
+            this.render();
+        });
+        view.addEventListener("pointerup", () => {
+            const d = this.drag;
+            this.drag = null;
+            if (d && !d.moved) this.select(d.name);
+        });
+    }
+
+    /** Selects a pass and shows its properties (its renderUI), or clears the selection. */
+    select(name: string | null): void {
+        this.selected = name;
+        this.renderProperties();
+        this.render();
+    }
+
+    private renderProperties(): void {
+        const panel = this.properties;
+        panel.innerHTML = "";
+        const pass = this.selected && this.graph?.getPasses().find((p) => p.name === this.selected)?.pass;
+        if (!pass) {
+            this.selected = null;
+            return;
+        }
+        const title = panel.ownerDocument.createElement("div");
+        title.className = "graph-properties-title";
+        title.textContent = `${this.selected} (${pass.type || pass.constructor.name})`;
+        const body = panel.ownerDocument.createElement("div");
+        pass.renderUI(new DomWidgets(body, () => this.hooks.onPassPropertiesChanged?.()));
+        if (body.childElementCount === 0) body.textContent = "(no properties)";
+        panel.append(title, body);
     }
 
     setGraph(graph: RenderGraph | null): void {
+        if (graph !== this.graph) {
+            this.positions.clear();
+            this.selected = null;
+        }
         this.graph = graph;
         this.pendingSource = null;
+        this.renderProperties();
         this.render();
     }
 
     private changed(): void {
         this.pendingSource = null;
         this.hooks.onGraphChanged();
+        this.renderProperties();
         this.render();
     }
 
@@ -121,7 +179,8 @@ export class GraphEditor {
             const d = depth.get(name) ?? 0;
             const y = columns.get(d) ?? 8;
             const height = 22 + Math.max(inputs.length, outputs.length) * kPortH + 6;
-            nodes.set(name, { x: 8 + d * (kNodeW + kColGap), y, h: height, inputs, outputs });
+            const placed = this.positions.get(name);
+            nodes.set(name, { x: placed?.x ?? 8 + d * (kNodeW + kColGap), y: placed?.y ?? y, h: height, inputs, outputs });
             columns.set(d, y + height + kRowGap);
         }
         return nodes;
@@ -170,12 +229,22 @@ export class GraphEditor {
         }
         for (const { name, pass } of passes) {
             const n = nodes.get(name)!;
-            const g = el("g", { class: "graph-node", "data-pass": name, transform: `translate(${n.x},${n.y})` });
-            g.appendChild(el("rect", { width: kNodeW, height: n.h, rx: 4, class: "graph-node-bg" }));
-            g.appendChild(el("text", { x: 6, y: 14, class: "graph-node-title" }, `${name} (${pass.type || pass.constructor.name})`));
+            const g = el("g", { class: `graph-node${this.selected === name ? " graph-node-selected" : ""}`, "data-pass": name, transform: `translate(${n.x},${n.y})` });
+            const bg = el("rect", { width: kNodeW, height: n.h, rx: 4, class: "graph-node-bg" });
+            const title = el("text", { x: 6, y: 14, class: "graph-node-title" }, `${name} (${pass.type || pass.constructor.name})`);
+            for (const handle of [bg, title]) {
+                handle.addEventListener("pointerdown", (ev) => {
+                    const e = ev as PointerEvent;
+                    e.preventDefault();
+                    this.drag = { name, x0: e.clientX, y0: e.clientY, px: n.x, py: n.y, moved: false };
+                });
+            }
+            g.append(bg, title);
             const remove = el("text", { x: kNodeW - 12, y: 14, class: "graph-remove", "data-remove": name }, "×");
             remove.addEventListener("click", () => {
                 graph.removePass(name);
+                this.positions.delete(name);
+                if (this.selected === name) this.selected = null;
                 this.message = `removed ${name}`;
                 this.changed();
             });
