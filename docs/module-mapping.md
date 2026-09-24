@@ -155,7 +155,7 @@ on-device** (M8 feasibility gate): the `autodiff-feasibility` GPU test runs a
 analytic gradient (f(x)=x²k+sin(x) → 2xk+cos(x) = 11.58385 at x=2,k=3).
 Falcor's TinyBC.py (a BC7 mode-6 encoder trained by `__bwd_diff` over 16-element weight
 arrays) runs unmodified and prints native's PSNR exactly at every tested step count. Getting
-there exposed a Slang 2026.12.2 WGSL emitter bug: vector/matrix negation is written as
+there exposed a Slang 2026.12.2 WGSL emitter bug (fixed upstream in 2026.18; the post-pass stays harmless): vector/matrix negation is written as
 `(vecN<T>(0) - x)` without parentheses around `x`, so `-(a + b)` became `0 - a + b`.
 Autodiff emits that pattern for every `dot`/subtraction chain, which zeroed TinyBC's
 gradients. User code hit it too. `parenthesizeNegations` (SlangCompiler.ts) now wraps

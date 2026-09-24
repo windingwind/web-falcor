@@ -13,7 +13,7 @@ stay valid.
 2. **Reuse Falcor's shader library verbatim.** Falcor's value is concentrated in its
    257 `.slang` files (materials, BSDFs, samplers, light sampling, SDFs, path tracing).
    We compile the *unmodified upstream sources* with Slang's WGSL backend rather than
-   hand-porting to WGSL. Verified working: Slang v2026.12.2 compiles
+   hand-porting to WGSL. Verified working: Slang v2026.18.2 compiles
    `Utils.Math.*` / `Utils.Sampling.*` modules directly to WGSL
    (see `packages/falcor/shaders/SanityCompute.cs.slang` → `generated/`).
 3. **Feature-gap honesty.** Every feature is classified in the parity matrix (§8) with
@@ -92,7 +92,7 @@ Repository layout:
 ```
 web-falcor/
 ├── Falcor/                    # upstream clone: shader source of truth + native oracle
-├── tools/slang/               # Slang v2026.12.2 (slangc with WGSL backend)
+├── tools/slang/               # Slang v2026.18.2 (slangc with WGSL backend)
 ├── packages/
 │   ├── falcor/                # @web-falcor/falcor — core library, mirrors Source/Falcor
 │   │   ├── src/{Core,Scene,Rendering,RenderGraph,Utils,DiffRendering}/

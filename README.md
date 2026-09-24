@@ -122,7 +122,7 @@ git clone https://github.com/NVIDIAGameWorks/Falcor.git && (cd Falcor && ./setup
 cmake --preset linux-gcc -S Falcor && cmake --build Falcor/build/linux-gcc -j16
 
 # Native Slang toolchain (build-time Slang→WGSL for the shader compiler)
-mkdir -p tools/slang && curl -L https://github.com/shader-slang/slang/releases/download/v2026.12.2/slang-2026.12.2-linux-x86_64.tar.gz | tar xz -C tools/slang
+mkdir -p tools/slang && curl -L https://github.com/shader-slang/slang/releases/download/v2026.18.2/slang-2026.18.2-linux-x86_64.tar.gz | tar xz -C tools/slang
 ```
 
 ## Tests

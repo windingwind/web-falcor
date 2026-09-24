@@ -274,6 +274,18 @@ export class SlangCompiler {
      *  recent sessions and delete() evicted ones (embind teardown). */
     private static readonly kMaxSessions = 6;
 
+    /** Source each session loaded per module name. */
+    private loadedSources = new WeakMap<SlangSessionApi, Map<string, string>>();
+
+    /** Sessions replaced after a module-name conflict; kept alive (deleting them lost the GPU device). */
+    private retiredSessions: SlangSessionApi[] = [];
+
+    private evictSession(key: string): void {
+        const session = this.sessions.get(key);
+        this.sessions.delete(key);
+        if (session) this.retiredSessions.push(session);
+    }
+
     /** Releases every cached session (embind teardown); used by shader reload. */
     dispose(): void {
         for (const session of this.sessions.values()) (session as { delete?: () => void }).delete?.();
@@ -320,10 +332,8 @@ export class SlangCompiler {
         const list: CompileModule[] = (typeof modulesIn === "string" ? [modulesIn] : modulesIn).map((m) => (typeof m === "string" ? { path: m, sources: [{ file: m }] } : m));
         const paths = list.map((m) => m.path);
         const slang = slangInstance!;
-        const session = this.getSession(defines);
         const header = defines.toHeader();
-
-        const modules: (SlangModuleApi & SlangComponentApi)[] = list.map(({ path, name, sources }) => {
+        const prepared = list.map(({ path, name, sources }) => {
             // One translation unit per module: its files and strings in order (ProgramDesc::ShaderModule).
             const parts = sources.map((src) => {
                 if ("file" in src) {
@@ -345,7 +355,20 @@ export class SlangCompiler {
                 slang.FS.createPath("/", loadDir, true, true);
                 this.linkShaderRoots(loadDir);
             }
-            const module = session.loadModuleFromSource(`${header}${rewritten}`, moduleName, loadPath);
+            return { path, moduleName, loadPath, source: `${header}${rewritten}` };
+        });
+        // Slang rejects reloading a module name with different source in one session: start a fresh one.
+        let session = this.getSession(defines);
+        let loaded = this.loadedSources.get(session);
+        if (loaded && prepared.some((m) => loaded!.has(m.moduleName) && loaded!.get(m.moduleName) !== m.source)) {
+            this.evictSession(defines.key());
+            session = this.getSession(defines);
+            loaded = undefined;
+        }
+        if (!loaded) this.loadedSources.set(session, (loaded = new Map()));
+        const modules: (SlangModuleApi & SlangComponentApi)[] = prepared.map(({ path, moduleName, loadPath, source }) => {
+            const module = session.loadModuleFromSource(source, moduleName, loadPath);
+            loaded!.set(moduleName, source);
             if (!module) {
                 const err = slang.getLastError();
                 throw new RuntimeError(`Slang compilation failed for ${path}:\n${err.type}: ${err.message}`);

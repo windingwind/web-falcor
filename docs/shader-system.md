@@ -19,7 +19,7 @@ Slang → **WGSL** with the same compiler front-end, in two modes:
    (`MaterialSystem` emits Slang for registered material types; `Scene` defines control
    geometry types, light counts, etc.). A build-time-only pipeline cannot cover this.
    The official **slang-wasm** build (published per-release, e.g.
-   `slang-2026.12.2-wasm.zip`, the same artifact powering the Slang Playground) runs the
+   `slang-2026.18.2-wasm.zip`, the same artifact powering the Slang Playground) runs the
    identical compiler in the browser (and in Node for tests). The `ProgramManager`
    mirrors Falcor's: program (files + defines + conformances) → hash → cache lookup →
    compile on miss. Ahead-of-time-compiled variants from the manifest pre-seed the cache
