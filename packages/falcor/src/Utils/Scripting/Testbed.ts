@@ -20,6 +20,7 @@ import type { Scene } from "../../Scene/Scene.js";
 import { AssetCategory, AssetResolver } from "../../Core/AssetResolver.js";
 import { Clock } from "../Timing/Clock.js";
 import { FrameRate } from "../Timing/FrameRate.js";
+import { PyUiScreen } from "../UI/PythonUI.js";
 import { TextRenderer } from "../UI/TextRenderer.js";
 import { runSceneScript } from "./Scripting.js";
 
@@ -33,6 +34,10 @@ export interface TestbedOptions {
     canvas?: HTMLCanvasElement | null;
     /** Web: close after this many frames (headless runs). */
     maxFrames?: number;
+    /** Web: the element `falcor.ui` windows overlay (default: the canvas's parent). */
+    uiHost?: HTMLElement | null;
+    /** Web: called after each frame (tests drive the UI from here). */
+    onFrame?: (testbed: Testbed, frame: number) => void;
 }
 
 export class Testbed {
@@ -49,6 +54,7 @@ export class Testbed {
     private graphNeedsInit = false;
     private textRenderer: TextRenderer | null = null;
     private frames = 0;
+    private uiScreen: PyUiScreen | null = null;
 
     constructor(
         readonly device: Device,
@@ -78,6 +84,15 @@ export class Testbed {
     /** Mirrors Testbed::shouldClose. */
     get shouldClose(): boolean {
         return this.closeRequested || (this.options.maxFrames !== undefined && this.frames >= this.options.maxFrames);
+    }
+
+    /** Mirrors Testbed::getScreen: the root of `falcor.ui` widgets. */
+    get screen(): PyUiScreen {
+        if (!this.uiScreen) {
+            const host = this.options.uiHost ?? (this.options.createWindow ? this.options.canvas?.parentElement : null) ?? document.createElement("div");
+            this.uiScreen = new PyUiScreen(host);
+        }
+        return this.uiScreen;
     }
 
     /** The target FBO (native: the window's frame buffer). */
@@ -151,6 +166,8 @@ export class Testbed {
         if (this.context) presentToCanvas(this.device, this.targetFbo.getColorTexture(0)!, this.context.getCurrentTexture(), this.canvasFormat);
         ctx.submit();
         this.frames++;
+        if (this.uiScreen) this.uiScreen.root.style.display = this.showUI ? "" : "none";
+        this.options.onFrame?.(this, this.frames);
         if (this.context) await new Promise((resolve) => requestAnimationFrame(resolve));
         else await this.device.gpuDevice.queue.onSubmittedWorkDone();
     }

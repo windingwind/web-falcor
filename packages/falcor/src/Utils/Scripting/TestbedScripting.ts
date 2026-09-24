@@ -325,16 +325,212 @@ class Testbed:
         self._graph = g
         self._o.setRenderGraph(g._o if g is not None else None)
     def create_render_graph(self, name=""): return RenderGraph(_js.createRenderGraph(self._o, name))
-    def frame(self): run_sync(self._o.frame())
-    def run(self): run_sync(self._o.run())
+    def run(self):
+        while not self.should_close: self.frame()
     def resize_frame_buffer(self, width, height): self._o.resizeFrameBuffer(width, height)
     def load_scene(self, path, build_flags=0): run_sync(self._o.loadScene(str(path), int(build_flags)))
     def capture_output(self, path, output_index=0): run_sync(self._o.captureOutput(str(path), output_index))
+    @property
+    def screen(self):
+        if not hasattr(self, "_screen"): self._screen = ui.Screen(self._o.screen)
+        return self._screen
+    def frame(self):
+        run_sync(self._o.frame())
+        if hasattr(self, "_screen"): self._screen._drain()
+        _fire_timers()
 
 for _n, _v in list(globals().items()):
     if _n[:1].isupper() and not _n.startswith("_"):
         setattr(falcor, _n, _v)
 sys.modules["falcor"] = falcor
+
+def _vector(name, n, scalar):
+    fields = "xyzw"[:n]
+    def new(cls, *args):
+        if len(args) == 1 and hasattr(args[0], "__iter__"): args = tuple(args[0])
+        if len(args) == 1: args = args * n
+        if len(args) != n: raise TypeError(f"{name} takes 1 or {n} values")
+        return tuple.__new__(cls, (scalar(a) for a in args))
+    attrs = {"__new__": new, "__repr__": lambda s: f"{name}({', '.join(repr(v) for v in s)})"}
+    for i, f in enumerate(fields): attrs[f] = property(lambda s, i=i: s[i])
+    return type(name, (tuple,), attrs)
+
+for _n in (2, 3, 4):
+    for _prefix, _scalar in (("float", float), ("int", int), ("uint", int), ("bool", bool)):
+        setattr(falcor, f"{_prefix}{_n}", _vector(f"{_prefix}{_n}", _n, _scalar))
+
+# falcor.ui (Utils/UI/PythonUI): widgets over the testbed's DOM screen; edits queue in JS
+# and are applied (with their callbacks) inside testbed.frame(), as ImGui does natively.
+ui = types.ModuleType("falcor.ui")
+
+class SliderFlags(enum.IntFlag):
+    None_ = 0
+    AlwaysClamp = 1 << 4
+    Logarithmic = 1 << 5
+    NoRoundToFormat = 1 << 6
+    NoInput = 1 << 7
+
+def _tojs(v):
+    return to_js(v, dict_converter=__import__("js").Object.fromEntries)
+
+class Widget:
+    def _init(self, kind, parent, **props):
+        self._screen = parent._screen
+        self._props = props
+        self._parent = parent
+        self._children = []
+        self._visible = True
+        self._enabled = True
+        parent._children.append(self)
+        self._id = self._screen._o.create(kind, parent._id, _tojs(props))
+        self._screen._widgets[self._id] = self
+    def _set(self, name, value):
+        self._props[name] = value
+        self._screen._o.set(self._id, name, _tojs(value))
+    @property
+    def parent(self): return self._parent
+    @parent.setter
+    def parent(self, p):
+        if self._parent is not None: self._parent._children.remove(self)
+        self._parent = p
+        if p is not None: p._children.append(self)
+        self._screen._o.setParent(self._id, p._id if p is not None else None)
+    @property
+    def children(self): return list(self._children)
+    @property
+    def visible(self): return self._visible
+    @visible.setter
+    def visible(self, v):
+        self._visible = bool(v)
+        self._screen._o.set(self._id, "visible", self._visible)
+    @property
+    def enabled(self): return self._enabled
+    @enabled.setter
+    def enabled(self, v):
+        self._enabled = bool(v)
+        self._screen._o.set(self._id, "enabled", self._enabled)
+    def _event(self, value): pass
+
+def _prop(name, conv=None):
+    return property(lambda s: s._props[name], lambda s, v: s._set(name, conv(v) if conv else v))
+
+class Screen(Widget):
+    def __init__(self, js_screen):
+        self._o = js_screen
+        self._screen = self
+        self._id = 0
+        self._parent = None
+        self._children = []
+        self._visible = True
+        self._enabled = True
+        self._widgets = {}
+    def _drain(self):
+        for wid, value in self._o.takeEvents().to_py():
+            w = self._widgets.get(wid)
+            if w is not None and w._enabled: w._event(value)
+
+class Window(Widget):
+    def __init__(self, parent, title="", position=(10.0, 10.0), size=(400.0, 400.0)):
+        self._init("window", parent, title=title, position=[float(x) for x in position], size=[float(x) for x in size])
+    title = _prop("title")
+    position = _prop("position", lambda v: [float(x) for x in v])
+    size = _prop("size", lambda v: [float(x) for x in v])
+    def show(self): self.visible = True
+    def close(self): self.visible = False
+
+class Group(Widget):
+    def __init__(self, parent, label=""): self._init("group", parent, label=label)
+    label = _prop("label")
+
+class Text(Widget):
+    def __init__(self, parent, text=""): self._init("text", parent, text=text)
+    text = _prop("text")
+
+class ProgressBar(Widget):
+    def __init__(self, parent, fraction=0.0): self._init("progress", parent, fraction=float(fraction))
+    fraction = _prop("fraction", float)
+
+class Button(Widget):
+    def __init__(self, parent, label="", callback=None):
+        self.callback = callback
+        self._init("button", parent, label=label)
+    label = _prop("label")
+    def _event(self, value):
+        if self.callback: self.callback()
+
+class Property(Widget):
+    label = _prop("label")
+    def _event(self, value):
+        self._props["value"] = self._convert(value)
+        if self.change_callback: self.change_callback()
+    def _convert(self, value): return value
+
+class Checkbox(Property):
+    def __init__(self, parent, label="", change_callback=None, value=False):
+        self.change_callback = change_callback
+        self._init("checkbox", parent, label=label, value=bool(value))
+    value = _prop("value", bool)
+    def _convert(self, value): return bool(value)
+
+class Combobox(Property):
+    def __init__(self, parent, label="", change_callback=None, items=(), value=0):
+        self.change_callback = change_callback
+        self._init("combobox", parent, label=label, items=list(items), value=int(value))
+    items = _prop("items", list)
+    value = _prop("value", int)
+    def _convert(self, value): return int(value)
+
+def _vector_widget(kind, n, integer, default_format):
+    scalar = int if integer else float
+    conv = (lambda v: scalar(v)) if n == 1 else (lambda v: [scalar(x) for x in v])
+    class W(Property):
+        def __init__(self, parent, label="", change_callback=None, value=None, speed=1.0, min=0, max=0, format=default_format, flags=SliderFlags.None_):
+            self.change_callback = change_callback
+            value = conv(value if value is not None else (0 if n == 1 else [0] * n))
+            props = dict(label=label, value=value, min=scalar(min), max=scalar(max), format=format, flags=int(flags), components=n, integer=integer)
+            if kind == "drag": props["speed"] = float(speed)
+            self._init(kind, parent, **props)
+        value = _prop("value", conv)
+        min = _prop("min", scalar)
+        max = _prop("max", scalar)
+        format = _prop("format")
+        flags = _prop("flags", int)
+        def _convert(self, value): return conv(value.to_py() if hasattr(value, "to_py") else value)
+    if kind == "drag": W.speed = _prop("speed", float)
+    return W
+
+for _kind, _prefix in (("drag", "Drag"), ("slider", "Slider")):
+    for _n in (1, 2, 3, 4):
+        for _integer, _scalar in ((False, "Float"), (True, "Int")):
+            _name = f"{_prefix}{_scalar}{'' if _n == 1 else _n}"
+            _cls = _vector_widget(_kind, _n, _integer, "%d" if _integer else "%.3f")
+            _cls.__name__ = _name
+            setattr(ui, _name, _cls)
+
+for _cls in (Widget, Screen, Window, Group, Text, ProgressBar, Button, Property, Checkbox, Combobox, SliderFlags):
+    setattr(ui, _cls.__name__, _cls)
+falcor.ui = ui
+sys.modules["falcor.ui"] = ui
+
+# Pyodide has no threads: threading.Timer fires from testbed.frame(), which ui_demo.py
+# notes it relies on ("run frame-by-frame to have Python's timer working").
+import threading as _threading, time as _time
+_timers = []
+class _FrameTimer:
+    def __init__(self, interval, function, args=None, kwargs=None):
+        self.interval, self.function, self.args, self.kwargs = interval, function, args or [], kwargs or {}
+        self._cancelled = False
+    def start(self):
+        self._due = _time.monotonic() + self.interval
+        _timers.append(self)
+    def cancel(self): self._cancelled = True
+    def is_alive(self): return self in _timers
+def _fire_timers():
+    now = _time.monotonic()
+    for t in [t for t in _timers if t._due <= now]:
+        _timers.remove(t)
+        if not t._cancelled: t.function(*t.args, **t.kwargs)
+_threading.Timer = _FrameTimer
 `;
 
 export interface TestbedScriptResult {
@@ -379,7 +575,7 @@ export async function runTestbedScript(device: Device, scriptUrl: string, option
     ].join("\n");
     await py.runPythonAsync(`${prelude}\n${kFalcorPython}`);
     await py.runPythonAsync(
-        `import sys, runpy\nsys.path.insert(0, ${JSON.stringify(fsDir)})\ntry:\n    runpy.run_path(${JSON.stringify(scriptPath)}, run_name="__main__")\nexcept SystemExit:\n    pass\nfinally:\n    sys.path.remove(${JSON.stringify(fsDir)})\n    sys.modules.pop("falcor", None)\n`,
+        `import sys, runpy\nsys.path.insert(0, ${JSON.stringify(fsDir)})\ntry:\n    runpy.run_path(${JSON.stringify(scriptPath)}, run_name="__main__")\nexcept SystemExit:\n    pass\nfinally:\n    sys.path.remove(${JSON.stringify(fsDir)})\n    sys.modules.pop("falcor", None)\n    sys.modules.pop("falcor.ui", None)\n`,
     );
     return { testbeds, stdout };
 }
