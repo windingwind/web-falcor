@@ -711,6 +711,8 @@ export class SDFGridBridge {
         readonly type: SDFGridType,
         readonly narrowBandThickness: number,
         readonly brickWidth: number,
+        readonly compressed = false,
+        readonly defaultGridWidth = 256,
     ) {}
     generateCheeseValues(gridWidth: number, seed: number): void {
         this.ops.push({ kind: "cheese", gridWidth: Number(gridWidth), seed: Number(seed) });
@@ -733,7 +735,7 @@ export class SDFGridBridge {
         return 0;
     }
     toRecipe(): SDFGridRecipe {
-        return { type: this.type, narrowBandThickness: this.narrowBandThickness, brickWidth: this.brickWidth, ops: [...this.ops] };
+        return { type: this.type, narrowBandThickness: this.narrowBandThickness, brickWidth: this.brickWidth, compressed: this.compressed, defaultGridWidth: this.defaultGridWidth, ops: [...this.ops] };
     }
 }
 
@@ -1269,7 +1271,7 @@ export class SceneBuilderBridge {
 
     addSDFGrid(grid: SDFGridBridge, material: MaterialBridge): number {
         const g = unwrapGuard(grid) as SDFGridBridge;
-        const copy = new SDFGridBridge(g.type, Number(g.narrowBandThickness), Number(g.brickWidth));
+        const copy = new SDFGridBridge(g.type, Number(g.narrowBandThickness), Number(g.brickWidth), !!g.compressed, Number(g.defaultGridWidth));
         copy.ops = g.ops.map((o) => ({ ...o }));
         copy.pendingFiles = g.pendingFiles.map((f) => ({ ...f }));
         this.sdfGridsList.push({ grid: copy, material: unwrapGuard(material) });

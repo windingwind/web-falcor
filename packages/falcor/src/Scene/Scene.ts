@@ -53,6 +53,7 @@ import { AABB } from "../Utils/Math/AABB.js";
 import { getFormatChannelCount } from "../Core/API/Formats.js";
 import type { NDSDFGrid } from "./SDFs/NDSDFGrid.js";
 import { SDFSBS, packSBSGrids, type PackedSBS } from "./SDFs/SDFSBS.js";
+import { encodeBC4Texture } from "./SDFs/BC4Encode.js";
 import { SDFSVS } from "./SDFs/SDFSVS.js";
 import { SDFSVO } from "./SDFs/SDFSVO.js";
 
@@ -2140,15 +2141,17 @@ export class Scene {
             });
             indirection.setSubresourceBlob(0, 0, new Uint8Array(packed.indirection.buffer));
 
+            // Compressed SBS: a BC4Snorm texture, as natively (SDFSBS::mCompressed).
+            const [bw, bh] = packed.brickTextureDimensions;
             const bricks = new Texture(this.device, {
                 type: ResourceType.Texture2D,
-                width: packed.brickTextureDimensions[0],
-                height: packed.brickTextureDimensions[1],
-                format: ResourceFormat.R32Float,
-                bindFlags: storage,
+                width: bw,
+                height: bh,
+                format: packed.compressed ? ResourceFormat.BC4Snorm : ResourceFormat.R32Float,
+                bindFlags: packed.compressed ? ResourceBindFlags.ShaderResource : storage,
                 name: "Scene::sdfGrid0Bricks",
             });
-            bricks.setSubresourceBlob(0, 0, new Uint8Array(packed.brickTexture.buffer));
+            bricks.setSubresourceBlob(0, 0, packed.compressed ? encodeBC4Texture(packed.brickTexture, bw, bh) : new Uint8Array(packed.brickTexture.buffer));
             // Native SDFSBS::SharedData sampler: linear, clamp (brick edges).
             const sampler = new Sampler(this.device, {
                 magFilter: TextureFilteringMode.Linear,

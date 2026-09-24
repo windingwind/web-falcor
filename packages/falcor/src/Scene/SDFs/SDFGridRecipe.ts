@@ -18,6 +18,10 @@ export interface SDFGridRecipe {
     type: SDFGridType;
     narrowBandThickness: number;
     brickWidth: number;
+    /** SBS: BC4-compressed bricks (createSBS(compressed=True)). */
+    compressed?: boolean;
+    /** SBS: grid width for an SBS edited without values (createSBS(defaultGridWidth=...)). */
+    defaultGridWidth?: number;
     ops: (
         | { kind: "cheese"; gridWidth: number; seed: number }
         | { kind: "values"; gridWidth: number; values: Float32Array }
@@ -30,7 +34,7 @@ export type BuiltSDFGrid = NDSDFGrid | SDFSBS | SDFSVS | SDFSVO;
 /** Mirrors the SceneBuilder bridge's SDFGrid.create*() + generateCheeseValues() sequence. */
 export function buildSDFGridFromRecipe(recipe: SDFGridRecipe): BuiltSDFGrid {
     const built: BuiltSDFGrid =
-        recipe.type === "sbs" ? new SDFSBS(recipe.brickWidth)
+        recipe.type === "sbs" ? new SDFSBS(recipe.brickWidth, recipe.compressed ?? false, recipe.defaultGridWidth ?? 256)
         : recipe.type === "svs" ? new SDFSVS()
         : recipe.type === "svo" ? new SDFSVO()
         : new NDSDFGrid(recipe.narrowBandThickness);

@@ -500,7 +500,7 @@ class SDFGrid:
         return _SDFGridCreate('ndsdf', narrowBandThickness, 7)
     @staticmethod
     def createSBS(brickWidth=7, compressed=False, defaultGridWidth=256):
-        return _SDFGridCreate('sbs', 5.0, brickWidth)
+        return _SDFGridCreate('sbs', 5.0, brickWidth, bool(compressed), defaultGridWidth)
     @staticmethod
     def createSVS(**kwargs):
         return _SDFGridCreate('svs', 5.0, 7)
@@ -634,7 +634,8 @@ async function runSceneScriptInternal(device: Device, source: string, baseUrl: s
             // Loaded with the scene (fetches are asynchronous); stats aren't available in the script.
             createFromFile: (path: string, gridname: string) => ({ _file: { path: String(path), gridname: String(gridname) } }),
         },
-        _SDFGridCreate: (type: string, narrowBandThickness = 5.0, brickWidth = 7) => new SDFGridBridge(type as "ndsdf" | "sbs", narrowBandThickness, brickWidth),
+        _SDFGridCreate: (type: string, narrowBandThickness = 5.0, brickWidth = 7, compressed = false, defaultGridWidth = 256) =>
+            new SDFGridBridge(type as "ndsdf" | "sbs", Number(narrowBandThickness), Number(brickWidth), !!compressed, Number(defaultGridWidth)),
         SceneBuilderFlags: kSceneBuilderFlagsPython,
         ...AssetResolver.pythonBindings,
     };

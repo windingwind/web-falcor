@@ -13,6 +13,8 @@
  */
 
 import { generateCheeseCornerValues } from "./NDSDFGrid.js";
+import { bc4RoundTripTexture } from "./BC4Encode.js";
+import { RuntimeError } from "../../Core/Error.js";
 
 const kSqrt3 = Math.sqrt(3);
 const UINT32_MAX = 0xffffffff;
@@ -47,8 +49,15 @@ export class SDFSBS {
     indirection = new Uint32Array(0);
     aabbs: BrickAABB[] = [];
 
-    constructor(brickWidth = 7) {
+    constructor(
+        brickWidth = 7,
+        /** Mirrors SDFSBS mCompressed: bricks go through BC4 (BC4Encode.ts). */
+        readonly compressed = false,
+        /** Mirrors mDefaultGridWidth (an SBS built without values). */
+        readonly defaultGridWidth = 256,
+    ) {
         this.brickWidth = brickWidth;
+        if (compressed && (brickWidth + 1) % 4 !== 0) throw new RuntimeError(`'brickWidth' (${brickWidth}) must be a multiple of 4 minus 1 for compressed SDFSBSs`);
     }
 
     get normalizationFactor(): number {
@@ -215,6 +224,8 @@ export interface PackedSBS {
     bricksPerAxis: [number, number];
     brickTextureDimensions: [number, number];
     brickTexture: Float32Array;
+    /** Every grid is compressed: upload brickTexture as BC4Snorm blocks (encodeBC4Texture). */
+    compressed: boolean;
 }
 
 export function packSBSGrids(grids: readonly SDFSBS[]): PackedSBS {
@@ -234,8 +245,15 @@ export function packSBSGrids(grids: readonly SDFSBS[]): PackedSBS {
     const aabbs: BrickAABB[] = [];
     const brickOffsets: number[] = [];
     const zOffsets: number[] = [];
+    const compressed = grids.every((g) => g.compressed);
     let z0 = 0;
     for (const g of grids) {
+        // Sharing the texture with uncompressed grids: this grid's bricks take the BC4 round trip on the CPU.
+        let gridTexture = g.brickTexture;
+        if (g.compressed && !compressed) {
+            gridTexture = g.brickTexture.slice();
+            bc4RoundTripTexture(gridTexture, g.brickTextureDimensions[0], g.brickTextureDimensions[1]);
+        }
         const base = aabbs.length;
         brickOffsets.push(base);
         zOffsets.push(z0);
@@ -245,7 +263,7 @@ export function packSBSGrids(grids: readonly SDFSBS[]): PackedSBS {
             const [dx, dy] = [((base + b) % bricksAlongX) * bwv * bwv, Math.floor((base + b) / bricksAlongX) * bwv];
             for (let y = 0; y < bwv; y++) {
                 const src = sx + g.brickTextureDimensions[0] * (sy + y);
-                brickTexture.set(g.brickTexture.subarray(src, src + bwv * bwv), dx + texW * (dy + y));
+                brickTexture.set(gridTexture.subarray(src, src + bwv * bwv), dx + texW * (dy + y));
             }
         }
         const v = g.virtualBricksPerAxis;
@@ -257,5 +275,5 @@ export function packSBSGrids(grids: readonly SDFSBS[]): PackedSBS {
                 }
         z0 += v;
     }
-    return { aabbs, brickOffsets, zOffsets, indirection, indirectionDims: [side, side, depth], bricksPerAxis: [bricksAlongX, bricksAlongY], brickTextureDimensions: [texW, texH], brickTexture };
+    return { aabbs, brickOffsets, zOffsets, indirection, indirectionDims: [side, side, depth], bricksPerAxis: [bricksAlongX, bricksAlongY], brickTextureDimensions: [texW, texH], brickTexture, compressed };
 }
