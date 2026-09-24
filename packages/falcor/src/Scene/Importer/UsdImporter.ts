@@ -12,14 +12,15 @@ import { MaterialType, packTextureHandle, TextureHandleMode } from "../Material/
 import { generateTangents } from "../TangentSpace.js";
 import { type StaticVertex } from "../SceneData.js";
 import { float2, float3, float4 } from "../../Utils/Math/Vector.js";
-import { float4x4, mulMat } from "../../Utils/Math/Matrix.js";
+import { float4x4, mulMat, transformPoint } from "../../Utils/Math/Matrix.js";
 import { RuntimeError } from "../../Core/Error.js";
 import { Logger } from "../../Utils/Logger.js";
-import { extractUsdCamerasAndLights, usdaStageInfo, usdStageRootTransform, type UsdaCamera, type UsdaDomeLight } from "./UsdaScene.js";
+import { extractUsdCamerasAndLights, extractUsdMaterialBindings, extractUsdMaterialTextures, usdaStageInfo, usdChannelIndex, usdStageRootTransform, usdTexCoordTransform, type UsdaCamera, type UsdaDomeLight, type UsdaTextureInput } from "./UsdaScene.js";
 import type { AnalyticLight } from "../SceneData.js";
 
 interface UsdNode {
     primName: string;
+    absPath?: string;
     nodeType: string;
     contentId: number;
     localMatrix?: ArrayLike<number>;
@@ -138,6 +139,12 @@ function usdLayerText(native: TinyUsdzModule, bytes: Uint8Array): string | null 
     return null;
 }
 
+/** The stage's bounding box center and diagonal in meters (USD space: no up-axis rotation). */
+export interface UsdStageBounds {
+    center: float3;
+    diagonal: number;
+}
+
 export class UsdImporter {
     /** Parses USD (usda/usdc/usdz) into scene descriptors (device-free). */
     static async parseToDescs(
@@ -146,13 +153,18 @@ export class UsdImporter {
         baseUrl = "",
         excludePrims?: Set<string>,
         options: { assumeLinearSpaceTextures?: boolean } = {},
-    ): Promise<{ meshes: SceneMeshDesc[]; materials: SceneMaterialDesc[]; materialNames: string[]; cameras: UsdaCamera[]; lights: AnalyticLight[]; domeLight: UsdaDomeLight | null }> {
+    ): Promise<{ meshes: SceneMeshDesc[]; materials: SceneMaterialDesc[]; materialNames: string[]; cameras: UsdaCamera[]; lights: AnalyticLight[]; domeLight: UsdaDomeLight | null; stage: UsdStageBounds | null }> {
         const native = await loadTinyUsdz();
         const usd = new native.TinyUSDZLoaderNative();
         // Cameras, lights and stage metadata come from the layer's text (RenderScene has none of them).
         const layerText = usdLayerText(native, bytes);
-        const rootXform = layerText ? usdStageRootTransform(usdaStageInfo(layerText)) : float4x4.identity();
+        const stageInfo = layerText ? usdaStageInfo(layerText) : null;
+        const rootXform = stageInfo ? usdStageRootTransform(stageInfo) : float4x4.identity();
         const extracted = layerText ? extractUsdCamerasAndLights(layerText) : { cameras: [], lights: [], domeLight: null };
+        // Channel selectors, color spaces and st transforms of textured inputs (tinyusdz drops them).
+        const materialTextures = layerText ? extractUsdMaterialTextures(layerText) : new Map<string, Map<string, UsdaTextureInput>>();
+        // tinyusdz materials carry no name: find them through the meshes' bindings.
+        const bindings = layerText ? extractUsdMaterialBindings(layerText) : new Map<string, string>();
         if (!usd.loadFromBinary(bytes, "scene.usd")) {
             throw new RuntimeError(`UsdImporter: failed to parse USD (${usd.error()})`);
         }
@@ -161,17 +173,19 @@ export class UsdImporter {
         const materials: SceneMaterialDesc[] = [];
         const materialNames: string[] = [];
         const materialIndex = new Map<number, number>();
-        const textureJobs: { desc: SceneMaterialDesc; material: UsdMaterial }[] = [];
+        const texCoordTransforms: ((s: number, t: number) => [number, number])[] = [];
+        const textureJobs: { desc: SceneMaterialDesc; material: UsdMaterial; inputs: Map<string, UsdaTextureInput> }[] = [];
 
-        const getOrAddMaterial = (materialId: number | undefined): number => {
+        const getOrAddMaterial = (materialId: number | undefined, materialPath: string | undefined): number => {
             const id = materialId ?? -1;
             const existing = materialIndex.get(id);
             if (existing !== undefined) return existing;
             let desc: SceneMaterialDesc;
             let name = "";
+            let texTransform: UsdaTextureInput["transform"];
             if (id >= 0) {
                 const m = usd.getMaterial(id);
-                name = m.name ?? "";
+                name = m.name || (materialPath?.slice(materialPath.lastIndexOf("/") + 1) ?? "");
                 const dc = m.diffuseColor ?? [0.18, 0.18, 0.18];
                 const em = m.emissiveColor ?? [0, 0, 0];
                 const emissive = em[0]! !== 0 || em[1]! !== 0 || em[2]! !== 0;
@@ -188,8 +202,21 @@ export class UsdImporter {
                     },
                 };
                 applyUniformOpacity(m, desc);
+                const inputs = (materialPath && materialTextures.get(materialPath)) || new Map<string, UsdaTextureInput>();
+                const emissiveScale = inputs.get("emissivecolor")?.scale;
+                if (emissiveScale && emissiveScale.some((v) => v !== 1)) {
+                    if (emissiveScale.some((v) => v !== emissiveScale[0])) Logger.warning(`UsdPreviewSurface '${name}' input 'emissiveColor' specifies a vector texture value scale. Applying red component to all channels.`);
+                    desc.basic.emissiveFactor = emissiveScale[0];
+                }
+                // ConvertedTexTransform: the first non-identity st transform applies to every texture.
+                const isIdentity = (t: UsdaTextureInput["transform"]) => !t || (t.scale[0] === 1 && t.scale[1] === 1 && t.rotation === 0 && t.translation[0] === 0 && t.translation[1] === 0);
+                for (const input of inputs.values()) {
+                    if (isIdentity(input.transform)) continue;
+                    if (!texTransform) texTransform = input.transform;
+                    else if (JSON.stringify(texTransform) !== JSON.stringify(input.transform)) Logger.warning(`Shader input '${input.texture}' specifies a texture transform that differs from that used on another texture, which is not supported. Applying the first encountered non-idenity transform to all textures.`);
+                }
                 const hasTexture = [m.diffuseColorTextureId, m.roughnessTextureId, m.metallicTextureId, m.normalTextureId, m.emissiveColorTextureId, m.opacityTextureId, m.displacementTextureId].some((t) => t !== undefined && t >= 0);
-                if (hasTexture) textureJobs.push({ desc, material: m });
+                if (hasTexture) textureJobs.push({ desc, material: m, inputs });
             } else {
                 // UsdPreviewSurface fallback (18% gray).
                 desc = {
@@ -201,13 +228,30 @@ export class UsdImporter {
             materials.push(desc);
             materialNames.push(name);
             materialIndex.set(id, index);
+            // Native pre-transforms texcoords by its texture transform (at least a V flip).
+            texCoordTransforms.push(usdTexCoordTransform(texTransform));
             return index;
         };
 
-        const walk = (node: UsdNode, parentWorld: float4x4): void => {
+        // Stage bounds in USD space (UsdGeomBBoxCache's world bound, without the root transform).
+        const lo = [Infinity, Infinity, Infinity];
+        const hi = [-Infinity, -Infinity, -Infinity];
+        const walk = (node: UsdNode, parentWorld: float4x4, parentUsd: float4x4): void => {
             let world = parentWorld;
+            let usdWorld = parentUsd;
             if (node.localMatrix && node.localMatrix.length === 16) {
                 world = mulMat(parentWorld, usdToWebMatrix(node.localMatrix));
+                usdWorld = mulMat(parentUsd, usdToWebMatrix(node.localMatrix));
+            }
+            if (node.nodeType === "mesh") {
+                const points = usd.getMesh(node.contentId).points;
+                for (let i = 0; i < points.length; i += 3) {
+                    const p = transformPoint(usdWorld, new float3(points[i]!, points[i + 1]!, points[i + 2]!));
+                    [p.x, p.y, p.z].forEach((v, k) => {
+                        lo[k] = Math.min(lo[k]!, v);
+                        hi[k] = Math.max(hi[k]!, v);
+                    });
+                }
             }
             if (node.nodeType === "mesh" && !excludePrims?.has(node.primName)) {
                 const mesh = usd.getMesh(node.contentId);
@@ -217,34 +261,39 @@ export class UsdImporter {
                 const uvs = mesh.texcoords;
                 const vertexCount = positions.length / 3;
                 const vertices: StaticVertex[] = new Array(vertexCount);
+                const materialID = getOrAddMaterial(mesh.materialId, node.absPath ? bindings.get(node.absPath) : undefined);
+                const toTexCrd = texCoordTransforms[materialID]!;
                 for (let i = 0; i < vertexCount; i++) {
                     vertices[i] = {
                         position: new float3(positions[i * 3]!, positions[i * 3 + 1]!, positions[i * 3 + 2]!),
                         normal: new float3(normals[i * 3]!, normals[i * 3 + 1]!, normals[i * 3 + 2]!),
                         tangent: new float4(0, 0, 0, 0),
                         // USD st has a bottom-left origin; Falcor samples top-down
-                        // images with raw st (native parity) -> flip V.
-                        texCrd: uvs && uvs.length === vertexCount * 2 ? new float2(uvs[i * 2]!, 1 - uvs[i * 2 + 1]!) : new float2(0, 0),
+                        // images: flip V (s, -t), times any UsdTransform2d, as natively.
+                        texCrd: uvs && uvs.length === vertexCount * 2 ? new float2(...toTexCrd(uvs[i * 2]!, uvs[i * 2 + 1]!)) : new float2(0, 0),
                     };
                 }
                 generateTangents(vertices, indices);
-                meshes.push({ vertices, indices, materialID: getOrAddMaterial(mesh.materialId), transform: world.clone() });
+                meshes.push({ vertices, indices, materialID, transform: world.clone() });
             } else if (node.nodeType !== "xform" && node.nodeType !== "" && !/camera|light/i.test(node.nodeType)) {
                 Logger.warning(`UsdImporter: prim type '${node.nodeType}' ('${node.primName}') not supported (skipped)`);
             }
-            for (const child of node.children ?? []) walk(child, world);
+            for (const child of node.children ?? []) walk(child, world, usdWorld);
         };
 
         // Native's stage root transform: meters per unit, Z-up rotated to Y-up.
-        walk(usd.getDefaultRootNode(), rootXform);
+        walk(usd.getDefaultRootNode(), rootXform, float4x4.identity());
+        const mpu = stageInfo?.metersPerUnit ?? 1;
+        const diagonal = Math.hypot(hi[0]! - lo[0]!, hi[1]! - lo[1]!, hi[2]! - lo[2]!);
+        const stage = Number.isFinite(diagonal) ? { center: new float3(((lo[0]! + hi[0]!) / 2) * mpu, ((lo[1]! + hi[1]!) / 2) * mpu, ((lo[2]! + hi[2]!) / 2) * mpu), diagonal: diagonal * mpu } : null;
 
         // Resolve UsdUVTexture images (URI, embedded-encoded, or pre-decoded).
         if (textureManager) {
-            for (const { desc, material: m } of textureJobs) {
-                await resolveMaterialTextures(usd, m, desc, textureManager, baseUrl, !!options.assumeLinearSpaceTextures);
+            for (const { desc, material: m, inputs } of textureJobs) {
+                await resolveMaterialTextures(usd, m, desc, textureManager, baseUrl, !!options.assumeLinearSpaceTextures, inputs);
             }
         }
-        return { meshes, materials, materialNames, ...extracted };
+        return { meshes, materials, materialNames, ...extracted, stage };
     }
 }
 
@@ -269,9 +318,9 @@ function applyUniformOpacity(m: UsdMaterial, desc: SceneMaterialDesc): void {
 }
 
 /** Resolves the material's texture slots (mirrors PreviewSurfaceConverter):
- *  baseColor sRGB; roughness+metallic packed into one ORM texture like the
- *  native CreateSpecularTexture kernel (channel r — tinyusdz exposes no
- *  channel selectors); opacity through packBaseColorAlpha or
+ *  baseColor sRGB unless sourceColorSpace says otherwise; roughness+metallic
+ *  packed into one ORM texture like the native CreateSpecularTexture kernel,
+ *  reading the connected output channel; opacity through packBaseColorAlpha or
  *  createSpecularTransmissionTexture; normal, emissive and displacement direct.
  *  The packing kernels run on the CPU here (the port decodes textures there). */
 async function resolveMaterialTextures(
@@ -281,11 +330,20 @@ async function resolveMaterialTextures(
     textureManager: TextureManager,
     baseUrl: string,
     assumeLinear = false,
+    inputs = new Map<string, UsdaTextureInput>(),
 ): Promise<void> {
     const valid = (id: number | undefined): id is number => id !== undefined && id >= 0;
-    const load = async (id: number, slotSrgb: boolean): Promise<number | undefined> => {
+    // Authored color spaces override the slot's (ConvertedInput::loadSRGB).
+    const srgbOf = (input: string, slotSrgb: boolean) => (inputs.get(input)?.srgb ?? slotSrgb) && !assumeLinear;
+    // Single-channel inputs read the connected output (red without layer text); -2 marks several channels.
+    const channelOf = (input: string) => {
+        const output = inputs.get(input)?.output ?? "r";
+        const c = usdChannelIndex(output);
+        return c >= 0 ? c : -2;
+    };
+    const load = async (id: number, input: string, slotSrgb: boolean): Promise<number | undefined> => {
         try {
-            return textureManager.addTexture({ bitmap: await resolveImageBitmap(usd, id, baseUrl), srgb: slotSrgb && !assumeLinear });
+            return textureManager.addTexture({ bitmap: await resolveImageBitmap(usd, id, baseUrl), srgb: srgbOf(input, slotSrgb) });
         } catch (err) {
             Logger.warning(`UsdImporter: failed to load texture ${id} (${String(err)})`);
             return undefined;
@@ -293,7 +351,11 @@ async function resolveMaterialTextures(
     };
     const threshold = m.opacityThreshold ?? 0;
     const opacityTextured = valid(m.opacityTextureId);
-    if (threshold > 0 && (valid(m.diffuseColorTextureId) || opacityTextured) && ((m.opacity ?? 1) < 1 || opacityTextured)) {
+    const opacityChannel = channelOf("opacity");
+    if (opacityTextured && opacityChannel < 0) {
+        Logger.warning(threshold > 0 ? "Cannot set alpha channel; opacity texture provides more than one channel." : "Cannot create transmission texture; opacity texture provides more than one channel of data.");
+    }
+    if (threshold > 0 && (valid(m.diffuseColorTextureId) || opacityTextured) && ((m.opacity ?? 1) < 1 || opacityTextured) && !(opacityTextured && opacityChannel < 0)) {
         // packBaseColorAlpha: cutout opacity rides in the base colour's alpha.
         try {
             const baseImg = valid(m.diffuseColorTextureId) ? readPixels(await resolveImageBitmap(usd, m.diffuseColorTextureId, baseUrl)) : null;
@@ -310,27 +372,26 @@ async function resolveMaterialTextures(
                 for (let x = 0; x < w; x++) {
                     const i = (y * w + x) * 4;
                     for (let c = 0; c < 3; c++) packed[i + c] = baseImg ? sampleNearest(baseImg, x, y, w, h, c) : uniformRgb[c]!;
-                    // tinyusdz exposes no channel selector: the red channel carries opacity.
-                    packed[i + 3] = opacityImg ? sampleNearest(opacityImg, x, y, w, h, 0) : opacityConst;
+                    packed[i + 3] = opacityImg ? sampleNearest(opacityImg, x, y, w, h, opacityChannel) : opacityConst;
                 }
             }
             const bitmap = await createImageBitmap(new ImageData(packed, w, h), { premultiplyAlpha: "none", colorSpaceConversion: "none" });
-            desc.basic.texBaseColor = packTextureHandle(TextureHandleMode.Texture, textureManager.addTexture({ bitmap, srgb: !assumeLinear }));
+            desc.basic.texBaseColor = packTextureHandle(TextureHandleMode.Texture, textureManager.addTexture({ bitmap, srgb: srgbOf("diffusecolor", true) }));
         } catch (err) {
             Logger.warning(`UsdImporter: failed to pack base colour and opacity (${String(err)})`);
         }
-    } else if (valid(m.diffuseColorTextureId)) {
-        const id = await load(m.diffuseColorTextureId, true);
+    } else if (valid(m.diffuseColorTextureId) && !(threshold > 0 && opacityTextured)) {
+        const id = await load(m.diffuseColorTextureId, "diffusecolor", true);
         if (id !== undefined) desc.basic.texBaseColor = packTextureHandle(TextureHandleMode.Texture, id);
     }
-    if (threshold <= 0 && opacityTextured) {
+    if (threshold <= 0 && opacityTextured && opacityChannel >= 0) {
         // createSpecularTransmissionTexture: textured opacity becomes a grey
         // transmission map of 1 - opacity, with full specular transmission.
         try {
             const opacityImg = readPixels(await resolveImageBitmap(usd, m.opacityTextureId!, baseUrl));
             const out = new Uint8ClampedArray(opacityImg.width * opacityImg.height * 4);
             for (let i = 0; i < out.length; i += 4) {
-                const v = 255 - opacityImg.data[i]!;
+                const v = 255 - opacityImg.data[i + opacityChannel]!;
                 out.set([v, v, v, 255], i);
             }
             const bitmap = await createImageBitmap(new ImageData(out, opacityImg.width, opacityImg.height), { premultiplyAlpha: "none", colorSpaceConversion: "none" });
@@ -341,10 +402,14 @@ async function resolveMaterialTextures(
         }
     }
     if (valid(m.displacementTextureId)) {
-        const id = await load(m.displacementTextureId, false);
+        const id = await load(m.displacementTextureId, "displacement", false);
         if (id !== undefined) desc.basic.texDisplacement = packTextureHandle(TextureHandleMode.Texture, id);
     }
-    if (valid(m.roughnessTextureId) || valid(m.metallicTextureId)) {
+    const roughChannel = channelOf("roughness");
+    const metalChannel = channelOf("metallic");
+    if (valid(m.roughnessTextureId) && roughChannel < 0) Logger.warning("Cannot create specular texture; roughness texture provides more than one channel.");
+    else if (valid(m.metallicTextureId) && metalChannel < 0) Logger.warning("Cannot create specular texture; metallic texture provides more than one channel.");
+    else if (valid(m.roughnessTextureId) || valid(m.metallicTextureId)) {
         try {
             const rough = valid(m.roughnessTextureId) ? readPixels(await resolveImageBitmap(usd, m.roughnessTextureId, baseUrl)) : null;
             const metal = valid(m.metallicTextureId) ? readPixels(await resolveImageBitmap(usd, m.metallicTextureId, baseUrl)) : null;
@@ -353,17 +418,11 @@ async function resolveMaterialTextures(
             const orm = new Uint8ClampedArray(w * h * 4);
             const roughConst = Math.round((desc.basic.specular?.y ?? 0.5) * 255);
             const metalConst = Math.round((desc.basic.specular?.z ?? 0) * 255);
-            const sample = (img: { data: Uint8ClampedArray; width: number; height: number } | null, x: number, y: number, fallback: number): number => {
-                if (!img) return fallback;
-                const sx = Math.min(Math.floor((x * img.width) / w), img.width - 1);
-                const sy = Math.min(Math.floor((y * img.height) / h), img.height - 1);
-                return img.data[(sy * img.width + sx) * 4]!;
-            };
             for (let y = 0; y < h; y++) {
                 for (let x = 0; x < w; x++) {
                     const i = (y * w + x) * 4;
-                    orm[i + 1] = sample(rough, x, y, roughConst);
-                    orm[i + 2] = sample(metal, x, y, metalConst);
+                    orm[i + 1] = rough ? sampleNearest(rough, x, y, w, h, roughChannel) : roughConst;
+                    orm[i + 2] = metal ? sampleNearest(metal, x, y, w, h, metalChannel) : metalConst;
                     orm[i + 3] = 255;
                 }
             }
@@ -374,11 +433,11 @@ async function resolveMaterialTextures(
         }
     }
     if (valid(m.normalTextureId)) {
-        const id = await load(m.normalTextureId, false);
+        const id = await load(m.normalTextureId, "normal", false);
         if (id !== undefined) desc.basic.texNormalMap = packTextureHandle(TextureHandleMode.Texture, id);
     }
     if (valid(m.emissiveColorTextureId)) {
-        const id = await load(m.emissiveColorTextureId, true);
+        const id = await load(m.emissiveColorTextureId, "emissivecolor", true);
         if (id !== undefined) {
             desc.basic.texEmissive = packTextureHandle(TextureHandleMode.Texture, id);
             if (desc.header) desc.header.emissive = true;

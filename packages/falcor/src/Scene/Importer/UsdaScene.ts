@@ -289,3 +289,114 @@ export function extractUsdCamerasAndLights(text: string): { cameras: UsdaCamera[
     prims.forEach(visit);
     return { cameras, lights, domeLight };
 }
+
+/** A UsdPreviewSurface input read from a UsdUVTexture (ConvertedInput::convertTexture). */
+export interface UsdaTextureInput {
+    /** Path of the UsdUVTexture prim. */
+    texture: string;
+    /** The texture output the input connects to: r, g, b, a, rg or rgb. */
+    output: string;
+    /** sourceColorSpace or the file's colorSpace: true sRGB, false raw, undefined per slot. */
+    srgb?: boolean;
+    /** inputs:scale (native honours it only for emissiveColor, as the emissive factor). */
+    scale?: [number, number, number, number];
+    /** A UsdTransform2d on st: scale, rotation in degrees, translation. */
+    transform?: { scale: [number, number]; rotation: number; translation: [number, number] };
+}
+
+/** Texture channel index of a single-channel output name (getChannelIndex), else -1. */
+export function usdChannelIndex(output: string): number {
+    return ["r", "g", "b", "a"].indexOf(output);
+}
+
+/**
+ * The textured inputs of every Material's UsdPreviewSurface, keyed by the Material's path, with
+ * lowercase input names. Connections are followed through NodeGraph and Material interface
+ * attributes to the most upstream source, like native's getSourceInput.
+ */
+export function extractUsdMaterialTextures(text: string): Map<string, Map<string, UsdaTextureInput>> {
+    const byPath = new Map<string, UsdaPrim>();
+    const index = (p: UsdaPrim) => {
+        byPath.set(p.path, p);
+        p.children.forEach(index);
+    };
+    parseUsdaPrims(text, float4x4.identity()).forEach(index);
+    const target = (body: string, name: string) => attr(body, [`${name}.connect`])?.match(/<([^>]+)>/)?.[1];
+    // Follows `<prim.attr>` connections to the source prim and its output name.
+    const resolve = (connection: string): { prim: UsdaPrim; output: string } | null => {
+        for (let hop = 0; hop < 16; hop++) {
+            const dot = connection.lastIndexOf(".");
+            const prim = byPath.get(connection.slice(0, dot));
+            const property = connection.slice(dot + 1);
+            if (!prim) return null;
+            const next = target(prim.body, property);
+            if (!next) return { prim, output: property.replace(/^outputs:/, "") };
+            connection = next;
+        }
+        return null;
+    };
+    const infoId = (p: UsdaPrim) => attr(p.body, ["info:id"])?.match(/"([^"]*)"/)?.[1];
+    const result = new Map<string, Map<string, UsdaTextureInput>>();
+    for (const material of byPath.values()) {
+        if (material.type !== "Material") continue;
+        const surface = target(material.body, "outputs:surface");
+        const shader = surface ? resolve(surface)?.prim : undefined;
+        if (!shader || infoId(shader) !== "UsdPreviewSurface") continue;
+        const inputs = new Map<string, UsdaTextureInput>();
+        const names = [...shader.body.matchAll(/^\s*(?:uniform\s+)?[\w\[\]]+\s+inputs:(\w+)\.connect\s*=/gm)].map((m) => m[1]!).sort();
+        for (const name of names) {
+            const source = resolve(`${shader.path}.inputs:${name}`);
+            if (!source || infoId(source.prim) !== "UsdUVTexture") continue;
+            const tex = source.prim;
+            const input: UsdaTextureInput = { texture: tex.path, output: source.output };
+            // Native reads only an un-namespaced sourceColorSpace; the schema's is inputs:sourceColorSpace.
+            const colorSpace = attr(tex.body, ["inputs:sourceColorSpace", "sourceColorSpace"])?.match(/"([^"]*)"/)?.[1];
+            // The file asset's own colorSpace metadata takes precedence.
+            const fileSpace = tex.body.match(/inputs:file\s*=\s*@[^@]*@\s*\(([^)]*)\)/)?.[1]?.match(/colorSpace\s*=\s*"([^"]*)"/)?.[1];
+            for (const space of [colorSpace, fileSpace]) {
+                if (space === "sRGB") input.srgb = true;
+                else if (space === "raw") input.srgb = false;
+            }
+            const scale = attr(tex.body, ["inputs:scale"]);
+            if (scale !== undefined) input.scale = num(scale).slice(0, 4) as [number, number, number, number];
+            const st = target(tex.body, "inputs:st");
+            const stSource = st ? resolve(st)?.prim : undefined;
+            if (stSource && infoId(stSource) === "UsdTransform2d") {
+                const s = attrVector(stSource.body, ["inputs:scale"], [1, 1]);
+                const t = attrVector(stSource.body, ["inputs:translation"], [0, 0]);
+                input.transform = { scale: [s[0]!, s[1]!], rotation: attrNumber(stSource.body, ["inputs:rotation"], 0), translation: [t[0]!, t[1]!] };
+            }
+            inputs.set(name.toLowerCase(), input);
+        }
+        result.set(material.path, inputs);
+    }
+    return result;
+}
+
+/**
+ * Native's texcoord pre-transform for a material's UsdTransform2d (SceneBuilder applies the
+ * inverse of PreviewSurfaceConverter's texture transform): st' = t + R(rotation) * (sx*s, -sy*t).
+ * Without a transform it is the plain y-flip (s, -t).
+ */
+export function usdTexCoordTransform(transform: UsdaTextureInput["transform"]): (s: number, t: number) => [number, number] {
+    const { scale = [1, 1], rotation = 0, translation = [0, 0] } = transform ?? {};
+    const c = Math.cos(rotation * deg);
+    const n = Math.sin(rotation * deg);
+    return (s, t) => {
+        const x = scale[0] * s;
+        const y = -scale[1] * t;
+        return [translation[0] + c * x - n * y, translation[1] + n * x + c * y];
+    };
+}
+
+/** Each prim's bound material path (`material:binding`, inherited by descendants). */
+export function extractUsdMaterialBindings(text: string): Map<string, string> {
+    const bindings = new Map<string, string>();
+    const visit = (p: UsdaPrim, inherited: string | undefined) => {
+        const own = p.body.match(/^\s*rel\s+material:binding\s*=\s*<([^>]+)>/m)?.[1] ?? inherited;
+        if (own) bindings.set(p.path, own);
+        p.children.forEach((c) => visit(c, own));
+    };
+    parseUsdaPrims(text, float4x4.identity()).forEach((p) => visit(p, undefined));
+    return bindings;
+}

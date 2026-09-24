@@ -1,0 +1,9 @@
+# UsdUVTexture channel selectors, color space, st transform and value scale (see usd-channels.usda).
+sceneBuilder.importScene('usd-channels.usda')
+
+camera = Camera()
+camera.position = float3(0, 0, 6)
+camera.target = float3(0, 0, 0)
+camera.up = float3(0, 1, 0)
+sceneBuilder.addCamera(camera)
+sceneBuilder.selectedCamera = camera

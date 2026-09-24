@@ -7,3 +7,4 @@ camera.position = float3(2.5, 2.0, 6.0)
 camera.target = float3(2.5, 2.0, 0.4)
 camera.up = float3(0, 1, 0)
 sceneBuilder.addCamera(camera)
+sceneBuilder.selectedCamera = camera

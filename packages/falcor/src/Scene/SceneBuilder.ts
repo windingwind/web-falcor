@@ -811,12 +811,23 @@ export class SceneBuilderBridge {
     get envMap(): EnvMapRef | null {
         return this._envMap;
     }
-    cameraSpeed = 1;
+    private _cameraSpeed = 1;
+    private cameraSpeedSet = false;
+    get cameraSpeed(): number {
+        return this._cameraSpeed;
+    }
+    set cameraSpeed(speed: number) {
+        this._cameraSpeed = speed;
+        this.cameraSpeedSet = true;
+    }
     private _cameras: CameraBridge[] = [];
+    /** How many scene commands preceded each addCamera (native adds cameras in call order). */
+    private cameraCommandCounts: number[] = [];
 
     addCamera(camera: CameraBridge): void {
         const c = unwrapGuard(camera);
         this._cameras.push(c);
+        this.cameraCommandCounts.push(this.commands.length);
     }
     get cameras(): CameraBridge[] {
         return this._cameras;
@@ -1064,6 +1075,18 @@ export class SceneBuilderBridge {
                         this.importedCameras.push({
                             name: c.name,
                             pose: { position: c.position, target: c.target, up: c.up, focalLength: c.focalLength, depthRange: c.depthRange, focalDistance: c.focalDistance, apertureRadius: c.apertureRadius, frameWidth: c.frameWidth, frameHeight: c.frameHeight },
+                        });
+                    }
+                    const stage = parsed.stage;
+                    // USDImporter: camera speed from the stage size (a pyscene assignment wins here).
+                    if (stage && stage.diagonal > 0 && !this.cameraSpeedSet) this._cameraSpeed = 0.025 * stage.diagonal;
+                    const commandIndex = this.commands.indexOf(cmd);
+                    if (stage && this.importedCameras.length === 0 && !this.cameraCommandCounts.some((n) => n <= commandIndex)) {
+                        // No camera yet: native's default looks down (-1, -1, -1) at the stage center.
+                        const d = 1.5 * stage.diagonal / Math.sqrt(3);
+                        this.importedCameras.push({
+                            name: "Default",
+                            pose: { position: new float3(stage.center.x + d, stage.center.y + d, stage.center.z + d), target: stage.center, up: new float3(0, 1, 0), focalLength: 18, depthRange: [0.001, 4 * stage.diagonal] },
                         });
                     }
                     if (parsed.domeLight && !this._envMap) {

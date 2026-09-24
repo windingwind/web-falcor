@@ -1,0 +1,164 @@
+#usda 1.0
+(
+    defaultPrim = "World"
+    metersPerUnit = 1
+    upAxis = "Y"
+)
+# UsdUVTexture details tinyusdz drops, read from the layer text like native's
+# ConvertedInput: output channel selectors (roughness from g, metallic from b,
+# opacity from a), a "raw" file color space, an emissive value scale (the emissive
+# factor), and a UsdTransform2d on st (which native drops: ConvertedTexTransform
+# is updated before the texture path is known). usd-channels.png is 4x4 RGBA
+# with a different pattern per channel; usd-channels-orm.png is uniform per
+# channel (r 0.2, g 0.5, b 0.8), since native's CreateSpecularTexture samples at
+# LOD 0.5 (SampleGrad with scalar gradients) and so blurs patterned inputs.
+def Xform "World"
+{
+    def Mesh "Channels"
+    {
+        uniform token subdivisionScheme = "none"
+        int[] faceVertexCounts = [3, 3]
+        int[] faceVertexIndices = [0, 1, 2, 0, 2, 3]
+        point3f[] points = [(-3.2, -1, 0), (-1.2, -1, 0), (-1.2, 1, 0), (-3.2, 1, 0)]
+        normal3f[] normals = [(0, 0, 1), (0, 0, 1), (0, 0, 1), (0, 0, 1)] (
+            interpolation = "vertex"
+        )
+        texCoord2f[] primvars:st = [(0, 0), (1, 0), (1, 1), (0, 1)] (
+            interpolation = "vertex"
+        )
+        rel material:binding = </World/Materials/ChannelsMat>
+    }
+    def Mesh "Emissive"
+    {
+        uniform token subdivisionScheme = "none"
+        int[] faceVertexCounts = [3, 3]
+        int[] faceVertexIndices = [0, 1, 2, 0, 2, 3]
+        point3f[] points = [(-1, -1, 0), (1, -1, 0), (1, 1, 0), (-1, 1, 0)]
+        normal3f[] normals = [(0, 0, 1), (0, 0, 1), (0, 0, 1), (0, 0, 1)] (
+            interpolation = "vertex"
+        )
+        texCoord2f[] primvars:st = [(0, 0), (1, 0), (1, 1), (0, 1)] (
+            interpolation = "vertex"
+        )
+        rel material:binding = </World/Materials/EmissiveMat>
+    }
+
+    def Mesh "Transformed"
+    {
+        uniform token subdivisionScheme = "none"
+        int[] faceVertexCounts = [3, 3]
+        int[] faceVertexIndices = [0, 1, 2, 0, 2, 3]
+        point3f[] points = [(1.2, -1, 0), (3.2, -1, 0), (3.2, 1, 0), (1.2, 1, 0)]
+        normal3f[] normals = [(0, 0, 1), (0, 0, 1), (0, 0, 1), (0, 0, 1)] (
+            interpolation = "vertex"
+        )
+        texCoord2f[] primvars:st = [(0, 0), (1, 0), (1, 1), (0, 1)] (
+            interpolation = "vertex"
+        )
+        rel material:binding = </World/Materials/TransformedMat>
+    }
+
+    def Scope "Materials"
+    {
+        def Material "ChannelsMat"
+        {
+            token outputs:surface.connect = </World/Materials/ChannelsMat/Shader.outputs:surface>
+
+            def Shader "Shader"
+            {
+                uniform token info:id = "UsdPreviewSurface"
+                color3f inputs:diffuseColor.connect = </World/Materials/ChannelsMat/Tex.outputs:rgb>
+                float inputs:roughness.connect = </World/Materials/ChannelsMat/OrmTex.outputs:g>
+                float inputs:metallic.connect = </World/Materials/ChannelsMat/OrmTex.outputs:b>
+                token outputs:surface
+            }
+            def Shader "Reader"
+            {
+                uniform token info:id = "UsdPrimvarReader_float2"
+                token inputs:varname = "st"
+                float2 outputs:result
+            }
+            def Shader "Tex"
+            {
+                uniform token info:id = "UsdUVTexture"
+                asset inputs:file = @usd-channels.png@ (
+                    colorSpace = "raw"
+                )
+                float2 inputs:st.connect = </World/Materials/ChannelsMat/Reader.outputs:result>
+                float3 outputs:rgb
+            }
+            def Shader "OrmTex"
+            {
+                uniform token info:id = "UsdUVTexture"
+                asset inputs:file = @usd-channels-orm.png@
+                float2 inputs:st.connect = </World/Materials/ChannelsMat/Reader.outputs:result>
+                float outputs:g
+                float outputs:b
+            }
+        }
+        def Material "EmissiveMat"
+        {
+            token outputs:surface.connect = </World/Materials/EmissiveMat/Shader.outputs:surface>
+
+            def Shader "Shader"
+            {
+                uniform token info:id = "UsdPreviewSurface"
+                color3f inputs:diffuseColor = (0.6, 0.5, 0.4)
+                color3f inputs:emissiveColor.connect = </World/Materials/EmissiveMat/Tex.outputs:rgb>
+                float inputs:opacity.connect = </World/Materials/EmissiveMat/Tex.outputs:a>
+                token outputs:surface
+            }
+            def Shader "Reader"
+            {
+                uniform token info:id = "UsdPrimvarReader_float2"
+                token inputs:varname = "st"
+                float2 outputs:result
+            }
+            def Shader "Tex"
+            {
+                uniform token info:id = "UsdUVTexture"
+                # raw: native loads emissive textures linear by default (the web, sRGB).
+                asset inputs:file = @usd-channels.png@ (
+                    colorSpace = "raw"
+                )
+                float4 inputs:scale = (3, 3, 3, 1)
+                float2 inputs:st.connect = </World/Materials/EmissiveMat/Reader.outputs:result>
+                float3 outputs:rgb
+                float outputs:a
+            }
+        }
+        def Material "TransformedMat"
+        {
+            token outputs:surface.connect = </World/Materials/TransformedMat/Shader.outputs:surface>
+
+            def Shader "Shader"
+            {
+                uniform token info:id = "UsdPreviewSurface"
+                color3f inputs:diffuseColor.connect = </World/Materials/TransformedMat/Tex.outputs:rgb>
+                token outputs:surface
+            }
+            def Shader "Reader"
+            {
+                uniform token info:id = "UsdPrimvarReader_float2"
+                token inputs:varname = "st"
+                float2 outputs:result
+            }
+            def Shader "Transform"
+            {
+                uniform token info:id = "UsdTransform2d"
+                float2 inputs:in.connect = </World/Materials/TransformedMat/Reader.outputs:result>
+                float2 inputs:scale = (2, 0.5)
+                float inputs:rotation = 30
+                float2 inputs:translation = (0.25, 0.1)
+                float2 outputs:result
+            }
+            def Shader "Tex"
+            {
+                uniform token info:id = "UsdUVTexture"
+                asset inputs:file = @usd-channels.png@
+                float2 inputs:st.connect = </World/Materials/TransformedMat/Transform.outputs:result>
+                float3 outputs:rgb
+            }
+        }
+    }
+}

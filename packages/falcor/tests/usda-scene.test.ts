@@ -3,7 +3,8 @@
  * conversions of native's USDImporter.
  */
 import { describe, expect, it } from "vitest";
-import { extractUsdCamerasAndLights, parseUsdaPrims, usdaStageInfo, usdBlackbodyTemperatureAsRgb, usdStageRootTransform } from "../src/Scene/Importer/UsdaScene.js";
+import { extractUsdCamerasAndLights, extractUsdMaterialTextures, parseUsdaPrims, usdaStageInfo, usdBlackbodyTemperatureAsRgb, usdStageRootTransform, usdTexCoordTransform } from "../src/Scene/Importer/UsdaScene.js";
+import { readFileSync } from "node:fs";
 import { LightType } from "../src/Scene/SceneData.js";
 import { float3 } from "../src/Utils/Math/Vector.js";
 import { float4x4, transformPoint, transformVector } from "../src/Utils/Math/Matrix.js";
@@ -133,5 +134,33 @@ def SphereLight "S"
 }
 `);
         close(lights[0]!.intensity, [2 * 1.043333, 2 * 0.983624, 2 * 1.034613]);
+    });
+
+    it("reads UsdUVTexture channels, color spaces, scales and st transforms", () => {
+        const text = readFileSync(new URL("../../../tests/oracle/assets/usd-channels.usda", import.meta.url), "utf8");
+        const mats = extractUsdMaterialTextures(text);
+        const channels = mats.get("/World/Materials/ChannelsMat")!;
+        expect(channels.get("diffusecolor")).toMatchObject({ output: "rgb", srgb: false });
+        expect(channels.get("roughness")!.output).toBe("g");
+        expect(channels.get("metallic")!.output).toBe("b");
+        const transformed = mats.get("/World/Materials/TransformedMat")!.get("diffusecolor")!;
+        expect(transformed.transform).toEqual({ scale: [2, 0.5], rotation: 30, translation: [0.25, 0.1] });
+        expect(transformed.srgb).toBeUndefined();
+        const emissive = mats.get("/World/Materials/EmissiveMat")!;
+        expect(emissive.get("emissivecolor")).toMatchObject({ output: "rgb", scale: [3, 3, 3, 1] });
+        expect(emissive.get("emissivecolor")!.srgb).toBe(false);
+        expect(emissive.get("opacity")!.output).toBe("a");
+        // The schema's inputs:sourceColorSpace, and native's un-namespaced one.
+        for (const name of ["inputs:sourceColorSpace", "sourceColorSpace"]) {
+            const t = text.replace('asset inputs:file = @usd-channels.png@ (\n                    colorSpace = "raw"\n                )', `asset inputs:file = @usd-channels.png@\n                token ${name} = "raw"`);
+            expect(t).not.toBe(text);
+            expect(extractUsdMaterialTextures(t).get("/World/Materials/ChannelsMat")!.get("diffusecolor")!.srgb).toBe(false);
+        }
+        // st' = t + R(30 deg) * (2 s, -0.5 t).
+        const [s, t] = usdTexCoordTransform(transformed.transform)(1, 1);
+        const c = Math.cos(Math.PI / 6);
+        const n = Math.sin(Math.PI / 6);
+        expect(s).toBeCloseTo(0.25 + c * 2 + n * 0.5, 6);
+        expect(t).toBeCloseTo(0.1 + n * 2 - c * 0.5, 6);
     });
 });

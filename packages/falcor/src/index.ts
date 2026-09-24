@@ -98,6 +98,7 @@ export * from "./Rendering/RTXDI/RTXDI.js";
 export * from "./Scene/SceneBuilder.js";
 export * from "./Scene/Importer/GltfImporter.js";
 export * from "./Scene/Importer/UsdImporter.js";
+export * from "./Scene/Importer/UsdaScene.js";
 export * from "./Scene/Importer/PbrtImporter.js";
 export * from "./Scene/Importer/MitsubaImporter.js";
 export * from "./Scene/Importer/DDSLoader.js";
