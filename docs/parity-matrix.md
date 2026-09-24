@@ -50,8 +50,8 @@ by a documented toolchain/asset gap, ❌ means the web platform cannot provide i
 
 ### 8.2 Render passes (29 upstream directories, 38 registered pass classes)
 
-Tallies today: 21 pass classes fully implemented, 4 partial, 13 not implemented
-(of which 4 ❌ NVIDIA-SDK-bound, 2 🟠 autodiff-blocked).
+Tallies today, over the 37 rows below: 31 ✅, 3 🟡 (software ray tracing in place of DXR), and 3 ❌.
+The ❌ rows are DLSSPass, OptixDenoiser and TestPyTorchPass, which are bound to NVIDIA SDKs or CUDA.
 
 | Pass | Status | Notes |
 |---|---|---|
@@ -83,7 +83,7 @@ Tallies today: 21 pass classes fully implemented, 4 partial, 13 not implemented
   - samplers used with integer textures bind non-filtering;
   - radiance is packed into pass-owned textures instead of in place. Native NRDPass is D3D12-only, so there is no Linux oracle. Verified behaviourally on Arcade (`nrd.gpu.test.ts`): after 32 frames, ReLAX output is 30× closer and ReBLUR output 25× closer (MSE) to a 256-frame reference than the raw 1-spp frame; with a static camera the motion-vector methods give 0 wherever a delta path exists |
 | OptixDenoiser | ❌ | requires CUDA+OptiX. Same substitutes as NRD |
-| OverlaySamplePass | ❌ | demo draws via raw ImGui draw lists (no web ImGui); closest equivalent would be DOM overlays — not a 1:1 port target |
+| OverlaySamplePass | ✅ | `render-passes/src/OverlaySamplePass.ts`: input copy plus native's 5x3 grid of draw-list primitives in `renderOverlayUI`. `RenderPass.renderOverlayUI(drawList)` and `RenderGraph.renderOverlayUI` mirror native; `Utils/UI/OverlayDrawList.ts` implements the ImDrawList subset on a 2D canvas, with ImGui's pixel offsets and alpha-0 skip. Mogwai draws it over each presented frame, and F7 toggles it as natively. Verified: `OverlaySamplePass.drawsPrimitiveGrid` checks pixels, and the viewer was screenshotted. §9: shapes are rasterized by Canvas2D, not ImGui's vertex buffers, and the text font is the browser's Trebuchet MS bold 14 px (native bundles trebucbd.ttf). |
 | PathTracer | ✅ verified | full upstream loop: NEE+MIS, Uniform/Power/LightBVH emissive samplers, EnvMapSampler, dielectrics/nested priority, guide outputs, adaptive spp (`sampleCount` input), rayCount/pathLength stats. Fixed spp 1–16 + variable spp verified (spp=4 vs native: 10/65536 bad px); curve geometry (`USE_CURVES` + Hair BSDF) verified vs native. `USE_RTXDI` in-tracer ReSTIR direct lighting verified vs native (16-frame temporal reservoir chain, meanAbs 8.9e-4, 42 bad px; needed two storage-buffer-budget moves — see §9). Remaining ⏳: NRD guide outputs; SER ❌. NRD outputs ✅: all 18 guide/radiance channels plus the delta reflection/transmission trace passes (`DELTA_*_PASS` kernels). WebGPU allows 8 storage textures per stage, so the `NRDBuffers` override turns every member into a subscript view over one pixel buffer and one per-sample buffer, and a generated kernel copies the connected outputs out, 8 at a time. §9 formats: RGB10A2Unorm → RGBA16Float and R16Float → R32Float (not storage formats). Verified vs native on Arcade (`pathtracer-nrd.gpu.test.ts`): the 13 guides match per pixel (≤ 216 of 57,600 off), and the accumulated radiance matches with 8x8-block relative L1 ≤ 1.1e-2 and image sums to 0.1%. Limit: NRD outputs together with `useRTXDI` need a fifth bind group in the trace kernel (WebGPU allows 4) |
 | PixelInspectorPass | ✅ | pixel/material inspector: PixelData record via async readback (§9) + `renderUI` panel; two overrides (`ShadingData sd = {}` frontend error, `this = {};` WGSL abort); functional GPU test cross-checks the record against the G-buffer inputs; viewer canvas click-to-select wired (§8.3) |
 | RenderPassTemplate | ✅ | authoring skeleton at `render-passes/src/RenderPassTemplate.ts` (registered; pass-through verified in a graph) |

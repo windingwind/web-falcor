@@ -72,6 +72,7 @@ export * from "./Utils/Image/BCEncoder.js";
 export * from "./Utils/Threading/WorkerPool.js";
 export * from "./Utils/Image/ImageCompare.js";
 export * from "./Utils/UI/DomWidgets.js";
+export * from "./Utils/UI/OverlayDrawList.js";
 export * from "./Utils/UI/InputTypes.js";
 export * from "./Core/Program/ShaderSources.js";
 export * from "./Core/SampleApp.js";

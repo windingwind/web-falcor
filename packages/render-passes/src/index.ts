@@ -13,6 +13,7 @@ export * from "./GBuffer/GBufferRaster.js";
 export * from "./GBuffer/VBufferRT.js";
 export * from "./GBuffer/VBufferRaster.js";
 export * from "./RenderPassTemplate.js";
+export * from "./OverlaySamplePass.js";
 export * from "./GBuffer/GBufferRT.js";
 export * from "./MinimalPathTracer/MinimalPathTracer.js";
 export * from "./PathTracer/PathTracer.js";

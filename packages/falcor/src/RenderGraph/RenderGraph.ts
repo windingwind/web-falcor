@@ -206,6 +206,11 @@ export class RenderGraph {
         this.compiled = null;
     }
 
+    /** Mirrors RenderGraph::renderOverlayUI: each executed pass draws its overlay (none before compile). */
+    renderOverlayUI(drawList: import("../Utils/UI/OverlayDrawList.js").OverlayDrawList): void {
+        for (const { pass } of this.compiled ?? []) pass.renderOverlayUI(drawList);
+    }
+
     /** Mirrors RenderGraph::onResize(targetFbo): size-0 fields and Unknown formats follow the target. */
     onResize(width: number, height: number, format?: ResourceFormat): void {
         this.defaultDims = [width, height];

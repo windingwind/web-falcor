@@ -4,7 +4,7 @@
  */
 
 import { FrameCaptureExtension, captureOutput } from "./FrameCapture.js";
-import { AssetCategory, AssetResolver, isAbsoluteUrl, kProjectMediaUrl, Clock, Device, Logger, Profiler, ProfilerUI, VideoRecorder, ProgramManager, RenderGraph, ResourceFormat, Bitmap, BitmapExportFlags, createPass, initScripting, initSlang, runConsoleCommand, runGraphScript, runSceneScript, runPbrtScene, runMitsubaScene, presentToCanvas, type Scene } from "@web-falcor/falcor";
+import { AssetCategory, AssetResolver, isAbsoluteUrl, kProjectMediaUrl, Clock, Device, Logger, Profiler, ProfilerUI, VideoRecorder, ProgramManager, RenderGraph, ResourceFormat, Bitmap, BitmapExportFlags, createPass, initScripting, initSlang, runConsoleCommand, runGraphScript, runSceneScript, runPbrtScene, runMitsubaScene, presentToCanvas, OverlayDrawList, type Scene } from "@web-falcor/falcor";
 import "@web-falcor/render-passes";
 import { CameraController, kCameraControllerTypes, kUpDirectionNames } from "./CameraController.js";
 import { buildUIPanel } from "./UIPanel.js";
@@ -264,12 +264,25 @@ async function main() {
     rebuildUI();
     // Profiler panel (native: P toggles the profiler window).
     const profilerPanel = document.getElementById("profiler") as HTMLDivElement;
+    const overlayCanvas = document.getElementById("overlay") as HTMLCanvasElement;
+    const overlay = new OverlayDrawList(overlayCanvas.getContext("2d")!);
+    // Mirrors MogwaiSettings' mShowOverlayUI: the graph's passes draw over each presented frame.
+    const renderOverlay = () => {
+        if (overlayCanvas.hidden) return;
+        if (overlayCanvas.width !== canvas.width || overlayCanvas.height !== canvas.height) [overlayCanvas.width, overlayCanvas.height] = [canvas.width, canvas.height];
+        overlay.ctx.clearRect(0, 0, overlayCanvas.width, overlayCanvas.height);
+        state.graph?.renderOverlayUI(overlay);
+    };
     const profilerUI = new ProfilerUI(profiler, profilerPanel);
     window.addEventListener("keydown", (ev) => {
         if (ev.target instanceof HTMLInputElement || ev.target instanceof HTMLTextAreaElement) return;
         if (ev.key === "p" || ev.key === "P") profilerPanel.hidden = !profilerPanel.hidden;
         // Reload shaders in place. Native binds this to F5, which the browser
         // owns, so the viewer uses F6 (docs §9).
+        if (ev.key === "F7") {
+            ev.preventDefault();
+            overlayCanvas.hidden = !overlayCanvas.hidden;
+        }
         if (ev.key === "F6") {
             ev.preventDefault();
             void reloadShaders(state.device).then(() => (state.frame = 0));
@@ -307,6 +320,7 @@ async function main() {
             }
             const tex = state.graph.getOutput(state.output);
             if (tex) presentToCanvas(device, tex, context!.getCurrentTexture(), format);
+            renderOverlay();
             void state.frameCapture?.endFrame();
             pixelZoom.render();
             if (videoRecorder.recording) videoRecorder.captureFrame();

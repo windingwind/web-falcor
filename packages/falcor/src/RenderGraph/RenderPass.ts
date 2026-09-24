@@ -3,6 +3,7 @@
  * and the Plugin system (ES-module self-registration replaces DLL plugins).
  */
 
+import type { OverlayDrawList } from "../Utils/UI/OverlayDrawList.js";
 import type { Device } from "../Core/API/Device.js";
 import type { RenderContext } from "../Core/API/RenderContext.js";
 import { Texture } from "../Core/API/Texture.js";
@@ -108,6 +109,9 @@ export abstract class RenderPass {
 
     /** Adds this pass's live controls to a UI panel (mirrors RenderPass::renderUI). */
     renderUI(_ui: UIWidgets): void {}
+
+    /** Draws over the presented frame, even with the pass UI closed (mirrors RenderPass::renderOverlayUI). */
+    renderOverlayUI(_drawList: OverlayDrawList): void {}
 }
 
 export type RenderPassFactory = (device: Device, props: Properties) => RenderPass;
