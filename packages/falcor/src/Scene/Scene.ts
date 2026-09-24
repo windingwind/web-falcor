@@ -56,6 +56,18 @@ export interface SceneSDFGridDesc {
     transform?: float4x4;
 }
 
+/** Mirrors Scene::Metadata: optional settings an importer found in the asset. */
+export interface SceneMetadata {
+    fNumber?: number;
+    filmISO?: number;
+    shutterSpeed?: number;
+    samplesPerPixel?: number;
+    maxDiffuseBounces?: number;
+    maxSpecularBounces?: number;
+    maxTransmissionBounces?: number;
+    maxVolumeBounces?: number;
+}
+
 export interface SceneMeshDesc {
     vertices: StaticVertex[];
     indices: Uint32Array;
@@ -976,6 +988,8 @@ export class Scene {
     private animationEnabled = true;
     /** Mirrors Scene::setCameraSpeed (the camera controller's speed). */
     cameraSpeed = 1;
+    /** Mirrors Scene::getMetadata (camera and render settings from the imported asset). */
+    metadata: SceneMetadata = {};
 
     /** Mirrors Scene::getScript: render settings, animation state, camera selection and pose, camera speed. */
     getScript(sceneVar: string): string {

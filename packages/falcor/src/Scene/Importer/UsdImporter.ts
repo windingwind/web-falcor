@@ -6,7 +6,7 @@
  * load as .usda/.usdc/.usdz.
  */
 
-import type { SceneMeshDesc, SceneMaterialDesc } from "../Scene.js";
+import type { SceneMeshDesc, SceneMaterialDesc, SceneMetadata } from "../Scene.js";
 import type { TextureManager } from "../Material/TextureManager.js";
 import { MaterialType, packTextureHandle, TextureHandleMode } from "../Material/MaterialData.js";
 import { generateTangents } from "../TangentSpace.js";
@@ -15,7 +15,7 @@ import { float2, float3, float4 } from "../../Utils/Math/Vector.js";
 import { float4x4, mulMat, transformPoint } from "../../Utils/Math/Matrix.js";
 import { RuntimeError } from "../../Core/Error.js";
 import { Logger } from "../../Utils/Logger.js";
-import { extractUsdCamerasAndLights, extractUsdDisplayColors, extractUsdMaterialBindings, extractUsdMaterialTextures, extractUsdPointInstancers, usdaStageInfo, usdChannelIndex, usdStageRootTransform, usdTexCoordTransform, type UsdaCamera, type UsdaDomeLight, type UsdaTextureInput } from "./UsdaScene.js";
+import { extractUsdCamerasAndLights, extractUsdDisplayColors, extractUsdMaterialBindings, extractUsdMaterialTextures, extractUsdPointInstancers, usdRenderSettings, usdaStageInfo, usdChannelIndex, usdStageRootTransform, usdTexCoordTransform, type UsdaCamera, type UsdaDomeLight, type UsdaTextureInput } from "./UsdaScene.js";
 import type { AnalyticLight } from "../SceneData.js";
 
 interface UsdNode {
@@ -232,7 +232,7 @@ export class UsdImporter {
         baseUrl = "",
         excludePrims?: Set<string>,
         options: { assumeLinearSpaceTextures?: boolean } = {},
-    ): Promise<{ meshes: SceneMeshDesc[]; materials: SceneMaterialDesc[]; materialNames: string[]; cameras: UsdaCamera[]; lights: AnalyticLight[]; domeLight: UsdaDomeLight | null; stage: UsdStageBounds | null }> {
+    ): Promise<{ meshes: SceneMeshDesc[]; materials: SceneMaterialDesc[]; materialNames: string[]; cameras: UsdaCamera[]; lights: AnalyticLight[]; domeLight: UsdaDomeLight | null; stage: UsdStageBounds | null; metadata: SceneMetadata | null }> {
         const native = await loadTinyUsdz();
         let usd = new native.TinyUSDZLoaderNative();
         // Files with composition arcs are composed first; the rest load directly.
@@ -405,7 +405,8 @@ export class UsdImporter {
                 await resolveMaterialTextures(usd, m, desc, textureManager, baseUrl, !!options.assumeLinearSpaceTextures, inputs);
             }
         }
-        return { meshes, materials, materialNames, ...extracted, stage };
+        const metadata = layerText ? (usdRenderSettings(layerText)?.metadata ?? null) : null;
+        return { meshes, materials, materialNames, ...extracted, stage, metadata };
     }
 }
 

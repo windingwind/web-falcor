@@ -12,7 +12,7 @@ import { buildNanoVDBGrid, type ParsedFloatGrid } from "./Volume/VDBLoader.js";
 import { buildSDFGridFromRecipe, type SDFGridRecipe, type SDFGridType } from "./SDFs/SDFGridRecipe.js";
 import type { SceneSDFGridDesc } from "./Scene.js";
 import { Camera } from "./Camera/Camera.js";
-import { Scene, type SceneMaterialDesc, type SceneMeshDesc } from "./Scene.js";
+import { Scene, type SceneMaterialDesc, type SceneMeshDesc, type SceneMetadata } from "./Scene.js";
 import type { SceneNode, AnimationChannel, WeightTrack } from "./Animation/SceneAnimation.js";
 import { GltfImporter } from "./Importer/GltfImporter.js";
 import { FbxImporter, kAssimpSceneExtensions, objMaterialLibraries, type ImportedCamera } from "./Importer/FbxImporter.js";
@@ -820,6 +820,8 @@ export class SceneBuilderBridge {
         this._cameraSpeed = speed;
         this.cameraSpeedSet = true;
     }
+    /** Mirrors SceneBuilder::setMetadata/getMetadata (set by importers, e.g. USD render settings). */
+    metadata: SceneMetadata = {};
     private _cameras: CameraBridge[] = [];
     /** How many scene commands preceded each addCamera (native adds cameras in call order). */
     private cameraCommandCounts: number[] = [];
@@ -1078,6 +1080,7 @@ export class SceneBuilderBridge {
                         });
                     }
                     const stage = parsed.stage;
+                    if (parsed.metadata) this.metadata = parsed.metadata;
                     // USDImporter: camera speed from the stage size (a pyscene assignment wins here).
                     if (stage && stage.diagonal > 0 && !this.cameraSpeedSet) this._cameraSpeed = 0.025 * stage.diagonal;
                     const commandIndex = this.commands.indexOf(cmd);
@@ -1409,6 +1412,7 @@ export class SceneBuilderBridge {
         const selected = this.camera ? this._cameras.indexOf(this.camera) : -1;
         scene.setCameraList(cameraList, selected >= 0 ? selected + this.importedCameras.length : 0, Math.max(animatedCamera, 0));
         scene.cameraSpeed = this.cameraSpeed;
+        scene.metadata = { ...this.metadata };
         if (this.envMap) {
             const constant = this.envMap.constantColor;
             const envMap = constant

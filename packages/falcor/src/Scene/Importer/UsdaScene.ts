@@ -15,6 +15,7 @@ import { float3, normalize3 } from "../../Utils/Math/Vector.js";
 import { extractEulerAngleXYZ, float4x4, inverse, matrixFromRotationAxisAngle, matrixFromScaling, matrixFromTranslation, mulMat, transformPoint, transformVector } from "../../Utils/Math/Matrix.js";
 import { matrixFromQuat, quatf } from "../../Utils/Math/Quaternion.js";
 import { LightType, type AnalyticLight } from "../SceneData.js";
+import type { SceneMetadata } from "../Scene.js";
 import { Logger } from "../../Utils/Logger.js";
 
 export interface UsdaPrim {
@@ -461,4 +462,41 @@ export function extractUsdDisplayColors(text: string): Map<string, [number, numb
     };
     parseUsdaPrims(text, float4x4.identity()).forEach(visit);
     return colors;
+}
+
+/**
+ * USDImporter's setMetadata: Omniverse render settings (customLayerData.renderSettings) as
+ * Scene::Metadata, with Create's defaults and bounce mapping, plus the subdivision refinement
+ * level. Null without a renderSettings dictionary.
+ */
+export function usdRenderSettings(text: string): { metadata: SceneMetadata; refinementLevel: number } | null {
+    const header = text.slice(0, text.search(/^\s*(def|over|class)\s/m) >>> 0);
+    const start = header.search(/dictionary\s+renderSettings\s*=\s*\{/);
+    if (start < 0) return null;
+    let i = header.indexOf("{", start) + 1;
+    const from = i;
+    for (let depth = 1; i < header.length && depth > 0; i++) depth += header[i] === "{" ? 1 : header[i] === "}" ? -1 : 0;
+    const dict = new Map<string, number>();
+    for (const m of header.slice(from, i - 1).matchAll(/^\s*\w+\s+"?([\w:]+)"?\s*=\s*([^\n]+)$/gm)) {
+        const v = m[2]!.trim();
+        const n = /^(true|false)$/.test(v) ? Number(v === "true") : num(v)[0];
+        if (n !== undefined) dict.set(m[1]!, n);
+    }
+    const get = (key: string, fallback: number) => dict.get(key) ?? fallback;
+    // Falcor's bounce counts include primary visibility and NEE, Create's do not (subtract 2).
+    const diffuse = Math.max(2, Math.floor(get("rtx:pathtracing:maxBounces", 4))) - 2;
+    const specTrans = Math.max(2, Math.floor(get("rtx:pathtracing:maxSpecularAndTransmissionBounces", 6))) - 2;
+    return {
+        metadata: {
+            fNumber: get("rtx:post:tonemap:fNumber", 5),
+            filmISO: get("rtx:post:tonemap:filmIso", 100),
+            shutterSpeed: get("rtx:post:tonemap:cameraShutter", 50),
+            samplesPerPixel: Math.floor(get("rtx:pathtracing:spp", 1)),
+            maxDiffuseBounces: diffuse,
+            maxSpecularBounces: Math.max(diffuse, specTrans),
+            maxTransmissionBounces: Math.max(diffuse, specTrans),
+            maxVolumeBounces: Math.max(diffuse, Math.max(2, Math.floor(get("rtx:pathtracing:maxVolumeBounces", 4))) - 2),
+        },
+        refinementLevel: Math.floor(get("rtx:hydra:refinementLevel", 0)),
+    };
 }

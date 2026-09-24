@@ -15,7 +15,7 @@ import { RuntimeError } from "../Core/Error.js";
 import { float2, float3, float4 } from "../Utils/Math/Vector.js";
 import { float4x4 } from "../Utils/Math/Matrix.js";
 import { quatf } from "../Utils/Math/Quaternion.js";
-import { Scene, type SceneMeshDesc, type SceneMaterialDesc, type SceneCurveDesc } from "./Scene.js";
+import { Scene, type SceneMeshDesc, type SceneMaterialDesc, type SceneCurveDesc, type SceneMetadata } from "./Scene.js";
 import { TextureManager, type TextureSource } from "./Material/TextureManager.js";
 import { EnvMap } from "./Lights/EnvMap.js";
 import type { AnalyticLight, StaticVertex } from "./SceneData.js";
@@ -58,6 +58,9 @@ export interface CacheableScene {
     cameras: SceneCameraPose[];
     selectedCamera: number;
     animatedCamera: number;
+    /** Scene::Metadata and the camera speed. */
+    metadata?: SceneMetadata;
+    cameraSpeed?: number;
     /** Material textures as lossless PNG (phase 2). */
     textures: { png: Uint8Array; srgb: boolean }[];
     /** Static curve geometry (phase 3). */
@@ -207,6 +210,8 @@ export function serializeScene(cached: CacheableScene): Uint8Array {
         cameras: cached.cameras,
         selectedCamera: cached.selectedCamera,
         animatedCamera: cached.animatedCamera,
+        metadata: cached.metadata,
+        cameraSpeed: cached.cameraSpeed,
         textures: cached.textures.map((t) => ({ srgb: t.srgb, byteLength: t.png.byteLength })),
         curves: cached.curves.map((c) => ({
             floatCount: c.positionsRadii.length,
@@ -279,6 +284,8 @@ export function deserializeScene(bytes: Uint8Array): CacheableScene {
         cameras: SceneCameraPose[];
         selectedCamera: number;
         animatedCamera: number;
+        metadata?: SceneMetadata;
+        cameraSpeed?: number;
         textures: { srgb: boolean; byteLength: number }[];
         curves: { floatCount: number; texCrdCount: number; indexCount: number; materialID: number; transform?: { __m4: number[] } }[];
         envMap?: { byteLength: number; isExr: boolean; intensity: number; tint: [number, number, number]; rotationDeg: [number, number, number]; equalAreaOctahedral?: boolean };
@@ -391,6 +398,8 @@ export function deserializeScene(bytes: Uint8Array): CacheableScene {
         cameras: header.cameras,
         selectedCamera: header.selectedCamera,
         animatedCamera: header.animatedCamera,
+        metadata: header.metadata,
+        cameraSpeed: header.cameraSpeed,
         textures,
         curves,
         envMap,
@@ -503,11 +512,13 @@ export async function buildSceneFromCache(device: Device, cached: CacheableScene
         return cam;
     });
     scene.setCameraList(cameras, cached.selectedCamera, cached.animatedCamera);
+    scene.metadata = { ...(cached.metadata ?? {}) };
+    if (cached.cameraSpeed !== undefined) scene.cameraSpeed = cached.cameraSpeed;
     return scene;
 }
 
 /** Camera snapshots for the cache (read back off the built scene). */
-export function snapshotCameras(scene: Scene): Pick<CacheableScene, "cameras" | "selectedCamera" | "animatedCamera"> {
+export function snapshotCameras(scene: Scene): Pick<CacheableScene, "cameras" | "selectedCamera" | "animatedCamera" | "metadata" | "cameraSpeed"> {
     const cameras = scene.getCameras().map((c): SceneCameraPose => {
         const p = c.getPosition();
         const t = c.getTarget();
@@ -526,5 +537,5 @@ export function snapshotCameras(scene: Scene): Pick<CacheableScene, "cameras" | 
             aspectRatio: c.getAspectRatio(),
         };
     });
-    return { cameras, selectedCamera: scene.getSelectedCameraIndex(), animatedCamera: scene.getAnimatedCameraIndex() };
+    return { cameras, selectedCamera: scene.getSelectedCameraIndex(), animatedCamera: scene.getAnimatedCameraIndex(), metadata: { ...scene.metadata }, cameraSpeed: scene.cameraSpeed };
 }

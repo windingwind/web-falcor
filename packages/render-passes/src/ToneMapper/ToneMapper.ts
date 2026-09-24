@@ -22,6 +22,7 @@ import {
     type CompileData,
     type Device,
     type RenderContext,
+    type Scene,
     type UIWidgets,
     Logger,
 } from "@web-falcor/falcor";
@@ -71,6 +72,10 @@ export class ToneMapper extends RenderPass {
     private whiteScale = 11.2;
     private clamp = true;
     private outputFormat = ResourceFormat.RGBA8UnormSrgb;
+    /** Set by the 'outputFormat' property (native's Unknown default is omitted from getProperties). */
+    private outputFormatSet = false;
+    /** ToneMapper::mUseSceneMetadata: take film speed, f-number and shutter from the scene. */
+    private useSceneMetadata = true;
     private outputSize = IOSize.Default;
     /** Native kFixedOutputSize default (used when outputSize == Fixed). */
     private fixedOutputSize: [number, number] = [512, 512];
@@ -107,7 +112,7 @@ export class ToneMapper extends RenderPass {
         this.whitePoint = Math.min(kWhitePointMax, Math.max(kWhitePointMin, props.get("whitePoint", this.whitePoint)));
         this.whiteMaxLuminance = props.get("whiteMaxLuminance", this.whiteMaxLuminance);
         this.whiteScale = props.get("whiteScale", this.whiteScale);
-        // 'useSceneMetadata' accepted (no camera metadata on imported web scenes yet).
+        this.useSceneMetadata = props.get("useSceneMetadata", this.useSceneMetadata);
         this.updateWhiteBalanceTransform();
         const autoExposure = props.get("autoExposure", this.autoExposure);
         if (autoExposure !== this.autoExposure) {
@@ -118,26 +123,41 @@ export class ToneMapper extends RenderPass {
         const fmt = props.getOpt<string | number>("outputFormat");
         if (fmt !== undefined) {
             this.outputFormat = (typeof fmt === "string" ? ResourceFormat[fmt as keyof typeof ResourceFormat] : fmt) ?? this.outputFormat;
+            this.outputFormatSet = true;
         }
     }
 
     override getProperties(): Properties {
-        return new Properties({
-            outputSize: IOSize[this.outputSize]!,
-            fixedOutputSize: this.fixedOutputSize,
-            operator: ToneMapOperator[this.operator]!,
+        // Native's key order.
+        const props: NonNullable<ConstructorParameters<typeof Properties>[0]> = { outputSize: IOSize[this.outputSize]! };
+        if (this.outputSize === IOSize.Fixed) props.fixedOutputSize = this.fixedOutputSize;
+        if (this.outputFormatSet) props.outputFormat = ResourceFormat[this.outputFormat]!;
+        Object.assign(props, {
+            useSceneMetadata: this.useSceneMetadata,
             exposureCompensation: this.exposureCompensation,
             autoExposure: this.autoExposure,
-            exposureMode: ExposureMode[this.exposureMode]!,
-            fNumber: this.fNumber,
-            shutter: this.shutter,
             filmSpeed: this.filmSpeed,
             whiteBalance: this.whiteBalance,
             whitePoint: this.whitePoint,
+            operator: ToneMapOperator[this.operator]!,
+            clamp: this.clamp,
             whiteMaxLuminance: this.whiteMaxLuminance,
             whiteScale: this.whiteScale,
-            clamp: this.clamp,
+            fNumber: this.fNumber,
+            shutter: this.shutter,
+            exposureMode: ExposureMode[this.exposureMode]!,
         });
+        return new Properties(props);
+    }
+
+    /** ToneMapper::setScene: the scene's camera metadata, unless disabled. */
+    override setScene(scene: Scene | null): void {
+        super.setScene(scene);
+        const meta = scene?.metadata;
+        if (!meta || !this.useSceneMetadata) return;
+        if (meta.filmISO !== undefined) this.filmSpeed = Math.min(kFilmSpeedMax, Math.max(kFilmSpeedMin, meta.filmISO));
+        if (meta.fNumber !== undefined) this.setFNumber(meta.fNumber);
+        if (meta.shutterSpeed !== undefined) this.setShutter(meta.shutterSpeed);
     }
 
     /** Mirrors ToneMapper::setFNumber / setShutter / setExposureValue / updateExposureValue. */
