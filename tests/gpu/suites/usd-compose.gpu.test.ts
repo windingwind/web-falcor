@@ -1,8 +1,9 @@
 /**
  * USD composition through the USD importer: the layer is composed (sublayers, external
- * and internal references, instanceable prims) before the render scene is built, as a
- * USD stage does natively. Compared with a native GBufferRT capture; the referenced
- * part's own material binding is checked through the diffuse albedo.
+ * and internal references, instanceable prims, variant selections) before the render
+ * scene is built, as a USD stage does natively. Compared with a native GBufferRT
+ * capture; the referenced part's own material binding is checked through the diffuse
+ * albedo, and unbound meshes through native's display-color default material.
  *
  * Regenerate the oracle with:
  *   Falcor/build/linux-gcc/bin/Release/Mogwai --script tests/oracle/render-native-usd-compose.py --headless
@@ -19,8 +20,8 @@ gpuTest("UsdCompose.matchesNativeOracle", async ({ device }) => {
     const source = await (await fetch("/tests/oracle/assets/usd-compose.pyscene")).text();
     const scene = await runSceneScript(device, source, "/tests/oracle/assets");
     scene.camera.setAspectRatio(w / h);
-    // The sublayer's floor, the referenced quad and two instanced triangles.
-    expectEq(scene.stats.instances, 4, "every composed mesh is imported");
+    // The sublayer's floor, the referenced quad, the selected variant and two instanced triangles.
+    expectEq(scene.stats.instances, 5, "every composed mesh is imported");
     expectEq(scene.getMaterial(0)?.name, "Red", "the referenced material is bound");
     expectEq(scene.getMaterial("default-mesh-1")?.basic.baseColor?.y, 0.6, "unbound meshes take their display color");
 

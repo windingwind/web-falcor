@@ -176,7 +176,9 @@ const toArray = (v: unknown): string[] => {
 async function composeUsdLayer(usd: TinyUsdzLayer, bytes: Uint8Array, baseUrl: string): Promise<string | null> {
     if (!usd.loadAsLayerFromBinary(bytes, "scene.usd")) return null;
     const sublayers = toArray(usd.extractSublayerAssetPaths());
-    if (sublayers.length === 0 && !usd.hasReferences() && !usd.hasPayload() && !usd.hasInherits() && !usd.hasVariants()) return null;
+    // tinyusdz's hasVariants() reports none, so variant sets are found in the text.
+    const hasVariantSets = () => /\bvariantSet\s+"/.test(usd.layerToString());
+    if (sublayers.length === 0 && !usd.hasReferences() && !usd.hasPayload() && !usd.hasInherits() && !hasVariantSets()) return null;
     const fetched = new Set<string>();
     const fetchAssets = async (paths: string[]) => {
         await Promise.all(
@@ -193,7 +195,7 @@ async function composeUsdLayer(usd: TinyUsdzLayer, bytes: Uint8Array, baseUrl: s
     await fetchAssets(sublayers);
     if (!usd.composeSublayers()) throw new RuntimeError(`UsdImporter: failed to compose sublayers (${usd.error()})`);
     for (let i = 0; i < 16; i++) {
-        const [refs, payload, inherits, variants] = [usd.hasReferences(), usd.hasPayload(), usd.hasInherits(), usd.hasVariants()];
+        const [refs, payload, inherits, variants] = [usd.hasReferences(), usd.hasPayload(), usd.hasInherits(), hasVariantSets()];
         if (!refs && !payload && !inherits && !variants) break;
         if (inherits && !usd.composeInherits()) throw new RuntimeError(`UsdImporter: failed to compose inherits (${usd.error()})`);
         if (variants && !usd.composeVariants()) throw new RuntimeError(`UsdImporter: failed to compose variants (${usd.error()})`);

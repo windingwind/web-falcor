@@ -7,7 +7,7 @@
 )
 # USD composition: a sublayer (the floor, with a display color for native's default
 # material), an external reference carrying its own material, and two instanceable
-# references to an internal class prim.
+# references to an internal class prim, and a variant set (its second variant selected).
 def Xform "World"
 {
     def Xform "Ext" (
@@ -16,6 +16,42 @@ def Xform "World"
     {
         double3 xformOp:translate = (-1.5, 0, 0)
         uniform token[] xformOpOrder = ["xformOp:translate"]
+    }
+    def Xform "Var" (
+        variants = {
+            string shape = "tall"
+        }
+        prepend variantSets = "shape"
+    )
+    {
+        double3 xformOp:translate = (-3.2, 0, 0)
+        uniform token[] xformOpOrder = ["xformOp:translate"]
+        variantSet "shape" = {
+            "wide" {
+                def Mesh "Wide"
+                {
+                    uniform token subdivisionScheme = "none"
+                    int[] faceVertexCounts = [3]
+                    int[] faceVertexIndices = [0, 1, 2]
+                    point3f[] points = [(-0.8, -0.3, 0), (0.8, -0.3, 0), (0, 0.3, 0)]
+                    normal3f[] normals = [(0, 0, 1), (0, 0, 1), (0, 0, 1)] (
+                        interpolation = "vertex"
+                    )
+                }
+            }
+            "tall" {
+                def Mesh "Tall"
+                {
+                    uniform token subdivisionScheme = "none"
+                    int[] faceVertexCounts = [3]
+                    int[] faceVertexIndices = [0, 1, 2]
+                    point3f[] points = [(-0.3, -0.8, 0), (0.3, -0.8, 0), (0, 0.9, 0)]
+                    normal3f[] normals = [(0, 0, 1), (0, 0, 1), (0, 0, 1)] (
+                        interpolation = "vertex"
+                    )
+                }
+            }
+        }
     }
     def Xform "A" (
         instanceable = true
