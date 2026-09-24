@@ -1,0 +1,9 @@
+# UsdSkel skinning (see usd-skel.usda).
+sceneBuilder.importScene('usd-skel.usda')
+
+camera = Camera()
+camera.position = float3(0, 0.6, 5)
+camera.target = float3(0, 0.4, 0)
+camera.up = float3(0, 1, 0)
+sceneBuilder.addCamera(camera)
+sceneBuilder.selectedCamera = camera

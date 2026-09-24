@@ -12,6 +12,8 @@ export interface CornerMesh {
     positions: Float32Array;
     normals: Float32Array;
     uvs: Float32Array | null;
+    /** Each corner's source point (for per-point data such as joint influences). */
+    pointIndices?: Uint32Array;
 }
 
 /** Indexes an attribute array of `interp` for a corner (point p, face-vertex c, face f). */
@@ -25,6 +27,7 @@ export function triangulateUsdMesh(mesh: UsdaSubdivMesh, points: number[], norma
     const pos: number[] = [];
     const nrm: number[] = [];
     const uv: number[] = [];
+    const corners: number[] = [];
     for (let f = 0, base = 0; f < mesh.faceVertexCounts.length; base += mesh.faceVertexCounts[f]!, f++) {
         const count = mesh.faceVertexCounts[f]!;
         if (holes.has(f) || count < 3) continue;
@@ -49,6 +52,7 @@ export function triangulateUsdMesh(mesh: UsdaSubdivMesh, points: number[], norma
             for (const k of [0, v + next[0]!, v + next[1]!]) {
                 const p = point(k);
                 pos.push(points[p * 3]!, points[p * 3 + 1]!, points[p * 3 + 2]!);
+                corners.push(p);
                 if (flat) nrm.push(...flat);
                 else {
                     const i = pick(normalInterp, p, base + k, f);
@@ -61,7 +65,7 @@ export function triangulateUsdMesh(mesh: UsdaSubdivMesh, points: number[], norma
             }
         }
     }
-    return { positions: Float32Array.from(pos), normals: Float32Array.from(nrm), uvs: st ? Float32Array.from(uv) : null };
+    return { positions: Float32Array.from(pos), normals: Float32Array.from(nrm), uvs: st ? Float32Array.from(uv) : null, pointIndices: Uint32Array.from(corners) };
 }
 
 /** A refined mesh expanded per triangle corner (see TessellatedMesh). */

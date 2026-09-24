@@ -1076,7 +1076,14 @@ export class SceneBuilderBridge {
                     for (const n of parsed.nodes) nodes.push({ ...n, parent: n.parent >= 0 ? n.parent + nodeOffset : -1 });
                     for (const ch of parsed.animations) animations.push({ ...ch, nodeID: ch.nodeID + nodeOffset, clip: ch.clip !== undefined ? ch.clip + clipOffset : undefined });
                     clipOffset += parsed.animations.reduce((mx, c) => Math.max(mx, (c.clip ?? -1) + 1), 0);
-                    for (const m of parsed.meshes) meshes.push({ ...m, materialID: m.materialID + materialOffset, nodeID: m.nodeID !== undefined ? m.nodeID + nodeOffset : undefined });
+                    for (const m of parsed.meshes) {
+                        meshes.push({
+                            ...m,
+                            materialID: m.materialID + materialOffset,
+                            nodeID: m.nodeID !== undefined ? m.nodeID + nodeOffset : undefined,
+                            skin: m.skin ? { ...m.skin, boneNodeIDs: m.skin.boneNodeIDs.map((n) => n + nodeOffset) } : undefined,
+                        });
+                    }
                     // UsdLux lights, UsdGeom cameras and the dome light (native ImporterContext).
                     importedLights.push(...parsed.lights);
                     for (const c of parsed.cameras) {

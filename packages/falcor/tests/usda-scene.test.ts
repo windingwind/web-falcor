@@ -3,7 +3,7 @@
  * conversions of native's USDImporter.
  */
 import { describe, expect, it } from "vitest";
-import { extractUsdCamerasAndLights, extractUsdDisplayColors, extractUsdMeshes, extractUsdXformAnimations, usdTimeCodesPerSecond, extractUsdMaterialTextures, extractUsdPointInstancers, parseUsdaPrims, usdaStageInfo, usdBlackbodyTemperatureAsRgb, usdRenderSettings, usdStageRootTransform, usdTexCoordTransform } from "../src/Scene/Importer/UsdaScene.js";
+import { extractUsdCamerasAndLights, extractUsdDisplayColors, extractUsdMeshes, extractUsdSkeletons, extractUsdXformAnimations, usdTimeCodesPerSecond, extractUsdMaterialTextures, extractUsdPointInstancers, parseUsdaPrims, usdaStageInfo, usdBlackbodyTemperatureAsRgb, usdRenderSettings, usdStageRootTransform, usdTexCoordTransform } from "../src/Scene/Importer/UsdaScene.js";
 import { readFileSync } from "node:fs";
 import { LightType } from "../src/Scene/SceneData.js";
 import { float3 } from "../src/Utils/Math/Vector.js";
@@ -219,5 +219,24 @@ def SphereLight "S"
         const child = anims.get("/World/Parent/Child")!;
         expect(child.times).toEqual([0, 1.5]);
         close(child.scaling[1]!, [0.5, 1.5, 0.8]);
+    });
+
+    it("reads skeletons, their animations and mesh skin data", () => {
+        const text = readFileSync(new URL("../../../tests/oracle/assets/usd-skel.usda", import.meta.url), "utf8");
+        const { skeletons, bindings } = extractUsdSkeletons(text);
+        const skel = skeletons.get("/World/Rig/Skel")!;
+        expect(skel.joints).toEqual(["Root", "Root/Arm"]);
+        close(transformPoint(skel.bind[1]!, new float3(0, 0, 0)), [0, 1, 0]);
+        expect(skel.anim!.times).toEqual([0, 24, 48]);
+        close(skel.anim!.translation[2]![0]!, [-0.8, 0, 0]);
+        // Arm's rotation at 24: 90 degrees about Z.
+        expect(skel.anim!.rotation[1]![1]!.z).toBeCloseTo(Math.SQRT1_2, 6);
+        expect(bindings.get("/World/Rig/Bar")).toBe("/World/Rig/Skel");
+        expect(extractUsdMeshes(text).get("/World/Rig/Bar")!.skin).toMatchObject({ elementSize: 2, interpolation: "vertex" });
+        // Animation joints map by name (UsdSkel), whatever their order; rest comes from bind if absent.
+        const reordered = text.replace('uniform token[] joints = ["Root", "Root/Arm"]\n                quatf', 'uniform token[] joints = ["Root/Arm", "Root"]\n                quatf').replace(/uniform matrix4d\[\] restTransforms = .*\n/, "");
+        const re = extractUsdSkeletons(reordered).skeletons.get("/World/Rig/Skel")!;
+        expect(re.anim!.rotation[1]![0]!.z).toBeCloseTo(Math.SQRT1_2, 6);
+        close(transformPoint(re.rest[1]!, new float3(0, 0, 0)), [0, 1, 0]);
     });
 });

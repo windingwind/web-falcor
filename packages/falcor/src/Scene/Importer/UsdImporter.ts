@@ -12,13 +12,13 @@ import { MaterialType, packTextureHandle, TextureHandleMode } from "../Material/
 import { generateTangents } from "../TangentSpace.js";
 import { type StaticVertex } from "../SceneData.js";
 import { float2, float3, float4 } from "../../Utils/Math/Vector.js";
-import { float4x4, mulMat, transformPoint } from "../../Utils/Math/Matrix.js";
+import { float4x4, inverse, mulMat, transformPoint } from "../../Utils/Math/Matrix.js";
 import { RuntimeError } from "../../Core/Error.js";
 import { Logger } from "../../Utils/Logger.js";
-import { decomposeTRS, type AnimationChannel, type SceneNode } from "../Animation/SceneAnimation.js";
+import { decomposeTRS, type AnimationChannel, type SceneNode, type SkinDesc } from "../Animation/SceneAnimation.js";
 import { loadOpenSubdiv, tessellateUsdMesh, type TessellatedMesh } from "./Subdivision.js";
 import { refinedCorners, triangulateUsdMesh, type CornerMesh } from "./UsdTriangulate.js";
-import { extractUsdCamerasAndLights, extractUsdDisplayColors, extractUsdMaterialBindings, extractUsdMaterialTextures, extractUsdPointInstancers, extractUsdMeshes, extractUsdXformAnimations, sampleAt, usdRenderSettings, usdTimeCodesPerSecond, usdaStageInfo, usdChannelIndex, usdStageRootTransform, usdTexCoordTransform, type UsdaCamera, type UsdaDomeLight, type UsdaSubdivMesh, type UsdaTextureInput, type UsdaXformAnimation } from "./UsdaScene.js";
+import { extractUsdCamerasAndLights, extractUsdDisplayColors, extractUsdMaterialBindings, extractUsdMaterialTextures, extractUsdPointInstancers, extractUsdMeshes, extractUsdSkeletons, extractUsdXformAnimations, sampleAt, usdRenderSettings, usdTimeCodesPerSecond, usdaStageInfo, usdChannelIndex, usdStageRootTransform, usdTexCoordTransform, type UsdaCamera, type UsdaDomeLight, type UsdaSkeleton, type UsdaSubdivMesh, type UsdaTextureInput, type UsdaXformAnimation } from "./UsdaScene.js";
 import type { AnalyticLight } from "../SceneData.js";
 
 interface UsdNode {
@@ -219,9 +219,9 @@ const toArray = (v: unknown): string[] => {
 
 /**
  * Composes a USD layer as a stage does (sublayers, then inherits, variants, references and
- * payloads until none remain), fetching external layers relative to `baseUrl`, and builds the
- * render scene from it. Returns the composed layer's text, or null if the file has no
- * composition arcs (the caller then loads it directly).
+ * payloads until none remain), fetching external layers relative to `baseUrl`. Returns the
+ * composed layer's text (the caller builds the render scene), or null if the file has no
+ * composition arcs.
  */
 async function composeUsdLayer(usd: TinyUsdzLayer, bytes: Uint8Array, baseUrl: string): Promise<string | null> {
     if (!usd.loadAsLayerFromBinary(bytes, "scene.usd")) return null;
@@ -258,7 +258,6 @@ async function composeUsdLayer(usd: TinyUsdzLayer, bytes: Uint8Array, baseUrl: s
             if (!usd.composePayload()) throw new RuntimeError(`UsdImporter: failed to compose payloads (${usd.error()})`);
         }
     }
-    if (!usd.layerToRenderScene()) throw new RuntimeError(`UsdImporter: failed to build the composed scene (${usd.error()})`);
     return usd.layerToString();
 }
 
@@ -289,14 +288,23 @@ export class UsdImporter {
     ): Promise<{ meshes: SceneMeshDesc[]; materials: SceneMaterialDesc[]; materialNames: string[]; cameras: UsdaCamera[]; lights: AnalyticLight[]; domeLight: UsdaDomeLight | null; stage: UsdStageBounds | null; metadata: SceneMetadata | null; nodes: SceneNode[]; animations: AnimationChannel[] }> {
         const native = await loadTinyUsdz();
         let usd = new native.TinyUSDZLoaderNative();
-        // Files with composition arcs are composed first; the rest load directly.
+        // Files with composition arcs are composed first.
         const composedText = await composeUsdLayer(usd as unknown as TinyUsdzLayer, bytes, baseUrl);
-        if (composedText === null) {
+        // Cameras, lights and stage metadata come from the layer's text (RenderScene has none of them).
+        const layerText = composedText ?? usdLayerText(native, bytes);
+        // tinyusdz's RenderScene conversion crashes on skel joint primvars; they are read from the
+        // layer text instead, so its scene is built from the text without them.
+        const skelPrimvars = /^\s*[\w\[\]]+\s+primvars:skel:\w+\s*=\s*(\[[^\]]*\]|\([^)]*\))(\s*\([^)]*\))?/gm;
+        if (layerText && skelPrimvars.test(layerText)) {
+            usd = new native.TinyUSDZLoaderNative();
+            if (!usd.loadFromBinary(new TextEncoder().encode(layerText.replace(skelPrimvars, "")), "scene.usda")) throw new RuntimeError(`UsdImporter: failed to parse USD (${usd.error()})`);
+        } else if (composedText !== null) {
+            const layer = usd as unknown as TinyUsdzLayer;
+            if (!layer.layerToRenderScene()) throw new RuntimeError(`UsdImporter: failed to build the composed scene (${layer.error()})`);
+        } else {
             usd = new native.TinyUSDZLoaderNative();
             if (!usd.loadFromBinary(bytes, "scene.usd")) throw new RuntimeError(`UsdImporter: failed to parse USD (${usd.error()})`);
         }
-        // Cameras, lights and stage metadata come from the layer's text (RenderScene has none of them).
-        const layerText = composedText ?? usdLayerText(native, bytes);
         const stageInfo = layerText ? usdaStageInfo(layerText) : null;
         const rootXform = stageInfo ? usdStageRootTransform(stageInfo) : float4x4.identity();
         const extracted = layerText ? extractUsdCamerasAndLights(layerText) : { cameras: [], lights: [], domeLight: null };
@@ -400,6 +408,55 @@ export class UsdImporter {
             if (level > 0) refinementLevels.set(path, Number(level));
         }
         const osd = refinementLevels.size > 0 ? await loadOpenSubdiv() : null;
+        // UsdSkel skeletons: joints become bone nodes with native's per-bone animations. Native's
+        // skinning pass cancels the skeleton's world transform and renders the result with the
+        // mesh's, so skinned = meshWorld * joint * inverse bind: root bones hang off a node with the
+        // mesh's world (one bone set per skeleton and mesh world).
+        const { skeletons, bindings: skelBindings } = layerText ? extractUsdSkeletons(layerText) : { skeletons: new Map<string, UsdaSkeleton>(), bindings: new Map<string, string>() };
+        const tcps = layerText ? usdTimeCodesPerSecond(layerText) : 24;
+        const boneNodes = new Map<string, number[]>();
+        const usdSkin = (m: UsdaSubdivMesh, skel: UsdaSkeleton, pointOfCorner: Uint32Array, meshWorld: float4x4, path: string): SkinDesc => {
+            const key = `${skel.path} ${meshWorld.toArray().join(",")}`;
+            let ids = boneNodes.get(key);
+            if (!ids) {
+                ids = [];
+                const skelRoot = nodes.length;
+                nodes.push({ parent: -1, ...decomposeTRS(meshWorld) });
+                for (let i = 0; i < skel.joints.length; i++) {
+                    const parentPath = skel.joints[i]!.slice(0, Math.max(0, skel.joints[i]!.lastIndexOf("/")));
+                    const parent = skel.joints.indexOf(parentPath);
+                    const id = nodes.length;
+                    nodes.push({ parent: parent >= 0 ? ids[parent]! : skelRoot, ...decomposeTRS(skel.rest[i]!) });
+                    ids.push(id);
+                    const clip = new Set(animations.map((c) => c.clip)).size;
+                    const times = Float32Array.from(skel.anim!.times.map((t) => t / tcps));
+                    const channel = (p: AnimationChannel["path"], values: number[]) => animations.push({ nodeID: id, path: p, times, values: Float32Array.from(values), interp: "LINEAR", clip });
+                    channel("translation", skel.anim!.translation.flatMap((pose) => [pose[i]!.x, pose[i]!.y, pose[i]!.z]));
+                    channel("rotation", skel.anim!.rotation.flatMap((pose) => [pose[i]!.x, pose[i]!.y, pose[i]!.z, pose[i]!.w]));
+                    channel("scale", skel.anim!.scale.flatMap((pose) => [pose[i]!.x, pose[i]!.y, pose[i]!.z]));
+                }
+                boneNodes.set(key, ids);
+            }
+            const { indices, weights, elementSize, joints } = m.skin!;
+            if (elementSize > 4) Logger.warning(`Mesh '${path}' contains more than 4 bones per vertex (${elementSize}). Ignoring extra data.`);
+            // A mesh's skel:joints may name a subset of the skeleton's joints.
+            const remap = joints ? joints.map((j) => skel.joints.indexOf(j)) : null;
+            const boneIDs = new Uint32Array(pointOfCorner.length * 4);
+            const boneWeights = new Float32Array(pointOfCorner.length * 4);
+            pointOfCorner.forEach((p, c) => {
+                for (let j = 0; j < Math.min(4, elementSize); j++) {
+                    const w = weights[p * elementSize + j] ?? 0;
+                    if (w <= 0) continue;
+                    const joint = indices[p * elementSize + j] ?? 0;
+                    boneIDs[c * 4 + j] = remap ? remap[joint]! : joint;
+                    boneWeights[c * 4 + j] = w;
+                }
+                // Normalize in case the sum isn't 1.
+                const sum = boneWeights[c * 4]! + boneWeights[c * 4 + 1]! + boneWeights[c * 4 + 2]! + boneWeights[c * 4 + 3]!;
+                for (let j = 0; j < 4; j++) boneWeights[c * 4 + j]! /= sum;
+            });
+            return { boneNodeIDs: ids, inverseBind: skel.bind.map((b) => inverse(b)), boneIDs, weights: boneWeights };
+        };
         // Time-sampled xforms (createAnimation): meshes below one get a node chain from the stage root.
         const xformAnims = layerText ? extractUsdXformAnimations(layerText) : new Map<string, UsdaXformAnimation>();
         const nodes: SceneNode[] = [];
@@ -468,6 +525,23 @@ export class UsdImporter {
                 const level = node.absPath ? refinementLevels.get(node.absPath) : undefined;
                 const usdaMesh = node.absPath ? usdaMeshes.get(node.absPath) : undefined;
                 const samples = usdaMesh?.pointsSamples;
+                // UsdSkel: skinned by its bound skeleton when that has an animation, as natively.
+                const skel = usdaMesh?.skin && node.absPath ? skeletons.get(skelBindings.get(node.absPath) ?? "") : undefined;
+                if (usdaMesh?.skin && !skel?.anim) {
+                    Logger.warning(skel ? `SkelRoot contains a skeleton '${skel.path}' without an associated animation, which is not supported. Ignoring.` : `Mesh '${node.absPath}' has skinning data but no skeleton. Skinning data will not be loaded.`);
+                } else if (usdaMesh?.skin && skel && usdaMesh.skin.interpolation !== "vertex") {
+                    Logger.warning(`Skinning data for mesh '${node.absPath}' must be per-vertex. "constant" interpolation is not supported. Ignoring primitive.`);
+                    return;
+                } else if (usdaMesh?.skin && skel && !instanced) {
+                    const materialID = getOrAddMaterial(mesh.materialId, bindings.get(node.absPath!), node.absPath);
+                    const corners = triangulateUsdMesh(usdaMesh, usdaMesh.points, usdaMesh.normals?.values);
+                    const vertices = cornerVertices(corners, texCoordTransforms[materialID]!);
+                    const indices = Uint32Array.from(vertices.keys());
+                    generateTangents(vertices, indices);
+                    meshes.push({ vertices, indices, materialID, transform: world.clone(), skin: usdSkin(usdaMesh, skel, corners.pointIndices!, world, node.absPath!) });
+                    for (const child of node.children ?? []) walk(child, world, usdWorld, instanced);
+                    return;
+                }
                 const motion = samples && samples.length > 1 && options.settings?.getAttribute(node.absPath!, "usdImporter:enableMotion", 1) !== false && options.settings?.getAttribute(node.absPath!, "usdImporter:enableMotion", 1) !== 0;
                 if (motion && usdaMesh) {
                     // Time-sampled points: a vertex cache (CachedMesh), each sample converted like the base mesh.
@@ -481,8 +555,7 @@ export class UsdImporter {
                         generateTangents(vertices, Uint32Array.from(vertices.keys()));
                         return vertices;
                     });
-                    const tcps = usdTimeCodesPerSecond(layerText!);
-                    meshes.push({
+                                meshes.push({
                         vertices: frames[0]!,
                         indices: Uint32Array.from(frames[0]!.keys()),
                         materialID,

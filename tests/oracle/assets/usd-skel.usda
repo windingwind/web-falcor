@@ -1,0 +1,74 @@
+#usda 1.0
+(
+    defaultPrim = "World"
+    metersPerUnit = 1
+    upAxis = "Y"
+    timeCodesPerSecond = 24
+    startTimeCode = 0
+    endTimeCode = 48
+)
+# UsdSkel: a two-joint skeleton with a SkelAnimation (sampled rotations and root
+# translations) skinning a bar mesh with two influences per vertex. The SkelRoot is
+# translated. The animation lists its joints in the skeleton's order: native indexes the
+# animation's arrays by skeleton joint (the web maps them by name, as UsdSkel specifies).
+def Xform "World"
+{
+    def SkelRoot "Rig" (
+        prepend apiSchemas = ["SkelBindingAPI"]
+    )
+    {
+        double3 xformOp:translate = (0.5, -0.8, 0)
+        uniform token[] xformOpOrder = ["xformOp:translate"]
+        rel skel:skeleton = </World/Rig/Skel>
+
+        def Skeleton "Skel" (
+            prepend apiSchemas = ["SkelBindingAPI"]
+        )
+        {
+            uniform token[] joints = ["Root", "Root/Arm"]
+            uniform matrix4d[] bindTransforms = [( (1, 0, 0, 0), (0, 1, 0, 0), (0, 0, 1, 0), (0, 0, 0, 1) ), ( (1, 0, 0, 0), (0, 1, 0, 0), (0, 0, 1, 0), (0, 1, 0, 1) )]
+            uniform matrix4d[] restTransforms = [( (1, 0, 0, 0), (0, 1, 0, 0), (0, 0, 1, 0), (0, 0, 0, 1) ), ( (1, 0, 0, 0), (0, 1, 0, 0), (0, 0, 1, 0), (0, 1, 0, 1) )]
+            rel skel:animationSource = </World/Rig/Skel/Anim>
+
+            def SkelAnimation "Anim"
+            {
+                uniform token[] joints = ["Root", "Root/Arm"]
+                quatf[] rotations.timeSamples = {
+                    0: [(1, 0, 0, 0), (1, 0, 0, 0)],
+                    24: [(0.9659258, 0, 0, 0.2588190), (0.7071068, 0, 0, 0.7071068)],
+                    48: [(1, 0, 0, 0), (0.9238795, 0.3826834, 0, 0)],
+                }
+                float3[] translations.timeSamples = {
+                    0: [(0, 0, 0), (0, 1, 0)],
+                    48: [(-0.8, 0, 0), (0, 1, 0)],
+                }
+                half3[] scales = [(1, 1, 1), (1, 1, 1)]
+            }
+        }
+
+        def Mesh "Bar" (
+            prepend apiSchemas = ["SkelBindingAPI"]
+        )
+        {
+            uniform token subdivisionScheme = "none"
+            int[] faceVertexCounts = [4, 4, 4, 4, 4, 4, 4, 4]
+            int[] faceVertexIndices = [0, 1, 5, 4, 1, 2, 6, 5, 2, 3, 7, 6, 3, 0, 4, 7, 4, 5, 9, 8, 5, 6, 10, 9, 6, 7, 11, 10, 7, 4, 8, 11]
+            point3f[] points = [(-0.15, 0.0, -0.15), (0.15, 0.0, -0.15), (0.15, 0.0, 0.15), (-0.15, 0.0, 0.15), (-0.15, 1.0, -0.15), (0.15, 1.0, -0.15), (0.15, 1.0, 0.15), (-0.15, 1.0, 0.15), (-0.15, 2.0, -0.15), (0.15, 2.0, -0.15), (0.15, 2.0, 0.15), (-0.15, 2.0, 0.15)]
+            int[] primvars:skel:jointIndices = [0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1] (
+                elementSize = 2
+                interpolation = "vertex"
+            )
+            float[] primvars:skel:jointWeights = [1.0, 0.0, 1.0, 0.0, 1.0, 0.0, 1.0, 0.0, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.0, 1.0, 0.0, 1.0, 0.0, 1.0, 0.0, 1.0] (
+                elementSize = 2
+                interpolation = "vertex"
+            )
+        }
+    }
+    def Mesh "Floor"
+    {
+        uniform token subdivisionScheme = "none"
+        int[] faceVertexCounts = [4]
+        int[] faceVertexIndices = [0, 3, 2, 1]
+        point3f[] points = [(-4, -0.9, -2), (4, -0.9, -2), (4, -0.9, 2), (-4, -0.9, 2)]
+    }
+}

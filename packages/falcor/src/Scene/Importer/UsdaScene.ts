@@ -13,7 +13,8 @@
 
 import { float3, normalize3 } from "../../Utils/Math/Vector.js";
 import { extractEulerAngleXYZ, float4x4, inverse, matrixFromRotationAxisAngle, matrixFromScaling, matrixFromTranslation, mulMat, transformPoint, transformVector } from "../../Utils/Math/Matrix.js";
-import { matrixFromQuat, mulQuat, quatf } from "../../Utils/Math/Quaternion.js";
+import { matrixFromQuat, mulQuat, quatf, slerp } from "../../Utils/Math/Quaternion.js";
+import { decomposeTRS } from "../Animation/SceneAnimation.js";
 import { LightType, type AnalyticLight } from "../SceneData.js";
 import type { SceneMetadata } from "../Scene.js";
 import { Logger } from "../../Utils/Logger.js";
@@ -535,6 +536,8 @@ export interface UsdaSubdivMesh {
     /** Authored normals and their interpolation (normals defaults to vertex). */
     normals?: { values: number[]; interpolation: string };
     holeIndices: number[];
+    /** primvars:skel:jointIndices/jointWeights (per point when interpolation is vertex) and skel:joints. */
+    skin?: { indices: number[]; weights: number[]; elementSize: number; interpolation: string; joints?: string[] };
     /** Time-sampled points / normals (time codes), for vertex caches. */
     pointsSamples?: { time: number; value: number[] }[];
     normalsSamples?: { time: number; value: number[] }[];
@@ -580,6 +583,18 @@ export function extractUsdMeshes(text: string): Map<string, UsdaSubdivMesh> {
             } else if (mesh.normalsSamples) {
                 const meta = b.match(/normals\.timeSamples[^]*?\}\s*\(([^)]*)\)/)?.[1] ?? "";
                 mesh.normals = { values: mesh.normalsSamples[0]!.value, interpolation: meta.match(/interpolation\s*=\s*"(\w+)"/)?.[1] ?? "vertex" };
+            }
+            const ji = attrMultiline(b, ["primvars:skel:jointIndices"]);
+            const jw = attrMultiline(b, ["primvars:skel:jointWeights"]);
+            if (ji && jw) {
+                const meta = (m: string, key: string) => m.match(new RegExp(`${key}\\s*=\\s*"?(\\w+)"?`))?.[1];
+                mesh.skin = {
+                    indices: num(ji.value),
+                    weights: num(jw.value),
+                    elementSize: Number(meta(ji.metadata, "elementSize") ?? 1),
+                    interpolation: meta(ji.metadata, "interpolation") ?? "constant",
+                    joints: attrMultiline(b, ["skel:joints"])?.value.match(/"([^"]*)"/g)?.map((t) => t.slice(1, -1)),
+                };
             }
             if (attr(b, ["refinementEnableOverride"]) !== "false" && attr(b, ["refinementLevel"]) !== undefined) mesh.refinementLevel = attrNumber(b, ["refinementLevel"], 0);
             out.set(p.path, mesh);
@@ -692,4 +707,97 @@ export function extractUsdXformAnimations(text: string): Map<string, UsdaXformAn
     };
     parseUsdaPrims(text, float4x4.identity()).forEach(visit);
     return out;
+}
+
+/** A UsdSkelSkeleton with its bound SkelAnimation (ImporterContext::createSkeleton). */
+export interface UsdaSkeleton {
+    path: string;
+    /** Joint paths ("Root", "Root/Arm"), in skeleton order. */
+    joints: string[];
+    /** Skeleton-space bind transforms. */
+    bind: float4x4[];
+    /** Joint-local rest transforms. */
+    rest: float4x4[];
+    /** Per-sample joint-local components for every skeleton joint (rest for joints the animation lacks). */
+    anim: { times: number[]; translation: float3[][]; rotation: quatf[][]; scale: float3[][] } | null;
+}
+
+/** USD matrix4d[] text (row-major, row vectors) as column-vector float4x4s. */
+function usdMatrices(text: string): float4x4[] {
+    const v = num(text);
+    return Array.from({ length: Math.floor(v.length / 16) }, (_, i) => float4x4.fromRows([0, 1, 2, 3].map((r) => [0, 1, 2, 3].map((c) => v[i * 16 + c * 4 + r]!))));
+}
+
+/** Skeletons by path, and each prim's bound skeleton (`skel:skeleton`, inherited by descendants). */
+export function extractUsdSkeletons(text: string): { skeletons: Map<string, UsdaSkeleton>; bindings: Map<string, string> } {
+    const byPath = new Map<string, UsdaPrim>();
+    const bindings = new Map<string, string>();
+    const index = (p: UsdaPrim, inherited: string | undefined) => {
+        byPath.set(p.path, p);
+        const own = p.body.match(/^\s*rel\s+skel:skeleton\s*=\s*<([^>]+)>/m)?.[1] ?? inherited;
+        if (own) bindings.set(p.path, own);
+        p.children.forEach((c) => index(c, own));
+    };
+    parseUsdaPrims(text, float4x4.identity()).forEach((p) => index(p, undefined));
+    const tokens = (b: string, name: string) => attrMultiline(b, [name])?.value.match(/"([^"]*)"/g)?.map((t) => t.slice(1, -1)) ?? [];
+    const skeletons = new Map<string, UsdaSkeleton>();
+    for (const p of byPath.values()) {
+        if (p.type !== "Skeleton") continue;
+        const joints = tokens(p.body, "joints");
+        const bind = usdMatrices(attrMultiline(p.body, ["bindTransforms"])?.value ?? "");
+        const parentOf = (i: number) => joints.indexOf(joints[i]!.slice(0, Math.max(0, joints[i]!.lastIndexOf("/"))));
+        let rest = usdMatrices(attrMultiline(p.body, ["restTransforms"])?.value ?? "");
+        if (rest.length !== joints.length) {
+            // Without rest transforms, the bind pose in joint-local form.
+            rest = joints.map((_, i) => (parentOf(i) >= 0 ? mulMat(inverse(bind[parentOf(i)]!), bind[i]!) : bind[i] ?? float4x4.identity()));
+        }
+        const skel: UsdaSkeleton = { path: p.path, joints, bind, rest, anim: null };
+        const animPrim = byPath.get(p.body.match(/^\s*rel\s+skel:animationSource\s*=\s*<([^>]+)>/m)?.[1] ?? "");
+        if (animPrim && animPrim.type === "SkelAnimation") {
+            const b = animPrim.body;
+            const animJoints = tokens(b, "joints");
+            const channel = (name: string, width: number) => {
+                const samples = attrTimeSamples(b, name);
+                const fallback = attrMultiline(b, [name]);
+                return { samples, value: fallback ? num(fallback.value) : undefined, width };
+            };
+            const [tr, rot, sc] = [channel("translations", 3), channel("rotations", 4), channel("scales", 3)];
+            const times = [...new Set([tr, rot, sc].flatMap((c) => c.samples?.map((s) => s.time) ?? []))].sort((x, y) => x - y);
+            const at = (c: ReturnType<typeof channel>, t: number): number[] | undefined => {
+                if (!c.samples || c.samples.length === 0) return c.value;
+                if (c.width !== 4) return sampleAt(c.samples, t);
+                // Quaternions interpolate by slerp (USD's GfSlerp), per joint.
+                const k = c.samples.findIndex((s) => s.time >= t);
+                if (k <= 0) return c.samples[k < 0 ? c.samples.length - 1 : 0]!.value;
+                const [a, bb] = [c.samples[k - 1]!, c.samples[k]!];
+                const u = (t - a.time) / (bb.time - a.time);
+                return a.value.flatMap((_, i) => {
+                    if (i % 4) return [];
+                    const q = slerp(new quatf(a.value[i + 1]!, a.value[i + 2]!, a.value[i + 3]!, a.value[i]!), new quatf(bb.value[i + 1]!, bb.value[i + 2]!, bb.value[i + 3]!, bb.value[i]!), u);
+                    return [q.w, q.x, q.y, q.z];
+                });
+            };
+            if (times.length > 0) {
+                skel.anim = { times, translation: [], rotation: [], scale: [] };
+                for (const t of times) {
+                    const [tv, rv, sv] = [at(tr, t), at(rot, t), at(sc, t)];
+                    const pose = joints.map((name, i) => {
+                        const restTRS = decomposeTRS(rest[i]!);
+                        const a = animJoints.indexOf(name);
+                        if (a < 0) return restTRS;
+                        return {
+                            t: tv ? new float3(tv[a * 3]!, tv[a * 3 + 1]!, tv[a * 3 + 2]!) : restTRS.t,
+                            r: rv ? new quatf(rv[a * 4 + 1]!, rv[a * 4 + 2]!, rv[a * 4 + 3]!, rv[a * 4]!) : restTRS.r,
+                            s: sv ? new float3(sv[a * 3]!, sv[a * 3 + 1]!, sv[a * 3 + 2]!) : restTRS.s,
+                        };
+                    });
+                    skel.anim.translation.push(pose.map((j) => j.t));
+                    skel.anim.rotation.push(pose.map((j) => j.r));
+                    skel.anim.scale.push(pose.map((j) => j.s));
+                }
+            }
+        }
+        skeletons.set(p.path, skel);
+    }
+    return { skeletons, bindings };
 }
