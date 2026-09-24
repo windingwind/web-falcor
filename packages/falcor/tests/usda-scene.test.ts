@@ -3,7 +3,7 @@
  * conversions of native's USDImporter.
  */
 import { describe, expect, it } from "vitest";
-import { extractUsdCamerasAndLights, extractUsdMaterialTextures, parseUsdaPrims, usdaStageInfo, usdBlackbodyTemperatureAsRgb, usdStageRootTransform, usdTexCoordTransform } from "../src/Scene/Importer/UsdaScene.js";
+import { extractUsdCamerasAndLights, extractUsdMaterialTextures, extractUsdPointInstancers, parseUsdaPrims, usdaStageInfo, usdBlackbodyTemperatureAsRgb, usdStageRootTransform, usdTexCoordTransform } from "../src/Scene/Importer/UsdaScene.js";
 import { readFileSync } from "node:fs";
 import { LightType } from "../src/Scene/SceneData.js";
 import { float3 } from "../src/Utils/Math/Vector.js";
@@ -162,5 +162,19 @@ def SphereLight "S"
         const n = Math.sin(Math.PI / 6);
         expect(s).toBeCloseTo(0.25 + c * 2 + n * 0.5, 6);
         expect(t).toBeCloseTo(0.1 + n * 2 - c * 0.5, 6);
+    });
+
+    it("reads PointInstancer prototypes and instance transforms", () => {
+        const text = readFileSync(new URL("../../../tests/oracle/assets/usd-instancer.usda", import.meta.url), "utf8");
+        const [inst] = extractUsdPointInstancers(text);
+        expect(inst!.path).toBe("/World/Instancer");
+        expect(inst!.prototypes).toEqual(["/World/Instancer/Protos/Quad", "/World/Instancer/Protos/Tri"]);
+        expect(inst!.instances.map((i) => i.proto)).toEqual([0, 1, 0, 1, 0]);
+        close(transformPoint(inst!.usdWorld, new float3(0, 0, 0)), [0, 0.5, 0]);
+        // Instance 1: translate (-1.5, 0, 0) * rotateZ(45 deg) * scale(0.5).
+        const s = Math.SQRT1_2 * 0.5;
+        close(transformPoint(inst!.instances[1]!.transform, new float3(1, 0, 0)), [-1.5 + s, s, 0]);
+        // Instance 4: rotateY(90 deg) * scale(0.8).
+        close(transformPoint(inst!.instances[4]!.transform, new float3(1, 0, 0)), [3, 0, -0.8]);
     });
 });

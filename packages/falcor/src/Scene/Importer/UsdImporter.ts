@@ -15,7 +15,7 @@ import { float2, float3, float4 } from "../../Utils/Math/Vector.js";
 import { float4x4, mulMat, transformPoint } from "../../Utils/Math/Matrix.js";
 import { RuntimeError } from "../../Core/Error.js";
 import { Logger } from "../../Utils/Logger.js";
-import { extractUsdCamerasAndLights, extractUsdMaterialBindings, extractUsdMaterialTextures, usdaStageInfo, usdChannelIndex, usdStageRootTransform, usdTexCoordTransform, type UsdaCamera, type UsdaDomeLight, type UsdaTextureInput } from "./UsdaScene.js";
+import { extractUsdCamerasAndLights, extractUsdMaterialBindings, extractUsdMaterialTextures, extractUsdPointInstancers, usdaStageInfo, usdChannelIndex, usdStageRootTransform, usdTexCoordTransform, type UsdaCamera, type UsdaDomeLight, type UsdaTextureInput } from "./UsdaScene.js";
 import type { AnalyticLight } from "../SceneData.js";
 
 interface UsdNode {
@@ -233,10 +233,33 @@ export class UsdImporter {
             return index;
         };
 
+        // PointInstancers (tinyusdz keeps their prototypes as plain children): the prototypes
+        // render once per instance and nowhere else, as natively.
+        const instancers = new Map((layerText ? extractUsdPointInstancers(layerText) : []).map((i) => [i.path, i]));
+        const nodesByPath = new Map<string, UsdNode>();
+        const indexNodes = (n: UsdNode) => {
+            if (n.absPath) nodesByPath.set(n.absPath, n);
+            (n.children ?? []).forEach(indexNodes);
+        };
+        indexNodes(usd.getDefaultRootNode());
         // Stage bounds in USD space (UsdGeomBBoxCache's world bound, without the root transform).
         const lo = [Infinity, Infinity, Infinity];
         const hi = [-Infinity, -Infinity, -Infinity];
         const walk = (node: UsdNode, parentWorld: float4x4, parentUsd: float4x4): void => {
+            const instancer = node.absPath ? instancers.get(node.absPath) : undefined;
+            if (instancer) {
+                for (const { proto, transform } of instancer.instances) {
+                    const protoPath = instancer.prototypes[proto];
+                    const protoNode = protoPath ? nodesByPath.get(protoPath) : undefined;
+                    if (!protoNode) {
+                        Logger.error(`Point instancer '${instancer.path}' references nonexistent prim '${protoPath}'. Ignoring.`);
+                        continue;
+                    }
+                    const usdWorld = mulMat(instancer.usdWorld, transform);
+                    walk(protoNode, mulMat(rootXform, usdWorld), usdWorld);
+                }
+                return;
+            }
             let world = parentWorld;
             let usdWorld = parentUsd;
             if (node.localMatrix && node.localMatrix.length === 16) {

@@ -1,0 +1,61 @@
+#usda 1.0
+(
+    defaultPrim = "World"
+    metersPerUnit = 1
+    upAxis = "Y"
+)
+# A UsdGeomPointInstancer with two prototypes (a quad, and a translated Xform
+# holding a triangle) instanced five times with positions, orientations and
+# scales. Prototypes render only through the instancer, as natively.
+def Xform "World"
+{
+    def PointInstancer "Instancer"
+    {
+        double3 xformOp:translate = (0, 0.5, 0)
+        uniform token[] xformOpOrder = ["xformOp:translate"]
+        rel prototypes = [</World/Instancer/Protos/Quad>, </World/Instancer/Protos/Tri>]
+        int[] protoIndices = [0, 1, 0, 1, 0]
+        point3f[] positions = [(-3, 0, 0), (-1.5, 0, 0), (0, 0, 0), (1.5, 0, 0), (3, 0, 0)]
+        quath[] orientations = [(1, 0, 0, 0), (0.9238795, 0, 0, 0.3826834), (0.9659258, 0.2588190, 0, 0), (1, 0, 0, 0), (0.7071068, 0, 0.7071068, 0)]
+        float3[] scales = [(1, 1, 1), (0.5, 0.5, 0.5), (1, 2, 1), (1, 1, 1), (0.8, 0.8, 0.8)]
+
+        def Scope "Protos"
+        {
+            def Mesh "Quad"
+            {
+                uniform token subdivisionScheme = "none"
+                int[] faceVertexCounts = [3, 3]
+                int[] faceVertexIndices = [0, 1, 2, 0, 2, 3]
+                point3f[] points = [(-0.5, -0.5, 0), (0.5, -0.5, 0), (0.5, 0.5, 0), (-0.5, 0.5, 0)]
+                normal3f[] normals = [(0, 0, 1), (0, 0, 1), (0, 0, 1), (0, 0, 1)] (
+                    interpolation = "vertex"
+                )
+            }
+            def Xform "Tri"
+            {
+                double3 xformOp:translate = (0, -0.25, 0)
+                uniform token[] xformOpOrder = ["xformOp:translate"]
+                def Mesh "TriMesh"
+                {
+                    uniform token subdivisionScheme = "none"
+                    int[] faceVertexCounts = [3]
+                    int[] faceVertexIndices = [0, 1, 2]
+                    point3f[] points = [(-0.5, 0, 0), (0.5, 0, 0), (0, 0.8, 0)]
+                    normal3f[] normals = [(0, 0, 1), (0, 0, 1), (0, 0, 1)] (
+                        interpolation = "vertex"
+                    )
+                }
+            }
+        }
+    }
+    def Mesh "Floor"
+    {
+        uniform token subdivisionScheme = "none"
+        int[] faceVertexCounts = [3, 3]
+        int[] faceVertexIndices = [0, 1, 2, 0, 2, 3]
+        point3f[] points = [(-4, -1, -2), (4, -1, -2), (4, -1, 2), (-4, -1, 2)]
+        normal3f[] normals = [(0, 1, 0), (0, 1, 0), (0, 1, 0), (0, 1, 0)] (
+            interpolation = "vertex"
+        )
+    }
+}

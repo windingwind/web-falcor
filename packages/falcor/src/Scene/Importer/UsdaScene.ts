@@ -400,3 +400,53 @@ export function extractUsdMaterialBindings(text: string): Map<string, string> {
     parseUsdaPrims(text, float4x4.identity()).forEach((p) => visit(p, undefined));
     return bindings;
 }
+
+/** A UsdGeomPointInstancer: its prototypes and per-instance transforms at the earliest time. */
+export interface UsdaPointInstancer {
+    path: string;
+    /** The instancer's local-to-world in USD space (tinyusdz drops its xformOps). */
+    usdWorld: float4x4;
+    prototypes: string[];
+    /** translate * orient * scale (ComputeInstanceTransformsAtTime, ExcludeProtoXform). */
+    instances: { proto: number; transform: float4x4 }[];
+}
+
+/** The PointInstancers of a USD layer's text (velocities and time samples are not applied). */
+export function extractUsdPointInstancers(text: string): UsdaPointInstancer[] {
+    const out: UsdaPointInstancer[] = [];
+    const visit = (p: UsdaPrim) => {
+        if (p.type === "PointInstancer") {
+            const b = p.body;
+            const rel = b.match(/^\s*rel\s+prototypes\s*=\s*(\[[^\]]*\]|<[^>]+>)/m)?.[1] ?? "";
+            const prototypes = [...rel.matchAll(/<([^>]+)>/g)].map((m) => m[1]!);
+            const protoIndices = attr(b, ["protoIndices"]);
+            if (protoIndices === undefined) {
+                Logger.error(`Point instancer '${p.path}' has no prototype indices. Ignoring prim.`);
+            } else {
+                const indices = num(protoIndices);
+                const positions = attrVector(b, ["positions"], []);
+                const orientations = attrVector(b, ["orientations"], []);
+                const scales = attrVector(b, ["scales"], []);
+                if (positions.length !== indices.length * 3) {
+                    Logger.error(`Point instancer '${p.path}' has ${indices.length} prototype indices but ${positions.length / 3} transforms.`);
+                } else {
+                    const instances = indices.map((proto, i) => {
+                        let m = matrixFromTranslation(new float3(positions[i * 3]!, positions[i * 3 + 1]!, positions[i * 3 + 2]!));
+                        if (orientations.length >= (i + 1) * 4) {
+                            // Authored (real, i, j, k); GfRotation normalizes.
+                            const [w, x, y, z] = orientations.slice(i * 4, i * 4 + 4) as [number, number, number, number];
+                            const len = Math.hypot(w, x, y, z) || 1;
+                            m = mulMat(m, matrixFromQuat(new quatf(x / len, y / len, z / len, w / len)));
+                        }
+                        if (scales.length >= (i + 1) * 3) m = mulMat(m, matrixFromScaling(new float3(scales[i * 3]!, scales[i * 3 + 1]!, scales[i * 3 + 2]!)));
+                        return { proto, transform: m };
+                    });
+                    out.push({ path: p.path, usdWorld: p.usdWorld, prototypes, instances });
+                }
+            }
+        }
+        p.children.forEach(visit);
+    };
+    parseUsdaPrims(text, float4x4.identity()).forEach(visit);
+    return out;
+}
