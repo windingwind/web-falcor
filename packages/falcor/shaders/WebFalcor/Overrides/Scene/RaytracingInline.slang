@@ -164,7 +164,7 @@ bool traverseBvhFiltered<F : ITriangleHitFilter>(const Ray ray, const bool anyHi
 // calls intersectSDF once per primitive the ray crosses. WebFalcor's software
 // RT has no procedural BLAS: NDSDF/SVO have a single whole-grid primitive
 // (ID 0); SBS/SVS traverse a host-built BVH over their primitive AABBs
-// (gScene.webfalcorSdfBvhNodes/PrimIndices) so a ray only tests the handful
+// (gScene.webfalcorSdfBvh, one BVH per distinct grid) so a ray only tests the handful
 // of bricks/voxels it actually crosses.
 #if SCENE_SDF_GRID_IMPLEMENTATION == SCENE_SDF_GRID_IMPLEMENTATION_SBS || SCENE_SDF_GRID_IMPLEMENTATION == SCENE_SDF_GRID_IMPLEMENTATION_SVS
 #define WEBFALCOR_SDF_USE_PRIMITIVE_BVH 1
@@ -182,15 +182,21 @@ uint webfalcorSdfPrimIndex(uint i)
     io_hitT / io_hitData / io_instance / found for each nearer intersectSDF hit. */
 void intersectSdfInstanceBvh(const Ray ray, const GeometryInstanceID instanceID, inout float io_hitT, inout SDFGridHitData io_hitData, inout uint io_instance, inout bool found)
 {
-    const float3 invDir = float3(1.f) / ray.dir;
+    // Brick AABBs are grid-local: cull with the ray in instance space (same t parameterization).
+    const GeometryInstanceData instance = gScene.geometryInstances[instanceID.index];
+    const float4x4 worldMat = gScene.loadWorldMatrix(instance.globalMatrixID);
+    const float3x3 invTransposeMat = gScene.loadInverseTransposeWorldMatrix(instance.globalMatrixID);
+    const float3 localOrigin = mul(ray.origin - float3(worldMat[0].w, worldMat[1].w, worldMat[2].w), invTransposeMat);
+    const float3 invDir = float3(1.f) / mul(ray.dir, invTransposeMat);
     uint stack[32];
     uint stackSize = 0;
-    uint node = 0;
+    // Each instance's header names its grid's BVH root.
+    uint node = asuint(gScene.webfalcorSdfBvh[(instanceID.index - gScene.webfalcorSdfInstanceFirst) * 2].x);
     for (;;)
     {
         const float4 n0 = gScene.webfalcorSdfBvh[node * 2];
         const float4 n1 = gScene.webfalcorSdfBvh[node * 2 + 1];
-        if (intersectAabb(ray.origin, invDir, ray.tMin, io_hitT, n0.xyz, n1.xyz))
+        if (intersectAabb(localOrigin, invDir, ray.tMin, io_hitT, n0.xyz, n1.xyz))
         {
             const uint leftFirst = asuint(n0.w);
             const uint count = asuint(n1.w);
@@ -228,15 +234,21 @@ void intersectSdfInstanceBvh(const Ray ray, const GeometryInstanceID instanceID,
 /** Any-hit over the SDF primitive-AABB BVH for one instance. */
 bool intersectSdfInstanceBvhAny(const Ray ray, const GeometryInstanceID instanceID)
 {
-    const float3 invDir = float3(1.f) / ray.dir;
+    // Brick AABBs are grid-local: cull with the ray in instance space (same t parameterization).
+    const GeometryInstanceData instance = gScene.geometryInstances[instanceID.index];
+    const float4x4 worldMat = gScene.loadWorldMatrix(instance.globalMatrixID);
+    const float3x3 invTransposeMat = gScene.loadInverseTransposeWorldMatrix(instance.globalMatrixID);
+    const float3 localOrigin = mul(ray.origin - float3(worldMat[0].w, worldMat[1].w, worldMat[2].w), invTransposeMat);
+    const float3 invDir = float3(1.f) / mul(ray.dir, invTransposeMat);
     uint stack[32];
     uint stackSize = 0;
-    uint node = 0;
+    // Each instance's header names its grid's BVH root.
+    uint node = asuint(gScene.webfalcorSdfBvh[(instanceID.index - gScene.webfalcorSdfInstanceFirst) * 2].x);
     for (;;)
     {
         const float4 n0 = gScene.webfalcorSdfBvh[node * 2];
         const float4 n1 = gScene.webfalcorSdfBvh[node * 2 + 1];
-        if (intersectAabb(ray.origin, invDir, ray.tMin, ray.tMax, n0.xyz, n1.xyz))
+        if (intersectAabb(localOrigin, invDir, ray.tMin, ray.tMax, n0.xyz, n1.xyz))
         {
             const uint leftFirst = asuint(n0.w);
             const uint count = asuint(n1.w);

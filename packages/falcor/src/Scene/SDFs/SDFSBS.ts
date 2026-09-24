@@ -62,7 +62,6 @@ export class SDFSBS {
     /** Mirrors SDFGrid::generateCheeseValues + SDFSBS::setValuesInternal. */
     generateCheeseValues(gridWidth: number, seed: number): void {
         this.setValues(generateCheeseCornerValues(gridWidth, seed), gridWidth);
-        this.build();
     }
 
     /** Mirrors SDFSBS::setValuesInternal (snorm8, normalizationFactor 2*gw/sqrt3). */
@@ -76,6 +75,13 @@ export class SDFSBS {
             const integerScale = normalized * 127;
             this.sdField[v] = Math.trunc(integerScale >= 0 ? integerScale + 0.5 : integerScale - 0.5);
         }
+        this.build();
+    }
+
+    /** The stored field as corner values (inverse of setValues' snorm8 quantization). */
+    cornerValues(): Float32Array {
+        const scale = kSqrt3 / (2 * this.gridWidth);
+        return Float32Array.from(this.sdField, (v) => (v / 127) * scale);
     }
 
     private field(x: number, y: number, z: number): number {
@@ -192,4 +198,64 @@ export class SDFSBS {
             }
         }
     }
+}
+
+/**
+ * Several SBS grids packed into one gScene.sdfGrid0 binding (WGSL has no resource arrays):
+ * bricks share one texture with per-grid brick-ID offsets, indirection volumes stack along z.
+ */
+export interface PackedSBS {
+    aabbs: BrickAABB[];
+    /** First AABB/brick of each grid. */
+    brickOffsets: number[];
+    /** Indirection z offset of each grid. */
+    zOffsets: number[];
+    indirection: Uint32Array;
+    indirectionDims: [number, number, number];
+    bricksPerAxis: [number, number];
+    brickTextureDimensions: [number, number];
+    brickTexture: Float32Array;
+}
+
+export function packSBSGrids(grids: readonly SDFSBS[]): PackedSBS {
+    const bw = grids[0]!.brickWidth;
+    if (grids.some((g) => g.brickWidth !== bw)) throw new Error("SDFSBS: packed grids need one brick width");
+    const bwv = bw + 1;
+    const brickCount = grids.reduce((n, g) => n + g.brickCount, 0);
+    // Same square-ish layout as a single grid's build.
+    const bricksAlongX = Math.max(1, Math.ceil(Math.sqrt(brickCount / bwv)));
+    const bricksAlongY = Math.max(1, Math.ceil(brickCount / bricksAlongX));
+    const texW = bwv * bwv * bricksAlongX;
+    const texH = bwv * bricksAlongY;
+    const brickTexture = new Float32Array(texW * texH);
+    const side = Math.max(...grids.map((g) => g.virtualBricksPerAxis));
+    const depth = grids.reduce((n, g) => n + g.virtualBricksPerAxis, 0);
+    const indirection = new Uint32Array(side * side * depth).fill(UINT32_MAX);
+    const aabbs: BrickAABB[] = [];
+    const brickOffsets: number[] = [];
+    const zOffsets: number[] = [];
+    let z0 = 0;
+    for (const g of grids) {
+        const base = aabbs.length;
+        brickOffsets.push(base);
+        zOffsets.push(z0);
+        aabbs.push(...g.aabbs);
+        for (let b = 0; b < g.brickCount; b++) {
+            const [sx, sy] = [(b % g.bricksPerAxis[0]) * bwv * bwv, Math.floor(b / g.bricksPerAxis[0]) * bwv];
+            const [dx, dy] = [((base + b) % bricksAlongX) * bwv * bwv, Math.floor((base + b) / bricksAlongX) * bwv];
+            for (let y = 0; y < bwv; y++) {
+                const src = sx + g.brickTextureDimensions[0] * (sy + y);
+                brickTexture.set(g.brickTexture.subarray(src, src + bwv * bwv), dx + texW * (dy + y));
+            }
+        }
+        const v = g.virtualBricksPerAxis;
+        for (let z = 0; z < v; z++)
+            for (let y = 0; y < v; y++)
+                for (let x = 0; x < v; x++) {
+                    const id = g.indirection[x + v * (y + v * z)]!;
+                    indirection[x + side * (y + side * (z + z0))] = id === UINT32_MAX ? UINT32_MAX : id + base;
+                }
+        z0 += v;
+    }
+    return { aabbs, brickOffsets, zOffsets, indirection, indirectionDims: [side, side, depth], bricksPerAxis: [bricksAlongX, bricksAlongY], brickTextureDimensions: [texW, texH], brickTexture };
 }

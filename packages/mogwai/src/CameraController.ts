@@ -30,6 +30,8 @@ export class CameraController {
     private upDirection = UpDirection.YPos;
     private speed = 1; // native Scene::mCameraSpeed default
     private dollyAccum = 0; // wheel dolly for the first-person controllers (web extra; native ignores the wheel there)
+    /** False while the scene's camera controls are disabled (Scene::setCameraControlsEnabled). */
+    inputEnabled: () => boolean = () => true;
 
     constructor(private readonly canvas: HTMLCanvasElement) {
         canvas.addEventListener("mousedown", this.onMouseDown);
@@ -100,6 +102,7 @@ export class CameraController {
         return !!el && /^(INPUT|SELECT|TEXTAREA|BUTTON)$/.test(el.tagName);
     }
     private onMouseDown = (e: MouseEvent) => {
+        if (!this.inputEnabled()) return;
         const button = this.button(e);
         if (button) this.controller?.onMouseEvent({ type: "buttonDown", button, pos: this.pos(e) });
     };
@@ -108,16 +111,20 @@ export class CameraController {
         if (button) this.controller?.onMouseEvent({ type: "buttonUp", button, pos: this.pos(e) });
     };
     private onMouseMove = (e: MouseEvent) => {
+        if (!this.inputEnabled()) return;
         this.controller?.onMouseEvent({ type: "move", pos: this.pos(e) });
     };
     private onWheel = (e: WheelEvent) => {
         e.preventDefault();
+        if (!this.inputEnabled()) return;
         const up = -Math.sign(e.deltaY); // native wheelDelta.y: +1 = scroll up
         const handled = this.controller?.onMouseEvent({ type: "wheel", pos: this.pos(e), wheelDelta: new float2(0, up) }) ?? false;
         if (!handled) this.dollyAccum += up * this.speed * 0.5;
     };
     private onKey = (e: KeyboardEvent) => {
         if (this.isTypingTarget(e.target)) return;
+        // Releases still go through, so no key stays held while controls are off.
+        if (e.type === "keydown" && !this.inputEnabled()) return;
         this.controller?.onKeyEvent({ type: e.type === "keydown" ? "keyPressed" : "keyReleased", key: e.key.toLowerCase(), shift: e.shiftKey, ctrl: e.ctrlKey });
     };
     private pollGamepad(): void {

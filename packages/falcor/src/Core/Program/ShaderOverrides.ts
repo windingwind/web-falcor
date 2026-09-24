@@ -129,10 +129,12 @@ export const kShaderOverrides: Readonly<Record<string, string>> = {
     "RenderPasses/RTXDIPass/FinalShading.cs.slang": "WebFalcor/Overrides/RenderPasses/RTXDIPass/FinalShading.cs.slang",
     // Per-LOD Texture3D binding array -> one R8Snorm atlas stacked along Z.
     "Scene/SDFs/NormalizedDenseSDFGrid/NDSDFGrid.slang": "WebFalcor/Overrides/Scene/SDFs/NormalizedDenseSDFGrid/NDSDFGrid.slang",
-    // brickID != UINT32_MAX promotes to i64 (unsupported in WGSL) -> 0xffffffffu.
+    // brickID != UINT32_MAX promotes to i64 (unsupported in WGSL) -> 0xffffffffu; packed multi-grid indirection.
     "Scene/SDFs/SparseBrickSet/SDFSBS.slang": "WebFalcor/Overrides/Scene/SDFs/SparseBrickSet/SDFSBS.slang",
     // Per-voxel AABBs moved into the shared SDF BVH buffer (16-storage-buffer cap).
     "Scene/SDFs/SparseVoxelSet/SDFSVS.slang": "WebFalcor/Overrides/Scene/SDFs/SparseVoxelSet/SDFSVS.slang",
     // decodeHit avoids decodeLocation's >2^63 Morton unshift masks (Tint abstract-int).
     "Scene/SDFs/SparseVoxelOctree/SDFSVO.slang": "WebFalcor/Overrides/Scene/SDFs/SparseVoxelOctree/SDFSVO.slang",
+    // UINT32_MAX as 0xffffffffu (the un-suffixed literal is i64, which WGSL lacks).
+    "Utils/Math/MathConstants.slangh": "WebFalcor/Overrides/Utils/Math/MathConstants.slangh",
 };

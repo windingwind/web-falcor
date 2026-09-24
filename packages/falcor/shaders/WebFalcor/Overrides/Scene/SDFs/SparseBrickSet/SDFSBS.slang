@@ -30,6 +30,8 @@
  * Diff vs upstream: `brickID != UINT32_MAX` promotes to i64 in the WGSL
  * backend (UINT32_MAX is the un-suffixed literal 4294967295 = signed-int
  * overflow → i64; Tint has no i64), so compare against the explicit 0xffffffffu.
+ * Several grids share one binding: indirectionZOffset selects the grid's slab of the
+ * z-stacked indirection volume (set per instance by Scene.getSDFGrid).
  */
 
 #include "Utils/Math/MathConstants.slangh"
@@ -58,6 +60,7 @@ struct SDFSBS : SDFGridBase, ISDFGrid
     uint2 brickTextureDimensions;
     uint brickWidth;
     float normalizationFactor;
+    uint indirectionZOffset;
 
     bool calculateBrickCoords(float3 pLocal, float3 brickMinLocal, float3 brickMaxLocal, out uint3 virtualBrickCoords, out uint2 brickTexelCoords, out float3 virtualVoxelBrickPos, out float3 voxelUnitCoords, out int3 brickLocalMinCoords, out int3 brickLocalMaxCoords)
     {
@@ -126,7 +129,7 @@ struct SDFSBS : SDFGridBase, ISDFGrid
     bool calculateBrickTexelCoords(const uint3 virtualBrickCoords, out uint2 brickTexelCoords)
     {
         // Load the brick ID from the indirection buffer.
-        uint brickID = indirectionBuffer[virtualBrickCoords];
+        uint brickID = indirectionBuffer[virtualBrickCoords + uint3(0, 0, indirectionZOffset)];
         uint brickWidthInValues = brickWidth + 1;
         brickTexelCoords = uint2(brickID % bricksPerAxis.x, brickID / bricksPerAxis.x) * uint2(brickWidthInValues * brickWidthInValues, brickWidthInValues);
 

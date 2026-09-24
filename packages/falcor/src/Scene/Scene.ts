@@ -47,7 +47,7 @@ import type { LightProfile } from "./Lights/LightProfile.js";
 import type { RenderContext } from "../Core/API/RenderContext.js";
 import { assert, RuntimeError } from "../Core/Error.js";
 import type { NDSDFGrid } from "./SDFs/NDSDFGrid.js";
-import { SDFSBS } from "./SDFs/SDFSBS.js";
+import { SDFSBS, packSBSGrids, type PackedSBS } from "./SDFs/SDFSBS.js";
 import { SDFSVS } from "./SDFs/SDFSVS.js";
 import { SDFSVO } from "./SDFs/SDFSVO.js";
 
@@ -425,6 +425,10 @@ export class Scene {
     /** Last animated-frame BVH, refit on the next animation step. */
     private animatedBvh: import("./SoftwareRT/Bvh.js").BvhBuildResult | null = null;
     private invTransposeOffset = 0;
+    /** Geometry instance (and node) index of SDF grid 0; mesh instances come first. */
+    private sdfInstanceBase = 0;
+    /** Mirrors Scene::setCameraControlsEnabled (the viewer's camera controller checks it). */
+    cameraControlsEnabled = true;
     // Animation state (retained only for animated scenes; null otherwise).
     private sourceMeshes: SceneMeshDesc[] | null = null;
     private animData: SceneAnimations | null = null;
@@ -445,6 +449,8 @@ export class Scene {
     private svsResources: { voxels: Buffer } | null = null;
     private svoResources: { svo: Buffer } | null = null;
     private sdfBvhBuffers: { buf: Buffer; primOffset: number } | null = null;
+    /** Distinct SBS grids packed into the one sdfGrid0 binding (built with the SBS resources). */
+    private sbsPacked: { grids: SDFSBS[]; packed: PackedSBS } | null = null;
     private displacementTexture: Texture | null = null;
     private curveInstanceFirst = 0;
     private curveDescs: SceneCurveDesc[] = [];
@@ -689,6 +695,7 @@ export class Scene {
         curves.forEach((desc, i) => putNode(meshes.length + sdfGrids.length + i, desc.transform ?? float4x4.identity()));
         make("worldMatrices", world, 64);
         this.invTransposeOffset = nodeCount;
+        this.sdfInstanceBase = meshes.length;
 
         // Software RT BVH over world-space triangles (docs §5); displaced meshes use their own AABB region.
         const { bvhTris, displacedAabbs, displacedEntries } = prebuilt?.geometry ?? Scene.collectBvhGeometry(meshes, materials);
@@ -1537,13 +1544,71 @@ export class Scene {
         }
     }
 
-    /** Binds gScene.sdfGrid0 for the SparseBrickSet implementation. */
+    /**
+     * One merged float4 buffer (16-storage-buffer budget): a 2-float4 header per SDF instance
+     * (BVH root node, and for SBS its grid's virtualGridWidth, virtualBricksPerAxis, indirection
+     * z offset, normalizationFactor), then every distinct grid's BVH nodes (2 float4/node), then
+     * prim indices packed 4-per-float4.
+     */
+    private buildSdfBvhBuffer(sbs: { grids: SDFSBS[]; packed: PackedSBS } | null, aabbs: { min: [number, number, number]; max: [number, number, number] }[]): { buf: Buffer; primOffset: number } {
+        const gridsOf = sbs ? sbs.grids : [this.sdfGrids[0]!.grid];
+        const ranges = sbs ? sbs.grids.map((g, i) => [sbs.packed.brickOffsets[i]!, g.brickCount] as const) : [[0, aabbs.length] as const];
+        const bvhs = ranges.map(([first, count]) => buildAabbBvh(aabbs.slice(first, first + count)));
+        const header = this.sdfGrids.length * 2;
+        const nodeTotal = bvhs.reduce((n, b) => n + b.nodeCount, 0);
+        const primTotal = bvhs.reduce((n, b) => n + b.primIndices.length, 0);
+        const primOffset = header + nodeTotal * 2;
+        const merged = new Float32Array((primOffset + Math.ceil(primTotal / 4)) * 4);
+        const u32 = new Uint32Array(merged.buffer);
+        const roots: number[] = [];
+        let [nodeBase, primBase] = [0, 0];
+        bvhs.forEach((bvh, g) => {
+            roots.push(nodeBase);
+            const nodes = new Uint32Array(bvh.nodes.buffer, bvh.nodes.byteOffset, bvh.nodeCount * 8);
+            const at = (header + nodeBase * 2) * 4;
+            u32.set(nodes, at);
+            for (let n = 0; n < bvh.nodeCount; n++) {
+                // Leaves index the prim list, interior nodes their left child.
+                u32[at + n * 8 + 3]! += u32[at + n * 8 + 7]! > 0 ? primBase : header / 2 + nodeBase;
+            }
+            const first = ranges[g]![0];
+            for (let i = 0; i < bvh.primIndices.length; i++) u32[primOffset * 4 + primBase + i] = bvh.primIndices[i]! + first;
+            nodeBase += bvh.nodeCount;
+            primBase += bvh.primIndices.length;
+        });
+        this.sdfGrids.forEach((d, i) => {
+            const g = gridsOf.indexOf(d.grid);
+            u32[i * 8] = header / 2 + roots[g]!;
+            if (sbs) {
+                const grid = sbs.grids[g]!;
+                u32.set([grid.gridWidth, grid.virtualBricksPerAxis, sbs.packed.zOffsets[g]!], i * 8 + 1);
+                merged[i * 8 + 4] = grid.normalizationFactor;
+            }
+        });
+        const storage = ResourceBindFlags.ShaderResource | ResourceBindFlags.UnorderedAccess;
+        const buf = new Buffer(this.device, { size: merged.byteLength, structSize: 16, bindFlags: storage, memoryType: MemoryType.DeviceLocal, name: "Scene::sdfBvh" });
+        buf.setBlob(new Uint8Array(merged.buffer));
+        return { buf, primOffset };
+    }
+
+    /** Distinct SBS grids of the scene, packed (see packSBSGrids). */
+    private getPackedSBS(): { grids: SDFSBS[]; packed: PackedSBS } {
+        if (!this.sbsPacked) {
+            const grids = [...new Set(this.sdfGrids.map((d) => d.grid))] as SDFSBS[];
+            this.sbsPacked = { grids, packed: packSBSGrids(grids) };
+        }
+        return this.sbsPacked;
+    }
+
+    /** Binds gScene.sdfGrid0 for the SparseBrickSet implementation (all grids packed; per-grid
+     *  fields are patched per instance by the Scene.slang override's getSDFGrid). */
     private bindSdfSbs(scene: ShaderVar, grid: SDFSBS): void {
+        const { packed } = this.getPackedSBS();
         if (!this.sbsResources) {
             const storage = ResourceBindFlags.ShaderResource;
             // AABB StructuredBuffer: 32-byte stride (min.xyz @0, max.xyz @16).
-            const aabbData = new Float32Array(grid.aabbs.length * 8);
-            grid.aabbs.forEach((a, i) => {
+            const aabbData = new Float32Array(packed.aabbs.length * 8);
+            packed.aabbs.forEach((a, i) => {
                 aabbData.set(a.min, i * 8);
                 aabbData.set(a.max, i * 8 + 4);
             });
@@ -1556,28 +1621,27 @@ export class Scene {
             });
             aabbs.setBlob(new Uint8Array(aabbData.buffer));
 
-            const vbpa = grid.virtualBricksPerAxis;
+            const [iw, ih, id] = packed.indirectionDims;
             const indirection = new Texture(this.device, {
                 type: ResourceType.Texture3D,
-                width: vbpa,
-                height: vbpa,
-                depth: vbpa,
+                width: iw,
+                height: ih,
+                depth: id,
                 format: ResourceFormat.R32Uint,
                 bindFlags: storage,
                 name: "Scene::sdfGrid0Indirection",
             });
-            indirection.setSubresourceBlob(0, 0, new Uint8Array(grid.indirection.buffer));
+            indirection.setSubresourceBlob(0, 0, new Uint8Array(packed.indirection.buffer));
 
             const bricks = new Texture(this.device, {
                 type: ResourceType.Texture2D,
-                width: grid.brickTextureDimensions[0],
-                height: grid.brickTextureDimensions[1],
+                width: packed.brickTextureDimensions[0],
+                height: packed.brickTextureDimensions[1],
                 format: ResourceFormat.R32Float,
                 bindFlags: storage,
                 name: "Scene::sdfGrid0Bricks",
             });
-            bricks.setSubresourceBlob(0, 0, new Uint8Array(grid.brickTexture.buffer));
-
+            bricks.setSubresourceBlob(0, 0, new Uint8Array(packed.brickTexture.buffer));
             // Native SDFSBS::SharedData sampler: linear, clamp (brick edges).
             const sampler = new Sampler(this.device, {
                 magFilter: TextureFilteringMode.Linear,
@@ -1597,10 +1661,11 @@ export class Scene {
             v["sampler"] = this.sbsResources.sampler;
             v["virtualGridWidth"] = grid.gridWidth;
             v["virtualBricksPerAxis"] = grid.virtualBricksPerAxis;
-            v["bricksPerAxis"] = grid.bricksPerAxis;
-            v["brickTextureDimensions"] = grid.brickTextureDimensions;
+            v["bricksPerAxis"] = packed.bricksPerAxis;
+            v["brickTextureDimensions"] = packed.brickTextureDimensions;
             v["brickWidth"] = grid.brickWidth;
             v["normalizationFactor"] = grid.normalizationFactor;
+            v["indirectionZOffset"] = 0;
         } catch (e) {
             console.error(`# sdfGrid0 (SBS) bind failed: ${e}`);
         }
@@ -1816,6 +1881,7 @@ export class Scene {
     private invalidateSDFResources(): void {
         this.sdfAtlasTexture = null;
         this.sbsResources = null;
+        this.sbsPacked = null;
         this.svsResources = null;
         this.svoResources = null;
         this.sdfBvhBuffers = null;
@@ -1896,7 +1962,9 @@ export class Scene {
         const svsGrid = grid0 instanceof SDFSVS ? grid0 : null;
         const svoGrid = grid0 instanceof SDFSVO ? grid0 : null;
         // SBS/SVS traverse a BVH over their primitive AABBs (bricks/voxels).
-        const sdfAabbs = sbsGrid ? sbsGrid.aabbs : svsGrid ? svsGrid.aabbs : null;
+        const distinctGrids = new Set(this.sdfGrids.map((d) => d.grid)).size;
+        if (distinctGrids > 1 && !sbsGrid) throw new RuntimeError("Scene: several distinct SDF grids are supported for SBS only (gScene.sdfGrid0; WGSL has no binding arrays)");
+        const sdfAabbs = sbsGrid ? this.getPackedSBS().packed.aabbs : svsGrid ? svsGrid.aabbs : null;
         try {
             scene["webfalcorSdfInstanceFirst"] = this.sdfInstanceFirst;
             scene["webfalcorSdfInstanceCount"] = this.sdfGrids.length;
@@ -1919,20 +1987,7 @@ export class Scene {
             /* curve-less kernel variant */
         }
         if (sdfAabbs) {
-            if (!this.sdfBvhBuffers) {
-                const bvh = buildAabbBvh(sdfAabbs);
-                // One merged float4 buffer (16-storage-buffer budget): BVH nodes
-                // (2 float4/node), then prim indices packed 4-per-float4.
-                const nodeFloat4s = bvh.nodes.length / 4;
-                const primFloat4s = Math.ceil(bvh.primIndices.length / 4);
-                const merged = new Float32Array((nodeFloat4s + primFloat4s) * 4);
-                merged.set(bvh.nodes, 0);
-                new Uint32Array(merged.buffer).set(bvh.primIndices, nodeFloat4s * 4);
-                const storage = ResourceBindFlags.ShaderResource | ResourceBindFlags.UnorderedAccess;
-                const buf = new Buffer(this.device, { size: merged.byteLength, structSize: 16, bindFlags: storage, memoryType: MemoryType.DeviceLocal, name: "Scene::sdfBvh" });
-                buf.setBlob(new Uint8Array(merged.buffer));
-                this.sdfBvhBuffers = { buf, primOffset: nodeFloat4s };
-            }
+            if (!this.sdfBvhBuffers) this.sdfBvhBuffers = this.buildSdfBvhBuffer(sbsGrid ? this.getPackedSBS() : null, sdfAabbs);
             try {
                 scene["webfalcorSdfBvh"] = this.sdfBvhBuffers.buf;
                 scene["webfalcorSdfPrimOffset"] = this.sdfBvhBuffers.primOffset;
@@ -1941,7 +1996,6 @@ export class Scene {
             }
         }
         if (this.sdfGrids.length > 0) {
-            if (this.sdfGrids.length > 1) throw new RuntimeError("Scene: only one SDF grid supported (gScene.sdfGrid0; WGSL has no binding arrays)");
             if (sbsGrid) this.bindSdfSbs(scene, sbsGrid);
             else if (svsGrid) this.bindSdfSvs(scene, svsGrid);
             else if (svoGrid) this.bindSdfSvo(scene, svoGrid);
@@ -2017,10 +2071,49 @@ export class Scene {
         const instances = this.instanceCount + this.sdfGrids.length + this.sceneCurves.length + this.customPrimitives.length;
         let primitiveBits = allocateBits(this.maxPrimitiveCount);
         for (const d of this.sdfGrids) primitiveBits = Math.max(primitiveBits, 12, "maxPrimitiveIDBits" in d.grid ? (d.grid as { maxPrimitiveIDBits: number }).maxPrimitiveIDBits : 0);
+        // Packed SBS grids hit with global brick IDs.
+        const sbsBricks = [...new Set(this.sdfGrids.map((d) => d.grid))].reduce((n, g) => n + (g instanceof SDFSBS ? g.brickCount : 0), 0);
+        if (sbsBricks > 0) primitiveBits = Math.max(primitiveBits, allocateBits(sbsBricks));
         const typeBits = allocateBits(kHitTypeCount);
         const instanceBits = allocateBits(instances);
         if (primitiveBits > 32 || typeBits + instanceBits > 32) throw new RuntimeError("Scene requires > 64 bits for encoding hit info header. This is currently not supported.");
         return { HIT_INFO_TYPE_BITS: typeBits, HIT_INFO_INSTANCE_ID_BITS: instanceBits, HIT_INFO_PRIMITIVE_INDEX_BITS: primitiveBits };
+    }
+
+    /** Mirrors Scene::setCameraControlsEnabled. */
+    setCameraControlsEnabled(enabled: boolean): void {
+        this.cameraControlsEnabled = enabled;
+    }
+
+    /** Mirrors getGeometryInstanceIDsByType(SDFGrid): one instance per SDF grid, after the meshes. */
+    getSDFGridInstanceIDs(): number[] {
+        return this.sdfGrids.map((_g, i) => this.sdfInstanceBase + i);
+    }
+
+    /** Mirrors findSDFGridIDFromGeometryInstanceID; -1 if the instance is not an SDF grid. */
+    findSDFGridIDFromGeometryInstanceID(instanceID: number): number {
+        const id = instanceID - this.sdfInstanceBase;
+        return id >= 0 && id < this.sdfGrids.length ? id : -1;
+    }
+
+    /** The SDF grid instance's world matrix (AnimationController::getGlobalMatrices()[globalMatrixID]). */
+    getSDFGridTransform(gridID: number): float4x4 {
+        return this.sdfGrids[gridID]!.transform ?? float4x4.identity();
+    }
+
+    /**
+     * Mirrors updateNodeTransform for an SDF grid instance: rewrites its world and
+     * inverse-transpose matrices and drops the SDF acceleration data built from them.
+     */
+    updateSDFGridTransform(gridID: number, transform: float4x4): void {
+        this.sdfGrids[gridID]!.transform = transform;
+        const node = this.sdfInstanceBase + gridID;
+        const buffer = this.buffers["worldMatrices"];
+        if (buffer) {
+            buffer.setBlob(new Float32Array(transform.toArray()), node * 64);
+            buffer.setBlob(new Float32Array(transpose(inverse(transform)).toArray()), (this.invTransposeOffset + node) * 64);
+        }
+        this.invalidateSDFResources();
     }
 
     getGeometryInstanceCount(): number {

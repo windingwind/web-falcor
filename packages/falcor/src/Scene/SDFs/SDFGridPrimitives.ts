@@ -35,6 +35,8 @@ export class SDFGridPrimitives {
         private readonly grid: SDFGridValueSink,
         readonly gridWidth: number,
         primitives: readonly SDF3DPrimitive[] = [],
+        /** Corner values the primitives edit (a grid loaded from values); empty space otherwise. */
+        private readonly baseValues?: Float32Array,
     ) {
         if (primitives.length > 0) this.setPrimitives(primitives);
     }
@@ -136,7 +138,7 @@ export class SDFGridPrimitives {
      */
     rebuild(): boolean {
         if (!this.dirty) return false;
-        this.grid.setValues(evaluateSDFPrimitives(this.primitives, this.gridWidth), this.gridWidth);
+        this.grid.setValues(evaluateSDFPrimitives(this.primitives, this.gridWidth, this.baseValues), this.gridWidth);
         this.dirty = false;
         return true;
     }

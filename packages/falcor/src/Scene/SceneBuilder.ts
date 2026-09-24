@@ -597,12 +597,16 @@ export class SDFGridBridge {
 
     /** Mirrors SDFGrid::loadValuesFromFile (the `.sdfg` corner-value format). */
     loadValuesFromFile(path: unknown): boolean {
-        this.pendingFiles.push({ path: String(path) });
+        // Python keyword arguments (`path=...`) arrive as a trailing object.
+        const kw = typeof path === "object" && path !== null ? (path as { path?: unknown }) : undefined;
+        this.pendingFiles.push({ path: String(kw ? kw.path : path) });
         return true;
     }
 
     /** Mirrors SDFGrid::loadPrimitivesFromFile (the `.sdf` primitive-list format). */
-    loadPrimitivesFromFile(path: unknown, gridWidth: unknown): number {
+    loadPrimitivesFromFile(path: unknown, gridWidth?: unknown): number {
+        const kw = [path, gridWidth].find((a): a is { path?: unknown; gridWidth?: unknown } => typeof a === "object" && a !== null);
+        if (kw) [path, gridWidth] = [kw.path ?? path, kw.gridWidth ?? gridWidth];
         this.pendingFiles.push({ path: String(path), primitives: true, gridWidth: Number(gridWidth) });
         // Native returns the primitive count; it is only known after the fetch.
         return 0;

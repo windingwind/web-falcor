@@ -237,6 +237,8 @@ async function main() {
         state.frame = 0;
     };
     const camControl = new CameraController(canvas);
+    // Mirrors Scene::setCameraControlsEnabled (e.g. the SDF editor takes the mouse while a modifier is held).
+    camControl.inputEnabled = () => state.scene?.cameraControlsEnabled ?? true;
     const rebuildUI = () =>
         buildUIPanel(passesEl, state.graph, resetAccum, state.scene, {
             notify: resetAccum,
@@ -466,28 +468,48 @@ function wirePixelZoom(): PixelZoom {
 }
 
 /**
- * Mirrors Renderer::onMouseEvent: passes see canvas mouse events first (e.g. the
- * SplitScreen divider); a pass that handles one stops it reaching the camera controller.
+ * Mirrors Renderer::onMouseEvent/onKeyEvent: passes see canvas mouse, wheel and key events first
+ * (e.g. the SplitScreen divider, the SDF editor); one a pass handles stops reaching the camera controller.
  */
 function wireMouseForwarding(state: ViewerState): void {
-    type PassMouseEvent = { type: "buttonDown" | "buttonUp" | "move"; button?: "left" | "right" | "middle"; pos: [number, number] };
+    type PassMouseEvent = { type: "buttonDown" | "buttonUp" | "move" | "wheel"; button?: "left" | "right" | "middle"; pos: [number, number]; wheelDelta?: [number, number] };
+    type PassKeyEvent = { type: "keyPressed" | "keyReleased" | "keyRepeated"; key: string; mods: { shift: boolean; ctrl: boolean; alt: boolean } };
     const buttons = ["left", "middle", "right"] as const;
+    const dispatch = (ev: Event, call: (p: { onMouseEvent?: (e: PassMouseEvent) => boolean; onKeyEvent?: (e: PassKeyEvent) => boolean }) => boolean | undefined) => {
+        let handled = false;
+        for (const { pass } of state.graph!.getPasses()) handled = (call(pass as object) ?? false) || handled;
+        if (handled) {
+            ev.preventDefault();
+            ev.stopImmediatePropagation();
+        }
+    };
     const forward = (ev: MouseEvent, type: PassMouseEvent["type"]) => {
         if (!state.graph) return;
-        if (type === "buttonDown" && ev.target !== canvas) return; // presses on the panels are theirs
+        if ((type === "buttonDown" || type === "wheel") && ev.target !== canvas) return; // the panels' own
         const rect = canvas.getBoundingClientRect();
         const pos: [number, number] = [(ev.clientX - rect.left) / rect.width, (ev.clientY - rect.top) / rect.height];
-        let handled = false;
-        for (const { pass } of state.graph.getPasses()) {
-            const p = pass as { onMouseEvent?: (e: PassMouseEvent) => boolean };
-            if (typeof p.onMouseEvent === "function") handled = p.onMouseEvent({ type, button: buttons[ev.button], pos }) || handled;
-        }
-        if (handled) ev.stopImmediatePropagation();
+        // Native wheelDelta.y: +1 = scroll up.
+        const wheelDelta: [number, number] | undefined = type === "wheel" ? [0, -Math.sign((ev as WheelEvent).deltaY)] : undefined;
+        dispatch(ev, (p) => p.onMouseEvent?.({ type, button: type === "move" || type === "wheel" ? undefined : buttons[ev.button], pos, wheelDelta }));
+    };
+    // Native Input::Key names from DOM codes ("KeyA" -> "A", "Digit1" -> "Key1", "ShiftLeft" -> "LeftShift").
+    const keyName = (code: string) =>
+        code.replace(/^Key(?=[A-Z]$)/, "").replace(/^Digit/, "Key").replace(/^(Shift|Control|Alt|Super)(Left|Right)$/, "$2$1").replace(/^Meta(Left|Right)$/, "$1Super");
+    const forwardKey = (ev: KeyboardEvent) => {
+        if (!state.graph) return;
+        const t = ev.target as HTMLElement | null;
+        if (t && /^(INPUT|SELECT|TEXTAREA)$/.test(t.tagName)) return;
+        const type = ev.type === "keyup" ? "keyReleased" : ev.repeat ? "keyRepeated" : "keyPressed";
+        const mods = { shift: ev.shiftKey, ctrl: ev.ctrlKey, alt: ev.altKey };
+        dispatch(ev, (p) => p.onKeyEvent?.({ type, key: keyName(ev.code), mods }));
     };
     // Capture phase: runs before the camera controller's and the pixel picker's listeners.
     window.addEventListener("mousedown", (ev) => forward(ev, "buttonDown"), true);
     window.addEventListener("mousemove", (ev) => forward(ev, "move"), true);
     window.addEventListener("mouseup", (ev) => forward(ev, "buttonUp"), true);
+    window.addEventListener("wheel", (ev) => forward(ev, "wheel"), { capture: true, passive: false });
+    window.addEventListener("keydown", forwardKey, true);
+    window.addEventListener("keyup", forwardKey, true);
 }
 
 /** Render-graph editor panel (Graph button); edits refresh outputs, pass panels and accumulation. */

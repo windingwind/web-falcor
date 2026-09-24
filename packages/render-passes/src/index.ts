@@ -35,3 +35,4 @@ export * from "./BSDFViewer/BSDFViewer.js";
 export * from "./RTXDIPass/RTXDIPass.js";
 export * from "./TestPasses/TestRtProgram.js";
 export * from "./WARDiffPathTracer/WARDiffPathTracer.js";
+export * from "./SDFEditor/SDFEditor.js";

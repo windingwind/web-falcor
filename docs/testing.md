@@ -110,8 +110,7 @@ verified-vs-native or has a specific, documented blocker:
   ColorMap, SideBySide, SplitScreen, ModulateIllumination, SimplePostFX, FLIP,
   Whitted). **102 GPU + 40 unit tests green.**
 - **Asset-blocked** (missing from this Falcor drop, unloadable natively too):
-  NRDPass (NRD SDK shaders absent), SDFEditorRenderGraphV2 (`one_primitive_edited.sdfg`
-  absent).
+  NRDPass (NRD SDK shaders absent).
 - **Compiler-blocked**: WARDiffPathTracerTranslationBwd. Slang 2026.18 crashes transposing the
   nested fwd_diff of the warped-area reparameterization (§6.9). The two forward-mode graphs are verified.
 - **Runtime-impractical without new infra**: SVS/SVO SDF grids (one AABB per
@@ -127,7 +126,7 @@ verified-vs-native or has a specific, documented blocker:
 |---|---|---|
 | ✅ verified vs native | 15 | MinimalPathTracer, ToneMapping, VBufferRT, CompositePass, CrossFadePass, GaussianBlur, ColorMapPass, SideBySide, SplitScreen, ModulateIllumination, SimplePostFX, FLIPPass, PathTracer, PathTracerDielectrics, RTXDI |
 | 🟢 runnable now (passes exist; oracle pending) | 1 | VBufferRTInline (same pass; inline variant is our default) |
-| 🟠 asset-blocked | 1 | SDFEditorRenderGraphV2 (SDFEditorSceneTwoSDFs.pyscene references `one_primitive_edited.sdfg`, absent from this Falcor drop → scene unloadable natively too; SBS grid chain itself is verified) |
+| ✅ GUI layer verified vs native; scene runnable on web only | 1 | SDFEditorRenderGraphV2. The missing `one_primitive_edited.sdfg` comes from `node scripts/gen-assets.mjs sdfeditor`, and the unmodified SDFEditorSceneTwoSDFs.pyscene renders both grids. Native can't give this scene's SBS surface on this machine: it throws on primitive grids and gets almost no hits on value-file grids. So `sdfeditor.gpu.test.ts` runs the editor over native's own ToneMapper.dst capture (cheese-grid variant). The bounding boxes, current-mode badge and preview then match native's output at 0 of 4155 GUI pixels; the only difference is 98 preview pixels that the real surface hides (GUIPass hiddenHitAlpha). |
 | 🟠 runnable on web; native oracle impossible on this machine | 1 | HalfRes (needs FBX importer for Arcade.pyscene; and the oracle GPU lacks ROV support, so native Mogwai cannot run GBufferRaster-based graphs at all) |
 | 🟡 GBuffer remainder | 3 | GBufferRaster, GBufferRasterAlpha, MVecRaster — ⚠ all raster-based: native-ROV oracle blocker |
 | 🟡 needs larger pass ports (M8 scope) | 4 | SVGF + TAA (both passes PORTED + feature-verified vs native via GBufferRT feature graphs — TAA mse 8.4e-7, SVGF mean 4.2e-4; the upstream graphs themselves stay oracle-blocked: GBufferRaster needs ROV the native driver lacks), VBufferRaster, VBufferRasterAlpha |

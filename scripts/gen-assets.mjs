@@ -324,6 +324,26 @@ const GROUPS = [
             },
         ],
     },
+    {
+        name: "sdfeditor",
+        dir: "sdfeditor",
+        root: "Falcor/tests/image_tests/scene/scenes",
+        note: "SDFEditorSceneTwoSDFs.pyscene's one_primitive_edited.sdfg (absent from the Falcor drop), next to the scene",
+        files: [
+            {
+                file: "one_primitive_edited.sdfg",
+                sizeMB: 1,
+                desc: "Sphere of radius 0.3 with one added box primitive (0.1 x 0.35 x 0.1 half extents), 64^3 cells",
+                write: (path) =>
+                    writeSdfGrid(path, 64, (p) => {
+                        const sphere = Math.hypot(p[0], p[1], p[2]) - 0.3;
+                        const d = [Math.abs(p[0]) - 0.1, Math.abs(p[1]) - 0.35, Math.abs(p[2]) - 0.1];
+                        const box = Math.hypot(Math.max(d[0], 0), Math.max(d[1], 0), Math.max(d[2], 0)) + Math.min(Math.max(d[0], d[1], d[2]), 0);
+                        return Math.min(sphere, box);
+                    }),
+            },
+        ],
+    },
 ];
 
 function parseArgs(argv) {
@@ -369,7 +389,8 @@ Groups: ${GROUPS.map((g) => g.name).join(", ")}`);
         : GROUPS;
 
     for (const group of wanted) {
-        const dir = join(opts.dest, group.dir);
+        // Groups with `root` complete an upstream asset folder instead of media/.
+        const dir = group.root ? join(repoRoot, group.root) : join(opts.dest, group.dir);
         console.log(`\n${group.name} → ${dir}`);
         for (const f of group.files) {
             const path = join(dir, f.file);

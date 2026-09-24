@@ -97,8 +97,8 @@ struct Scene
     // RaytracingInline override traverses this to prune tens of thousands of
     // voxel AABBs to the few a ray crosses. Zero/empty for other grid types.
     uint webfalcorSdfBrickCount;
-    // One merged buffer (16-storage-buffer budget): BVH nodes (2x float4 each)
-    // at [0, webfalcorSdfPrimOffset), then primitive indices packed 4-per-float4.
+    // One merged buffer (16-storage-buffer budget): a 2x float4 header per SDF instance (BVH root,
+    // SBS grid fields), BVH nodes (2x float4 each), then primitive indices packed 4-per-float4.
     StructuredBuffer<float4> webfalcorSdfBvh;
     uint webfalcorSdfPrimOffset; // float4 index where the packed prim indices begin
 
@@ -877,6 +877,14 @@ struct Scene
     void getSDFGrid(const GeometryInstanceID instanceID, out SDFGrid sdfGrid)
     {
         sdfGrid = sdfGrid0;
+#if SCENE_SDF_GRID_IMPLEMENTATION == SCENE_SDF_GRID_IMPLEMENTATION_SBS
+        // WebFalcor: grids are packed into sdfGrid0; the per-instance header holds this grid's fields.
+        const uint4 h0 = asuint(webfalcorSdfBvh[(instanceID.index - webfalcorSdfInstanceFirst) * 2]);
+        sdfGrid.virtualGridWidth = h0.y;
+        sdfGrid.virtualBricksPerAxis = h0.z;
+        sdfGrid.indirectionZOffset = h0.w;
+        sdfGrid.normalizationFactor = webfalcorSdfBvh[(instanceID.index - webfalcorSdfInstanceFirst) * 2 + 1].x;
+#endif
     }
 
     /** Returns the interpolated vertex attributes for an SDF grid.
@@ -889,7 +897,8 @@ struct Scene
         VertexData v;
 
         const GeometryInstanceData instance = geometryInstances[hit.instanceID.index];
-        const SDFGrid sdfGrid = sdfGrid0;
+        SDFGrid sdfGrid;
+        getSDFGrid(hit.instanceID, sdfGrid);
 
         // Load Matrices.
         const float4x4 worldMat = loadWorldMatrix(instance.globalMatrixID);

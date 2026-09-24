@@ -197,18 +197,19 @@ export function evalSDFPrimitive(primitive: SDF3DPrimitive, p: readonly [number,
 
 /**
  * Mirrors EvaluateSDFPrimitives.cs.slang: evaluates the primitive list at every
- * grid corner of a `gridWidth` grid spanning [-0.5, 0.5]^3.
+ * grid corner of a `gridWidth` grid spanning [-0.5, 0.5]^3. With `base` (a grid
+ * loaded from values), the primitives fold into those values instead of empty space.
  *
  * @returns (gridWidth + 1)^3 corner values, x-fastest (flatten3D order).
  */
-export function evaluateSDFPrimitives(primitives: readonly SDF3DPrimitive[], gridWidth: number): Float32Array {
+export function evaluateSDFPrimitives(primitives: readonly SDF3DPrimitive[], gridWidth: number, base?: Float32Array): Float32Array {
     const w = gridWidth + 1;
     const values = new Float32Array(w * w * w);
     for (let z = 0; z < w; z++) {
         for (let y = 0; y < w; y++) {
             for (let x = 0; x < w; x++) {
                 const p: [number, number, number] = [-0.5 + x / gridWidth, -0.5 + y / gridWidth, -0.5 + z / gridWidth];
-                let d = kFltMax;
+                let d = base ? base[x + w * (y + w * z)]! : kFltMax;
                 for (const primitive of primitives) d = evalSDFPrimitive(primitive, p, d);
                 values[x + w * (y + w * z)] = d;
             }
