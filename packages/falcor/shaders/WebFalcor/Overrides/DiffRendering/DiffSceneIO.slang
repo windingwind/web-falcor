@@ -44,6 +44,9 @@ import DiffRendering.SceneGradients;
 import DiffRendering.GradientIOWrapper;
 
 RWTexture2D<float4> gOutputDColor;
+// WebFalcor: rgba32float storage can't be read in WGSL; BackwardDiffDebug accumulates the
+// thread's own pixel here and the kernel writes it once.
+static float gWebfalcorDColorAcc = 0.f;
 
 // Avoid compilation warnings if not running in a differentiable mode.
 #ifndef DIFF_MODE
@@ -136,7 +139,7 @@ struct DiffSceneIO
         {
             float3 velocity = gDiffDebug.grad.xyz;
             float value = dot(velocity, dPos[0]) + dot(velocity, dPos[1]) + dot(velocity, dPos[2]);
-            gOutputDColor[dpGradInfo.p.pixel] += float4(value, 0.f, 0.f, 0.f);
+            gWebfalcorDColorAcc += value; // WebFalcor: was gOutputDColor[pixel] += float4(value, 0, 0, 0)
         }
 #endif
     }

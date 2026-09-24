@@ -190,7 +190,11 @@ WarpedAreaReparam, DiffSceneQuery, DiffSceneIO, and the three gradient-parameter
 
    Minimal repros are in `docs/slang-repros/`.
 
-The backward modes still crash Slang (`DiffTransposePass::transposeMakePair` on a
-`RayAD.Differential` pair) once the nested region is transposed. The pass throws for
-them. Until an upstream Slang fix lands, the TranslationBwd graph and BSDFOptimizer,
-which needs the same backward path, remain blocked.
+The backward modes crashed Slang 2026.18 (`DiffTransposePass::transposeMakePair` on a
+`RayAD.Differential` pair). Bisecting release builds with a small C++ API driver
+(module + entry point + type conformances) located the break in 2026.7, the first release
+with the autodiff refactor (#9808). 2026.5.2 compiles the kernel in about 8 s, as does
+native's 2024.1.34. So the pass compiles its backward modes with a pinned slang-wasm
+2026.5.2: `ProgramManager.loadSlangRuntime` loads a second build, and `ProgramDesc.slangRuntime`
+selects it per program. That build lacks `ByteAddressBuffer.Load2/3/4` for WGSL, so its
+sources rewrite them to the equivalent `Load<uintN>`.

@@ -1,5 +1,5 @@
-# Native oracle: WARDiffPathTracer in ForwardDiffDebug mode (upstream graphs
-# WARDiffPathTracerTranslationFwd.py and WARDiffPathTracerMaterialFwd.py over
+# Native oracle: WARDiffPathTracer in ForwardDiffDebug and BackwardDiffDebug mode (upstream graphs
+# WARDiffPathTracerTranslationFwd.py, WARDiffPathTracerMaterialFwd.py and WARDiffPathTracerTranslationBwd.py over
 # bunny_war_diff_pt.pyscene with the upstream test's builder flags), 128x128, 64
 # accumulated frames. Captures the accumulated primal and gradient images.
 from falcor import *
@@ -14,7 +14,7 @@ m.resizeFrameBuffer(128, 128)
 m.ui = False
 m.frameCapture.outputDir = os.path.join(base, "out-native")
 
-for name in ["WARDiffPathTracerTranslationFwd", "WARDiffPathTracerMaterialFwd"]:
+for name in ["WARDiffPathTracerTranslationFwd", "WARDiffPathTracerMaterialFwd", "WARDiffPathTracerTranslationBwd"]:
     m.removeAllGraphs() if hasattr(m, "removeAllGraphs") else None
     m.script(os.path.join(graphs, name + ".py"))
     m.loadScene(os.path.join(root, "media/test_scenes/bunny_war_diff_pt.pyscene"), buildFlags=flags)

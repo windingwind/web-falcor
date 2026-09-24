@@ -216,6 +216,7 @@ void main(uint3 dispatchThreadId: SV_DispatchThreadID)
 
         DifferentialPair<SceneQueryAD> dpQuery = diffPair(sceneQuery, dQuery);
         bwd_diff(tracePaths)(dpQuery, pixel, float3(1.f, 0.f, 0.f));
+        gOutputDColor[pixel] = float4(gWebfalcorDColorAcc, 0.f, 0.f, 0.f); // WebFalcor: see DiffSceneIO
     }
 #endif
 }

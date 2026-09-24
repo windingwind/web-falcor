@@ -13,7 +13,7 @@
  *      just the text shaders; it does NOT clone the repo or run the native
  *      CMake build (that is only for the test oracles — see scripts below).
  *   2. The slang-wasm compiler (the official per-release build) into
- *      tools/slang-wasm/.
+ *      tools/slang-wasm/, plus the pinned autodiff build into tools/slang-wasm-2026.5.2/.
  *   3. The SDK shader headers those sources include — nanovdb/PNanoVDB.h (pulled
  *      in by Scene.slang, i.e. by EVERY scene-bound pass) and the RTXDI SDK
  *      headers — from their public repos at Falcor's pinned versions, into the
@@ -39,7 +39,10 @@ const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 // Pinned upstream versions (keep in sync with README / docs).
 const FALCOR_COMMIT = "eb540f6748774680ce0039aaf3ac9279266ec521";
 const SLANG_VERSION = "2026.18.2";
-const SLANG_WASM_URL = `https://github.com/shader-slang/slang/releases/download/v${SLANG_VERSION}/slang-${SLANG_VERSION}-wasm.zip`;
+// Backward-mode autodiff kernels (WARDiffPathTracer) compile with the last release before Slang's
+// autodiff refactor (#9808, in 2026.7), which crashes transposing them (docs/module-mapping.md).
+const SLANG_AUTODIFF_VERSION = "2026.5.2";
+const slangWasmUrl = (version) => `https://github.com/shader-slang/slang/releases/download/v${version}/slang-${version}-wasm.zip`;
 const FALCOR_RAW = `https://raw.githubusercontent.com/NVIDIAGameWorks/Falcor/${FALCOR_COMMIT}`;
 
 const args = new Set(process.argv.slice(2));
@@ -144,14 +147,14 @@ async function fetchExternalHeaders() {
     console.log("  SDK shader headers ready under Falcor/external/packman/");
 }
 
-async function fetchSlangWasm() {
-    const outDir = join(repoRoot, "tools/slang-wasm");
+async function fetchSlangWasm(version, dir) {
+    const outDir = join(repoRoot, dir);
     if (existsSync(join(outDir, "slang-wasm.wasm")) && existsSync(join(outDir, "slang-wasm.js"))) {
-        console.log("slang-wasm already present — skipping (delete tools/slang-wasm to refetch)");
+        console.log(`slang-wasm ${version} already present — skipping (delete ${dir} to refetch)`);
         return;
     }
-    console.log(`Downloading slang-wasm ${SLANG_VERSION} (~25 MB)…`);
-    const zipBytes = await fetchBuffer(SLANG_WASM_URL);
+    console.log(`Downloading slang-wasm ${version} (~25 MB)…`);
+    const zipBytes = await fetchBuffer(slangWasmUrl(version));
     const scratch = join(tmpdir(), `slang-wasm-${process.pid}`);
     rmSync(scratch, { recursive: true, force: true });
     mkdirSync(scratch, { recursive: true });
@@ -177,7 +180,7 @@ async function fetchSlangWasm() {
     walk(scratch);
     rmSync(scratch, { recursive: true, force: true });
     if (!existsSync(join(outDir, "slang-wasm.wasm"))) throw new Error("slang-wasm.wasm not found in the release zip");
-    console.log(`  slang-wasm ready under tools/slang-wasm/ (${copied} files)`);
+    console.log(`  slang-wasm ready under ${dir}/ (${copied} files)`);
 }
 
 /** Pyodide packages used by Falcor's Python scripts (and their dependencies from the lock). */
@@ -218,6 +221,9 @@ if (!args.has("--skip-shaders")) {
     await fetchShaders();
     await fetchExternalHeaders();
 }
-if (!args.has("--skip-slang")) await fetchSlangWasm();
+if (!args.has("--skip-slang")) {
+    await fetchSlangWasm(SLANG_VERSION, "tools/slang-wasm");
+    await fetchSlangWasm(SLANG_AUTODIFF_VERSION, `tools/slang-wasm-${SLANG_AUTODIFF_VERSION}`);
+}
 if (!args.has("--skip-pyodide-packages")) await fetchPyodidePackages();
 console.log(`\nWeb setup complete in ${((Date.now() - t0) / 1000).toFixed(1)}s. Next: npm run typecheck && npm run dev`);

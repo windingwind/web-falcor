@@ -1,6 +1,8 @@
 /**
- * WARDiffPathTracer in ForwardDiffDebug mode through the upstream graph scripts
- * (WARDiffPathTracerTranslationFwd.py, WARDiffPathTracerMaterialFwd.py) over
+ * WARDiffPathTracer in ForwardDiffDebug and BackwardDiffDebug mode through the upstream graph
+ * scripts (WARDiffPathTracerTranslationFwd.py, WARDiffPathTracerMaterialFwd.py,
+ * WARDiffPathTracerTranslationBwd.py; the backward kernel compiles with the pinned
+ * pre-refactor slang-wasm) over
  * bunny_war_diff_pt.pyscene with the upstream test's builder flags. The accumulated primal and
  * gradient images after 64 frames are compared with native captures.
  *
@@ -16,14 +18,20 @@ import { gpuTest, expectEq } from "../harness/registry.js";
 const size = 128;
 const frames = 64;
 
-gpuTest("WARDiffPathTracer.forwardDiffMatchesNative", async ({ device }) => {
+gpuTest("WARDiffPathTracer.diffModesMatchNative", async ({ device }) => {
     await initScripting("/node_modules/pyodide");
     const ctx = device.renderContext;
     const sceneSource = await (await fetch("/Falcor/media/test_scenes/bunny_war_diff_pt.pyscene")).text();
     const flags = SceneBuilderFlags.DontMergeMaterials | SceneBuilderFlags.RTDontMergeDynamic | SceneBuilderFlags.DontOptimizeMaterials;
     const native = async (file: string) => (parseExr(await (await fetch(`/tests/oracle/out-native/${file}`)).arrayBuffer(), 1015) as { data: Float32Array }).data;
 
-    for (const name of ["WARDiffPathTracerTranslationFwd", "WARDiffPathTracerMaterialFwd"]) {
+    const graphs: [string, string[]][] = [
+        ["WARDiffPathTracerTranslationFwd", ["AccumulatePassPrimal.output", "AccumulatePassDiff.output"]],
+        ["WARDiffPathTracerMaterialFwd", ["AccumulatePassPrimal.output", "AccumulatePassDiff.output"]],
+        // BackwardDiffDebug: the dColor of the translation, through the transposed derivative.
+        ["WARDiffPathTracerTranslationBwd", ["AccumulatePassDiff.output"]],
+    ];
+    for (const [name, outputs] of graphs) {
         const scene = await runSceneScript(device, sceneSource, "/Falcor/media/test_scenes", { flags });
         const [graph] = await runGraphScript(device, await (await fetch(`/Falcor/tests/image_tests/renderpasses/graphs/${name}.py`)).text());
         scene.camera.setAspectRatio(1);
@@ -34,7 +42,7 @@ gpuTest("WARDiffPathTracer.forwardDiffMatchesNative", async ({ device }) => {
         for (let f = 0; f < frames; f++) graph!.execute(ctx);
         const read = async (output: string) => new Float32Array((await ctx.readTextureSubresource(graph!.getOutput(output)!)).buffer);
         const summary: string[] = [];
-        for (const output of ["AccumulatePassPrimal.output", "AccumulatePassDiff.output"]) {
+        for (const output of outputs) {
             const [web, nat] = [await read(output), await native(`wardiff-${name}.${output}.${frames}.exr`)];
             // Native EXR captures are bottom-up. Per pixel, bounced paths decorrelate (float rounding flips
             // sampling decisions, as with the PathTracer oracles), so the gate is on 8x8 block means.

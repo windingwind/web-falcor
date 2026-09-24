@@ -1,7 +1,9 @@
 /**
  * WebFalcor override of DiffRendering/SceneGradients.slang: WARDiffPathTracer defines
  * WEBFALCOR_DIFF_PARAMS_AS_CB to declare the block as a ConstantBuffer, which fits it in
- * WebGPU's 4 bind groups. Other programs keep the ParameterBlock.
+ * WebGPU's 4 bind groups. Other programs keep the ParameterBlock. WGSL has neither resource
+ * arrays nor float atomics: tmpGrads[4] becomes tmpGrads0..3 of Atomic<uint>, and
+ * InterlockedAddF32 a compare-exchange loop.
  */
 /***************************************************************************
  # Copyright (c) 2015-23, NVIDIA CORPORATION. All rights reserved.
@@ -39,25 +41,58 @@ struct SceneGradients
     uint gradDim[(uint)GradientType::Count];
     uint hashSize[(uint)GradientType::Count];
 
-    // Temporary buffers for keeping gradients before aggregating them.
-    RWByteAddressBuffer tmpGrads[(uint)GradientType::Count];
+    // Temporary buffers for keeping gradients before aggregating them (one per GradientType).
+    RWStructuredBuffer<Atomic<uint>> tmpGrads0;
+    RWStructuredBuffer<Atomic<uint>> tmpGrads1;
+    RWStructuredBuffer<Atomic<uint>> tmpGrads2;
+    RWStructuredBuffer<Atomic<uint>> tmpGrads3;
 
     uint getGradDim(GradientType gradType) { return gradDim[(uint)gradType]; }
 
     uint getHashSize(GradientType gradType) { return hashSize[(uint)gradType]; }
 
+    uint loadTmp(GradientType gradType, uint index)
+    {
+        switch (gradType)
+        {
+        case GradientType::Material: return tmpGrads0[index].load();
+        case GradientType::MeshPosition: return tmpGrads1[index].load();
+        case GradientType::MeshNormal: return tmpGrads2[index].load();
+        default: return tmpGrads3[index].load();
+        }
+    }
+
+    uint compareExchangeTmp(GradientType gradType, uint index, uint expected, uint desired)
+    {
+        switch (gradType)
+        {
+        case GradientType::Material: return tmpGrads0[index].compareExchange(expected, desired);
+        case GradientType::MeshPosition: return tmpGrads1[index].compareExchange(expected, desired);
+        case GradientType::MeshNormal: return tmpGrads2[index].compareExchange(expected, desired);
+        default: return tmpGrads3[index].compareExchange(expected, desired);
+        }
+    }
+
     float getGrad(GradientType gradType, uint gradIndex, uint hashIndex)
     {
         uint index = hashIndex * gradDim[(uint)gradType] + gradIndex;
-        return asfloat(tmpGrads[(uint)gradType].Load(index * 4));
+        return asfloat(loadTmp(gradType, index));
     }
 
     void atomicAddGrad(GradientType gradType, uint gradIndex, uint hashIndex, float value)
     {
-        if (gradIndex < gradDim[(uint)gradType])
+        const uint dim = getGradDim(gradType);
+        if (gradIndex < dim)
         {
-            uint index = hashIndex * gradDim[(uint)gradType] + gradIndex;
-            tmpGrads[(uint)gradType].InterlockedAddF32(index * 4, value);
+            const uint index = hashIndex * dim + gradIndex;
+            uint expected = loadTmp(gradType, index);
+            for (;;)
+            {
+                const uint original = compareExchangeTmp(gradType, index, expected, asuint(asfloat(expected) + value));
+                if (original == expected)
+                    break;
+                expected = original;
+            }
         }
     }
 };

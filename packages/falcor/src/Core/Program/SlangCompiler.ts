@@ -170,29 +170,45 @@ interface SlangWasmApi {
     };
 }
 
-let slangInstance: SlangWasmApi | null = null;
-let slangGlobalSession: { createSession(target: number): SlangSessionApi | null } | null = null;
-let wgslTargetId = -1;
+/** One loaded slang-wasm build: the module, its process-wide global session and WGSL target id. */
+export interface SlangRuntime {
+    readonly url: string;
+    readonly instance: SlangWasmApi;
+    readonly globalSession: { createSession(target: number): SlangSessionApi | null };
+    readonly wgslTargetId: number;
+}
 
-/** Loads the slang-wasm module (idempotent). `moduleUrl` points at slang-wasm.js. */
+const runtimes = new Map<string, Promise<SlangRuntime>>();
+let defaultRuntime: SlangRuntime | null = null;
+
+/** Loads a slang-wasm build once per URL (`moduleUrl` points at its slang-wasm.js). */
+export function loadSlangRuntime(moduleUrl: string): Promise<SlangRuntime> {
+    let rt = runtimes.get(moduleUrl);
+    if (!rt) {
+        rt = (async () => {
+            const { default: factory } = (await import(/* @vite-ignore */ moduleUrl)) as { default: () => Promise<SlangWasmApi> };
+            const instance = await factory();
+            const wgsl = instance.getCompileTargets().find((t) => t.name === "WGSL");
+            if (!wgsl) throw new RuntimeError("slang-wasm build lacks the WGSL target");
+            // One global session per build: each loads the full Slang core module and is never
+            // freed — creating one per define-set exhausts the wasm heap after ~15 program variants.
+            const globalSession = instance.createGlobalSession();
+            if (!globalSession) throw new RuntimeError("Failed to create Slang global session");
+            return { url: moduleUrl, instance, globalSession, wgslTargetId: wgsl.value };
+        })();
+        runtimes.set(moduleUrl, rt);
+    }
+    return rt;
+}
+
+/** Loads the default slang-wasm build (idempotent). */
 export async function initSlang(moduleUrl: string): Promise<void> {
-    if (slangInstance) return;
-    const { default: factory } = (await import(/* @vite-ignore */ moduleUrl)) as {
-        default: () => Promise<SlangWasmApi>;
-    };
-    slangInstance = await factory();
-    const wgsl = slangInstance.getCompileTargets().find((t) => t.name === "WGSL");
-    if (!wgsl) throw new RuntimeError("slang-wasm build lacks the WGSL target");
-    wgslTargetId = wgsl.value;
-    // One global session for the process: each global session loads the full
-    // Slang core module and is never freed — creating one per define-set
-    // exhausts the wasm heap after ~15 program variants.
-    slangGlobalSession = slangInstance.createGlobalSession();
-    if (!slangGlobalSession) throw new RuntimeError("Failed to create Slang global session");
+    if (defaultRuntime) return;
+    defaultRuntime = await loadSlangRuntime(moduleUrl);
 }
 
 export function isSlangInitialized(): boolean {
-    return slangInstance !== null;
+    return defaultRuntime !== null;
 }
 
 export class SlangCompiler {
@@ -200,8 +216,17 @@ export class SlangCompiler {
     private sessions = new Map<string, SlangSessionApi>();
     private registeredFiles: string[] = [];
 
-    constructor(private readonly resolveSource: ShaderSourceResolver, private readonly filePaths: string[]) {
-        if (!slangInstance) throw new RuntimeError("Call initSlang() before constructing SlangCompiler");
+    private readonly rt: SlangRuntime;
+
+    constructor(
+        private readonly resolveSource: ShaderSourceResolver,
+        private readonly filePaths: string[],
+        runtime?: SlangRuntime,
+        /** Extra source rewrite for this build (e.g. constructs an older Slang can't emit). */
+        private readonly transform: (source: string) => string = (source) => source,
+    ) {
+        if (!runtime && !defaultRuntime) throw new RuntimeError("Call initSlang() before constructing SlangCompiler");
+        this.rt = runtime ?? defaultRuntime!;
         this.registeredFiles = filePaths;
     }
 
@@ -213,7 +238,7 @@ export class SlangCompiler {
     private rewriteIncludes(source: string, filePath: string): string {
         const dir = filePath.split("/").slice(0, -1).join("/");
         const known = new Set(this.registeredFiles);
-        return lowerTypedBuffers(source).replace(/^(\s*#\s*include\s+")([^"]+)(")/gm, (_m, pre: string, target: string, post: string) => {
+        return lowerTypedBuffers(this.transform(source)).replace(/^(\s*#\s*include\s+")([^"]+)(")/gm, (_m, pre: string, target: string, post: string) => {
             if (target.startsWith("/")) return `${pre}${target}${post}`;
             if (known.has(target)) return `${pre}/${target}${post}`;
             const relative = dir ? `${dir}/${target}` : target;
@@ -230,7 +255,7 @@ export class SlangCompiler {
      *  so the files must carry the ACTIVE session's defines whenever a compile
      *  may trigger implicit module loads. */
     private writeShaderFiles(defines: DefineList): void {
-        const slang = slangInstance!;
+        const slang = this.rt.instance;
         const header = defines.toHeader();
         const dirs = new Set<string>();
         for (const path of this.registeredFiles) {
@@ -258,7 +283,7 @@ export class SlangCompiler {
 
     /** Links every top-level shader root into `dir`, so root-relative imports resolve from it. */
     private linkShaderRoots(dir: string): void {
-        const slang = slangInstance!;
+        const slang = this.rt.instance;
         const roots = new Set(this.registeredFiles.map((f) => f.split("/")[0]!).filter((r) => !r.includes(".")));
         for (const root of roots) {
             try {
@@ -306,7 +331,7 @@ export class SlangCompiler {
                 this.sessions.delete(oldKey);
                 (old as { delete?: () => void }).delete?.();
             }
-            session = slangGlobalSession!.createSession(wgslTargetId) ?? null;
+            session = this.rt.globalSession.createSession(this.rt.wgslTargetId) ?? null;
             if (!session) throw new RuntimeError("Failed to create Slang session");
             this.sessions.set(key, session);
         }
@@ -331,7 +356,7 @@ export class SlangCompiler {
     ): CompileResult {
         const list: CompileModule[] = (typeof modulesIn === "string" ? [modulesIn] : modulesIn).map((m) => (typeof m === "string" ? { path: m, sources: [{ file: m }] } : m));
         const paths = list.map((m) => m.path);
-        const slang = slangInstance!;
+        const slang = this.rt.instance;
         const header = defines.toHeader();
         const prepared = list.map(({ path, name, sources }) => {
             // One translation unit per module: its files and strings in order (ProgramDesc::ShaderModule).
@@ -341,7 +366,7 @@ export class SlangCompiler {
                     if (text === undefined) throw new RuntimeError(`Shader source not found: ${src.file}`);
                     return `#line 1 "${src.file}"\n${this.rewriteIncludes(text, src.file)}`;
                 }
-                return `#line 1 "${src.path ?? path}"\n${lowerTypedBuffers(src.string)}`;
+                return `#line 1 "${src.path ?? path}"\n${lowerTypedBuffers(this.transform(src.string))}`;
             });
             const joined = parts.join("\n");
             const rewritten = lowerDynamicObjects(joined, typeConformances);

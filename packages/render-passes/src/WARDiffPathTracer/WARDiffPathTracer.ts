@@ -31,6 +31,11 @@ import {
 } from "@web-falcor/falcor";
 
 const kShaderFile = "RenderPasses/WARDiffPathTracer/WARDiffPathTracer.rt.slang";
+/**
+ * Slang 2026.7's autodiff refactor (#9808) crashes transposing this kernel's nested fwd_diff;
+ * the backward modes compile with the last release before it (fetched by scripts/setup-web.mjs).
+ */
+const kAutodiffSlang = "/tools/slang-wasm-2026.5.2/slang-wasm.js";
 
 /** Mirrors DiffMode (DiffRendering/SharedTypes.slang). */
 export enum DiffMode {
@@ -60,6 +65,7 @@ export class WARDiffPathTracer extends RenderPass {
     private useFixedSeed = false;
     private fixedSeed = 1;
     private dummyBuffer: Buffer | null = null;
+    private gradDummies: Buffer[] = [];
 
     // StaticParams (native defaults).
     private samplesPerPixel = 1;
@@ -178,7 +184,7 @@ export class WARDiffPathTracer extends RenderPass {
         };
         ui.slider("Samples/pixel", this.samplesPerPixel, 1, 16, 1, rebuild((v) => (this.samplesPerPixel = Math.round(v))));
         ui.slider("Max bounces", this.maxBounces, 0, 254, 1, rebuild((v) => (this.maxBounces = Math.round(v))));
-        ui.dropdown("Diff mode", ["Primal", "ForwardDiffDebug"], DiffMode[this.diffMode], rebuild((v: string) => (this.diffMode = DiffMode[v as keyof typeof DiffMode])));
+        ui.dropdown("Diff mode", ["Primal", "BackwardDiff", "ForwardDiffDebug", "BackwardDiffDebug"], DiffMode[this.diffMode], rebuild((v: string) => (this.diffMode = DiffMode[v as keyof typeof DiffMode])));
         ui.text(`Diff variable name: ${this.diffVarName}`);
         ui.checkbox("Antithetic sampling", this.useAntitheticSampling, rebuild((v) => (this.useAntitheticSampling = v)));
         ui.checkbox("BSDF importance sampling", this.useBSDFSampling, rebuild((v) => (this.useBSDFSampling = v)));
@@ -224,16 +230,19 @@ export class WARDiffPathTracer extends RenderPass {
         }
     }
 
+    override async initAsync(): Promise<void> {
+        await this.device.programManager.loadSlangRuntime(kAutodiffSlang);
+    }
+
     override execute(ctx: RenderContext, renderData: RenderData): void {
         const color = renderData.getTexture("color")!;
         const dColor = renderData.getTexture("dColor")!;
         ctx.clearTexture(color);
         ctx.clearTexture(dColor);
         if (!this.scene) return;
-        if (this.diffMode === DiffMode.BackwardDiff || this.diffMode === DiffMode.BackwardDiffDebug) {
-            throw new Error(`WARDiffPathTracer: ${DiffMode[this.diffMode]} is blocked by a Slang 2026.18 autodiff crash (docs/module-mapping.md §6.9)`);
-        }
-        if (!this.pass) this.pass = ComputePass.create(this.device, { path: kShaderFile, defines: this.getDefines() });
+        // The backward modes compile with the pinned pre-refactor Slang (see kAutodiffSlang).
+        const backward = this.diffMode === DiffMode.BackwardDiff || this.diffMode === DiffMode.BackwardDiffDebug;
+        if (!this.pass) this.pass = ComputePass.create(this.device, { path: kShaderFile, defines: this.getDefines(), slangRuntime: backward ? kAutodiffSlang : undefined });
 
         const root = this.pass.getRootVar();
         this.scene.bindShaderData(root);
@@ -259,15 +268,26 @@ export class WARDiffPathTracer extends RenderPass {
         if (!this.dummyBuffer) {
             this.dummyBuffer = new Buffer(this.device, { size: 16, bindFlags: ResourceBindFlags.ShaderResource | ResourceBindFlags.UnorderedAccess, memoryType: MemoryType.DeviceLocal, name: "WARDiffPathTracer::dummy" });
         }
-        try {
-            const grads = root["gSceneGradients"] as ShaderVar;
+        // WebGPU forbids aliasing writable bindings: one placeholder per gradient buffer.
+        if (this.gradDummies.length === 0) {
             for (let i = 0; i < kGradientTypeCount; i++) {
-                (grads["gradDim"] as ShaderVar)[i] = 0;
-                (grads["hashSize"] as ShaderVar)[i] = 1;
-                this.trySet(grads["tmpGrads"] as ShaderVar, String(i), this.dummyBuffer);
+                this.gradDummies.push(new Buffer(this.device, { size: 16, bindFlags: ResourceBindFlags.ShaderResource | ResourceBindFlags.UnorderedAccess, memoryType: MemoryType.DeviceLocal, name: `WARDiffPathTracer::tmpGrads${i}` }));
             }
+        }
+        let grads: ShaderVar | null = null;
+        try {
+            grads = root["gSceneGradients"] as ShaderVar;
         } catch {
             /* gradients unused in this variant */
+        }
+        for (let i = 0; grads && i < kGradientTypeCount; i++) {
+            try {
+                (grads["gradDim"] as ShaderVar)[i] = 0;
+                (grads["hashSize"] as ShaderVar)[i] = 1;
+            } catch {
+                /* dims stripped when unused */
+            }
+            this.trySet(grads, `tmpGrads${i}`, this.gradDummies[i]!);
         }
         this.trySet(root, "dLdI", this.dummyBuffer);
         root["gOutputColor"] = color;

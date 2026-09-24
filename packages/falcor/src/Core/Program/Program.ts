@@ -7,7 +7,7 @@
 
 import { Device } from "../API/Device.js";
 import { DefineList } from "./DefineList.js";
-import { SlangCompiler, ShaderType, parenthesizeNegations, type CompileModule, type ShaderSourceResolver, type EntryPointDesc } from "./SlangCompiler.js";
+import { SlangCompiler, ShaderType, loadSlangRuntime, type SlangRuntime, parenthesizeNegations, type CompileModule, type ShaderSourceResolver, type EntryPointDesc } from "./SlangCompiler.js";
 import { kShaderOverrides } from "./ShaderOverrides.js";
 import { ProgramReflection, parseWgslBindings, type WgslBinding } from "./ProgramReflection.js";
 import { RuntimeError } from "../Error.js";
@@ -34,6 +34,11 @@ export interface ProgramDesc {
     /** Mirrors ProgramDesc::addTypeConformances: IDs for createDynamicObject<Interface, T>(id, data). */
     typeConformances?: TypeConformance[];
     entryPoints: EntryPointDesc[];
+    /**
+     * slang-wasm build to compile with (URL of its slang-wasm.js) instead of the default; it must
+     * be loaded first with ProgramManager.loadSlangRuntime. For kernels a newer Slang breaks.
+     */
+    slangRuntime?: string;
 }
 
 /** Mirrors TypeConformance + its conformance ID. */
@@ -153,6 +158,8 @@ function shaderTypeToVisibility(type: ShaderType): GPUShaderStageFlags {
 export class ProgramManager {
     readonly globalDefines = new DefineList();
     private compiler: SlangCompiler;
+    /** Compilers over other slang-wasm builds, by URL (ProgramDesc.slangRuntime). */
+    private altCompilers = new Map<string, { runtime: SlangRuntime; compiler: SlangCompiler }>();
     private resolveSource: ShaderSourceResolver;
     private filePaths: string[];
     /** Bumped by reloadAllPrograms; Programs drop cached versions when it moves. */
@@ -192,9 +199,18 @@ export class ProgramManager {
     }
 
     /** Substitutes WGSL-incompatible upstream files with WebFalcor overrides (docs §4.3). */
-    private createCompiler(): SlangCompiler {
+    private createCompiler(runtime?: SlangRuntime): SlangCompiler {
         const resolveWithOverrides: ShaderSourceResolver = (path) => this.resolveSource(kShaderOverrides[path] ?? path);
-        return new SlangCompiler(resolveWithOverrides, this.filePaths);
+        // Older builds lack ByteAddressBuffer.Load2/3/4 for WGSL; the generic Load<T> is equivalent.
+        const transform = runtime ? (src: string) => src.replace(/\.Load([234])\(/g, ".Load<uint$1>(") : undefined;
+        return new SlangCompiler(resolveWithOverrides, this.filePaths, runtime, transform);
+    }
+
+    /** Loads another slang-wasm build for programs that name it in ProgramDesc.slangRuntime. */
+    async loadSlangRuntime(url: string): Promise<void> {
+        if (this.altCompilers.has(url)) return;
+        const runtime = await loadSlangRuntime(url);
+        if (!this.altCompilers.has(url)) this.altCompilers.set(url, { runtime, compiler: this.createCompiler(runtime) });
     }
 
     /** The shader sources in use; wrap these to patch a file and reload. */
@@ -224,6 +240,10 @@ export class ProgramManager {
         }
         this.compiler.dispose();
         this.compiler = this.createCompiler();
+        for (const alt of this.altCompilers.values()) {
+            alt.compiler.dispose();
+            alt.compiler = this.createCompiler(alt.runtime);
+        }
         this.reloadGeneration++;
     }
 
@@ -243,7 +263,10 @@ export class ProgramManager {
 
     compileProgram(desc: ProgramDesc, defines: DefineList): ProgramVersion {
         const allDefines = this.globalDefines.clone().addAll(defines);
-        const result = this.compiler.compile(programModules(desc), desc.entryPoints, allDefines, desc.typeConformances ?? []);
+        const alt = desc.slangRuntime ? this.altCompilers.get(desc.slangRuntime) : undefined;
+        if (desc.slangRuntime && !alt) throw new RuntimeError(`Slang runtime ${desc.slangRuntime} not loaded (ProgramManager.loadSlangRuntime)`);
+        const compiler = alt?.compiler ?? this.compiler;
+        const result = compiler.compile(programModules(desc), desc.entryPoints, allDefines, desc.typeConformances ?? []);
         const kernels = desc.entryPoints.map((ep, i) => {
             const wgsl = fixupWgsl(result.entryPointCode[i]!);
             return {

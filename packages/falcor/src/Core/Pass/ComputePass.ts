@@ -18,6 +18,8 @@ export interface ComputePassDesc {
     typeConformances?: TypeConformance[];
     csEntry?: string;
     defines?: DefineList | Record<string, string | number | boolean>;
+    /** ProgramDesc.slangRuntime: compile with another (preloaded) slang-wasm build. */
+    slangRuntime?: string;
 }
 
 export class ComputePass {
@@ -40,7 +42,7 @@ export class ComputePass {
     ) {
         const defines = desc.defines instanceof DefineList ? desc.defines : new DefineList().addAll(desc.defines ?? {});
         const entry = desc.csEntry ?? "main";
-        this.program = device.programManager.createProgram({ path: desc.path, modules: desc.modules, typeConformances: desc.typeConformances, entryPoints: [{ name: entry, type: ShaderType.Compute }] }, defines);
+        this.program = device.programManager.createProgram({ path: desc.path, modules: desc.modules, typeConformances: desc.typeConformances, entryPoints: [{ name: entry, type: ShaderType.Compute }], slangRuntime: desc.slangRuntime }, defines);
         this.entry = entry;
         ({ version: this.version, kernel: this.kernel, vars: this.vars, root: this.root, pipeline: this.pipeline } = this.build());
     }
