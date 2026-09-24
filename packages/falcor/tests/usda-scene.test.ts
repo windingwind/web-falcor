@@ -3,7 +3,7 @@
  * conversions of native's USDImporter.
  */
 import { describe, expect, it } from "vitest";
-import { extractUsdCamerasAndLights, extractUsdMaterialTextures, extractUsdPointInstancers, parseUsdaPrims, usdaStageInfo, usdBlackbodyTemperatureAsRgb, usdStageRootTransform, usdTexCoordTransform } from "../src/Scene/Importer/UsdaScene.js";
+import { extractUsdCamerasAndLights, extractUsdDisplayColors, extractUsdMaterialTextures, extractUsdPointInstancers, parseUsdaPrims, usdaStageInfo, usdBlackbodyTemperatureAsRgb, usdStageRootTransform, usdTexCoordTransform } from "../src/Scene/Importer/UsdaScene.js";
 import { readFileSync } from "node:fs";
 import { LightType } from "../src/Scene/SceneData.js";
 import { float3 } from "../src/Utils/Math/Vector.js";
@@ -176,5 +176,10 @@ def SphereLight "S"
         close(transformPoint(inst!.instances[1]!.transform, new float3(1, 0, 0)), [-1.5 + s, s, 0]);
         // Instance 4: rotateY(90 deg) * scale(0.8).
         close(transformPoint(inst!.instances[4]!.transform, new float3(1, 0, 0)), [3, 0, -0.8]);
+    });
+
+    it("reads display colors", () => {
+        const text = readFileSync(new URL("../../../tests/oracle/assets/usd-compose/floor.usda", import.meta.url), "utf8");
+        expect(extractUsdDisplayColors(text).get("/World/Floor")).toEqual([0.2, 0.6, 0.3]);
     });
 });

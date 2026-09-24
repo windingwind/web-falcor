@@ -450,3 +450,15 @@ export function extractUsdPointInstancers(text: string): UsdaPointInstancer[] {
     parseUsdaPrims(text, float4x4.identity()).forEach(visit);
     return out;
 }
+
+/** Each prim's first authored display color (`primvars:displayColor`, or the legacy `displayColor`). */
+export function extractUsdDisplayColors(text: string): Map<string, [number, number, number]> {
+    const colors = new Map<string, [number, number, number]>();
+    const visit = (p: UsdaPrim) => {
+        const c = num(attr(p.body, ["primvars:displayColor", "displayColor"]) ?? "");
+        if (c.length >= 3) colors.set(p.path, [c[0]!, c[1]!, c[2]!]);
+        p.children.forEach(visit);
+    };
+    parseUsdaPrims(text, float4x4.identity()).forEach(visit);
+    return colors;
+}

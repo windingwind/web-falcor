@@ -15,7 +15,7 @@ import { float2, float3, float4 } from "../../Utils/Math/Vector.js";
 import { float4x4, mulMat, transformPoint } from "../../Utils/Math/Matrix.js";
 import { RuntimeError } from "../../Core/Error.js";
 import { Logger } from "../../Utils/Logger.js";
-import { extractUsdCamerasAndLights, extractUsdMaterialBindings, extractUsdMaterialTextures, extractUsdPointInstancers, usdaStageInfo, usdChannelIndex, usdStageRootTransform, usdTexCoordTransform, type UsdaCamera, type UsdaDomeLight, type UsdaTextureInput } from "./UsdaScene.js";
+import { extractUsdCamerasAndLights, extractUsdDisplayColors, extractUsdMaterialBindings, extractUsdMaterialTextures, extractUsdPointInstancers, usdaStageInfo, usdChannelIndex, usdStageRootTransform, usdTexCoordTransform, type UsdaCamera, type UsdaDomeLight, type UsdaTextureInput } from "./UsdaScene.js";
 import type { AnalyticLight } from "../SceneData.js";
 
 interface UsdNode {
@@ -139,6 +139,83 @@ function usdLayerText(native: TinyUsdzModule, bytes: Uint8Array): string | null 
     return null;
 }
 
+/** tinyusdz's layer API (composition), on the same loader class. */
+interface TinyUsdzLayer {
+    loadAsLayerFromBinary(bytes: Uint8Array, path: string): boolean;
+    layerToString(): string;
+    layerToRenderScene(): boolean;
+    extractSublayerAssetPaths(): unknown;
+    extractReferencesAssetPaths(): unknown;
+    extractPayloadAssetPaths(): unknown;
+    composeSublayers(): boolean;
+    hasReferences(): boolean;
+    composeReferences(): boolean;
+    hasPayload(): boolean;
+    composePayload(): boolean;
+    hasInherits(): boolean;
+    composeInherits(): boolean;
+    hasVariants(): boolean;
+    composeVariants(): boolean;
+    setAsset(path: string, bytes: Uint8Array): void;
+    error(): string;
+}
+
+/** Embind vectors or arrays as arrays. */
+const toArray = (v: unknown): string[] => {
+    if (Array.isArray(v)) return v as string[];
+    const vec = v as { size?(): number; get(i: number): string } | null;
+    return vec?.size ? Array.from({ length: vec.size() }, (_, i) => vec.get(i)) : [];
+};
+
+/**
+ * Composes a USD layer as a stage does (sublayers, then inherits, variants, references and
+ * payloads until none remain), fetching external layers relative to `baseUrl`, and builds the
+ * render scene from it. Returns the composed layer's text, or null if the file has no
+ * composition arcs (the caller then loads it directly).
+ */
+async function composeUsdLayer(usd: TinyUsdzLayer, bytes: Uint8Array, baseUrl: string): Promise<string | null> {
+    if (!usd.loadAsLayerFromBinary(bytes, "scene.usd")) return null;
+    const sublayers = toArray(usd.extractSublayerAssetPaths());
+    if (sublayers.length === 0 && !usd.hasReferences() && !usd.hasPayload() && !usd.hasInherits() && !usd.hasVariants()) return null;
+    const fetched = new Set<string>();
+    const fetchAssets = async (paths: string[]) => {
+        await Promise.all(
+            // Internal references have no asset path.
+            paths.filter((p) => p && !fetched.has(p)).map(async (p) => {
+                fetched.add(p);
+                const url = /^([a-z]+:|\/)/i.test(p) || !baseUrl ? p : `${baseUrl}/${p.replace(/^\.\//, "")}`;
+                const res = await fetch(url);
+                if (!res.ok) throw new RuntimeError(`UsdImporter: can't find layer '${p}' (tried '${url}', ${res.status})`);
+                usd.setAsset(p, new Uint8Array(await res.arrayBuffer()));
+            }),
+        );
+    };
+    await fetchAssets(sublayers);
+    if (!usd.composeSublayers()) throw new RuntimeError(`UsdImporter: failed to compose sublayers (${usd.error()})`);
+    for (let i = 0; i < 16; i++) {
+        const [refs, payload, inherits, variants] = [usd.hasReferences(), usd.hasPayload(), usd.hasInherits(), usd.hasVariants()];
+        if (!refs && !payload && !inherits && !variants) break;
+        if (inherits && !usd.composeInherits()) throw new RuntimeError(`UsdImporter: failed to compose inherits (${usd.error()})`);
+        if (variants && !usd.composeVariants()) throw new RuntimeError(`UsdImporter: failed to compose variants (${usd.error()})`);
+        if (refs) {
+            await fetchAssets(toArray(usd.extractReferencesAssetPaths()));
+            if (!usd.composeReferences()) throw new RuntimeError(`UsdImporter: failed to compose references (${usd.error()})`);
+        }
+        if (payload) {
+            await fetchAssets(toArray(usd.extractPayloadAssetPaths()));
+            if (!usd.composePayload()) throw new RuntimeError(`UsdImporter: failed to compose payloads (${usd.error()})`);
+        }
+    }
+    if (!usd.layerToRenderScene()) throw new RuntimeError(`UsdImporter: failed to build the composed scene (${usd.error()})`);
+    return usd.layerToString();
+}
+
+/** A mesh's first display color (on the prim, else its parent), as native's default material uses; [0.7, 0.7, 0.7] if none. */
+function usdDisplayColor(colors: Map<string, [number, number, number]>, meshPath: string | undefined): [number, number, number] {
+    const parent = meshPath?.slice(0, meshPath.lastIndexOf("/"));
+    return (meshPath && colors.get(meshPath)) || (parent && colors.get(parent)) || [0.7, 0.7, 0.7];
+}
+
 /** The stage's bounding box center and diagonal in meters (USD space: no up-axis rotation). */
 export interface UsdStageBounds {
     center: float3;
@@ -155,9 +232,15 @@ export class UsdImporter {
         options: { assumeLinearSpaceTextures?: boolean } = {},
     ): Promise<{ meshes: SceneMeshDesc[]; materials: SceneMaterialDesc[]; materialNames: string[]; cameras: UsdaCamera[]; lights: AnalyticLight[]; domeLight: UsdaDomeLight | null; stage: UsdStageBounds | null }> {
         const native = await loadTinyUsdz();
-        const usd = new native.TinyUSDZLoaderNative();
+        let usd = new native.TinyUSDZLoaderNative();
+        // Files with composition arcs are composed first; the rest load directly.
+        const composedText = await composeUsdLayer(usd as unknown as TinyUsdzLayer, bytes, baseUrl);
+        if (composedText === null) {
+            usd = new native.TinyUSDZLoaderNative();
+            if (!usd.loadFromBinary(bytes, "scene.usd")) throw new RuntimeError(`UsdImporter: failed to parse USD (${usd.error()})`);
+        }
         // Cameras, lights and stage metadata come from the layer's text (RenderScene has none of them).
-        const layerText = usdLayerText(native, bytes);
+        const layerText = composedText ?? usdLayerText(native, bytes);
         const stageInfo = layerText ? usdaStageInfo(layerText) : null;
         const rootXform = stageInfo ? usdStageRootTransform(stageInfo) : float4x4.identity();
         const extracted = layerText ? extractUsdCamerasAndLights(layerText) : { cameras: [], lights: [], domeLight: null };
@@ -165,20 +248,21 @@ export class UsdImporter {
         const materialTextures = layerText ? extractUsdMaterialTextures(layerText) : new Map<string, Map<string, UsdaTextureInput>>();
         // tinyusdz materials carry no name: find them through the meshes' bindings.
         const bindings = layerText ? extractUsdMaterialBindings(layerText) : new Map<string, string>();
-        if (!usd.loadFromBinary(bytes, "scene.usd")) {
-            throw new RuntimeError(`UsdImporter: failed to parse USD (${usd.error()})`);
-        }
+        const displayColors = layerText ? extractUsdDisplayColors(layerText) : new Map<string, [number, number, number]>();
 
         const meshes: SceneMeshDesc[] = [];
         const materials: SceneMaterialDesc[] = [];
         const materialNames: string[] = [];
-        const materialIndex = new Map<number, number>();
+        const materialIndex = new Map<number | string, number>();
         const texCoordTransforms: ((s: number, t: number) => [number, number])[] = [];
         const textureJobs: { desc: SceneMaterialDesc; material: UsdMaterial; inputs: Map<string, UsdaTextureInput> }[] = [];
 
-        const getOrAddMaterial = (materialId: number | undefined, materialPath: string | undefined): number => {
+        const getOrAddMaterial = (materialId: number | undefined, materialPath: string | undefined, meshPath?: string): number => {
             const id = materialId ?? -1;
-            const existing = materialIndex.get(id);
+            // Unbound meshes share native's default material per display color.
+            const color = id < 0 ? usdDisplayColor(displayColors, meshPath) : undefined;
+            const key = color ? `default:${color.join(",")}` : id;
+            const existing = materialIndex.get(key);
             if (existing !== undefined) return existing;
             let desc: SceneMaterialDesc;
             let name = "";
@@ -218,16 +302,19 @@ export class UsdImporter {
                 const hasTexture = [m.diffuseColorTextureId, m.roughnessTextureId, m.metallicTextureId, m.normalTextureId, m.emissiveColorTextureId, m.opacityTextureId, m.displacementTextureId].some((t) => t !== undefined && t >= 0);
                 if (hasTexture) textureJobs.push({ desc, material: m, inputs });
             } else {
-                // UsdPreviewSurface fallback (18% gray).
+                // ImporterContext::getDefaultMaterial: the display color, roughness 0.3, double-sided.
+                const c = color ?? [0.7, 0.7, 0.7];
+                name = `default-mesh-${[...materialIndex.keys()].filter((k) => typeof k === "string").length}`;
                 desc = {
-                    header: { materialType: MaterialType.Standard },
-                    basic: { baseColor: new float4(0.18, 0.18, 0.18, 1), specular: new float4(0, 0.5, 0, 0) },
+                    name,
+                    header: { materialType: MaterialType.Standard, ior: 1.5, doubleSided: true },
+                    basic: { baseColor: new float4(c[0]!, c[1]!, c[2]!, 1), specular: new float4(0, 0.3, 0, 1) },
                 };
             }
             const index = materials.length;
             materials.push(desc);
             materialNames.push(name);
-            materialIndex.set(id, index);
+            materialIndex.set(key, index);
             // Native pre-transforms texcoords by its texture transform (at least a V flip).
             texCoordTransforms.push(usdTexCoordTransform(texTransform));
             return index;
@@ -284,7 +371,7 @@ export class UsdImporter {
                 const uvs = mesh.texcoords;
                 const vertexCount = positions.length / 3;
                 const vertices: StaticVertex[] = new Array(vertexCount);
-                const materialID = getOrAddMaterial(mesh.materialId, node.absPath ? bindings.get(node.absPath) : undefined);
+                const materialID = getOrAddMaterial(mesh.materialId, node.absPath ? bindings.get(node.absPath) : undefined, node.absPath);
                 const toTexCrd = texCoordTransforms[materialID]!;
                 for (let i = 0; i < vertexCount; i++) {
                     vertices[i] = {
