@@ -6,6 +6,8 @@ import { LightType, Logger, MaterialType, float3, float4, type Scene } from "@we
 export interface ScenePanelHooks {
     /** Called after any edit (viewer restarts accumulation). */
     notify: () => void;
+    /** Rebuilds the panel (lists that changed, e.g. viewpoints). */
+    rebuild?: () => void;
     /** Viewer-level "Animate Scene" flag (mirrors AnimationController::setEnabled). */
     getAnimate: () => boolean;
     setAnimate: (v: boolean) => void;
@@ -131,6 +133,43 @@ export function buildScenePanel(container: HTMLElement, scene: Scene | null, hoo
         ui.dropdown("Up Direction", cc.upNames, cc.upNames[cc.getUp()] ?? cc.upNames[2]!, (v) => cc.setUp(Math.max(0, cc.upNames.indexOf(v))));
         ui.dropdown("Camera Controller", cc.types, cc.getType(), cc.setType);
         ui.num("Camera Speed", cc.getSpeed(), 0.01, cc.setSpeed, 0);
+    }
+
+    // Mirrors Scene::renderUI's camera selection and viewpoints (F3 adds one, as natively).
+    {
+        const names = scene.cameras.map((c, i) => `${i}: ${c.name}`);
+        if (names.length > 1) {
+            ui.dropdown("Selected Camera", names, names[scene.getSelectedCameraIndex()]!, (v) => {
+                scene.selectCamera(Number(v.split(":")[0]));
+                hooks.rebuild?.();
+            });
+        }
+        ui.button("Add Viewpoint", () => {
+            scene.addViewpoint();
+            hooks.rebuild?.();
+        });
+        const count = scene.getViewpointCount();
+        if (count > 1) {
+            ui.button("Remove Viewpoint", () => {
+                scene.removeViewpoint();
+                hooks.rebuild?.();
+            });
+            let animationLength = 30;
+            ui.num("Animation Length", animationLength, 1, (v) => (animationLength = Math.round(v)), 1, 120);
+            // Native writes the file through a save dialog; the browser downloads it.
+            ui.button("Save Viewpoints", () => {
+                const a = document.createElement("a");
+                a.href = URL.createObjectURL(new Blob([scene.getViewpointsScript(animationLength)], { type: "text/plain" }));
+                a.download = "cameraPath.txt";
+                a.click();
+                URL.revokeObjectURL(a.href);
+            });
+            const views = Array.from({ length: count }, (_, i) => (i === 0 ? "Default Viewpoint" : `Viewpoint ${i}`));
+            ui.dropdown("Viewpoints", views, views[scene.getCurrentViewpoint()]!, (v) => {
+                scene.selectViewpoint(views.indexOf(v));
+                hooks.rebuild?.();
+            });
+        }
     }
 
     // Camera (mirrors Camera::renderUI; shutter/ISO are not modelled on the web).

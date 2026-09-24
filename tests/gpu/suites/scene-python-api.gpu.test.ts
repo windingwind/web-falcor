@@ -41,4 +41,13 @@ gpuTest("Scripting.liveScenePythonProperties", async ({ device }) => {
     expectEq(Number(run("m.scene.bounds.radius")) > 0, true, "bounds radius");
     run("m.scene.loopAnimations = False");
     expectEq(scene.isLooped(), false, "loopAnimations");
+
+    // Viewpoints: the default one exists; a saved pose comes back on select.
+    run("m.scene.addViewpoint()\nm.scene.camera.position = float3(9, 9, 9)\nm.scene.selectViewpoint(1)");
+    expectEq(scene.camera.getPosition().y, 2, "selectViewpoint restores the saved pose");
+    expectEq(scene.getViewpointCount(), 2, "viewpoint count");
+    const script = scene.getViewpointsScript(30).trim().split("\n");
+    expectEq(script.length === 3 && script[2]!.startsWith("30, Transform(position = float3("), true, `viewpoints script ${script.join(" | ")}`);
+    run("m.scene.removeViewpoint()");
+    expectEq(scene.getViewpointCount(), 1, "removeViewpoint");
 });

@@ -243,6 +243,10 @@ async function main() {
     const rebuildUI = () =>
         buildUIPanel(passesEl, state.graph, resetAccum, state.scene, {
             notify: resetAccum,
+            rebuild: () => {
+                resetAccum();
+                rebuildUI();
+            },
             getAnimate: () => state.animateScene,
             setAnimate: (v) => (state.animateScene = v),
             cameraControl: {
@@ -280,7 +284,16 @@ async function main() {
         if (ev.key === "p" || ev.key === "P") profilerPanel.hidden = !profilerPanel.hidden;
         // Reload shaders in place. Native binds this to F5, which the browser
         // owns, so the viewer uses F6 (docs §9).
-        if (ev.key === "F7") {
+        const modified = ev.ctrlKey || ev.shiftKey || ev.altKey;
+        // Scene::onKeyEvent: F3 adds a viewpoint; C or F7 with a modifier re-enables camera animation.
+        if (ev.key === "F3" && !modified) {
+            ev.preventDefault();
+            state.scene?.addViewpoint();
+            rebuildUI();
+        } else if (modified && (ev.key === "c" || ev.key === "C" || ev.key === "F7")) {
+            ev.preventDefault();
+            if (state.scene) state.scene.camera.animated = true;
+        } else if (ev.key === "F7") {
             ev.preventDefault();
             overlayCanvas.hidden = !overlayCanvas.hidden;
         }
@@ -300,6 +313,8 @@ async function main() {
     function frame(now: number) {
         const cam = state.scene?.camera;
         let dirty = cam ? camControl.update(cam, now) : false;
+        // Scene::onKeyEvent: moving the camera by hand stops its animation.
+        if (dirty && cam) cam.animated = false;
         // Advance the global clock (mirrors m.clock; console pause/frame stepping applies here).
         if (state.playing) {
             state.clock.tick();

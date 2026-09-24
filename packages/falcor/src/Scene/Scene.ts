@@ -47,6 +47,7 @@ import type { LightProfile } from "./Lights/LightProfile.js";
 import type { RenderContext } from "../Core/API/RenderContext.js";
 import { assert, RuntimeError } from "../Core/Error.js";
 import { formatByteSize } from "../Utils/StringUtils.js";
+import { Logger } from "../Utils/Logger.js";
 import { SceneMaterial } from "./Material/SceneMaterial.js";
 import { AABB } from "../Utils/Math/AABB.js";
 import { getFormatChannelCount } from "../Core/API/Formats.js";
@@ -446,6 +447,54 @@ export class Scene {
         return this.activeCameraIndex;
     }
 
+    /** Saved camera poses (Scene::Viewpoint); index 0 is the default one. */
+    private readonly viewpoints: { index: number; position: float3; target: float3; up: float3 }[] = [];
+    private currentViewpoint = 0;
+
+    /** Mirrors Scene::addViewpoint: the current camera pose, or the given one, becomes the current viewpoint. */
+    addViewpoint(position?: float3, target?: float3, up?: float3, cameraIndex = this.activeCameraIndex): void {
+        const camera = this.camera;
+        const v = (p: { x: number; y: number; z: number }) => new float3(Number(p.x), Number(p.y), Number(p.z));
+        this.viewpoints.push({ index: cameraIndex, position: v(position ?? camera.getPosition()), target: v(target ?? camera.getTarget()), up: v(up ?? camera.getUpVector()) });
+        this.currentViewpoint = this.viewpoints.length - 1;
+    }
+    /** Mirrors Scene::removeViewpoint (the default viewpoint stays). */
+    removeViewpoint(): void {
+        if (this.currentViewpoint === 0) {
+            Logger.warning("Cannot remove default viewpoint.");
+            return;
+        }
+        this.viewpoints.splice(this.currentViewpoint, 1);
+        this.currentViewpoint = Math.min(this.currentViewpoint, this.viewpoints.length - 1);
+    }
+    /** Mirrors Scene::selectViewpoint: selects its camera and moves it to the saved pose. */
+    selectViewpoint(index: number): void {
+        const vp = this.viewpoints[index];
+        if (!vp) {
+            Logger.warning("Viewpoint does not exist.");
+            return;
+        }
+        this.selectCamera(vp.index);
+        this.camera.setPosition(vp.position);
+        this.camera.setTarget(vp.target);
+        this.camera.setUpVector(vp.up);
+        this.currentViewpoint = index;
+    }
+    getViewpointCount(): number {
+        return this.viewpoints.length;
+    }
+    getCurrentViewpoint(): number {
+        return this.currentViewpoint;
+    }
+    /** The "Save Viewpoints" text: one camera keyframe per viewpoint over `animationLength`, closing on the first. */
+    getViewpointsScript(animationLength: number): string {
+        const f = (v: float3) => `float3(${v.x}, ${v.y}, ${v.z})`;
+        const line = (t: number, vp: (typeof this.viewpoints)[number]) => `${t}, Transform(position = ${f(vp.position)}, target = ${f(vp.target)}, up = ${f(vp.up)})`;
+        const lines = this.viewpoints.map((vp, i) => line((animationLength * i) / this.viewpoints.length, vp));
+        lines.push(line(animationLength, this.viewpoints[0]!));
+        return lines.join("\n") + "\n";
+    }
+
     getAnimatedCameraIndex(): number {
         return this.animatedCameraIndex;
     }
@@ -456,6 +505,9 @@ export class Scene {
         this.cameraList = cameras;
         this.activeCameraIndex = Math.min(Math.max(active, 0), cameras.length - 1);
         this.animatedCameraIndex = animated;
+        // Native adds the default viewpoint (the selected camera's pose) at scene creation.
+        this.viewpoints.length = 0;
+        this.addViewpoint();
         if (this.cameraNodeID !== undefined && cameras[animated]) cameras[animated]!.hasAnimation = true;
         // Native's first scene update poses animated cameras and lights at time 0.
         if (this.animData && this.hasAnimatedCameraOrLights && this.animationEnabled) this.updateAnimatedCameraAndLights(evaluateGlobals(this.animData, 0));
@@ -1136,6 +1188,7 @@ export class Scene {
         make("lights", packLights(this.activeLights), 224);
         // Camera/light Animatable: recompute their pose from node globals each frame.
         this.hasAnimatedCameraOrLights = cameraNodeID !== undefined || lights.some((l) => l.nodeID !== undefined);
+        this.addViewpoint(); // the default viewpoint (setCameraList redoes it for the scene's cameras)
 
         // Emissive geometry (LightCollection); inputs retained so runtime
         // emissive edits can rebuild the flux tables. materialDescs must be
