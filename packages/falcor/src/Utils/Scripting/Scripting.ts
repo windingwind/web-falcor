@@ -7,6 +7,7 @@
  * captures addGraph calls.
  */
 
+import { AABB } from "../Math/AABB.js";
 import type { Device } from "../../Core/API/Device.js";
 import { RenderGraph } from "../../RenderGraph/RenderGraph.js";
 import { Settings } from "../Settings.js";
@@ -100,23 +101,25 @@ export async function runGraphScript(device: Device, source: string, extras: Rec
     };
     pyodide.registerJsModule("falcor", falcorModule);
 
+    // Mirrors the native Settings script binding (m.settings / m.getSettings()).
+    const settings = {
+        addOptions: (dict: unknown) => {
+            globalSettings.addOptions(toJs(dict) as Record<string, never>);
+            applyMediaSearchPaths();
+            for (const g of graphs) for (const { pass } of g.getPasses()) pass.onOptionsChange(globalSettings.getOptions());
+        },
+        addFilteredAttributes: (dictOrList: unknown) => globalSettings.addFilteredAttributes(toJs(dictOrList) as Record<string, never>),
+        clearOptions: () => globalSettings.clearOptions(),
+        clearFilteredAttributes: () => globalSettings.clearFilteredAttributes(),
+    };
     const mogwai = {
         addGraph: (graph: RenderGraph) => {
             graphs.push(graph);
         },
         // Mirrors the native Profiler script binding (m.profiler).
         profiler: device.profilerHook?.pythonBindings((v) => pyodide!.toPy(v)) ?? null,
-        // Mirrors the native Settings script binding (Mogwai getSettings()).
-        settings: {
-            addOptions: (dict: unknown) => {
-                globalSettings.addOptions(toJs(dict) as Record<string, never>);
-                applyMediaSearchPaths();
-                for (const g of graphs) for (const { pass } of g.getPasses()) pass.onOptionsChange(globalSettings.getOptions());
-            },
-            addFilteredAttributes: (dictOrList: unknown) => globalSettings.addFilteredAttributes(toJs(dictOrList) as Record<string, never>),
-            clearOptions: () => globalSettings.clearOptions(),
-            clearFilteredAttributes: () => globalSettings.clearFilteredAttributes(),
-        },
+        settings,
+        getSettings: () => settings,
         ...extras,
     };
     pyodide.globals.set("m", mogwai);
@@ -152,6 +155,12 @@ export function runConsoleCommand(
         SceneBuilderFlags: kSceneBuilderFlagsPython,
         ...AssetResolver.pythonBindings,
     });
+    const settings = {
+        addOptions: (dict: unknown) => {
+            globalSettings.addOptions(toJs(dict) as Record<string, never>);
+            applyMediaSearchPaths();
+        },
+    };
     pyodide.globals.set("m", {
         scene: context.scene,
         activeGraph: context.graph,
@@ -159,18 +168,15 @@ export function runConsoleCommand(
         timingCapture: context.timingCapture,
         frameCapture: context.frameCapture,
         profiler: (context.profiler ?? device.profilerHook)?.pythonBindings((v) => pyodide!.toPy(v)) ?? null,
-        settings: {
-            addOptions: (dict: unknown) => {
-                globalSettings.addOptions(toJs(dict) as Record<string, never>);
-                applyMediaSearchPaths();
-            },
-        },
+        settings,
+        getSettings: () => settings,
     });
     const py = pyodide as unknown as { setStdout(opts: { batched: (s: string) => void }): void; runPython(src: string): unknown };
     py.setStdout({ batched: (s) => lines.push(s) });
     try {
         const result = py.runPython('import sys\nsys.modules.pop("falcor", None)\nfrom falcor import *\n' + source);
-        if (result !== undefined && result !== null) lines.push(String(result));
+        // Echo like python's repr for the scalars pyodide converts to JS.
+        if (result !== undefined && result !== null) lines.push(typeof result === "boolean" ? (result ? "True" : "False") : String(result));
     } finally {
         py.setStdout({ batched: (s) => console.log(s) });
     }
@@ -235,7 +241,7 @@ class TriangleMesh:
 def Transform(translation=None, rotationEuler=None, rotationEulerDeg=None, scaling=None):
     return _makeTransform(translation, rotationEuler, rotationEulerDeg, scaling)
 
-def AABB(min, max):
+def AABB(min=None, max=None):
     return _makeAABB(min, max)
 
 class EnvMap:
@@ -274,7 +280,7 @@ def _guarded(factory, known, kwnames=()):
 _matProps = {'baseColor', 'specularParams', 'transmissionColor', 'emissiveColor',
              'emissiveFactor', 'doubleSided', 'roughness', 'metallic',
              'indexOfRefraction', 'specularTransmission', 'diffuseTransmission', 'thinSurface',
-             'nestedPriority', 'volumeAbsorption', 'volumeScattering',
+             'nestedPriority', 'volumeAbsorption', 'volumeScattering', 'volumeAnisotropy',
              'displacementScale', 'displacementOffset', 'lightProfileEnabled'}
 _lightProps = {'position', 'intensity', 'direction', 'angle',
                'openingAngle', 'penumbraAngle', 'scaling', 'rotation'}
@@ -497,7 +503,7 @@ async function runSceneScriptInternal(device: Device, source: string, baseUrl: s
             return m;
         },
         _makeTransform: makeTransform,
-        _makeAABB: (min: VecLike, max: VecLike) => ({ min: { x: min.x, y: min.y, z: min.z }, max: { x: max.x, y: max.y, z: max.z } }),
+        _makeAABB: (min?: VecLike, max?: VecLike) => new AABB(min, max),
         _makeEnvMap: (path: string) => ({ path, intensity: 1 }),
         _GridVolume: (name = "") => new GridVolumeBridge(name),
         _Grid: {
@@ -706,6 +712,7 @@ export function recordMogwaiScript(device: Device, source: string, files: Record
             apply: (_t, _this, args: unknown[]) => void commands.push({ op: "call", target, method: path, args: args.map(deref) }),
         });
 
+    const recordedSettings = { addOptions: (dict: unknown) => globalSettings.addOptions(toJs(dict) as Record<string, never>) };
     pyodide.registerJsModule("_falcor_js", {
         RenderGraph: makeGraph,
         createPass: (type: string, props?: unknown) => createPass(device, type, new Properties((toJs(props) as Record<string, never>) ?? {})),
@@ -735,7 +742,8 @@ export function recordMogwaiScript(device: Device, source: string, files: Record
         frameCapture: recorder("frameCapture"),
         scene: recorder("scene"),
         ui: false,
-        settings: { addOptions: (dict: unknown) => globalSettings.addOptions(toJs(dict) as Record<string, never>) },
+        settings: recordedSettings,
+        getSettings: () => recordedSettings,
     });
 
     writePythonFiles(files);

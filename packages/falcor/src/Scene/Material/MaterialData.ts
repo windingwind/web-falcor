@@ -274,6 +274,8 @@ export interface BasicMaterialDesc {
     specularTransmission?: number;
     volumeAbsorption?: float3;
     volumeScattering?: float3;
+    /** Phase function anisotropy g, clamped to +-kMaxVolumeAnisotropy (BasicMaterial::setVolumeAnisotropy). */
+    volumeAnisotropy?: number;
     displacementScale?: number;
     displacementOffset?: number;
     texBaseColor?: number; // packed TextureHandle
@@ -290,6 +292,9 @@ export interface BasicMaterialDesc {
  * Packs a full 128-byte MaterialDataBlob for a basic (standard) material.
  * Field order transcribed from BasicMaterialData.slang.
  */
+/** BasicMaterial's kMaxVolumeAnisotropy. */
+export const kMaxVolumeAnisotropy = 0.99;
+
 export function packBasicMaterialBlob(header: MaterialHeaderDesc, mat: BasicMaterialDesc): Uint8Array {
     const blob = new ArrayBuffer(128);
     const u32 = new Uint32Array(blob);
@@ -329,7 +334,7 @@ export function packBasicMaterialBlob(header: MaterialHeaderDesc, mat: BasicMate
     const va = mat.volumeAbsorption ?? new float3(0, 0, 0);
     dv.setUint16(off, f32tof16(va.x), true); dv.setUint16(off + 2, f32tof16(va.y), true); dv.setUint16(off + 4, f32tof16(va.z), true);
     off += 6;
-    dv.setUint16(off, 0, true); off += 2; // volumeAnisotropy
+    dv.setUint16(off, f32tof16(Math.min(Math.max(mat.volumeAnisotropy ?? 0, -kMaxVolumeAnisotropy), kMaxVolumeAnisotropy)), true); off += 2;
     off += 2; // trailing pad: displacementScale is 4-byte aligned (payload offset 64)
     dv.setFloat32(off, mat.displacementScale ?? 0, true); off += 4; // displacementScale
     dv.setFloat32(off, mat.displacementOffset ?? 0, true); off += 4; // displacementOffset

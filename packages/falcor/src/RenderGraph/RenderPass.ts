@@ -68,6 +68,24 @@ export abstract class RenderPass {
 
     constructor(public readonly device: Device) {}
 
+    /** Python `desc`: the plugin description (§9: the web registry keeps none). */
+    get desc(): string {
+        return "";
+    }
+    /** Python `properties` / `getDictionary()`: the current properties (a Map, which Python subscripts like a dict). */
+    get properties(): Map<string, unknown> {
+        return new Map(Object.entries(this.getProperties().toJSON()));
+    }
+    getDictionary(): Map<string, unknown> {
+        return this.properties;
+    }
+    /** Python `set_properties(dict)`. */
+    set_properties(dict: unknown): void {
+        const proxy = dict as { toJs?: (o: object) => unknown };
+        const plain = typeof proxy?.toJs === "function" ? (proxy.toJs({ dict_converter: Object.fromEntries }) as Record<string, never>) : (dict as Record<string, never>);
+        this.setProperties(new Properties(plain ?? {}));
+    }
+
     /** Mirrors RenderPass::reflect. */
     abstract reflect(compileData: CompileData): RenderPassReflection;
 

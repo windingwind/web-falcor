@@ -46,6 +46,13 @@ const kChannelNames: Record<number, string> = {
     15: "TextureChannelFlags.RGBA",
 };
 
+/** A Python dict (PyProxy) or plain object as a plain object. */
+function toPlainDict(d: unknown): Record<string, unknown> {
+    const proxy = d as { toJs?: (o: object) => unknown } | null | undefined;
+    if (proxy && typeof proxy.toJs === "function") return proxy.toJs({ dict_converter: Object.fromEntries }) as Record<string, unknown>;
+    return (d as Record<string, unknown> | null | undefined) ?? {};
+}
+
 export class RenderGraph {
     private passes = new Map<string, RenderPass>();
     private edges: RenderGraphEdge[] = [];
@@ -62,8 +69,49 @@ export class RenderGraph {
 
     constructor(
         public readonly device: Device,
-        public readonly name = "RenderGraph",
+        public name = "RenderGraph",
     ) {}
+
+    // Python spellings of the graph API (RenderGraph's pybind11 bindings; dicts may arrive as PyProxies).
+    /** Mirrors RenderGraph::createPass (python `create_pass` / `createPass`). */
+    createPass(passName: string, passType: string, dict: unknown = {}): RenderPass {
+        return this.addPass(createPass(this.device, passType, toPlainDict(dict)), passName);
+    }
+    create_pass(passName: string, passType: string, dict: unknown = {}): RenderPass {
+        return this.createPass(passName, passType, dict);
+    }
+    remove_pass(name: string): void {
+        this.removePass(name);
+    }
+    update_pass(name: string, dict: unknown): void {
+        this.updatePass(name, toPlainDict(dict));
+    }
+    add_edge(src: string, dst: string): void {
+        this.addEdge(src, dst);
+    }
+    remove_edge(src: string, dst: string): void {
+        this.removeEdge(src, dst);
+    }
+    mark_output(name: string, mask?: number): void {
+        this.markOutput(name, mask);
+    }
+    unmark_output(name: string): void {
+        this.unmarkOutput(name);
+    }
+    get_pass(name: string): RenderPass | undefined {
+        return this.getPass(name);
+    }
+    get_output(name: string): Texture | undefined {
+        return this.getOutput(name);
+    }
+    /** Python `g["pass"]` (Pyodide subscripts JS objects through `get`). */
+    get(name: string): RenderPass | undefined {
+        return this.getPass(name);
+    }
+    /** Mirrors the python `print`: the graph as a script (§9: the web's exporter dialect, not native IR). */
+    print(): void {
+        Logger.info(this.exportScript());
+    }
 
     /** Mirrors RenderGraph::addPass. */
     addPass(pass: RenderPass, name: string): RenderPass {

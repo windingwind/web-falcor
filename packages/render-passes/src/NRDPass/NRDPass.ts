@@ -205,7 +205,7 @@ export class NRDPass extends RenderPass {
     private relaxDiffuseSpecular: NRDSettings | null = null;
     private relaxDiffuse: NRDSettings | null = null;
     private reblur: NRDSettings | null = null;
-    private desc: NRDDenoiserDesc | null = null;
+    private denoiserDesc: NRDDenoiserDesc | null = null;
     private pipelines: Pipeline[] = [];
     private samplers: Sampler[] = [];
     private permanentTextures: Texture[] = [];
@@ -335,7 +335,7 @@ export class NRDPass extends RenderPass {
         this.screenSize = calculateIOSize(this.outputSizeSelection, this.screenSize, compileData.defaultTexDims);
         if (this.screenSize[0] === 0 || this.screenSize[1] === 0) this.screenSize = compileData.defaultTexDims;
         this.frameIndex = 0;
-        this.desc = null; // reinit on first execute (the library loads asynchronously)
+        this.denoiserDesc = null; // reinit on first execute (the library loads asynchronously)
     }
 
     override setScene(scene: Scene | null): void {
@@ -356,7 +356,7 @@ export class NRDPass extends RenderPass {
     private reinit(): void {
         const lib = this.library!;
         lib.createDenoiser(this.nrdMethod(), this.screenSize[0], this.screenSize[1]);
-        const desc = (this.desc = lib.getDenoiserDesc());
+        const desc = (this.denoiserDesc = lib.getDenoiserDesc());
         this.samplers = desc.samplers.map(({ sampler }) => {
             const clamp = sampler === NRDSampler.NEAREST_CLAMP || sampler === NRDSampler.LINEAR_CLAMP;
             const nearest = sampler === NRDSampler.NEAREST_CLAMP || sampler === NRDSampler.NEAREST_MIRRORED_REPEAT;
@@ -476,7 +476,7 @@ export class NRDPass extends RenderPass {
 
     private executeInternal(ctx: RenderContext, renderData: RenderData): void {
         const lib = this.library!;
-        if (!this.desc || this.recreateDenoiser) this.reinit();
+        if (!this.denoiserDesc || this.recreateDenoiser) this.reinit();
         const method = this.nrdMethod();
         if (this.method === DenoisingMethod.RelaxDiffuseSpecular || this.method === DenoisingMethod.RelaxDiffuse) this.packRadiance(ctx, renderData, false);
         else if (this.method === DenoisingMethod.ReblurDiffuseSpecular) this.packRadiance(ctx, renderData, true);
@@ -512,7 +512,7 @@ export class NRDPass extends RenderPass {
 
     /** Mirrors dispatch: constants, resources by descriptor range, samplers, grid. */
     private dispatch(ctx: RenderContext, renderData: RenderData, d: NRDDispatch): void {
-        const desc = this.desc!;
+        const desc = this.denoiserDesc!;
         const pipelineDesc = desc.pipelines[d.pipelineIndex]!;
         const pipeline = this.pipelines[d.pipelineIndex]!;
         const root = pipeline.pass.getRootVar();

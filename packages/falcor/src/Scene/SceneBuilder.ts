@@ -188,6 +188,7 @@ function applyMaterialEdit(mat: SceneMaterialDesc, prop: string, value: unknown)
         case "nestedPriority": header.nestedPriority = num(); return true;
         case "volumeAbsorption": basic.volumeAbsorption = toF3(value as { x: number; y: number; z: number }); return true;
         case "volumeScattering": basic.volumeScattering = toF3(value as { x: number; y: number; z: number }); return true;
+        case "volumeAnisotropy": basic.volumeAnisotropy = num(); return true;
         case "baseColor": basic.baseColor = toF4(value as { x: number; y: number; z: number; w: number }); return true;
         default: return false;
     }
@@ -254,6 +255,7 @@ export class MaterialBridge {
     set volumeScattering(v: { x: number; y: number; z: number }) {
         this._volumeScattering = toF3(v);
     }
+    volumeAnisotropy = 0;
 
     constructor(
         public readonly materialType: MaterialType,
@@ -462,6 +464,7 @@ export class MaterialBridge {
                 diffuseTransmission: this.diffuseTransmission,
                 volumeAbsorption: this._volumeAbsorption,
                 volumeScattering: this._volumeScattering,
+                volumeAnisotropy: this.volumeAnisotropy,
                 displacementScale: this.displacementScale,
                 displacementOffset: this.displacementOffset,
                 ...(this.materialType === MaterialType.Standard ? { shadingModel: this._shadingModel } : {}),

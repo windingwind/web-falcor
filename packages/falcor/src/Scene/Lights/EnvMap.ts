@@ -49,6 +49,14 @@ export class EnvMap {
     /** Last rotation set (degrees), for cache snapshots. */
     rotationDeg: [number, number, number] = [0, 0, 0];
 
+    /** Python `envMap.rotation`: XYZ angles in degrees. */
+    get rotation(): { x: number; y: number; z: number } {
+        return { x: this.rotationDeg[0], y: this.rotationDeg[1], z: this.rotationDeg[2] };
+    }
+    set rotation(v: { x: number; y: number; z: number }) {
+        this.setRotation([Number(v.x), Number(v.y), Number(v.z)]);
+    }
+
     /** Mirrors EnvMap::setRotation(degreesXYZ). */
     setRotation(degreesXYZ: [number, number, number]): void {
         this.rotationDeg = [...degreesXYZ];

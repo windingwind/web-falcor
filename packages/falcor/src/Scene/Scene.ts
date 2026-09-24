@@ -19,7 +19,7 @@ import { Camera } from "./Camera/Camera.js";
 import { float4x4, transpose, inverse } from "../Utils/Math/Matrix.js";
 import { buildBvh, buildBvhParallel, buildAabbBvh, refitBvh, type BvhBuildResult, type BvhTriangle } from "./SoftwareRT/Bvh.js";
 import { WorkerPool } from "../Utils/Threading/WorkerPool.js";
-import { packLights, LightType, type AnalyticLight } from "./SceneData.js";
+import { packLights, LightType, SceneLight, type AnalyticLight } from "./SceneData.js";
 import { TextureManager, kMaxTextureBuckets } from "./Material/TextureManager.js";
 import type { EnvMap } from "./Lights/EnvMap.js";
 import { buildLightCollection } from "./Lights/LightCollection.js";
@@ -47,6 +47,8 @@ import type { LightProfile } from "./Lights/LightProfile.js";
 import type { RenderContext } from "../Core/API/RenderContext.js";
 import { assert, RuntimeError } from "../Core/Error.js";
 import { formatByteSize } from "../Utils/StringUtils.js";
+import { SceneMaterial } from "./Material/SceneMaterial.js";
+import { AABB } from "../Utils/Math/AABB.js";
 import { getFormatChannelCount } from "../Core/API/Formats.js";
 import type { NDSDFGrid } from "./SDFs/NDSDFGrid.js";
 import { SDFSBS, packSBSGrids, type PackedSBS } from "./SDFs/SDFSBS.js";
@@ -454,6 +456,7 @@ export class Scene {
         this.cameraList = cameras;
         this.activeCameraIndex = Math.min(Math.max(active, 0), cameras.length - 1);
         this.animatedCameraIndex = animated;
+        if (this.cameraNodeID !== undefined && cameras[animated]) cameras[animated]!.hasAnimation = true;
         // Native's first scene update poses animated cameras and lights at time 0.
         if (this.animData && this.hasAnimatedCameraOrLights && this.animationEnabled) this.updateAnimatedCameraAndLights(evaluateGlobals(this.animData, 0));
     }
@@ -556,7 +559,7 @@ export class Scene {
             tlasCount: 0,
             tlasMemoryInBytes: 0,
             tlasScratchMemoryInBytes: 0,
-            activeLightCount: this.analyticLights.length,
+            activeLightCount: this.activeLights.length,
             totalLightCount: this.analyticLights.length,
             pointLightCount: lightsOf(LightType.Point),
             directionalLightCount: lightsOf(LightType.Directional),
@@ -1128,9 +1131,9 @@ export class Scene {
         }
 
         // Analytic lights.
-        this.lightCount = lights.length;
-        this.analyticLights = lights;
-        make("lights", packLights(lights), 224);
+        this.analyticLights = lights.map((l) => (l instanceof SceneLight ? l : new SceneLight(l, () => (this.lightsDirty = true))));
+        this.lightCount = this.activeLights.length;
+        make("lights", packLights(this.activeLights), 224);
         // Camera/light Animatable: recompute their pose from node globals each frame.
         this.hasAnimatedCameraOrLights = cameraNodeID !== undefined || lights.some((l) => l.nodeID !== undefined);
 
@@ -1139,6 +1142,8 @@ export class Scene {
         // assigned first — the rebuild reads it.
         this.lcMeshes = meshes;
         this.lcTextureManager = textureManager;
+        materials = materials.map((m) => this.wrapMaterial(m));
+        materials.forEach((m, i) => m.header?.emissive && this.emissiveMaterialIDs.add(i));
         this.materialDescs = materials;
         this.rebuildLightCollection();
 
@@ -1305,7 +1310,7 @@ export class Scene {
         if (!(index >= 0 && index < this.materialDescs.length)) throw new RuntimeError("Material ID is invalid.");
         if (desc.merl || desc.rgl || desc.merlMix) throw new RuntimeError("Scene.replaceMaterial: measured materials can't replace at runtime (their data lives in the shared material buffer)");
         const definesBefore = this.getSceneDefines().key();
-        this.materialDescs[index] = desc;
+        this.materialDescs[index] = this.wrapMaterial(desc);
         if (this.lcTextureManager.count !== this.builtTextureCount) this.buildMaterialTextures(this.lcTextureManager);
         this.materialTypes = new Set(this.materialDescs.map((m) => (m.merl ? MaterialType.MERL : m.rgl ? MaterialType.RGL : m.merlMix ? MaterialType.MERLMix : (m.header?.materialType ?? MaterialType.Standard))));
         this.materialDescs.forEach((m, i) => this.buffers["materialData"]!.setBlob(this.packMaterial(m, i), i * 128));
@@ -1331,7 +1336,51 @@ export class Scene {
 
     /** Re-packs analytic lights after runtime property edits (mirrors Light change tracking in Scene::update). */
     updateLights(): void {
-        this.buffers["lights"]!.setBlob(packLights(this.analyticLights));
+        this.lightsDirty = false;
+        const active = this.activeLights;
+        this.lightCount = active.length;
+        this.buffers["lights"]!.setBlob(packLights(active));
+    }
+
+    /** Mirrors Scene::getActiveLights: the lights in the light buffer, in its order. */
+    get activeLights(): AnalyticLight[] {
+        return this.analyticLights.filter((l) => (l as SceneLight).active !== false);
+    }
+
+    /** Python `scene.bounds` (Scene::getSceneBounds): the world-space geometry bounds. */
+    get bounds(): AABB {
+        const b = this.worldBounds;
+        return b ? new AABB({ x: b.min[0], y: b.min[1], z: b.min[2] }, { x: b.max[0], y: b.max[1], z: b.max[2] }) : new AABB();
+    }
+
+    /** Mirrors Scene::getGridVolume / getGridVolumeByName (python also `getVolume`). */
+    getGridVolume(ref: number | string): import("./Volume/GridVolume.js").GridVolume | null {
+        return (typeof ref === "number" ? this.gridVolumes[ref] : this.gridVolumes.find((v) => v.name === ref)) ?? null;
+    }
+    getVolume(ref: number | string): import("./Volume/GridVolume.js").GridVolume | null {
+        return this.getGridVolume(ref);
+    }
+    /** Python `scene.volumes` (deprecated alias of gridVolumes). */
+    get volumes(): import("./Volume/GridVolume.js").GridVolume[] {
+        return this.gridVolumes;
+    }
+
+    /** Python `scene.lights` (Scene::getLights). */
+    get lights(): AnalyticLight[] {
+        return this.analyticLights;
+    }
+
+    /** Set by SceneLight edits; the buffer is repacked before the next bind. */
+    private lightsDirty = false;
+
+    /** A material record as a SceneMaterial (native property names; edits repack it). */
+    private wrapMaterial(m: SceneMaterialDesc): SceneMaterial {
+        return m instanceof SceneMaterial ? m : new SceneMaterial(m, (self) => this.updateMaterial(self));
+    }
+
+    /** Python `scene.materials` (Scene::getMaterials). */
+    get materials(): SceneMaterialDesc[] {
+        return this.materialDescs;
     }
 
     /** Mirrors Scene::getMaterial / getMaterialByName (live descriptor; call updateMaterial() after edits). */
@@ -1352,8 +1401,12 @@ export class Scene {
         // Emissive edits change the NEE flux distribution (mirrors native
         // MaterialsChanged handling). Presence toggles that flip scene defines
         // still require pass recreation by the caller.
-        if (m.header?.emissive) this.rebuildLightCollection();
+        if (m.header?.emissive || this.emissiveMaterialIDs.has(index)) this.rebuildLightCollection();
+        if (m.header?.emissive) this.emissiveMaterialIDs.add(index);
+        else this.emissiveMaterialIDs.delete(index);
     }
+    /** Materials emissive at their last update (an edit turning emission off must rebuild too). */
+    private emissiveMaterialIDs = new Set<number>();
 
     /** Packs one material blob; the alpha mode follows native updateAlphaMode unless given explicitly. */
     private packMaterial(m: SceneMaterialDesc, index: number): Uint8Array {
@@ -1729,18 +1782,19 @@ export class Scene {
         const ZERO = new float3(0, 0, 0);
         const FWD = new float3(0, 0, -1);
         const UP = new float3(0, 1, 0);
-        if (this.cameraNodeID !== undefined && globals[this.cameraNodeID]) {
+        const animatedCamera = this.cameraList[this.animatedCameraIndex];
+        if (this.cameraNodeID !== undefined && globals[this.cameraNodeID] && animatedCamera?.animated !== false) {
             const g = globals[this.cameraNodeID]!;
             const pos = transformPoint(g, ZERO);
             const fwd = normalize3(transformVector(g, FWD));
-            const camera = this.cameraList[this.animatedCameraIndex]!;
+            const camera = animatedCamera!;
             camera.setPosition(pos);
             camera.setTarget(new float3(pos.x + fwd.x, pos.y + fwd.y, pos.z + fwd.z));
             camera.setUpVector(normalize3(transformVector(g, UP)));
         }
         let lightsDirty = false;
         for (const light of this.analyticLights) {
-            if (light.nodeID === undefined || !globals[light.nodeID]) continue;
+            if (light.nodeID === undefined || !globals[light.nodeID] || (light as SceneLight).animated === false) continue;
             const g = globals[light.nodeID]!;
             const isArea = light.type === LightType.Rect || light.type === LightType.Disc || light.type === LightType.Sphere;
             if (isArea) {
@@ -1751,7 +1805,7 @@ export class Scene {
             }
             lightsDirty = true;
         }
-        if (lightsDirty) this.buffers["lights"]!.setBlob(packLights(this.analyticLights));
+        if (lightsDirty) this.updateLights();
     }
 
     /** Per-emissive-triangle flux in LightCollection order (for power sampling). */
@@ -2274,6 +2328,7 @@ export class Scene {
 
     /** Mirrors Scene::bindShaderData: fills the gScene parameter block. */
     bindShaderData(root: ShaderVar): void {
+        if (this.lightsDirty) this.updateLights();
         const scene = root["gScene"];
 
         // Camera (uniforms in the block's default buffer; statically-unused sets no-op).

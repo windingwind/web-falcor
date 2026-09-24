@@ -184,6 +184,73 @@ export interface AnalyticLight {
     nodeID?: number;
 }
 
+/**
+ * A scene's analytic light: the AnalyticLight record plus native's Light python properties
+ * (name, active, animated, intensity, position, direction, angles). Edits mark the scene's
+ * light buffer dirty; it is repacked before the next bind (native Scene::updateLights).
+ */
+export class SceneLight implements AnalyticLight {
+    type: LightType;
+    name?: string;
+    nodeID?: number;
+    /** Mirrors Animatable::setIsAnimated: whether the scene's animation drives this light. */
+    animated = true;
+    private _active = true;
+    private _posW?: float3;
+    private _dirW?: float3;
+    private _intensity: float3;
+    private _angle?: number;
+    private _openingAngle?: number;
+    private _penumbraAngle?: number;
+    private _transMat?: float4x4;
+
+    constructor(desc: AnalyticLight, private readonly changed: () => void = () => {}) {
+        this.type = desc.type;
+        this.name = desc.name;
+        this.nodeID = desc.nodeID;
+        this._posW = desc.posW;
+        this._dirW = desc.dirW;
+        this._intensity = desc.intensity;
+        this._angle = desc.angle;
+        this._openingAngle = desc.openingAngle;
+        this._penumbraAngle = desc.penumbraAngle;
+        this._transMat = desc.transMat;
+    }
+
+    get posW(): float3 | undefined { return this._posW; }
+    set posW(v: float3 | undefined) { this._posW = v; this.changed(); }
+    get dirW(): float3 | undefined { return this._dirW; }
+    set dirW(v: float3 | undefined) { this._dirW = v; this.changed(); }
+    get intensity(): float3 { return this._intensity; }
+    set intensity(v: float3) { this._intensity = vec3(v); this.changed(); }
+    get angle(): number | undefined { return this._angle; }
+    set angle(v: number | undefined) { this._angle = v; this.changed(); }
+    get openingAngle(): number | undefined { return this._openingAngle; }
+    set openingAngle(v: number | undefined) { this._openingAngle = v; this.changed(); }
+    get penumbraAngle(): number | undefined { return this._penumbraAngle; }
+    set penumbraAngle(v: number | undefined) { this._penumbraAngle = v; this.changed(); }
+    get transMat(): float4x4 | undefined { return this._transMat; }
+    set transMat(v: float4x4 | undefined) { this._transMat = v; this.changed(); }
+
+    /** Mirrors Light::setActive (inactive lights are left out of the light buffer). */
+    get active(): boolean { return this._active; }
+    set active(v: boolean) { this._active = Boolean(v); this.changed(); }
+    /** Mirrors PointLight::setWorldPosition. */
+    get position(): float3 | undefined { return this._posW; }
+    set position(v: float3 | undefined) { this.posW = v ? vec3(v) : v; }
+    /** Mirrors setWorldDirection (normalized, as natively). */
+    get direction(): float3 | undefined { return this._dirW; }
+    set direction(v: float3 | undefined) {
+        if (!v) return;
+        const l = Math.hypot(v.x, v.y, v.z) || 1;
+        this.dirW = new float3(v.x / l, v.y / l, v.z / l);
+    }
+    /** Mirrors Animatable::hasAnimation. */
+    get hasAnimation(): boolean { return this.nodeID !== undefined; }
+}
+
+const vec3 = (v: { x: number; y: number; z: number }) => new float3(Number(v.x), Number(v.y), Number(v.z));
+
 export const kLightDataSize = 224; // 6x16B rows + 2x 64B float4x4 (rows at 96/160)
 
 /** Packs LightData (LightData.slang layout; 16-byte rows, matrices identity). */

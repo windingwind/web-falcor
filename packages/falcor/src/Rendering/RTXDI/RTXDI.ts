@@ -347,7 +347,7 @@ export class RTXDI {
         // Categorize analytic lights (Point = local; Directional/Distant = infinite).
         const localIDs: number[] = [];
         const infiniteIDs: number[] = [];
-        this.scene.analyticLights.forEach((light, lightID) => {
+        this.scene.activeLights.forEach((light, lightID) => {
             if (light.type === LightType.Point) localIDs.push(lightID);
             else if (light.type === LightType.Directional || light.type === LightType.Distant) infiniteIDs.push(lightID);
         });
