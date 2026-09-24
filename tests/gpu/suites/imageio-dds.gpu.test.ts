@@ -2,7 +2,7 @@
  * ImageIO.saveToDDS (BCEncoder in place of NVTT) against NVTT 3.1.6 itself: the same inputs
  * are compressed by both (tests/oracle/assets/nvtt, see its README), every file is decoded by
  * the GPU (WebGPU texture-compression-bc) and scored against the source. The web encoder must
- * come close to NVTT's quality: BC1–BC5 within 0.5 dB, BC7 (mode 6 only) and BC6H (mode 11
+ * come close to NVTT's quality: BC1–BC5 and BC7 (all modes, alpha and opaque inputs) within 0.5 dB, BC6H (mode 11
  * only) within a few dB. Uncompressed saves round-trip bit-exactly, and saveTextureToDDS
  * reads GPU textures back into the same files.
  */
@@ -67,7 +67,7 @@ gpuTest("ImageIO.ddsSaveMatchesNvttQuality", async ({ device }) => {
         ["bc3", CompressionMode.BC3, [0, 1, 2, 3], 0.5],
         ["bc4", CompressionMode.BC4, [0], 0.5],
         ["bc5", CompressionMode.BC5, [0, 1], 0.5],
-        ["bc7", CompressionMode.BC7, [0, 1, 2, 3], 5],
+        ["bc7", CompressionMode.BC7, [0, 1, 2, 3], 0.5],
     ];
     const lines: string[] = [];
     for (const [name, mode, channels, margin] of cases) {
@@ -76,6 +76,15 @@ gpuTest("ImageIO.ddsSaveMatchesNvttQuality", async ({ device }) => {
         lines.push(`${name} web ${web.toFixed(2)} dB / nvtt ${nvtt.toFixed(2)} dB`);
         expectEq(web > nvtt - margin, true, `${name}: web ${web} dB vs NVTT ${nvtt} dB`);
     }
+    // Opaque input exercises BC7's RGB-only partitioned modes (0-3).
+    const opaque = Bitmap.create(w, h, ResourceFormat.RGBA8Unorm, Uint8Array.from(srcLdr, (v, i) => (i % 4 === 3 ? 255 : v)));
+    const srcAlpha = srcLdr.slice();
+    srcLdr.set(new Uint8Array(opaque.getData()));
+    const web7o = psnrLdr(await decode(ImageIO.saveToDDS(opaque, CompressionMode.BC7)), [0, 1, 2]);
+    const nvtt7o = psnrLdr(await decode(await fetchBytes("nvtt-bc7-opaque.dds")), [0, 1, 2]);
+    srcLdr.set(srcAlpha);
+    lines.push(`bc7 opaque web ${web7o.toFixed(2)} dB / nvtt ${nvtt7o.toFixed(2)} dB`);
+    expectEq(web7o > nvtt7o - 0.5, true, `bc7 opaque: web ${web7o} dB vs NVTT ${nvtt7o} dB`);
     const web6 = psnrHdr(await decode(ImageIO.saveToDDS(hdr, CompressionMode.BC6)));
     const nvtt6 = psnrHdr(await decode(await fetchBytes("nvtt-bc6.dds")));
     lines.push(`bc6 web ${web6.toFixed(2)} dB / nvtt ${nvtt6.toFixed(2)} dB (log2)`);

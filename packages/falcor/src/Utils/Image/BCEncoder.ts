@@ -1,8 +1,8 @@
 /**
  * Block-compression encoders for ImageIO.saveToDDS: the web stand-in for NVTT (native
  * compresses through NVIDIA Texture Tools). BC1–BC5 fit endpoints along the block's
- * principal axis and refine them by least squares; BC7 encodes mode 6 (RGBA, one subset,
- * 4-bit indices, p-bits searched); BC6H encodes mode 11 (one region, 10-bit endpoints)
+ * principal axis and refine them by least squares; BC7 searches all eight modes (ranked
+ * partitions, p-bits per endpoint, alpha rotations) and keeps the least-error one; BC6H encodes mode 11 (one region, 10-bit endpoints)
  * for the signed and unsigned formats. §9: the output is valid BC, not NVTT's bit pattern.
  *
  * Inputs are RGBA float texels (w*h*4, block-linear rows); partial edge blocks replicate
@@ -71,7 +71,7 @@ function encodeBlock(format: BCFormat, b: Float32Array, dst: Uint8Array): void {
             encodeBC6HMode11(b, format === "BC6HS", dst);
             return;
         case "BC7":
-            encodeBC7Mode6(b, dst);
+            encodeBC7(b, dst);
             return;
     }
 }
@@ -242,8 +242,10 @@ function encodeChannel(b: Float32Array, channel: number, signed: boolean, dst: U
     }
 }
 
-// --- BC7 mode 6 ---
+// --- BC7 (modes 0-3, 6, 7) ---
 
+const kWeights2 = [0, 21, 43, 64];
+const kWeights3 = [0, 9, 18, 27, 37, 46, 55, 64];
 const kWeights4 = [0, 4, 9, 13, 17, 21, 26, 30, 34, 38, 43, 47, 51, 55, 60, 64];
 
 class BitWriter {
@@ -256,52 +258,270 @@ class BitWriter {
     }
 }
 
-function encodeBC7Mode6(b: Float32Array, dst: Uint8Array): void {
-    const points = Array.from({ length: 16 }, (_, t) => [0, 1, 2, 3].map((c) => clamp01(b[t * 4 + c]!) * 255));
-    let best: { q0: number[]; q1: number[]; p0: number; p1: number; indices: number[]; err: number } | null = null;
-    for (const p0 of [0, 1]) {
-        for (const p1 of [0, 1]) {
-            const quant = (p: number) => (e: number[]) => e.map((v) => ((clamp(Math.round((v - p) / 2), 0, 127) << 1) | p));
-            // The palette interpolates the 8-bit endpoints ((7-bit << 1) | p).
-            const palette = (e0: number[], e1: number[]) => kWeights4.map((w) => e0.map((v, c) => ((64 - w) * v + w * e1[c]! + 32) >> 6));
-            // fitEndpoints quantizes both endpoints alike; refit each with its own p-bit.
-            const fit = fitEndpoints(points, 4, kWeights4.map((w) => w / 64), quant(p0), palette, sq);
-            const e0 = quant(p0)(fit.e0);
-            const e1 = quant(p1)(fit.e1);
-            const pal = palette(e0, e1);
-            let err = 0;
-            const indices = points.map((pt) => {
-                let bi = 0;
-                let be = Infinity;
-                pal.forEach((q, i) => {
-                    const e = sq(pt, q);
-                    if (e < be) {
-                        be = e;
-                        bi = i;
-                    }
-                });
-                err += be;
-                return bi;
-            });
-            if (!best || err < best.err) best = { q0: e0.map((v) => v >> 1), q1: e1.map((v) => v >> 1), p0, p1, indices, err };
+// BC7 partition tables (D3D11 spec; via DirectXTex g_aPartitionTable / g_aFixUp): one digit per texel.
+const kPartitions2 = ["0011001100110011", "0001000100010001", "0111011101110111", "0001001100110111", "0000000100010011", "0011011101111111", "0001001101111111", "0000000100110111", "0000000000010011", "0011011111111111", "0000000101111111", "0000000000010111", "0001011111111111", "0000000011111111", "0000111111111111", "0000000000001111", "0000100011101111", "0111000100000000", "0000000010001110", "0111001100010000", "0011000100000000", "0000100011001110", "0000000010001100", "0111001100110001", "0011000100010000", "0000100010001100", "0110011001100110", "0011011001101100", "0001011111101000", "0000111111110000", "0111000110001110", "0011100110011100", "0101010101010101", "0000111100001111", "0101101001011010", "0011001111001100", "0011110000111100", "0101010110101010", "0110100101101001", "0101101010100101", "0111001111001110", "0001001111001000", "0011001001001100", "0011101111011100", "0110100110010110", "0011110011000011", "0110011010011001", "0000011001100000", "0100111001000000", "0010011100100000", "0000001001110010", "0000010011100100", "0110110010010011", "0011011011001001", "0110001110011100", "0011100111000110", "0110110011001001", "0110001100111001", "0111111010000001", "0001100011100111", "0000111100110011", "0011001111110000", "0010001011101110", "0100010001110111"];
+const kPartitions3 = ["0011001102212222", "0001001122112221", "0000200122112211", "0222002200110111", "0000000011221122", "0011001100220022", "0022002211111111", "0011001122112211", "0000000011112222", "0000111111112222", "0000111122222222", "0012001200120012", "0112011201120112", "0122012201220122", "0011011211221222", "0011200122002220", "0001001101121122", "0111001120012200", "0000112211221122", "0022002200221111", "0111011102220222", "0001000122212221", "0000001101220122", "0000110022102210", "0122012200110000", "0012001211222222", "0110122112210110", "0000011012211221", "0022110211020022", "0110011020022222", "0011012201220011", "0000200022112221", "0000000211221222", "0222002200120011", "0011001200220222", "0120012001200120", "0000111122220000", "0120120120120120", "0120201212010120", "0011220011220011", "0011112222000011", "0101010122222222", "0000000021212121", "0022112200221122", "0022001100220011", "0220122102201221", "0101222222220101", "0000212121212121", "0101010101012222", "0222011102220111", "0002111200021112", "0000211221122112", "0222011101110222", "0002111211120002", "0110011001102222", "0000000021122112", "0110011022222222", "0022001100110022", "0022112211220022", "0000000000002112", "0002000100020001", "0222122202221222", "0101222222222222", "0111201122012220"];
+/** Anchor texel of subset 1 in the two-subset partitions. */
+const kAnchor2 = [15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 2, 8, 2, 2, 8, 8, 15, 2, 8, 2, 2, 8, 8, 2, 2, 15, 15, 6, 8, 2, 8, 15, 15, 2, 8, 2, 2, 2, 15, 15, 6, 6, 2, 6, 8, 15, 15, 2, 2, 15, 15, 15, 15, 15, 2, 2, 15];
+/** Anchor texels of subsets 1 and 2 in the three-subset partitions. */
+const kAnchor3 = [[3, 15], [3, 8], [15, 8], [15, 3], [8, 15], [3, 15], [15, 3], [15, 8], [8, 15], [8, 15], [6, 15], [6, 15], [6, 15], [5, 15], [3, 15], [3, 8], [3, 15], [3, 8], [8, 15], [15, 3], [3, 15], [3, 8], [6, 15], [10, 8], [5, 3], [8, 15], [8, 6], [6, 10], [8, 15], [5, 15], [15, 10], [15, 8], [8, 15], [15, 3], [3, 15], [5, 10], [6, 10], [10, 8], [8, 9], [15, 10], [15, 6], [3, 15], [15, 8], [5, 15], [15, 3], [15, 6], [15, 6], [15, 8], [3, 15], [15, 3], [5, 15], [5, 15], [5, 15], [8, 15], [5, 15], [10, 15], [5, 15], [10, 15], [8, 15], [13, 15], [15, 3], [12, 15], [3, 15], [3, 8]];
+
+/** One BC7 mode's layout: subsets, partition bits, endpoint bits, p-bits and index bits. */
+interface BC7Mode {
+    mode: number;
+    subsets: 1 | 2 | 3;
+    partitionBits: number;
+    colorBits: number;
+    /** 0: RGB only (alpha decodes to 255). */
+    alphaBits: number;
+    pbits: "none" | "shared" | "unique";
+    indexBits: number;
+}
+
+const kBC7Modes: BC7Mode[] = [
+    { mode: 0, subsets: 3, partitionBits: 4, colorBits: 4, alphaBits: 0, pbits: "unique", indexBits: 3 },
+    { mode: 1, subsets: 2, partitionBits: 6, colorBits: 6, alphaBits: 0, pbits: "shared", indexBits: 3 },
+    { mode: 2, subsets: 3, partitionBits: 6, colorBits: 5, alphaBits: 0, pbits: "none", indexBits: 2 },
+    { mode: 3, subsets: 2, partitionBits: 6, colorBits: 7, alphaBits: 0, pbits: "unique", indexBits: 2 },
+    { mode: 6, subsets: 1, partitionBits: 0, colorBits: 7, alphaBits: 7, pbits: "unique", indexBits: 4 },
+    { mode: 7, subsets: 2, partitionBits: 6, colorBits: 5, alphaBits: 5, pbits: "unique", indexBits: 2 },
+];
+
+/** Decoded 8-bit value of an n-bit endpoint component (with its p-bit appended, if any). */
+function bc7Decode(q: number, bits: number, p: number): number {
+    const n = p >= 0 ? bits + 1 : bits;
+    const c = p >= 0 ? (q << 1) | p : q;
+    const v = c << (8 - n);
+    return v | (v >> n);
+}
+
+/** Nearest n-bit component for an 8-bit target (p-bit fixed). */
+function bc7Quantize(v: number, bits: number, p: number): number {
+    const max = (1 << bits) - 1;
+    const guess = Math.round((v / 255) * max);
+    let best = 0;
+    let bestErr = Infinity;
+    for (let q = Math.max(0, guess - 1); q <= Math.min(max, guess + 1); q++) {
+        const e = Math.abs(bc7Decode(q, bits, p) - v);
+        if (e < bestErr) {
+            bestErr = e;
+            best = q;
         }
     }
-    let { q0, q1, p0, p1, indices } = best!;
-    // The anchor (texel 0) index has an implicit 0 top bit: swap endpoints if needed.
-    if (indices[0]! >= 8) {
-        [q0, q1] = [q1, q0];
-        [p0, p1] = [p1, p0];
-        indices = indices.map((i) => 15 - i);
+    return best;
+}
+
+interface BC7Subset {
+    q: [number[], number[]];
+    p: [number, number];
+    indices: number[];
+    err: number;
+}
+
+/** Fits one subset's endpoints, p-bits chosen per endpoint (shared: per subset). */
+function bc7FitSubset(points: number[][], m: BC7Mode, n: number): BC7Subset {
+    const weights = m.indexBits === 2 ? kWeights2 : m.indexBits === 3 ? kWeights3 : kWeights4;
+    const bitsOf = (c: number) => (c < 3 ? m.colorBits : m.alphaBits);
+    const pCombos: [number, number][] = m.pbits === "none" ? [[-1, -1]] : m.pbits === "shared" ? [[0, 0], [1, 1]] : [[0, 0], [0, 1], [1, 0], [1, 1]];
+    const palette = (e0: number[], e1: number[]) => weights.map((w) => e0.map((v, c) => ((64 - w) * v + w * e1[c]! + 32) >> 6));
+    const decodeAll = (q: number[], p: number) => q.map((v, c) => bc7Decode(v, bitsOf(c), p));
+    const quantAll = (e: number[], p: number) => e.map((v, c) => bc7Quantize(clamp(v, 0, 255), bitsOf(c), p));
+    let best: BC7Subset | null = null;
+    for (const [p0, p1] of pCombos) {
+        const fit = fitEndpoints(points, n, weights.map((w) => w / 64), (e) => decodeAll(quantAll(e, p0), p0), palette, sq);
+        // fitEndpoints snaps both endpoints with p0; requantize the second with its own p-bit.
+        const q0 = quantAll(fit.e0, p0);
+        const q1 = quantAll(fit.e1, p1);
+        const pal = palette(decodeAll(q0, p0), decodeAll(q1, p1));
+        let err = 0;
+        const indices = points.map((pt) => {
+            let bi = 0;
+            let be = Infinity;
+            pal.forEach((q, i) => {
+                const e = sq(pt, q);
+                if (e < be) {
+                    be = e;
+                    bi = i;
+                }
+            });
+            err += be;
+            return bi;
+        });
+        if (!best || err < best.err) best = { q: [q0, q1], p: [p0, p1], indices, err };
     }
+    return best!;
+}
+
+/** Residual of the subset's texels about their principal line (the partition-ranking estimate). */
+function lineResidual(points: number[][], n: number): number {
+    if (points.length < 2) return 0;
+    const { mean, axis } = principalAxis(points, n);
+    let r = 0;
+    for (const p of points) {
+        let d = 0;
+        let len2 = 0;
+        for (let c = 0; c < n; c++) {
+            const x = p[c]! - mean[c]!;
+            d += x * axis[c]!;
+            len2 += x * x;
+        }
+        r += len2 - d * d;
+    }
+    return r;
+}
+
+interface BC7Candidate {
+    m: BC7Mode;
+    partition: number;
+    subsets: BC7Subset[];
+    err: number;
+}
+
+const kPartitionsTried = 4;
+
+function encodeBC7Mode(texels: number[][], m: BC7Mode, opaque: boolean): BC7Candidate | null {
+    const n = m.alphaBits > 0 ? 4 : 3;
+    // RGB-only modes decode alpha as 255.
+    if (n === 3 && !opaque) return null;
+    const table = m.subsets === 2 ? kPartitions2 : m.subsets === 3 ? kPartitions3 : ["0000000000000000"];
+    const count = m.subsets === 1 ? 1 : 1 << m.partitionBits;
+    const groups = (part: number) => {
+        const g: number[][][] = Array.from({ length: m.subsets }, () => []);
+        for (let t = 0; t < 16; t++) g[table[part]!.charCodeAt(t) - 48]!.push(texels[t]!);
+        return g;
+    };
+    const ranked = Array.from({ length: count }, (_, part) => ({ part, r: groups(part).reduce((s, g) => s + lineResidual(g, n), 0) }))
+        .sort((a, b) => a.r - b.r)
+        .slice(0, kPartitionsTried);
+    let best: BC7Candidate | null = null;
+    for (const { part } of ranked) {
+        const subsets = groups(part).map((g) => bc7FitSubset(g, m, n));
+        const err = subsets.reduce((s, x) => s + x.err, 0);
+        if (!best || err < best.err) best = { m, partition: part, subsets, err };
+    }
+    return best;
+}
+
+function writeBC7(c: BC7Candidate, dst: Uint8Array): void {
+    const { m, partition } = c;
+    const table = m.subsets === 2 ? kPartitions2 : m.subsets === 3 ? kPartitions3 : ["0000000000000000"];
+    const anchors = m.subsets === 2 ? [0, kAnchor2[partition]!] : m.subsets === 3 ? [0, ...kAnchor3[partition]!] : [0];
+    // Per-texel index, with each subset's anchor forced to a 0 top bit by swapping its endpoints.
+    const cursor = new Array<number>(m.subsets).fill(0);
+    const indices = new Array<number>(16);
+    const top = 1 << (m.indexBits - 1);
+    const flip = c.subsets.map((s, k) => {
+        const anchorSlot = table[partition]!.slice(0, anchors[k]!).split("").filter((d) => Number(d) === k).length;
+        return s.indices[anchorSlot]! >= top;
+    });
+    for (let t = 0; t < 16; t++) {
+        const k = table[partition]!.charCodeAt(t) - 48;
+        const i = c.subsets[k]!.indices[cursor[k]!++]!;
+        indices[t] = flip[k] ? (1 << m.indexBits) - 1 - i : i;
+    }
+    const ends = c.subsets.map((s, k) => (flip[k] ? { q: [s.q[1], s.q[0]], p: [s.p[1], s.p[0]] } : { q: s.q, p: s.p }));
     const w = new BitWriter(dst);
-    w.write(1 << 6, 7); // mode 6
-    for (let c = 0; c < 4; c++) {
-        w.write(q0[c]!, 7);
-        w.write(q1[c]!, 7);
+    w.write(1 << m.mode, m.mode + 1);
+    w.write(partition, m.partitionBits);
+    const channels = m.alphaBits > 0 ? 4 : 3;
+    for (let ch = 0; ch < channels; ch++) {
+        for (const e of ends) {
+            w.write(e.q[0]![ch]!, ch < 3 ? m.colorBits : m.alphaBits);
+            w.write(e.q[1]![ch]!, ch < 3 ? m.colorBits : m.alphaBits);
+        }
     }
-    w.write(p0, 1);
-    w.write(p1, 1);
-    indices.forEach((i, t) => w.write(i, t === 0 ? 3 : 4));
+    if (m.pbits === "unique") for (const e of ends) e.p.forEach((p) => w.write(p, 1));
+    else if (m.pbits === "shared") for (const e of ends) w.write(e.p[0]!, 1);
+    for (let t = 0; t < 16; t++) w.write(indices[t]!, anchors.includes(t) ? m.indexBits - 1 : m.indexBits);
+}
+
+/** Nearest-palette indices of 1..4-channel points and their total squared error. */
+function bc7Assign(points: number[][], pal: number[][]): { indices: number[]; err: number } {
+    let err = 0;
+    const indices = points.map((pt) => {
+        let bi = 0;
+        let be = Infinity;
+        pal.forEach((q, i) => {
+            const e = sq(pt, q);
+            if (e < be) {
+                be = e;
+                bi = i;
+            }
+        });
+        err += be;
+        return bi;
+    });
+    return { indices, err };
+}
+
+/**
+ * Modes 4 and 5: one subset with color and alpha on separate index sets; `rotation` swaps
+ * alpha with R/G/B (the decoder swaps back), mode 4's `idxMode` picks which gets 3-bit indices.
+ */
+function encodeBC7Separate(texels: number[][], mode: 4 | 5, rotation: number, idxMode: number): { err: number; write: (dst: Uint8Array) => void } {
+    const rot = texels.map((p) => {
+        const q = [...p];
+        if (rotation > 0) [q[rotation - 1], q[3]] = [q[3]!, q[rotation - 1]!];
+        return q;
+    });
+    const [colorBits, alphaBits] = mode === 4 ? [5, 6] : [7, 8];
+    const colorW = mode === 4 && idxMode === 1 ? kWeights3 : kWeights2;
+    const alphaW = mode === 4 && idxMode === 0 ? kWeights3 : kWeights2;
+    const palette = (weights: number[]) => (e0: number[], e1: number[]) => weights.map((w) => e0.map((v, c) => ((64 - w) * v + w * e1[c]! + 32) >> 6));
+    const fitPart = (points: number[][], bits: number, weights: number[]) => {
+        const quant = (e: number[]) => e.map((v) => bc7Quantize(clamp(v, 0, 255), bits, -1));
+        const decode = (q: number[]) => q.map((v) => bc7Decode(v, bits, -1));
+        const fit = fitEndpoints(points, points[0]!.length, weights.map((w) => w / 64), (e) => decode(quant(e)), palette(weights), sq);
+        let [q0, q1] = [quant(fit.e0), quant(fit.e1)];
+        let { indices, err } = bc7Assign(points, palette(weights)(decode(q0), decode(q1)));
+        // Texel 0 is the anchor of both index sets.
+        if (indices[0]! >= weights.length / 2) {
+            [q0, q1] = [q1, q0];
+            indices = indices.map((i) => weights.length - 1 - i);
+        }
+        return { q0, q1, indices, err };
+    };
+    const color = fitPart(rot.map((p) => p.slice(0, 3)), colorBits, colorW);
+    const alpha = fitPart(rot.map((p) => [p[3]!]), alphaBits, alphaW);
+    return {
+        err: color.err + alpha.err,
+        write: (dst) => {
+            const w = new BitWriter(dst);
+            w.write(1 << mode, mode + 1);
+            w.write(rotation, 2);
+            if (mode === 4) w.write(idxMode, 1);
+            for (let c = 0; c < 3; c++) {
+                w.write(color.q0[c]!, colorBits);
+                w.write(color.q1[c]!, colorBits);
+            }
+            w.write(alpha.q0[0]!, alphaBits);
+            w.write(alpha.q1[0]!, alphaBits);
+            // The 2-bit index set comes first.
+            const [first, second] = mode === 4 && idxMode === 1 ? [alpha, color] : [color, alpha];
+            const bitsOf = (set: typeof color) => ((set === color ? colorW : alphaW).length === 8 ? 3 : 2);
+            for (const set of [first, second]) set.indices.forEach((i, t) => w.write(i, t === 0 ? bitsOf(set) - 1 : bitsOf(set)));
+        },
+    };
+}
+
+/** Tries every mode and keeps the one with the least squared error. */
+function encodeBC7(b: Float32Array, dst: Uint8Array): void {
+    const texels = Array.from({ length: 16 }, (_, t) => [0, 1, 2, 3].map((c) => clamp01(b[t * 4 + c]!) * 255));
+    const opaque = texels.every((p) => p[3]! >= 254.5);
+    let best: { err: number; write: (dst: Uint8Array) => void } | null = null;
+    for (const m of kBC7Modes) {
+        const c = encodeBC7Mode(opaque && m.alphaBits > 0 ? texels.map((p) => [p[0]!, p[1]!, p[2]!, 255]) : texels, m, opaque);
+        if (c && (!best || c.err < best.err)) best = { err: c.err, write: (d) => writeBC7(c, d) };
+    }
+    for (const mode of [4, 5] as const) {
+        for (let rotation = 0; rotation < 4; rotation++) {
+            for (const idxMode of mode === 4 ? [0, 1] : [0]) {
+                const c = encodeBC7Separate(texels, mode, rotation, idxMode);
+                if (c.err < best!.err) best = c;
+            }
+        }
+    }
+    best!.write(dst);
 }
 
 // --- BC6H mode 11 ---
