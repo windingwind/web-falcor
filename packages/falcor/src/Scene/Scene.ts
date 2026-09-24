@@ -46,6 +46,8 @@ import { kRGLAlbedoLUTSize, type RGLMeasurement } from "./Material/RGLFile.js";
 import type { LightProfile } from "./Lights/LightProfile.js";
 import type { RenderContext } from "../Core/API/RenderContext.js";
 import { assert, RuntimeError } from "../Core/Error.js";
+import { formatByteSize } from "../Utils/StringUtils.js";
+import { getFormatChannelCount } from "../Core/API/Formats.js";
 import type { NDSDFGrid } from "./SDFs/NDSDFGrid.js";
 import { SDFSBS, packSBSGrids, type PackedSBS } from "./SDFs/SDFSBS.js";
 import { SDFSVS } from "./SDFs/SDFSVS.js";
@@ -275,6 +277,88 @@ export interface SceneCurveDesc {
     vertexCache?: { times: number[]; positions: Float32Array[] };
 }
 
+/** Mirrors MaterialSystem::MaterialStats. */
+export interface MaterialStats {
+    materialTypeCount: number;
+    materialCount: number;
+    materialOpaqueCount: number;
+    materialMemoryInBytes: number;
+    textureCount: number;
+    textureCompressedCount: number;
+    textureTexelCount: number;
+    textureTexelChannelCount: number;
+    textureMemoryInBytes: number;
+}
+
+/** Mirrors Scene::SceneStats (see Scene.getSceneStats). */
+export interface SceneStats {
+    meshCount: number;
+    meshInstanceCount: number;
+    meshInstanceOpaqueCount: number;
+    transformCount: number;
+    uniqueTriangleCount: number;
+    uniqueVertexCount: number;
+    instancedTriangleCount: number;
+    instancedVertexCount: number;
+    indexMemoryInBytes: number;
+    vertexMemoryInBytes: number;
+    geometryMemoryInBytes: number;
+    animationMemoryInBytes: number;
+    curveCount: number;
+    curveInstanceCount: number;
+    uniqueCurveSegmentCount: number;
+    uniqueCurvePointCount: number;
+    instancedCurveSegmentCount: number;
+    instancedCurvePointCount: number;
+    curveIndexMemoryInBytes: number;
+    curveVertexMemoryInBytes: number;
+    sdfGridCount: number;
+    sdfGridDescriptorCount: number;
+    sdfGridInstancesCount: number;
+    sdfGridMemoryInBytes: number;
+    customPrimitiveCount: number;
+    materials: MaterialStats;
+    blasGroupCount: number;
+    blasCount: number;
+    blasCompactedCount: number;
+    blasOpaqueCount: number;
+    blasGeometryCount: number;
+    blasOpaqueGeometryCount: number;
+    blasMemoryInBytes: number;
+    blasScratchMemoryInBytes: number;
+    tlasCount: number;
+    tlasMemoryInBytes: number;
+    tlasScratchMemoryInBytes: number;
+    activeLightCount: number;
+    totalLightCount: number;
+    pointLightCount: number;
+    directionalLightCount: number;
+    rectLightCount: number;
+    discLightCount: number;
+    sphereLightCount: number;
+    distantLightCount: number;
+    lightsMemoryInBytes: number;
+    envMapMemoryInBytes: number;
+    emissiveMemoryInBytes: number;
+    gridVolumeCount: number;
+    gridVolumeMemoryInBytes: number;
+    gridCount: number;
+    gridVoxelCount: number;
+    gridMemoryInBytes: number;
+}
+
+/** Mirrors LightCollection::MeshLightStats. */
+export interface MeshLightStats {
+    meshLightCount: number;
+    triangleCount: number;
+    meshesTextured: number;
+    trianglesTextured: number;
+    trianglesCulled: number;
+    trianglesActiveUniform: number;
+    trianglesActiveTextured: number;
+    trianglesActive: number;
+}
+
 export interface SceneMaterialDesc {
     /** Material name; used by Scene.getMaterial(name). */
     name?: string;
@@ -372,15 +456,257 @@ export class Scene {
     }
     readonly gridVolumes: import("./Volume/GridVolume.js").GridVolume[] = [];
 
-    /** Scene size counters (diagnostics; mirrors Scene::getSceneStats subset). */
-    get stats(): { instances: number; materials: number; textures: number; vertices: number; triangles: number } {
+    /**
+     * Python `scene.stats`: native's flat SceneStats dict (materials fields inlined), plus the
+     * web's own short counters (instances, materials, textures, vertices, triangles).
+     */
+    get stats(): { instances: number; materials: number; textures: number; vertices: number; triangles: number } & Omit<SceneStats, "materials"> & MaterialStats {
+        const { materials, ...rest } = this.getSceneStats();
         return {
+            ...rest,
+            ...materials,
             instances: this.instanceCount,
             materials: this.materialCount,
             textures: this.textureCount,
             vertices: this.vertexTotal,
             triangles: this.triangleTotal,
         };
+    }
+
+    /**
+     * Mirrors Scene::getSceneStats (native field names). §9: the web has no BLAS/TLAS; its software
+     * BVH is reported as one TLAS-less BLAS group, and memory figures are packed resource sizes.
+     */
+    getSceneStats(): SceneStats {
+        const size = (...names: string[]) => names.reduce((sum, n) => sum + (this.buffers[n]?.size ?? 0), 0);
+        const meshes = this.lcMeshes;
+        const firstOfMesh = new Map<number, number>();
+        this.meshIDs.forEach((id, i) => firstOfMesh.has(id) || firstOfMesh.set(id, i));
+        const opaque = this.materialDescs.map((m) => {
+            const header: MaterialHeaderDesc = { materialType: MaterialType.Standard, ...m.header };
+            return (header.alphaMode ?? this.deriveAlphaMode(header, m.basic)) === AlphaMode.Opaque;
+        });
+        const lightsOf = (t: LightType) => this.analyticLights.filter((l) => l.type === t).length;
+        // Textures as loaded (TextureManager sources); memory is what the bucket arrays take.
+        const tm = this.lcTextureManager;
+        let texelCount = 0, channelCount = 0, compressed = 0;
+        for (let id = 0; id < tm.count; id++) {
+            const src = tm.getSource(id)!;
+            const c = src.compressed;
+            const levels = c ? c.levels.length : src.mips ? src.mips.length + 1 : Math.floor(Math.log2(Math.max(src.bitmap.width, src.bitmap.height))) + 1;
+            const [w, h] = c ? [c.width, c.height] : [src.bitmap.width, src.bitmap.height];
+            let texels = 0;
+            for (let mip = 0; mip < levels; mip++) texels += Math.max(1, w >> mip) * Math.max(1, h >> mip);
+            texelCount += texels;
+            channelCount += texels * (c ? getFormatChannelCount(c.format) : 4);
+            if (c) compressed++;
+        }
+        const grids = [...new Set(this.gridVolumes.flatMap((v) => [...v.getGridSequence("density"), ...v.getGridSequence("emission")]))];
+        const curveSegments = this.sceneCurves.reduce((n, c) => n + c.indices.length, 0);
+        const curvePoints = this.sceneCurves.reduce((n, c) => n + c.positionsRadii.length / 4, 0);
+        const bvhMemory = size("bvhNodes");
+        return {
+            meshCount: firstOfMesh.size,
+            meshInstanceCount: meshes.length,
+            meshInstanceOpaqueCount: meshes.filter((m) => opaque[m.materialID] ?? true).length,
+            transformCount: meshes.length + this.sdfGrids.length + this.sceneCurves.length,
+            uniqueTriangleCount: [...firstOfMesh.values()].reduce((n, i) => n + meshes[i]!.indices.length / 3, 0),
+            uniqueVertexCount: [...firstOfMesh.values()].reduce((n, i) => n + meshes[i]!.vertices.length, 0),
+            instancedTriangleCount: this.triangleTotal,
+            instancedVertexCount: this.vertexTotal,
+            indexMemoryInBytes: size("indices"),
+            vertexMemoryInBytes: size("vertices", "prevVertices"),
+            geometryMemoryInBytes: size("meshes", "geometryInstances", "drawIDs"),
+            animationMemoryInBytes: size("worldMatrices", "prevWorldMatrices"),
+            curveCount: this.sceneCurves.length,
+            curveInstanceCount: this.sceneCurves.length,
+            uniqueCurveSegmentCount: curveSegments,
+            uniqueCurvePointCount: curvePoints,
+            instancedCurveSegmentCount: curveSegments,
+            instancedCurvePointCount: curvePoints,
+            curveIndexMemoryInBytes: size("curveIndices"),
+            curveVertexMemoryInBytes: size("curveVertices", "curves"),
+            sdfGridCount: new Set(this.sdfGrids.map((d) => d.grid)).size,
+            sdfGridDescriptorCount: new Set(this.sdfGrids.map((d) => d.grid)).size,
+            sdfGridInstancesCount: this.sdfGrids.length,
+            sdfGridMemoryInBytes: Object.keys(this.buffers).filter((n) => n.startsWith("sdf")).reduce((n, k) => n + this.buffers[k]!.size, 0) + (this.sdfAtlasTexture?.getTextureSizeInBytes() ?? 0),
+            customPrimitiveCount: this.customPrimitives.length,
+            materials: {
+                materialTypeCount: this.materialTypes.size,
+                materialCount: this.materialDescs.length,
+                materialOpaqueCount: opaque.filter(Boolean).length,
+                materialMemoryInBytes: size("materialData"),
+                textureCount: tm.count,
+                textureCompressedCount: compressed,
+                textureTexelCount: texelCount,
+                textureTexelChannelCount: channelCount,
+                textureMemoryInBytes: this.builtTextureCount > 0 ? this.textureBuckets.reduce((n, t) => n + t.getTextureSizeInBytes(), 0) : 0,
+            },
+            blasGroupCount: bvhMemory > 0 ? 1 : 0,
+            blasCount: bvhMemory > 0 ? 1 : 0,
+            blasCompactedCount: 0,
+            blasOpaqueCount: bvhMemory > 0 && meshes.every((m) => opaque[m.materialID] ?? true) ? 1 : 0,
+            blasGeometryCount: meshes.length,
+            blasOpaqueGeometryCount: meshes.filter((m) => opaque[m.materialID] ?? true).length,
+            blasMemoryInBytes: bvhMemory,
+            blasScratchMemoryInBytes: 0,
+            tlasCount: 0,
+            tlasMemoryInBytes: 0,
+            tlasScratchMemoryInBytes: 0,
+            activeLightCount: this.analyticLights.length,
+            totalLightCount: this.analyticLights.length,
+            pointLightCount: lightsOf(LightType.Point),
+            directionalLightCount: lightsOf(LightType.Directional),
+            rectLightCount: lightsOf(LightType.Rect),
+            discLightCount: lightsOf(LightType.Disc),
+            sphereLightCount: lightsOf(LightType.Sphere),
+            distantLightCount: lightsOf(LightType.Distant),
+            lightsMemoryInBytes: size("lights"),
+            envMapMemoryInBytes: this.envMap?.texture.getTextureSizeInBytes() ?? 0,
+            emissiveMemoryInBytes: size("emissiveTriangles", "emissiveFlux", "emissiveActiveTriangles", "emissiveTriToActive", "emissiveMeshData", "emissivePerMeshInstanceOffset"),
+            gridVolumeCount: this.gridVolumes.length,
+            gridVolumeMemoryInBytes: this.gridVolumes.length > 0 ? size("gridVolumesData") : 0,
+            gridCount: grids.length,
+            gridVoxelCount: grids.reduce((n, g) => n + g.voxelCount, 0),
+            gridMemoryInBytes: grids.reduce((n, g) => n + g.gridBuffer.byteLength, 0),
+        };
+    }
+
+    /** Mirrors LightCollection::getStats (MeshLightStats). */
+    getMeshLightStats(): MeshLightStats {
+        const stats: MeshLightStats = { meshLightCount: this.emissiveMeshCount, triangleCount: this.emissiveTriangleCount, meshesTextured: 0, trianglesTextured: 0, trianglesCulled: 0, trianglesActiveUniform: 0, trianglesActiveTextured: 0, trianglesActive: 0 };
+        const textured = (materialID: number) => this.materialDescs[materialID]?.basic.texEmissive !== undefined;
+        for (let i = 0; i < this.emissiveMeshCount; i++) {
+            const [triOffset, triCount, materialID] = [this.emissiveMeshData[i * 4 + 1]!, this.emissiveMeshData[i * 4 + 2]!, this.emissiveMeshData[i * 4 + 3]!];
+            if (textured(materialID)) {
+                stats.meshesTextured++;
+                stats.trianglesTextured += triCount;
+            }
+            for (let t = triOffset; t < triOffset + triCount; t++) {
+                if (this.emissiveFluxes[t] === 0) stats.trianglesCulled++;
+                else if (textured(materialID)) stats.trianglesActiveTextured++;
+                else stats.trianglesActiveUniform++;
+            }
+        }
+        stats.trianglesActive = stats.trianglesActiveUniform + stats.trianglesActiveTextured;
+        return stats;
+    }
+
+    /** The "Statistics" text of Scene::renderUI. */
+    getSceneStatsText(): string {
+        const s = this.getSceneStats();
+        const m = s.materials;
+        const b = formatByteSize;
+        const bounds = this.worldBounds;
+        const total =
+            s.indexMemoryInBytes + s.vertexMemoryInBytes + s.geometryMemoryInBytes + s.animationMemoryInBytes + s.curveIndexMemoryInBytes + s.curveVertexMemoryInBytes + s.sdfGridMemoryInBytes +
+            m.materialMemoryInBytes + m.textureMemoryInBytes + s.blasMemoryInBytes + s.blasScratchMemoryInBytes + s.tlasMemoryInBytes + s.tlasScratchMemoryInBytes +
+            s.lightsMemoryInBytes + s.envMapMemoryInBytes + s.emissiveMemoryInBytes + s.gridVolumeMemoryInBytes + s.gridMemoryInBytes;
+        const lines = [
+            `Path: ${this.importPaths.at(-1) ?? ""}`,
+            `Bounds: (${bounds?.min.join(",") ?? "0,0,0"})-(${bounds?.max.join(",") ?? "0,0,0"})`,
+            `Total scene memory: ${b(total)}`,
+            "Geometry stats:",
+            `  Mesh count: ${s.meshCount}`,
+            `  Mesh instance count (total): ${s.meshInstanceCount}`,
+            `  Mesh instance count (opaque): ${s.meshInstanceOpaqueCount}`,
+            `  Mesh instance count (non-opaque): ${s.meshInstanceCount - s.meshInstanceOpaqueCount}`,
+            `  Transform matrix count: ${s.transformCount}`,
+            `  Unique triangle count: ${s.uniqueTriangleCount}`,
+            `  Unique vertex count: ${s.uniqueVertexCount}`,
+            `  Instanced triangle count: ${s.instancedTriangleCount}`,
+            `  Instanced vertex count: ${s.instancedVertexCount}`,
+            `  Index  buffer memory: ${b(s.indexMemoryInBytes)}`,
+            `  Vertex buffer memory: ${b(s.vertexMemoryInBytes)}`,
+            `  Geometry data memory: ${b(s.geometryMemoryInBytes)}`,
+            `  Animation data memory: ${b(s.animationMemoryInBytes)}`,
+            `  Curve count: ${s.curveCount}`,
+            `  Curve instance count: ${s.curveInstanceCount}`,
+            `  Unique curve segment count: ${s.uniqueCurveSegmentCount}`,
+            `  Unique curve point count: ${s.uniqueCurvePointCount}`,
+            `  Instanced curve segment count: ${s.instancedCurveSegmentCount}`,
+            `  Instanced curve point count: ${s.instancedCurvePointCount}`,
+            `  Curve index buffer memory: ${b(s.curveIndexMemoryInBytes)}`,
+            `  Curve vertex buffer memory: ${b(s.curveVertexMemoryInBytes)}`,
+            `  SDF grid count: ${s.sdfGridCount}`,
+            `  SDF grid descriptor count: ${s.sdfGridDescriptorCount}`,
+            `  SDF grid instances count: ${s.sdfGridInstancesCount}`,
+            `  SDF grid memory: ${b(s.sdfGridMemoryInBytes)}`,
+            `  Custom primitive count: ${s.customPrimitiveCount}`,
+            "",
+            "Raytracing stats (software BVH):",
+            `  BLAS groups: ${s.blasGroupCount}`,
+            `  BLAS count (total): ${s.blasCount}`,
+            `  BLAS count (compacted): ${s.blasCompactedCount}`,
+            `  BLAS count (opaque): ${s.blasOpaqueCount}`,
+            `  BLAS count (non-opaque): ${s.blasCount - s.blasOpaqueCount}`,
+            `  BLAS geometries (total): ${s.blasGeometryCount}`,
+            `  BLAS geometries (opaque): ${s.blasOpaqueGeometryCount}`,
+            `  BLAS geometries (non-opaque): ${s.blasGeometryCount - s.blasOpaqueGeometryCount}`,
+            `  BLAS memory (final): ${b(s.blasMemoryInBytes)}`,
+            `  BLAS memory (scratch): ${b(s.blasScratchMemoryInBytes)}`,
+            `  TLAS count: ${s.tlasCount}`,
+            `  TLAS memory (final): ${b(s.tlasMemoryInBytes)}`,
+            `  TLAS memory (scratch): ${b(s.tlasScratchMemoryInBytes)}`,
+            "",
+            "Materials stats:",
+            `  Material types: ${m.materialTypeCount}`,
+            `  Material count (total): ${m.materialCount}`,
+            `  Material count (opaque): ${m.materialOpaqueCount}`,
+            `  Material count (non-opaque): ${m.materialCount - m.materialOpaqueCount}`,
+            `  Material memory: ${b(m.materialMemoryInBytes)}`,
+            `  Texture count (total): ${m.textureCount}`,
+            `  Texture count (compressed): ${m.textureCompressedCount}`,
+            `  Texture texel count: ${m.textureTexelCount}`,
+            `  Texture memory: ${b(m.textureMemoryInBytes)}`,
+            `  Bytes/texel (average): ${(m.textureTexelCount > 0 ? m.textureMemoryInBytes / m.textureTexelCount : 0).toFixed(2)}`,
+            // Native divides by zero here for texture-less scenes (prints nan).
+            `  Channels/texel (average): ${(m.textureTexelChannelCount / m.textureTexelCount).toFixed(2)}`,
+            "",
+            "Analytic light stats:",
+            `  Active light count: ${s.activeLightCount}`,
+            `  Total light count: ${s.totalLightCount}`,
+            `  Point light count: ${s.pointLightCount}`,
+            `  Directional light count: ${s.directionalLightCount}`,
+            `  Rect light count: ${s.rectLightCount}`,
+            `  Disc light count: ${s.discLightCount}`,
+            `  Sphere light count: ${s.sphereLightCount}`,
+            `  Distant light count: ${s.distantLightCount}`,
+            `  Analytic lights memory: ${b(s.lightsMemoryInBytes)}`,
+            "",
+            "Emissive light stats:",
+        ];
+        if (this.emissiveMeshCount > 0) {
+            const e = this.getMeshLightStats();
+            lines.push(
+                `  Active triangle count: ${e.trianglesActive}`,
+                `  Active uniform triangle count: ${e.trianglesActiveUniform}`,
+                `  Active textured triangle count: ${e.trianglesActiveTextured}`,
+                "  Details:",
+                `    Total mesh count: ${e.meshLightCount}`,
+                `    Textured mesh count: ${e.meshesTextured}`,
+                `    Total triangle count: ${e.triangleCount}`,
+                `    Texture triangle count: ${e.trianglesTextured}`,
+                `    Culled triangle count: ${e.trianglesCulled}`,
+                `  Emissive lights memory: ${b(s.emissiveMemoryInBytes)}`,
+            );
+        } else lines.push("  N/A");
+        lines.push("", "Environment map:");
+        if (this.envMap) lines.push(`  Filename: ${this.envMap.path}`, `  Resolution: ${this.envMap.texture.width}x${this.envMap.texture.height}`, `  Texture memory: ${b(s.envMapMemoryInBytes)}`);
+        else lines.push("  N/A");
+        lines.push(
+            "",
+            "Grid volume stats:",
+            `  Grid volume count: ${s.gridVolumeCount}`,
+            `  Grid volume memory: ${b(s.gridVolumeMemoryInBytes)}`,
+            "",
+            "Grid stats:",
+            `  Grid count: ${s.gridCount}`,
+            `  Grid voxel count: ${s.gridVoxelCount}`,
+            `  Grid memory: ${b(s.gridMemoryInBytes)}`,
+            "",
+        );
+        return lines.join("\n");
     }
 
     /** World-space geometry AABB (BVH root); null for geometry-less scenes. */
@@ -422,6 +748,8 @@ export class Scene {
     private lightCount = 0;
     /** Analytic light descriptors (RTXDI needs types/order). */
     readonly analyticLights: AnalyticLight[] = [];
+    /** Mirrors Scene::getImportPaths: the scene file, then nested imports. */
+    readonly importPaths: string[] = [];
     emissiveActiveTriangleCount = 0;
     private bvhTrisOffset = 0;
     /** Last animated-frame BVH, refit on the next animation step. */
@@ -477,6 +805,8 @@ export class Scene {
     private lcTextureManager: TextureManager = new TextureManager();
     private emissiveTriangleCount = 0;
     private emissiveMeshCount = 0;
+    /** MeshLightData per mesh light: instance, triangle offset, triangle count, material. */
+    private emissiveMeshData: Uint32Array = new Uint32Array(0);
     /** Bumped whenever the LightCollection buffers are rebuilt (native ILightCollection::UpdateFlags). */
     emissiveVersion = 0;
     /** Emissive-mesh world matrices of the last animate() (change detection, mirrors isMatrixChanged). */
@@ -1144,6 +1474,7 @@ export class Scene {
         this.emissiveTriangleCount = lc.triangleCount;
         this.emissiveActiveTriangleCount = lc.activeTriangles.length;
         this.emissiveMeshCount = lc.meshCount;
+        this.emissiveMeshData = lc.meshData;
         this.emissiveFluxes = new Float32Array(lc.triangleCount);
         const fluxView = new DataView(lc.fluxData);
         for (let i = 0; i < lc.triangleCount; i++) this.emissiveFluxes[i] = fluxView.getFloat32(i * 32, true);

@@ -90,10 +90,11 @@ export async function runMogwaiSource(device: Device, source: string, dirUrl: st
                 const options = { flags: cmd.flags };
                 // Mogwai::loadScene: pyscenes run, pbrt parses, everything else goes through the importers.
                 scene = lower.endsWith(".pyscene")
-                    ? await runSceneScript(device, await (await fetch(url)).text(), baseUrl, options)
+                    ? await runSceneScript(device, await (await fetch(url)).text(), baseUrl, { ...options, path: url })
                     : lower.endsWith(".pbrt")
                       ? await runPbrtScene(device, await (await fetch(url)).text(), baseUrl, options)
                       : await runSceneScript(device, `sceneBuilder.importScene(${JSON.stringify(url.slice(baseUrl.length + 1))})`, baseUrl, options);
+                if (scene.importPaths[0] !== url) scene.importPaths.unshift(url);
                 scene.camera.setAspectRatio(size[0] / size[1]);
                 for (const g of graphs) g.setScene(scene);
                 break;

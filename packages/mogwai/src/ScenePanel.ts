@@ -1,7 +1,7 @@
 // Scene panel mirroring Scene::renderUI (camera, lights, materials, env map,
 // animation) on the DOM. Edits go through the runtime-edit API
 // (camera setters, Scene.updateLights / updateMaterial) and restart accumulation.
-import { LightType, MaterialType, float3, float4, type Scene } from "@web-falcor/falcor";
+import { LightType, Logger, MaterialType, float3, float4, type Scene } from "@web-falcor/falcor";
 
 export interface ScenePanelHooks {
     /** Called after any edit (viewer restarts accumulation). */
@@ -317,6 +317,24 @@ export function buildScenePanel(container: HTMLElement, scene: Scene | null, hoo
         });
         g.root.appendChild(body);
         render();
+    }
+
+    // Mirrors Scene::renderUI "Statistics"; the text is refreshed whenever the group opens.
+    {
+        const g = ui.group("Statistics");
+        // Not g.button: printing must not restart accumulation.
+        const print = document.createElement("button");
+        print.textContent = "Print to log";
+        print.onclick = () => Logger.info("\n" + scene.getSceneStatsText());
+        g.root.appendChild(print);
+        const pre = document.createElement("pre");
+        pre.className = "scene-stats";
+        pre.style.margin = "4px 0";
+        g.root.appendChild(pre);
+        const details = g.root as HTMLDetailsElement;
+        details.addEventListener("toggle", () => {
+            if (details.open) pre.textContent = scene.getSceneStatsText();
+        });
     }
     return true;
 }

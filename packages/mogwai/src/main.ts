@@ -84,7 +84,8 @@ async function loadScene(state: ViewerState, url: string, baseUrl: string): Prom
         ? await runPbrtScene(state.device, source, baseUrl)
         : lower.endsWith(".xml") // Mitsuba scenes are the only .xml we load
           ? await runMitsubaScene(state.device, source, baseUrl)
-          : await runSceneScript(state.device, source, baseUrl, { cache: true }); // OPFS scene cache: fast reloads
+          : await runSceneScript(state.device, source, baseUrl, { cache: true, path: url }); // OPFS scene cache: fast reloads
+    if (scene.importPaths[0] !== url) scene.importPaths.unshift(url);
     scene.camera.setAspectRatio(canvas.width / canvas.height);
     state.scene = scene;
     state.scenePath = url;

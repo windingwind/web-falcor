@@ -36,6 +36,8 @@ export class EnvMap {
     readonly texture: Texture;
     readonly sampler: Sampler;
     intensity = 1;
+    /** Source file (EnvMap::getPath); "" when built from memory. */
+    path = "";
     tint: [number, number, number] = [1, 1, 1];
     private transform = float4x4.identity();
     private invTransform = float4x4.identity();
@@ -86,7 +88,9 @@ export class EnvMap {
     static async createFromUrl(device: Device, url: string, options: EnvMapLoadOptions = {}): Promise<EnvMap> {
         const res = await fetch(url);
         if (!res.ok) throw new RuntimeError(`Failed to fetch env map '${url}' (${res.status})`);
-        return EnvMap.createFromBytes(device, new Uint8Array(await res.arrayBuffer()), url.toLowerCase().endsWith(".exr"), options);
+        const env = EnvMap.createFromBytes(device, new Uint8Array(await res.arrayBuffer()), url.toLowerCase().endsWith(".exr"), options);
+        env.path = url;
+        return env;
     }
 
     /** Decodes an encoded .hdr/.exr file; retains the bytes for the scene cache. */

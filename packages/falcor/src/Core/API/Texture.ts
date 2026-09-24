@@ -157,6 +157,28 @@ export class Texture extends Resource {
         }
     }
 
+    /** Mirrors Texture::getTexelCount: all mips and array slices. */
+    getTexelCount(): number {
+        let count = 0;
+        for (let mip = 0; mip < this.mipCount; mip++) {
+            const d = this.type === ResourceType.Texture3D ? Math.max(1, this.depth >> mip) : 1;
+            count += Math.max(1, this.width >> mip) * Math.max(1, this.height >> mip) * d;
+        }
+        return count * this.arraySize * (this.type === ResourceType.TextureCube ? 6 : 1);
+    }
+
+    /** Mirrors Texture::getTextureSizeInBytes. §9: WebGPU reports no allocation size, so this is the packed size. */
+    getTextureSizeInBytes(): number {
+        const bpb = getFormatBytesPerBlock(this.format);
+        const blockDim = isCompressedFormat(this.format) ? 4 : 1;
+        let bytes = 0;
+        for (let mip = 0; mip < this.mipCount; mip++) {
+            const d = this.type === ResourceType.Texture3D ? Math.max(1, this.depth >> mip) : 1;
+            bytes += Math.ceil(Math.max(1, this.width >> mip) / blockDim) * Math.ceil(Math.max(1, this.height >> mip) / blockDim) * d * bpb;
+        }
+        return bytes * this.arraySize * (this.type === ResourceType.TextureCube ? 6 : 1) * Math.max(1, this.sampleCount);
+    }
+
     /** Mirrors Texture::setSubresourceBlob: uploads one mip of one array slice. */
     setSubresourceBlob(mipLevel: number, arraySlice: number, data: ArrayBufferView | ArrayBuffer): void {
         const w = Math.max(1, this.width >> mipLevel);

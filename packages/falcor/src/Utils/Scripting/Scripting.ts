@@ -399,12 +399,16 @@ export function wasSceneLoadedFromCache(): boolean {
 export interface SceneScriptOptions {
     cache?: boolean;
     flags?: SceneBuilderFlags | number;
+    /** The script's own file; heads Scene.importPaths as SceneBuilder(path) does natively. */
+    path?: string;
 }
 
 export async function runSceneScript(device: Device, source: string, baseUrl: string, options?: SceneScriptOptions): Promise<Scene> {
     if (!pyodide) throw new RuntimeError("Call initScripting() first");
     sceneLoadedFromCache = false;
-    return withScriptSearchPath(baseUrl, () => runSceneScriptInternal(device, source, baseUrl, options));
+    const scene = await withScriptSearchPath(baseUrl, () => runSceneScriptInternal(device, source, baseUrl, options));
+    if (options?.path) scene.importPaths.unshift(options.path);
+    return scene;
 }
 
 async function runSceneScriptInternal(device: Device, source: string, baseUrl: string, options?: SceneScriptOptions): Promise<Scene> {

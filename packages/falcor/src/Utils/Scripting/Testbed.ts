@@ -138,7 +138,7 @@ export class Testbed {
         const url = path.startsWith("/") ? path : await AssetResolver.getDefaultResolver().resolvePath(path, AssetCategory.Scene);
         const baseUrl = url.slice(0, url.lastIndexOf("/"));
         this.sceneBaseUrl = baseUrl;
-        this.scene = await runSceneScript(this.device, await (await fetch(url)).text(), baseUrl, { flags: buildFlags });
+        this.scene = await runSceneScript(this.device, await (await fetch(url)).text(), baseUrl, { flags: buildFlags, path: url });
         if (this.renderGraph) {
             this.renderGraph.setScene(this.scene);
             this.graphNeedsInit = true;

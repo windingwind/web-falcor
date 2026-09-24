@@ -1065,11 +1065,13 @@ export class SceneBuilderBridge {
         const importedLights: AnalyticLight[] = []; // lights from imported assets (FBX)
 
         const importedMaterialNames: string[] = [];
+        const importPaths: string[] = []; // Scene::getImportPaths, nested imports in order
         const curves: import("./Scene.js").SceneCurveDesc[] = [];
         let clipOffset = 0; // clip ordinals accumulate across imports (native Animation list order)
         for (const cmd of this.commands) {
             if (cmd.kind === "import") {
                 const url = await resolveAssetUrl(cmd.path, baseUrl, AssetCategory.Scene, this.assetResolver);
+                importPaths.push(url);
                 const res = await fetch(url);
                 if (!res.ok) throw new RuntimeError(`SceneBuilder: Can't find scene file '${cmd.path}' (tried '${url}', ${res.status})`);
                 const bytes = new Uint8Array(await res.arrayBuffer());
@@ -1416,6 +1418,7 @@ export class SceneBuilderBridge {
         }
         const scene = await Scene.create(device, meshes, materials, lights, textureManager, sdfGrids, nodes, animations, cameraNodeID, weightTracks, curves);
         for (const c of this.customPrimitives) scene.addCustomPrimitive(c.userID, c.aabb);
+        scene.importPaths.push(...importPaths);
         // Snapshot for the scene cache (v4: every scene class; grid volumes are
         // read off scene.gridVolumes after finalize, env map off the scene).
         this.lastSceneArgs = {
