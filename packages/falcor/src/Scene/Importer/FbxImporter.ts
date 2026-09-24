@@ -20,7 +20,7 @@ import { generateTangents } from "../TangentSpace.js";
 import { MaterialType, ShadingModel, packTextureHandle, TextureHandleMode } from "../Material/MaterialData.js";
 import { getTextureSlotSrgb } from "../Material/TextureSlots.js";
 import { decodeTGA } from "../../Utils/Image/TGADecoder.js";
-import { decodeDDSToRGBA } from "./DDSLoader.js";
+import { ddsCompressedPayload, decodeDDSToRGBA } from "./DDSLoader.js";
 import type { SceneMaterialDesc, SceneMeshDesc } from "../Scene.js";
 import { decomposeTRS, type SceneNode, type AnimationChannel, type SkinDesc } from "../Animation/SceneAnimation.js";
 import { LightType, type AnalyticLight, type StaticVertex } from "../SceneData.js";
@@ -317,6 +317,8 @@ export class FbxImporter {
             // texture-array path, and TGA goes through the CPU decoder. Other
             // undecodable formats skip so geometry loads with a base colour.
             let bitmap: ImageBitmap;
+            let compressed: ReturnType<typeof ddsCompressedPayload>;
+            let ddsBytes: Uint8Array | undefined;
             try {
                 if (ext === ".tga") {
                     // Browsers cannot decode TGA; native reads it through FreeImage.
@@ -326,7 +328,11 @@ export class FbxImporter {
                         colorSpaceConversion: "none",
                     });
                 } else if (ext === ".dds") {
-                    const { width, height, rgba } = decodeDDSToRGBA(await res.arrayBuffer(), srgb, 512);
+                    const buffer = await res.arrayBuffer();
+                    // The GPU gets the full-resolution BC chain; the capped decode serves CPU analysis.
+                    compressed = ddsCompressedPayload(buffer, srgb);
+                    ddsBytes = new Uint8Array(buffer);
+                    const { width, height, rgba } = decodeDDSToRGBA(buffer, srgb, 512);
                     // ImageData holds raw RGBA already — no colour-space/premultiply
                     // decode step applies, so createImageBitmap needs no options.
                     const imageData = new ImageData(new Uint8ClampedArray(rgba), width, height);
@@ -338,7 +344,7 @@ export class FbxImporter {
                 skippedFormats.add(ext);
                 return undefined;
             }
-            const id = textureManager.addTexture({ bitmap, srgb });
+            const id = textureManager.addTexture({ bitmap, srgb, compressed, bytes: ddsBytes, dds: ddsBytes !== undefined });
             textureIDs.set(key, id);
             return id;
         };
@@ -553,6 +559,16 @@ export class FbxImporter {
                 aspectRatio: C.aspect || undefined,
             };
             const nodeID = nameToNodeID.get(C.name);
+            const nodeWorld = nameToWorld.get(C.name);
+            if (nodeWorld && !(nodeID !== undefined && animations.some((a) => a.nodeID === nodeID))) {
+                // Static cameras too take their node's transform (Camera::updateFromAnimation of
+                // the node world * the camera's local view-matrix node): up, -forward, position columns.
+                const g = mulMat(nodeWorld, cam.getViewMatrix());
+                const pos = new float3(g.get(0, 3), g.get(1, 3), g.get(2, 3));
+                imported.pose.position = pos;
+                imported.pose.up = new float3(g.get(0, 1), g.get(1, 1), g.get(2, 1));
+                imported.pose.target = new float3(pos.x - g.get(0, 2), pos.y - g.get(1, 2), pos.z - g.get(2, 2));
+            }
             if (nodeID !== undefined && animations.some((a) => a.nodeID === nodeID)) {
                 imported.nodeID = nodes.length;
                 nodes.push({ parent: nodeID, ...decomposeTRS(cam.getViewMatrix()) });

@@ -18,6 +18,7 @@ import { GltfImporter } from "./Importer/GltfImporter.js";
 import { FbxImporter, kAssimpSceneExtensions, objMaterialLibraries, type ImportedCamera } from "./Importer/FbxImporter.js";
 import { UsdImporter } from "./Importer/UsdImporter.js";
 import { convertToLinearSweptSphere, convertToPolytube } from "./Curves/CurveTessellation.js";
+import { optimizeMaterialTextures } from "./Material/MaterialOptimizer.js";
 import { TextureManager } from "./Material/TextureManager.js";
 import { EnvMap } from "./Lights/EnvMap.js";
 import { generateTangents } from "./TangentSpace.js";
@@ -327,7 +328,9 @@ export class MaterialBridge {
                         : ext === ".dds"
                           ? await decodeDdsToBitmap(bytes, url, device)
                           : await createImageBitmap(blob, { colorSpaceConversion: "none" });
-                this.assignTextureHandle(t.slot, packTextureHandle(TextureHandleMode.Texture, tm.addTexture({ bitmap, srgb, bytes })));
+                // DDS: the GPU gets the full-resolution BC chain in its own format.
+                const compressed = ext === ".dds" ? (await import("./Importer/DDSLoader.js")).ddsCompressedPayload(bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer, srgb) : undefined;
+                this.assignTextureHandle(t.slot, packTextureHandle(TextureHandleMode.Texture, tm.addTexture({ bitmap, srgb, bytes, compressed, dds: ext === ".dds" })));
             } catch (e) {
                 Logger.warning(`MaterialTextureLoader: failed to load texture '${t.path}' for material '${this.name}': ${(e as Error).message}`);
             }
@@ -1392,6 +1395,8 @@ export class SceneBuilderBridge {
         // The scene animates one camera node: the first imported camera that has one.
         const animatedCamera = this.importedCameras.findIndex((c) => c.nodeID !== undefined);
         const cameraNodeID = animatedCamera >= 0 ? this.importedCameras[animatedCamera]!.nodeID : undefined;
+        // MaterialSystem::optimizeMaterials: constant textures become uniform material values.
+        if (!this.hasFlag(SceneBuilderFlags.DontOptimizeMaterials)) optimizeMaterialTextures(materials, textureManager);
         const scene = new Scene(device, meshes, materials, lights, textureManager, sdfGrids, nodes, animations, cameraNodeID, weightTracks, curves);
         for (const c of this.customPrimitives) scene.addCustomPrimitive(c.userID, c.aabb);
         // Snapshot for the scene cache (v4: every scene class; grid volumes are

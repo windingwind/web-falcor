@@ -12,7 +12,7 @@
  * stays sRGB whatever `srgb` says; the flag only promotes linear color formats.
  */
 
-import { ResourceFormat } from "../../Core/API/Formats.js";
+import { ResourceFormat, isCompressedFormat } from "../../Core/API/Formats.js";
 
 const DDS_MAGIC = 0x20534444; // "DDS "
 const fourCC = (a: string) => a.charCodeAt(0) | (a.charCodeAt(1) << 8) | (a.charCodeAt(2) << 16) | (a.charCodeAt(3) << 24);
@@ -304,4 +304,14 @@ export function decodeDDSToRGBA(buffer: ArrayBuffer, srgb: boolean, maxDim = 512
         level = img.levels[img.levels.length - 1]!;
     }
     return { width: level.width, height: level.height, rgba: decodeLevelToRGBA(level.data, img.format, level.width, level.height) };
+}
+
+/**
+ * A block-compressed DDS as a material texture's GPU payload: its full-resolution mip chain in
+ * its own BC format (`srgb` picks the sRGB variant like parseDDS). Undefined for uncompressed files.
+ */
+export function ddsCompressedPayload(buffer: ArrayBuffer, srgb: boolean): { format: ResourceFormat; width: number; height: number; levels: Uint8Array[] } | undefined {
+    const dds = parseDDS(buffer, srgb);
+    if (!isCompressedFormat(dds.format)) return undefined;
+    return { format: dds.format, width: dds.width, height: dds.height, levels: dds.levels.map((l) => l.data) };
 }

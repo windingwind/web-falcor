@@ -71,8 +71,8 @@ gpuTest("SceneCache.cachedSceneRendersIdentically", async ({ device }) => {
         }
         console.error(`# probe ${name}: ${d} diff bytes (${da.length}/${db.length}) ${detail.join(" | ")}`);
     }
-    const texArr = (sc: unknown) => (sc as { textureArray: import("@web-falcor/falcor").Texture }).textureArray;
-    for (let layer = 0; layer < 3; layer++) {
+    const texArr = (sc: unknown) => (sc as { textureBuckets: import("@web-falcor/falcor").Texture[] }).textureBuckets[0]!;
+    for (let layer = 0; layer < Math.min(3, texArr(tex1).gpuTexture.depthOrArrayLayers); layer++) {
         const [ta, tb] = [await ctx.readTextureSubresource(texArr(tex1), 0, layer), await ctx.readTextureSubresource(texArr(tex2), 0, layer)];
         let d = 0;
         for (let i = 0; i < ta.length; i++) if (ta[i] !== tb[i]) d++;

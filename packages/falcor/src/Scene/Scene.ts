@@ -19,7 +19,7 @@ import { Camera } from "./Camera/Camera.js";
 import { float4x4, transpose, inverse } from "../Utils/Math/Matrix.js";
 import { buildBvh, buildAabbBvh, refitBvh, type BvhTriangle } from "./SoftwareRT/Bvh.js";
 import { packLights, LightType, type AnalyticLight } from "./SceneData.js";
-import { TextureManager } from "./Material/TextureManager.js";
+import { TextureManager, kMaxTextureBuckets } from "./Material/TextureManager.js";
 import type { EnvMap } from "./Lights/EnvMap.js";
 import { buildLightCollection } from "./Lights/LightCollection.js";
 import { evaluateGlobals, computeSkinMatrices, skinVertices, sampleMorphWeights, applyMorph, type SceneAnimations, type SceneNode, type AnimationChannel, type SkinDesc, type MorphDesc, type WeightTrack } from "./Animation/SceneAnimation.js";
@@ -363,6 +363,8 @@ export class Scene {
         this.cameraList = cameras;
         this.activeCameraIndex = Math.min(Math.max(active, 0), cameras.length - 1);
         this.animatedCameraIndex = animated;
+        // Native's first scene update poses animated cameras and lights at time 0.
+        if (this.animData && this.hasAnimatedCameraOrLights && this.animationEnabled) this.updateAnimatedCameraAndLights(evaluateGlobals(this.animData, 0));
     }
     readonly gridVolumes: import("./Volume/GridVolume.js").GridVolume[] = [];
 
@@ -388,8 +390,8 @@ export class Scene {
         return this.grid0Stats;
     }
     private buffers: Record<string, Buffer> = {};
-    private textureArray: Texture;
-    private textureArrayLinear: Texture;
+    /** Material texture arrays (TextureManager buckets); the shader binds kMaxTextureBuckets. */
+    private textureBuckets: Texture[];
     private texInfoTexture!: Texture;
     private dummyTexture: Texture;
     /** IES profile shared by materials with `lightProfileEnabled` (MaterialSystem::mpLightProfile). */
@@ -407,6 +409,7 @@ export class Scene {
     /** Mesh vertices/triangles uploaded (Scene::getSceneStats meshVertexCount / meshTriangleCount). */
     private vertexTotal = 0;
     private triangleTotal = 0;
+    private maxPrimitiveCount = 0;
     private textureCount = 1;
     private drawList: { indexCount: number; firstIndex: number; baseVertex: number; firstInstance: number }[] = [];
 
@@ -545,6 +548,8 @@ export class Scene {
         });
         this.vertexTotal = allVertices.length;
         this.triangleTotal = allIndices.length / 3;
+        // HitInfo::init: the largest per-geometry primitive count sizes the primitive-index field.
+        this.maxPrimitiveCount = Math.max(0, ...meshes.map((m) => m.indices.length / 3), ...curves.map((c) => c.indices.length));
         // SDF grid instances append after the triangle instances (they are
         // not in the triangle BVH; SBS/SVS use a separate primitive-AABB BVH).
         this.sdfInstanceFirst = instances.length;
@@ -852,13 +857,11 @@ export class Scene {
         }
         make("gridVolumeDummy", new Uint32Array(64), 256); // GridVolumeData-sized dummy (2x float4x4 + params)
 
-        // Material textures packed into one array (docs §6.2).
+        // Material textures in per-format/size arrays (docs §6.2).
         const packed = textureManager.build(this.device);
-        this.textureArray = packed.array;
-        this.textureArrayLinear = packed.arrayLinear;
-        // Mip chains for texture-LOD (uploads are queue-ordered before the blits).
-        this.textureArray.generateMips(this.device.renderContext);
-        this.textureArrayLinear.generateMips(this.device.renderContext);
+        this.textureBuckets = packed.buckets.map((b) => b.texture);
+        // Mip chains for texture-LOD (uploads are queue-ordered before the blits); BC arrays carry theirs.
+        for (const b of packed.buckets) if (b.generateMips) b.texture.generateMips(this.device.renderContext);
         this.textureCount = Math.max(textureManager.count, 1);
         // 1-row texture (16-storage-buffer budget: frees a slot in every scene-bound kernel).
         this.texInfoTexture = new Texture(this.device, {
@@ -1662,9 +1665,7 @@ export class Scene {
             SCENE_VERTEX_BUFFER_INDEX_BITS: 1,
             HIT_INFO_DEFINES: 1,
             HIT_INFO_USE_COMPRESSION: 0,
-            HIT_INFO_TYPE_BITS: 4,
-            HIT_INFO_INSTANCE_ID_BITS: 16,
-            HIT_INFO_PRIMITIVE_INDEX_BITS: 12,
+            ...this.hitInfoDefines(),
             MATERIAL_SYSTEM_SAMPLER_DESC_COUNT: 16,
             MATERIAL_SYSTEM_TEXTURE_DESC_COUNT: this.textureCount,
             MATERIAL_SYSTEM_BUFFER_DESC_COUNT: 1,
@@ -1955,8 +1956,7 @@ export class Scene {
         materials["materialCount"] = this.materialCount;
         materials["materialData"] = this.buffers["materialData"]!;
         materials["materialSampler0"] = this.sampler;
-        materials["materialTexturesArray"] = this.textureArray;
-        materials["materialTexturesArrayLinear"] = this.textureArrayLinear;
+        for (let i = 0; i < kMaxTextureBuckets; i++) materials[`materialTextures${i}`] = this.textureBuckets[i] ?? this.textureBuckets[0]!;
         (materials["materialTextureUvScale"] as ShaderVar)["tex"] = this.texInfoTexture;
         materials["webfalcorDummyTexture"] = this.dummyTexture;
         try {
@@ -1966,6 +1966,22 @@ export class Scene {
         }
         materials["materialBuffer0"] = this.buffers["materialBuffer0"]!;
         materials["materialTexture3D0"] = this.texture3D;
+    }
+
+    /**
+     * HitInfo::init's bit allocation (128-bit format): hit type, instance ID over every geometry
+     * instance, primitive index over the largest mesh/curve (SDF grids keep their primitive-ID bits).
+     */
+    private hitInfoDefines(): { HIT_INFO_TYPE_BITS: number; HIT_INFO_INSTANCE_ID_BITS: number; HIT_INFO_PRIMITIVE_INDEX_BITS: number } {
+        const allocateBits = (count: number) => (count <= 1 ? 0 : Math.floor(Math.log2(count - 1)) + 1);
+        const kHitTypeCount = 7;
+        const instances = this.instanceCount + this.sdfGrids.length + this.sceneCurves.length + this.customPrimitives.length;
+        let primitiveBits = allocateBits(this.maxPrimitiveCount);
+        for (const d of this.sdfGrids) primitiveBits = Math.max(primitiveBits, 12, "maxPrimitiveIDBits" in d.grid ? (d.grid as { maxPrimitiveIDBits: number }).maxPrimitiveIDBits : 0);
+        const typeBits = allocateBits(kHitTypeCount);
+        const instanceBits = allocateBits(instances);
+        if (primitiveBits > 32 || typeBits + instanceBits > 32) throw new RuntimeError("Scene requires > 64 bits for encoding hit info header. This is currently not supported.");
+        return { HIT_INFO_TYPE_BITS: typeBits, HIT_INFO_INSTANCE_ID_BITS: instanceBits, HIT_INFO_PRIMITIVE_INDEX_BITS: primitiveBits };
     }
 
     getGeometryInstanceCount(): number {

@@ -2,7 +2,7 @@
  * WebFalcor override of Scene/Material/MaterialSystem.slang (docs §4.3, §6.2).
  *
  * Diff vs upstream: WGSL has no binding arrays, so
- * - material textures are packed into one Texture2DArray (layer == textureID)
+ * - material textures live in up to 16 Texture2DArrays (per format and size), selected per texture
  *   with per-texture uv scaling (host TextureManager packs/resizes);
  * - samplers/buffers/3D textures are single bindings (samplerID ignored --
  *   divergence recorded in the parity matrix);
@@ -70,15 +70,30 @@ struct MaterialSystem
 {
     uint materialCount;                                                         ///< Total number of materials.
     StructuredBuffer<MaterialDataBlob> materialData;                            ///< Material parameters. The format of the data blob depends on the material type.
-    // WebFalcor (docs §6.2): WGSL has no binding arrays. Material textures are
-    // packed into one Texture2DArray (layer == textureID); per-texture uv scale
-    // (actual size / array size) lives in a buffer. Samplers/buffers/3D textures
+    // WebFalcor (docs §6.2): WGSL has no binding arrays. Material textures live in
+    // up to 16 Texture2DArrays ("buckets", one per format and size; BC stays
+    // compressed); a per-texture info row selects bucket and layer and holds the
+    // uv scale (actual size / layer size). Samplers/buffers/3D textures
     // are single bindings for now (getTextureSampler ignores samplerID -- divergence
     // documented in the parity matrix; revisit for scenes with mixed sampler modes).
     SamplerState materialSampler0;
-    Texture2DArray<float4> materialTexturesArray;
-    TexInfoTexture materialTextureUvScale; ///< Per-texture: uvScale.xy, arraySelector (0 sRGB / 1 linear), layer (1-row texture; 16-storage-buffer budget).
-    Texture2DArray materialTexturesArrayLinear; ///< Linear-colorspace textures (normal/specular maps).
+    Texture2DArray<float4> materialTextures0;
+    Texture2DArray<float4> materialTextures1;
+    Texture2DArray<float4> materialTextures2;
+    Texture2DArray<float4> materialTextures3;
+    Texture2DArray<float4> materialTextures4;
+    Texture2DArray<float4> materialTextures5;
+    Texture2DArray<float4> materialTextures6;
+    Texture2DArray<float4> materialTextures7;
+    Texture2DArray<float4> materialTextures8;
+    Texture2DArray<float4> materialTextures9;
+    Texture2DArray<float4> materialTextures10;
+    Texture2DArray<float4> materialTextures11;
+    Texture2DArray<float4> materialTextures12;
+    Texture2DArray<float4> materialTextures13;
+    Texture2DArray<float4> materialTextures14;
+    Texture2DArray<float4> materialTextures15;
+    TexInfoTexture materialTextureUvScale; ///< Per-texture: uvScale.xy, bucket * 2 (+1 when its tiles fill the layer exactly), layer (1-row texture; 16-storage-buffer budget).
     Texture2D<float4> webfalcorDummyTexture;
     // Single displacement texture (v1: one displaced material per scene, docs §8.4).
     Texture2D<float4> webfalcorDisplacementTexture;
@@ -304,12 +319,8 @@ struct MaterialSystem
         {
         case TextureHandle::Mode::Texture:
             {
-                uint elements;
                 const float4 texInfo = materialTextureUvScale[handle.getTextureID()];
-                if (frac(texInfo.z * 0.5f) > 0.25f)
-                    materialTexturesArrayLinear.GetDimensions(0, info.width, info.height, elements, info.mipLevels);
-                else
-                    materialTexturesArray.GetDimensions(0, info.width, info.height, elements, info.mipLevels);
+                getBucketDimensions(uint(texInfo.z) >> 1, info.width, info.height, info.mipLevels);
                 info.width = uint(info.width * texInfo.x);
                 info.height = uint(info.height * texInfo.y);
             }
@@ -317,6 +328,60 @@ struct MaterialSystem
         default:
         }
         return info;
+    }
+
+    /** A bucket array's size and mip count (WGSL cannot index texture bindings). */
+    void getBucketDimensions(uint bucket, out uint width, out uint height, out uint mipLevels)
+    {
+        uint elements;
+        width = 0;
+        height = 0;
+        mipLevels = 0;
+        switch (bucket)
+        {
+        case 0: materialTextures0.GetDimensions(0, width, height, elements, mipLevels); break;
+        case 1: materialTextures1.GetDimensions(0, width, height, elements, mipLevels); break;
+        case 2: materialTextures2.GetDimensions(0, width, height, elements, mipLevels); break;
+        case 3: materialTextures3.GetDimensions(0, width, height, elements, mipLevels); break;
+        case 4: materialTextures4.GetDimensions(0, width, height, elements, mipLevels); break;
+        case 5: materialTextures5.GetDimensions(0, width, height, elements, mipLevels); break;
+        case 6: materialTextures6.GetDimensions(0, width, height, elements, mipLevels); break;
+        case 7: materialTextures7.GetDimensions(0, width, height, elements, mipLevels); break;
+        case 8: materialTextures8.GetDimensions(0, width, height, elements, mipLevels); break;
+        case 9: materialTextures9.GetDimensions(0, width, height, elements, mipLevels); break;
+        case 10: materialTextures10.GetDimensions(0, width, height, elements, mipLevels); break;
+        case 11: materialTextures11.GetDimensions(0, width, height, elements, mipLevels); break;
+        case 12: materialTextures12.GetDimensions(0, width, height, elements, mipLevels); break;
+        case 13: materialTextures13.GetDimensions(0, width, height, elements, mipLevels); break;
+        case 14: materialTextures14.GetDimensions(0, width, height, elements, mipLevels); break;
+        case 15: materialTextures15.GetDimensions(0, width, height, elements, mipLevels); break;
+        default: break;
+        }
+    }
+
+    /** Samples layer uvw.z of a bucket array. */
+    float4 sampleBucket<L:ITextureSampler>(uint bucket, L lod, SamplerState s, float3 uvw, float2 uvScale)
+    {
+        switch (bucket)
+        {
+        case 0: return lod.sampleTexture(materialTextures0, s, uvw, uvScale);
+        case 1: return lod.sampleTexture(materialTextures1, s, uvw, uvScale);
+        case 2: return lod.sampleTexture(materialTextures2, s, uvw, uvScale);
+        case 3: return lod.sampleTexture(materialTextures3, s, uvw, uvScale);
+        case 4: return lod.sampleTexture(materialTextures4, s, uvw, uvScale);
+        case 5: return lod.sampleTexture(materialTextures5, s, uvw, uvScale);
+        case 6: return lod.sampleTexture(materialTextures6, s, uvw, uvScale);
+        case 7: return lod.sampleTexture(materialTextures7, s, uvw, uvScale);
+        case 8: return lod.sampleTexture(materialTextures8, s, uvw, uvScale);
+        case 9: return lod.sampleTexture(materialTextures9, s, uvw, uvScale);
+        case 10: return lod.sampleTexture(materialTextures10, s, uvw, uvScale);
+        case 11: return lod.sampleTexture(materialTextures11, s, uvw, uvScale);
+        case 12: return lod.sampleTexture(materialTextures12, s, uvw, uvScale);
+        case 13: return lod.sampleTexture(materialTextures13, s, uvw, uvScale);
+        case 14: return lod.sampleTexture(materialTextures14, s, uvw, uvScale);
+        case 15: return lod.sampleTexture(materialTextures15, s, uvw, uvScale);
+        default: return float4(0.f);
+        }
     }
 
     /** Sample data from a texture at a fixed level of detail.
@@ -357,14 +422,12 @@ struct MaterialSystem
                 // with continuous derivatives; otherwise frac() wraps in texture
                 // space so UVs don't land in the partial tiles.
                 const float4 texInfo = materialTextureUvScale[textureID];
-                const bool linearArray = frac(texInfo.z * 0.5f) > 0.25f;
+                const uint code = uint(texInfo.z);
                 float2 wrappedUV = uv;
-                if (texInfo.z < 1.5f && any(texInfo.xy < float2(1.f)))
+                if ((code & 1) == 0 && any(texInfo.xy < float2(1.f)))
                     wrappedUV = frac(uv);
                 const float2 scaledUV = wrappedUV * texInfo.xy;
-                if (linearArray)
-                    return lod.sampleTexture(materialTexturesArrayLinear, s, float3(scaledUV, texInfo.w), texInfo.xy);
-                return lod.sampleTexture(materialTexturesArray, s, float3(scaledUV, texInfo.w), texInfo.xy);
+                return sampleBucket(code >> 1, lod, s, float3(scaledUV, texInfo.w), texInfo.xy);
             }
         default:
             return float4(0.f);

@@ -31,7 +31,7 @@ import { GridVolume, type GridSlot } from "./Volume/GridVolume.js";
 import { Grid } from "./Volume/Grid.js";
 
 const kMagic = 0x43534657; // 'WFSC'
-const kVersion = 5; // v4: + animation, skin/morph, SDF recipes, grid volumes; v5: camera list
+const kVersion = 6; // v4: + animation, skin/morph, SDF recipes, grid volumes; v5: camera list; v6: DDS textures, metadata
 const kFloatsPerVertex = 13; // pos3 + normal3 + tangent4 + texCrd2 + curveRadius
 
 export interface SceneCameraPose {
@@ -62,7 +62,7 @@ export interface CacheableScene {
     metadata?: SceneMetadata;
     cameraSpeed?: number;
     /** Material textures as lossless PNG (phase 2). */
-    textures: { png: Uint8Array; srgb: boolean }[];
+    textures: CachedTexture[];
     /** Static curve geometry (phase 3). */
     curves: SceneCurveDesc[];
     /** Env map as the original encoded .hdr/.exr file (phase 3). */
@@ -212,7 +212,7 @@ export function serializeScene(cached: CacheableScene): Uint8Array {
         animatedCamera: cached.animatedCamera,
         metadata: cached.metadata,
         cameraSpeed: cached.cameraSpeed,
-        textures: cached.textures.map((t) => ({ srgb: t.srgb, byteLength: t.png.byteLength })),
+        textures: cached.textures.map((t) => ({ srgb: t.srgb, byteLength: t.png.byteLength, dds: t.dds })),
         curves: cached.curves.map((c) => ({
             floatCount: c.positionsRadii.length,
             texCrdCount: c.texCrds?.length ?? 0,
@@ -286,7 +286,7 @@ export function deserializeScene(bytes: Uint8Array): CacheableScene {
         animatedCamera: number;
         metadata?: SceneMetadata;
         cameraSpeed?: number;
-        textures: { srgb: boolean; byteLength: number }[];
+        textures: { srgb: boolean; byteLength: number; dds?: boolean }[];
         curves: { floatCount: number; texCrdCount: number; indexCount: number; materialID: number; transform?: { __m4: number[] } }[];
         envMap?: { byteLength: number; isExr: boolean; intensity: number; tint: [number, number, number]; rotationDeg: [number, number, number]; equalAreaOctahedral?: boolean };
         animations: TrackMeta[];
@@ -382,7 +382,7 @@ export function deserializeScene(bytes: Uint8Array): CacheableScene {
         ops: r.ops.map((op) => (op.kind === "values" ? { kind: op.kind, gridWidth: op.gridWidth, values: takeF32(op.valueCount) } : op)),
     }));
 
-    const textures = header.textures.map((meta) => ({ png: takeBytes(meta.byteLength), srgb: meta.srgb }));
+    const textures = header.textures.map((meta) => ({ png: takeBytes(meta.byteLength), srgb: meta.srgb, dds: meta.dds }));
     let envMap: CacheableScene["envMap"];
     if (header.envMap) {
         envMap = { bytes: takeBytes(header.envMap.byteLength), isExr: header.envMap.isExr, intensity: header.envMap.intensity, tint: header.envMap.tint, rotationDeg: header.envMap.rotationDeg, equalAreaOctahedral: header.envMap.equalAreaOctahedral };
@@ -411,15 +411,30 @@ export function deserializeScene(bytes: Uint8Array): CacheableScene {
     };
 }
 
-/** Collects texture sources for the cache: the original compressed bytes
- *  when retained (lossless), else a PNG re-encode (canvas roundtrip;
+/** A cached material texture: browser-decodable image bytes (PNG etc.) or, with `dds`, a DDS file. */
+export interface CachedTexture {
+    png: Uint8Array;
+    srgb: boolean;
+    dds?: boolean;
+}
+
+/** PNG, JPEG, WebP, GIF or BMP magic (what createImageBitmap decodes). */
+function browserDecodable(bytes: Uint8Array): boolean {
+    const b = (i: number) => bytes[i] ?? 0;
+    return (
+        (b(0) === 0x89 && b(1) === 0x50) || (b(0) === 0xff && b(1) === 0xd8) || (b(0) === 0x52 && b(8) === 0x57) || (b(0) === 0x47 && b(1) === 0x49) || (b(0) === 0x42 && b(1) === 0x4d)
+    );
+}
+
+/** Collects texture sources for the cache: the original bytes when retained and
+ *  decodable here again (images, DDS), else a PNG re-encode (canvas roundtrip;
  *  premultiply can differ by 1 lsb on translucent pixels). */
-export async function encodeTextureSources(textureManager: TextureManager): Promise<{ png: Uint8Array; srgb: boolean }[]> {
-    const out: { png: Uint8Array; srgb: boolean }[] = [];
+export async function encodeTextureSources(textureManager: TextureManager): Promise<CachedTexture[]> {
+    const out: CachedTexture[] = [];
     for (let i = 0; i < textureManager.count; i++) {
         const source = textureManager.getSource(i)!;
-        if (source.bytes) {
-            out.push({ png: source.bytes, srgb: source.srgb });
+        if (source.bytes && (source.dds || browserDecodable(source.bytes))) {
+            out.push({ png: source.bytes, srgb: source.srgb, dds: source.dds || undefined });
             continue;
         }
         const canvas = new OffscreenCanvas(source.bitmap.width, source.bitmap.height);
@@ -430,9 +445,18 @@ export async function encodeTextureSources(textureManager: TextureManager): Prom
     return out;
 }
 
-async function decodeTextureSources(textures: { png: Uint8Array; srgb: boolean }[]): Promise<TextureManager> {
+async function decodeTextureSources(textures: CachedTexture[]): Promise<TextureManager> {
     const tm = new TextureManager();
     for (const t of textures) {
+        if (t.dds) {
+            // DDS: the BC chain for the GPU and the capped decode for CPU analysis, as on import.
+            const { ddsCompressedPayload, decodeDDSToRGBA } = await import("./Importer/DDSLoader.js");
+            const buffer = t.png.slice().buffer as ArrayBuffer;
+            const { width, height, rgba } = decodeDDSToRGBA(buffer, t.srgb, 512);
+            const bitmap = await createImageBitmap(new ImageData(new Uint8ClampedArray(rgba), width, height));
+            tm.addTexture({ bitmap, srgb: t.srgb, bytes: t.png, compressed: ddsCompressedPayload(buffer, t.srgb), dds: true });
+            continue;
+        }
         // Same decode options as the pyscene import path (parity-critical).
         const bitmap = await createImageBitmap(new Blob([t.png.slice().buffer as ArrayBuffer]), { colorSpaceConversion: "none" });
         tm.addTexture({ bitmap, srgb: t.srgb, bytes: t.png } as TextureSource);
