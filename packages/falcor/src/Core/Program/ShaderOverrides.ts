@@ -102,6 +102,15 @@ export const kShaderOverrides: Readonly<Record<string, string>> = {
     // RT pipeline -> compute megakernel over SceneRayQuery; existential lod
     // samplers restructured into generic helpers.
     "RenderPasses/WhittedRayTracer/WhittedRayTracer.rt.slang": "WebFalcor/Overrides/RenderPasses/WhittedRayTracer/WhittedRayTracer.rt.slang",
+    // WARDiffPathTracer: compute kernel + reshaping around Slang 2026.18 nested-autodiff crashes.
+    "RenderPasses/WARDiffPathTracer/WARDiffPathTracer.rt.slang": "WebFalcor/Overrides/RenderPasses/WARDiffPathTracer/WARDiffPathTracer.rt.slang",
+    "RenderPasses/WARDiffPathTracer/PTUtils.slang": "WebFalcor/Overrides/RenderPasses/WARDiffPathTracer/PTUtils.slang",
+    "RenderPasses/WARDiffPathTracer/WarpedAreaReparam.slang": "WebFalcor/Overrides/RenderPasses/WARDiffPathTracer/WarpedAreaReparam.slang",
+    "DiffRendering/DiffSceneIO.slang": "WebFalcor/Overrides/DiffRendering/DiffSceneIO.slang",
+    "DiffRendering/DiffSceneQuery.slang": "WebFalcor/Overrides/DiffRendering/DiffSceneQuery.slang",
+    "DiffRendering/DiffDebugParams.slang": "WebFalcor/Overrides/DiffRendering/DiffDebugParams.slang",
+    "DiffRendering/InverseOptimizationParams.slang": "WebFalcor/Overrides/DiffRendering/InverseOptimizationParams.slang",
+    "DiffRendering/SceneGradients.slang": "WebFalcor/Overrides/DiffRendering/SceneGradients.slang",
     // Write-only storage textures (WGSL r32*-only read_write rule).
     "RenderPasses/SceneDebugger/SceneDebugger.cs.slang": "WebFalcor/Overrides/RenderPasses/SceneDebugger/SceneDebugger.cs.slang",
     "RenderPasses/BSDFViewer/BSDFViewer.cs.slang": "WebFalcor/Overrides/RenderPasses/BSDFViewer/BSDFViewer.cs.slang",

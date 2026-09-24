@@ -163,23 +163,34 @@ the operand of every negation. That fix also cleared older unexplained residuals
 skinned motion-vector depth (409 → 0 bad pixels), quantized/Draco geometry normal
 outliers (p99 114° → 0.3°), and tutorial-material emissive (44 → 0 bad pixels).
 
-**BUT the full WARDiffPathTracer is blocked by a compiler crash** (🟠, tooling, not a
-web limitation). Porting the pass past the mechanical steps —
+**WARDiffPathTracer: Primal and ForwardDiffDebug run and match native; the backward modes
+are compiler-blocked.** The port (overrides of WARDiffPathTracer.rt.slang, PTUtils,
+WarpedAreaReparam, DiffSceneQuery, DiffSceneIO, and the three gradient-parameter modules):
 
-1. RT-pipeline raygen → compute megakernel over `SceneRayQuery` (`import
-   Scene.Raytracing` is vestigial; the diff-scene queries already use
-   `SceneRayQuery`/`RaytracingInline`);
-2. `TriangleHit` brace-init → member-wise (the HitInfo override adds an
-   `__init(PackedHitInfo)` that shadows aggregate init);
-3. explicit `detach()` at each implicit derivative-drop into a non-differentiable
-   path record (newer Slang enforces `E41031` where 2024.1.34 did not) —
+1. The raygen shader becomes a compute kernel over `SceneRayQuery`, and only the active
+   `DIFF_MODE` branch is compiled. Native compiles all four branches, which instantiates
+   every derivative.
+2. `TriangleHit` brace-init becomes member-wise, and explicit `detach()` marks the two
+   implicit derivative drops (E41031).
+3. `gDiffPTData`, `gDiffDebug`, `gInvOpt` and `gSceneGradients` become `ConstantBuffer`s,
+   because WebGPU allows 4 bind groups (globals, gScene, materials). The DiffRendering
+   blocks switch only under `WEBFALCOR_DIFF_PARAMS_AS_CB`, which the pass defines. Declaring
+   them unconditionally added a fifth group to the RTXDI kernels.
+4. The warped-area reparameterization differentiates (backward or forward) through an inner
+   `fwd_diff`. Slang 2026.18 crashes on four patterns in that nested region, and each has
+   a value-preserving rewrite:
+   - differentiable `out`/`inout` parameters (including `[mutating]` methods such as
+     `ShadingFrame`'s constructor): the warped-ray functions, the intersection chain and
+     the vertex loaders return their results instead, keeping the out-parameter forms
+     as wrappers;
+   - `SceneQueryAD.Differential dQuery = {}`: a plain declaration;
+   - `no_diff` parameters feeding builtins such as `dot`: the callers pass `detach()`ed
+     values;
+   - the vMF frame: built outside autodiff, since its inputs are `no_diff`.
 
-reaches a point where **`slangc` v2026.12.2 SEGFAULTS while differentiating the full
-`tracePaths` path tracer**, for BOTH forward and reverse mode and BOTH the `wgsl` and
-`hlsl` targets (so it is an autodiff-codegen crash, not a WGSL issue). Native Falcor
-builds this pass with Slang **2024.1.34** (no WGSL backend, but does not crash on the
-autodiff). The web port is therefore gated on a Slang version that has both the WGSL
-backend **and** the fix for this large-function autodiff crash. When unblocked, the
-mechanical override recipe above applies; gradient accumulation needs the float-atomic
-CAS shim, and the PyTorch training loop is replaced by gradient buffers readable into
-JS / ONNX-web pipelines.
+   Minimal repros are in `docs/slang-repros/`.
+
+The backward modes still crash Slang (`DiffTransposePass::transposeMakePair` on a
+`RayAD.Differential` pair) once the nested region is transposed. The pass throws for
+them. Until an upstream Slang fix lands, the TranslationBwd graph and BSDFOptimizer,
+which needs the same backward path, remain blocked.

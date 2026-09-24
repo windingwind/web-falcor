@@ -87,7 +87,7 @@ Tallies today: 21 pass classes fully implemented, 4 partial, 13 not implemented
 | TestPasses: TestPyTorchPass | ❌ | CUDA + PyTorch tensor interop |
 | ToneMapper | ✅ | all 6 operators + manual exposure verified; auto-exposure (log-luminance mip chain) verified vs native (sRGB MSE 2.1e-4, zero mean bias); fNumber/shutter/filmSpeed physical exposure verified (upstream test variants, sub-byte bias); native option set completed: exposure mode (Aperture/Shutter priority) + exposure value, white balance (CAT02 von Kries port of `Utils/Color/ColorUtils.h`, D65 preserved at 6500 K) + white point, ReinhardModified white luminance / HableUc2 linear white as options; `useSceneMetadata` accepted (no camera metadata on web scenes yet); `useSceneMetadata` ✅ (film speed, f-number and shutter from Scene::Metadata on setScene; getProperties in native's key order — verified vs a Mogwai probe) |
 | Utils (Composite/CrossFade/GaussianBlur) | ✅ | verified |
-| WARDiffPathTracer | 🟠 compiler-blocked | §6.9: autodiff primitive device-verified on WebGPU; slangc v2026.12.2 segfaults differentiating the full tracePaths (both wgsl and hlsl targets) → needs a Slang release with the large-function autodiff fix |
+| WARDiffPathTracer | 🔶 | §6.9. Primal and ForwardDiffDebug are ported (compute kernel; warped-area reparameterization reshaped around Slang 2026.18 crashes) and verified against native through the upstream TranslationFwd and MaterialFwd graphs: 8x8-block relative L1 ≤ 2.1e-2, image sums within 0.4%. BackwardDiff and BackwardDiffDebug are still compiler-blocked: Slang crashes transposing the nested fwd_diff (the pass throws with a pointer to §6.9). |
 | WhittedRayTracer | 🟡 | SoftwareRT, recursion → loop; verified byte-exact |
 
 ### 8.3 Ecosystem / tooling

@@ -112,9 +112,8 @@ verified-vs-native or has a specific, documented blocker:
 - **Asset-blocked** (missing from this Falcor drop, unloadable natively too):
   NRDPass (NRD SDK shaders absent), SDFEditorRenderGraphV2 (`one_primitive_edited.sdfg`
   absent).
-- **Compiler-blocked**: WARDiffPathTracer — the autodiff primitive is
-  device-verified, but slangc v2026.12.2 segfaults differentiating the full
-  path tracer (§6.9).
+- **Compiler-blocked**: WARDiffPathTracerTranslationBwd. Slang 2026.18 crashes transposing the
+  nested fwd_diff of the warped-area reparameterization (§6.9). The two forward-mode graphs are verified.
 - **Runtime-impractical without new infra**: SVS/SVO SDF grids (one AABB per
   surface voxel → need a procedural-AABB BVH; NDSDF + SBS already cover both
   SDF representation classes).
@@ -132,7 +131,8 @@ verified-vs-native or has a specific, documented blocker:
 | 🟠 runnable on web; native oracle impossible on this machine | 1 | HalfRes (needs FBX importer for Arcade.pyscene; and the oracle GPU lacks ROV support, so native Mogwai cannot run GBufferRaster-based graphs at all) |
 | 🟡 GBuffer remainder | 3 | GBufferRaster, GBufferRasterAlpha, MVecRaster — ⚠ all raster-based: native-ROV oracle blocker |
 | 🟡 needs larger pass ports (M8 scope) | 4 | SVGF + TAA (both passes PORTED + feature-verified vs native via GBufferRT feature graphs — TAA mse 8.4e-7, SVGF mean 4.2e-4; the upstream graphs themselves stay oracle-blocked: GBufferRaster needs ROV the native driver lacks), VBufferRaster, VBufferRasterAlpha |
-| 🟠 compiler-blocked | 3 | WARDiffPathTracer ×3 — autodiff primitive device-verified, but slangc v2026.12.2 segfaults differentiating the full path tracer (§6.9) |
+| ✅ verified vs native (forward-mode autodiff) | 2 | WARDiffPathTracerTranslationFwd, WARDiffPathTracerMaterialFwd (128², 64 frames; 8x8-block relative L1 9.4e-3 / 2.1e-2 on the gradient images) |
+| 🟠 compiler-blocked | 1 | WARDiffPathTracerTranslationBwd (Slang 2026.18 crashes transposing the nested fwd_diff, §6.9) |
 | ❌ impossible on web (CUDA/driver tech) | 2 | OptixDenoiser, DLSS |
 
 \* also needs SDF grid geometry (M7 remainder).
