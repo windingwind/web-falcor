@@ -284,6 +284,16 @@ export class ParameterBlock {
             } else {
                 throw new RuntimeError(`Unexpected matrix layout for '${member.name}': float${rows}x${cols} in ${size} bytes`);
             }
+        } else if (type.kind === "array") {
+            // Element by element at the reflected stride (uniform arrays pad elements to 16 bytes in WGSL).
+            const t = type as { elementCount?: number; elementType?: typeof type; uniformStride?: number };
+            const arr = value as ArrayLike<unknown>;
+            const count = t.elementCount ?? 0;
+            if (arr.length > count) throw new ArgumentError(`Expected at most ${count} elements for '${member.name}', got ${arr.length}`);
+            const stride = t.uniformStride ?? (count > 0 ? member.byteSize / count : 0);
+            for (let i = 0; i < arr.length; i++) {
+                this.writeValue(slot, { name: `${member.name}[${i}]`, type: t.elementType!, byteOffset: offset + i * stride, byteSize: stride } as unknown as ReflectionVar, arr[i]);
+            }
         } else {
             throw new RuntimeError(`Setting '${type.kind}' uniforms not implemented yet (member '${member.name}')`);
         }

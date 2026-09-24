@@ -128,3 +128,5 @@ export * from "./Scene/Lights/EnvMapConverter.js";
 export * from "./Utils/Image/PFMDecoder.js";
 export * from "./Scene/Material/RGLFile.js";
 export * from "./Scene/Lights/LightProfile.js";
+export * from "./Scene/Material/MaterialParamLayout.js";
+export * from "./DiffRendering/SceneGradients.js";

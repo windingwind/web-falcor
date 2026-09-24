@@ -21,6 +21,7 @@ import {
     ResourceFormat,
     SAMPLE_GENERATOR_UNIFORM,
     SampleGenerator,
+    SceneGradients,
     GeometryType,
     registerRenderPass,
     type CompileData,
@@ -230,6 +231,14 @@ export class WARDiffPathTracer extends RenderPass {
         }
     }
 
+    // --- Python surface (native registerBindings) ---
+    /** Mirrors scene_gradients: where BackwardDiff accumulates (no gradients without it). */
+    scene_gradients: SceneGradients | null = null;
+    /** Mirrors dL_dI: per-pixel float3 loss gradient BackwardDiff starts from. */
+    dL_dI: Buffer | null = null;
+    /** Mirrors run_backward: 0 renders the primal in BackwardDiff mode. */
+    run_backward = 1;
+
     override async initAsync(): Promise<void> {
         await this.device.programManager.loadSlangRuntime(kAutodiffSlang);
     }
@@ -237,8 +246,11 @@ export class WARDiffPathTracer extends RenderPass {
     override execute(ctx: RenderContext, renderData: RenderData): void {
         const color = renderData.getTexture("color")!;
         const dColor = renderData.getTexture("dColor")!;
-        ctx.clearTexture(color);
-        ctx.clearTexture(dColor);
+        // Native beginFrame keeps the outputs while BackwardDiff runs backward.
+        if (!(this.diffMode === DiffMode.BackwardDiff && this.run_backward === 1)) {
+            ctx.clearTexture(color);
+            ctx.clearTexture(dColor);
+        }
         if (!this.scene) return;
         // The backward modes compile with the pinned pre-refactor Slang (see kAutodiffSlang).
         const backward = this.diffMode === DiffMode.BackwardDiff || this.diffMode === DiffMode.BackwardDiffDebug;
@@ -251,7 +263,7 @@ export class WARDiffPathTracer extends RenderPass {
         params["useFixedSeed"] = this.useFixedSeed ? 1 : 0;
         params["fixedSeed"] = this.fixedSeed;
         params["assertThreshold"] = 1e9;
-        params["runBackward"] = 1;
+        params["runBackward"] = this.run_backward;
         params["frameDim"] = [w, h];
         params["screenTiles"] = [0, 0];
         params["frameCount"] = this.frameCount;
@@ -280,16 +292,17 @@ export class WARDiffPathTracer extends RenderPass {
         } catch {
             /* gradients unused in this variant */
         }
-        for (let i = 0; grads && i < kGradientTypeCount; i++) {
+        if (grads && this.scene_gradients) this.scene_gradients.bindShaderData(grads);
+        else if (grads) {
             try {
-                (grads["gradDim"] as ShaderVar)[i] = 0;
-                (grads["hashSize"] as ShaderVar)[i] = 1;
+                grads["gradDim"] = [0, 0, 0, 0];
+                grads["hashSize"] = [1, 1, 1, 1];
             } catch {
                 /* dims stripped when unused */
             }
-            this.trySet(grads, `tmpGrads${i}`, this.gradDummies[i]!);
+            for (let i = 0; i < kGradientTypeCount; i++) this.trySet(grads, `tmpGrads${i}`, this.gradDummies[i]!);
         }
-        this.trySet(root, "dLdI", this.dummyBuffer);
+        this.trySet(root, "dLdI", this.dL_dI ?? this.dummyBuffer);
         root["gOutputColor"] = color;
         this.trySet(root, "gOutputDColor", dColor);
         this.pass.execute(ctx, w, h);

@@ -72,9 +72,9 @@ gpuTest("RenderUI.everyPassExposesFlippableControls", async ({ device }) => {
     }
     console.error(`# render-ui: controls: ${withControls.join(" ")}`);
     console.error(`# render-ui: no controls: ${without.join(" ")}`);
-    // Native passes without any renderUI: InvalidPixelDetection, RenderPassTemplate; BSDFViewer and
-    // TestRtProgram only list controls once a scene is set (BSDFViewer covered below).
-    expectEq(without.every((t) => ["InvalidPixelDetectionPass", "RenderPassTemplate", "BSDFViewer", "TestRtProgram"].includes(t)), true, `unexpected passes without controls: ${without.join(", ")}`);
+    // Native passes without any renderUI: InvalidPixelDetection, RenderPassTemplate; BSDFViewer,
+    // TestRtProgram and BSDFOptimizer only list controls once a scene is set (BSDFViewer covered below).
+    expectEq(without.every((t) => ["InvalidPixelDetectionPass", "RenderPassTemplate", "BSDFViewer", "TestRtProgram", "BSDFOptimizer"].includes(t)), true, `unexpected passes without controls: ${without.join(", ")}`);
     expectEq(withControls.length >= 25, true, `${withControls.length} passes expose controls`);
 });
 

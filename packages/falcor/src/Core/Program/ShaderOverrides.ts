@@ -135,6 +135,11 @@ export const kShaderOverrides: Readonly<Record<string, string>> = {
     "Scene/SDFs/SparseVoxelSet/SDFSVS.slang": "WebFalcor/Overrides/Scene/SDFs/SparseVoxelSet/SDFSVS.slang",
     // decodeHit avoids decodeLocation's >2^63 Morton unshift masks (Tint abstract-int).
     "Scene/SDFs/SparseVoxelOctree/SDFSVO.slang": "WebFalcor/Overrides/Scene/SDFs/SparseVoxelOctree/SDFSVO.slang",
+    // `SurfaceData data = {}` -> plain declaration (synthesized __init).
+    "RenderPasses/BSDFOptimizer/BSDFViewer.cs.slang": "WebFalcor/Overrides/RenderPasses/BSDFOptimizer/BSDFViewer.cs.slang",
+    "RenderPasses/BSDFOptimizer/BSDFOptimizer.cs.slang": "WebFalcor/Overrides/RenderPasses/BSDFOptimizer/BSDFOptimizer.cs.slang",
+    // grads as Atomic<uint> with a compare-exchange float add (no float atomics in WGSL).
+    "DiffRendering/AggregateGradients.cs.slang": "WebFalcor/Overrides/DiffRendering/AggregateGradients.cs.slang",
     // UINT32_MAX as 0xffffffffu (the un-suffixed literal is i64, which WGSL lacks).
     "Utils/Math/MathConstants.slangh": "WebFalcor/Overrides/Utils/Math/MathConstants.slangh",
 };
