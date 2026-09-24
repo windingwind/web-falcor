@@ -1,0 +1,11 @@
+# Native oracle for procedural grids (Grid.createSphere/createBox fog volumes): prints their stats.
+import json
+out = {}
+for name, g in [('sphere', Grid.createSphere(1.0, 0.1)), ('sphereBlend1', Grid.createSphere(0.7, 0.05, 1.0)), ('box', Grid.createBox(1.0, 0.6, 0.4, 0.05))]:
+    probes = [[0, 0, 0], [8, 0, 0], [9, 0, 0], [10, 0, 0], [11, 0, 0], [12, 0, 0], [3, 4, 5], [-7, 2, 1]]
+    out[name] = {'voxelCount': g.voxelCount, 'minIndex': [g.minIndex.x, g.minIndex.y, g.minIndex.z], 'maxIndex': [g.maxIndex.x, g.maxIndex.y, g.maxIndex.z],
+                 'minValue': g.minValue, 'maxValue': g.maxValue, 'probes': [[p, g.getValue(int3(*p))] for p in probes]}
+print('GRIDSTATS ' + json.dumps(out))
+v = GridVolume('v')
+v.densityGrid = Grid.createSphere(1.0, 0.1)
+sceneBuilder.addGridVolume(v)

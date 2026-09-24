@@ -16,6 +16,8 @@ export class GridVolume {
     albedo = new float3(1, 1, 1);
     anisotropy = 0;
     emissionTemperature = 0;
+    /** Mirrors GridVolume::EmissionMode (Direct = 0, Blackbody = 1; the shaders read only Direct). */
+    emissionMode = 0;
     private grids: Partial<Record<GridSlot, Grid[]>> = {};
     private frame = 0;
     private rate = 30;

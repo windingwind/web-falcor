@@ -23,6 +23,9 @@ import { FrameRate } from "../Timing/FrameRate.js";
 import { PyUiScreen } from "../UI/PythonUI.js";
 import { TextRenderer } from "../UI/TextRenderer.js";
 import { runSceneScript } from "./Scripting.js";
+import { KeyboardEventType, MouseEventType, toKeyboardEvent, toMouseEvent, type KeyboardEvent, type MouseEvent } from "../UI/InputTypes.js";
+import { kProjectMediaUrl } from "../../Core/AssetResolver.js";
+import { RuntimeError } from "../../Core/Error.js";
 
 export interface TestbedOptions {
     width?: number;
@@ -73,14 +76,56 @@ export class Testbed {
             this.context = canvas.getContext("webgpu");
             this.canvasFormat = navigator.gpu.getPreferredCanvasFormat();
             this.context?.configure({ device: device.gpuDevice, format: this.canvasFormat });
-            window.addEventListener("keydown", (e) => {
-                if (e.key === "Escape") this.closeRequested = true;
-            });
+            window.addEventListener("keydown", (e) => this.handleKeyboardEvent(toKeyboardEvent(e, KeyboardEventType.KeyPressed)));
+            window.addEventListener("keyup", (e) => this.handleKeyboardEvent(toKeyboardEvent(e, KeyboardEventType.KeyReleased)));
+            canvas.addEventListener("mousedown", (e) => this.handleMouseEvent(toMouseEvent(e, MouseEventType.ButtonDown, canvas)));
+            canvas.addEventListener("mouseup", (e) => this.handleMouseEvent(toMouseEvent(e, MouseEventType.ButtonUp, canvas)));
+            canvas.addEventListener("mousemove", (e) => this.handleMouseEvent(toMouseEvent(e, MouseEventType.Move, canvas)));
+            canvas.addEventListener("wheel", (e) => this.handleMouseEvent(toMouseEvent(e, MouseEventType.Wheel, canvas)));
         }
         if (options.showFPS ?? true) {
             this.textRenderer = new TextRenderer(device);
             void this.textRenderer.init();
         }
+    }
+
+    /** Python `keyboard_event_callback` / `mouse_event_callback`: return True to consume the event. */
+    keyboardEventCallback: ((e: KeyboardEvent) => unknown) | null = null;
+    mouseEventCallback: ((e: MouseEvent) => unknown) | null = null;
+    /** Python `window_size_change_callback(width, height)`. */
+    windowSizeChangeCallback: ((width: number, height: number) => void) | null = null;
+
+    /** Mirrors Testbed::handleKeyboardEvent: Escape closes, F2 toggles the UI, P the profiler (F5 belongs to the browser). */
+    handleKeyboardEvent(e: KeyboardEvent): void {
+        if (e.type === KeyboardEventType.KeyPressed) {
+            if (e.key === "Escape") this.closeRequested = true;
+            else if (e.key === "F2") this.showUI = !this.showUI;
+            else if (e.key === "P" && this.device.profilerHook) this.device.profilerHook.setEnabled(!this.device.profilerHook.enabled);
+        }
+        this.keyboardEventCallback?.(e);
+    }
+    /** Mirrors Testbed::handleMouseEvent. */
+    handleMouseEvent(e: MouseEvent): void {
+        this.mouseEventCallback?.(e);
+    }
+
+    /** Mirrors Testbed::loadSceneFromString (pyscene sources; paths in it resolve against the media directory). */
+    async loadSceneFromString(source: string, extension = "pyscene", buildFlags = 0): Promise<void> {
+        if (extension.replace(/^\./, "").toLowerCase() !== "pyscene") throw new RuntimeError(`Testbed.loadSceneFromString: only 'pyscene' sources are supported on the web (got '${extension}')`);
+        this.scene = await runSceneScript(this.device, source, kProjectMediaUrl, { flags: buildFlags });
+        this.scene.importPaths.unshift("<memory>");
+        if (this.renderGraph) {
+            this.renderGraph.setScene(this.scene);
+            this.graphNeedsInit = true;
+        }
+    }
+
+    /** Mirrors Testbed::getImportPaths / getImportDicts (the web keeps no import dicts). */
+    getImportPaths(): string[] {
+        return this.scene?.importPaths ?? [];
+    }
+    getImportDicts(): Record<string, string>[] {
+        return (this.scene?.importPaths ?? []).map(() => ({}));
     }
 
     /** Mirrors Testbed::shouldClose. */
@@ -131,6 +176,7 @@ export class Testbed {
         this.renderGraph?.onResize(width, height);
         this.graphNeedsInit = true;
         this.scene?.camera.setAspectRatio(width / height);
+        this.windowSizeChangeCallback?.(width, height);
     }
 
     /** Mirrors Testbed::loadScene (paths resolve through the asset resolver, like native). */

@@ -1,0 +1,29 @@
+# Testbed python API (Falcor/Source/Falcor/Core/Testbed.cpp bindings): load_scene_from_string,
+# get_import_paths/dicts, load_render_graph, window, and the keyboard/mouse/resize callbacks.
+import falcor
+
+testbed = falcor.Testbed(width=64, height=64, create_window=False)
+testbed.load_scene_from_string("""
+m = StandardMaterial('M')
+sceneBuilder.addMeshInstance(sceneBuilder.addNode('q', Transform()), sceneBuilder.addTriangleMesh(TriangleMesh.createQuad(), m))
+""")
+assert testbed.get_import_paths() == ['<memory>'], testbed.get_import_paths()
+assert testbed.get_import_dicts() == [{}]
+assert testbed.window is None
+
+g = testbed.load_render_graph('/Falcor/tests/image_tests/renderpasses/graphs/ToneMapping.py')
+testbed.render_graph = g
+assert g['ToneMapping'] is not None and g.name == 'ToneMapper'
+
+events = []
+def on_key(e):
+    events.append((e.type, e.key))
+    if e.type == falcor.KeyboardEvent.Type.KeyPressed and e.key == falcor.Key.E:
+        testbed.show_ui = False
+    return True
+testbed.keyboard_event_callback = on_key
+sizes = []
+testbed.window_size_change_callback = lambda w, h: sizes.append((w, h))
+testbed.resize_frame_buffer(32, 16)
+assert sizes == [(32, 16)], sizes
+testbed.frame()

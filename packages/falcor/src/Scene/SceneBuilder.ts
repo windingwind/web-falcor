@@ -213,12 +213,16 @@ export class CameraBridge {
     shutterSpeed = 0.004;
     ISOSpeed = 100;
 
+    // Python reads back what the pyscene set (native properties are read-write).
+    get position(): float3 { return this._position; }
     set position(v: { x: number; y: number; z: number }) {
         this._position = toF3(v);
     }
+    get target(): float3 { return this._target; }
     set target(v: { x: number; y: number; z: number }) {
         this._target = toF3(v);
     }
+    get up(): float3 { return this._up; }
     set up(v: { x: number; y: number; z: number }) {
         this._up = toF3(v);
     }
@@ -253,9 +257,11 @@ export class MaterialBridge {
     private _volumeAbsorption = new float3(0, 0, 0);
     private _volumeScattering = new float3(0, 0, 0);
 
+    get volumeAbsorption(): float3 { return this._volumeAbsorption; }
     set volumeAbsorption(v: { x: number; y: number; z: number }) {
         this._volumeAbsorption = toF3(v);
     }
+    get volumeScattering(): float3 { return this._volumeScattering; }
     set volumeScattering(v: { x: number; y: number; z: number }) {
         this._volumeScattering = toF3(v);
     }
@@ -369,18 +375,25 @@ export class MaterialBridge {
         else if (slot === "Transmission") this._texHandles.texTransmission = handle;
     }
 
+    get baseColor(): float4 { return this._baseColor; }
     set baseColor(v: { x: number; y: number; z: number; w: number }) {
         this._baseColor = toF4(v);
     }
+    get specularParams(): float4 { return this._specularParams; }
     set specularParams(v: { x: number; y: number; z: number; w: number }) {
         this._specularParams = toF4(v);
     }
+    get transmissionColor(): float3 { return this._transmissionColor; }
     set transmissionColor(v: { x: number; y: number; z: number }) {
         this._transmissionColor = toF3(v);
     }
+    get emissiveColor(): float3 { return this._emissiveColor; }
     set emissiveColor(v: { x: number; y: number; z: number }) {
         this._emissiveColor = toF3(v);
     }
+    get roughness(): number { return this._specularParams.y; }
+    get metallic(): number { return this._specularParams.z; }
+    get lightProfileEnabled(): boolean { return this._lightProfileEnabled; }
 
     /** ClothMaterial/BasicMaterial::setRoughness -> specular.g. */
     set roughness(r: number | { x: number; y: number }) {
@@ -500,9 +513,12 @@ export class LightBridge {
     set position(v: { x: number; y: number; z: number }) {
         this._position = toF3(v);
     }
+    get position(): float3 { return this._position; }
+    get intensity(): float3 { return this._intensity; }
     set intensity(v: { x: number; y: number; z: number }) {
         this._intensity = toF3(v);
     }
+    get direction(): float3 { return this._direction; }
     set direction(v: { x: number; y: number; z: number }) {
         this._direction = toF3(v);
     }
@@ -809,6 +825,9 @@ async function loadIndexMap(url: string, path: string): Promise<import("./Materi
 }
 
 /** Recorded GridVolume state (eager copies; PyProxies die at script exit). */
+/** A pyscene Grid: procedural (createSphere/createBox) or a file loaded in resolve (createFromFile). */
+type GridRef = { _proceduralGrid?: ParsedFloatGrid; _file?: { path: string; gridname: string } };
+
 export class GridVolumeBridge {
     name: string;
     densityScale = 1;
@@ -842,10 +861,28 @@ export class GridVolumeBridge {
         return true;
     }
 
-    /** volume.densityGrid = Grid.createSphere/createBox(...) — a procedural grid. */
-    set densityGrid(g: { _proceduralGrid?: ParsedFloatGrid } | null) {
-        if (g?._proceduralGrid) this.proceduralGrids.push({ slot: "Density", parsed: g._proceduralGrid });
+    /** volume.densityGrid / emissionGrid = Grid.createSphere/createBox/createFromFile(...). */
+    set densityGrid(g: GridRef | null) {
+        this.setGridRef("density", g);
     }
+    get densityGrid(): GridRef | null {
+        return this.gridRefs.density ?? null;
+    }
+    set emissionGrid(g: GridRef | null) {
+        this.setGridRef("emission", g);
+    }
+    get emissionGrid(): GridRef | null {
+        return this.gridRefs.emission ?? null;
+    }
+    private gridRefs: Partial<Record<"density" | "emission", GridRef>> = {};
+    private setGridRef(slot: "density" | "emission", g: GridRef | null): void {
+        if (!g) return;
+        this.gridRefs[slot] = g;
+        if (g._proceduralGrid) this.proceduralGrids.push({ slot, parsed: g._proceduralGrid });
+        else if (g._file) this.grids.push({ slot, path: g._file.path, gridname: g._file.gridname });
+    }
+    /** Mirrors GridVolume::EmissionMode (Direct = 0, Blackbody = 1). */
+    emissionMode = 0;
 }
 
 interface EnvMapRef {
@@ -1246,6 +1283,7 @@ export class SceneBuilderBridge {
         copy.albedo = { x: Number(v.albedo.x), y: Number(v.albedo.y), z: Number(v.albedo.z) };
         copy.anisotropy = Number(v.anisotropy);
         copy.emissionTemperature = Number(v.emissionTemperature);
+        copy.emissionMode = Number(v.emissionMode);
         copy.grids = v.grids.map((g) => ({ slot: String(g.slot), path: String(g.path), gridname: String(g.gridname) }));
         copy.gridSequences = v.gridSequences.map((g) => ({ slot: String(g.slot), paths: g.paths.map((path) => String(path)), gridname: String(g.gridname) }));
         copy.frameRate = Number(v.frameRate);
@@ -1725,6 +1763,7 @@ export class SceneBuilderBridge {
             vol.albedo = new float3(v.albedo.x, v.albedo.y, v.albedo.z);
             vol.anisotropy = v.anisotropy;
             vol.emissionTemperature = v.emissionTemperature;
+            vol.emissionMode = v.emissionMode;
             for (const g of v.grids) {
                 const url = await resolveAssetUrl(g.path, baseUrl, AssetCategory.Any, this.assetResolver);
                 vol.setGrid(g.slot as GridSlot, await Grid.createFromUrl(device, url, g.gridname));

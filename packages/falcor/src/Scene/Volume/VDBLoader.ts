@@ -29,57 +29,194 @@ export interface ParsedFloatGrid {
     leafValues: Float32Array[];
 }
 
-/** Builds a ParsedFloatGrid by sampling a density function over a world-space AABB
- *  at `voxelSize` resolution (for TriangleMesh-free procedural volumes). */
-function buildProceduralGrid(
-    density: (wx: number, wy: number, wz: number) => number,
-    minW: [number, number, number],
-    maxW: [number, number, number],
-    voxelSize: number,
-): ParsedFloatGrid {
-    const leafFloor = (w: number) => Math.floor(Math.floor(w / voxelSize) / 8) * 8;
-    const idxCeil = (w: number) => Math.ceil(w / voxelSize);
+/**
+ * NanoVDB's fog volumes (Grid::createSphere/createBox: nanovdb::createFogVolumeSphere/Box), built
+ * like its GridBuilder so the values match native exactly, quirks included:
+ * - the narrow-band signed distances (|v| < halfWidth voxels, world units) of initSphere/initBox;
+ * - sdfToLevelSet's bottom-up scanline signedFloodFill over leaves (8^3), lower (16^3 leaves) and
+ *   upper (32^3 lower) nodes, which can leave interior tiles "outside" when few band voxels
+ *   reach a node (thin bands);
+ * - sdfToFog: inside -> 1, band -> -v / (halfWidth * voxelSize), outside inactive.
+ * Active tiles are expanded to leaves (the web NanoVDB writer emits leaves only).
+ */
+function buildFogVolume(sdf: (i: number, j: number, k: number) => number, lo: [number, number, number], hi: [number, number, number], voxelSize: number, halfWidth: number): ParsedFloatGrid {
+    const f = Math.fround;
+    const outside = f(halfWidth * voxelSize); // background
+    const vs = f(voxelSize);
+    type Leaf = { origin: [number, number, number]; values: Float32Array; mask: Uint8Array };
+    type Lower = { origin: [number, number, number]; children: Map<number, Leaf>; tiles: Float32Array; active: Uint8Array };
+    type Upper = { origin: [number, number, number]; children: Map<number, Lower>; tiles: Float32Array; active: Uint8Array };
+    const uppers = new Map<string, Upper>();
+    const key = (o: number[]) => o.join(",");
+    const leafIndex = (i: number, j: number, k: number) => ((i & 7) << 6) | ((j & 7) << 3) | (k & 7); // NanoVDB order (z fastest)
+    const lowerIndex = (i: number, j: number, k: number) => (((i & 127) >> 3) << 8) | (((j & 127) >> 3) << 4) | ((k & 127) >> 3);
+    const upperIndex = (i: number, j: number, k: number) => (((i & 4095) >> 7) << 10) | (((j & 4095) >> 7) << 5) | ((k & 4095) >> 7);
+    const setValue = (i: number, j: number, k: number, v: number) => {
+        const uo: [number, number, number] = [i & ~4095, j & ~4095, k & ~4095];
+        let up = uppers.get(key(uo));
+        if (!up) uppers.set(key(uo), (up = { origin: uo, children: new Map(), tiles: new Float32Array(32768).fill(outside), active: new Uint8Array(32768) }));
+        let low = up.children.get(upperIndex(i, j, k));
+        if (!low) up.children.set(upperIndex(i, j, k), (low = { origin: [i & ~127, j & ~127, k & ~127], children: new Map(), tiles: new Float32Array(4096).fill(outside), active: new Uint8Array(4096) }));
+        let leaf = low.children.get(lowerIndex(i, j, k));
+        if (!leaf) low.children.set(lowerIndex(i, j, k), (leaf = { origin: [i & ~7, j & ~7, k & ~7], values: new Float32Array(512).fill(outside), mask: new Uint8Array(512) }));
+        leaf.values[leafIndex(i, j, k)] = v;
+        leaf.mask[leafIndex(i, j, k)] = 1;
+    };
+    // initSphere/initBox: narrow-band distances in world units.
+    for (let i = lo[0]; i <= hi[0]; i++)
+        for (let j = lo[1]; j <= hi[1]; j++)
+            for (let k = lo[2]; k <= hi[2]; k++) {
+                const v = sdf(i, j, k);
+                if (Math.abs(v) < halfWidth) setValue(i, j, k, f(vs * v));
+            }
+    // signedFloodFill: the same scanline over a node's slots at every level (LOG2DIM 3/4/5).
+    const floodFill = (log2: number, isOn: (n: number) => boolean, first: (n: number) => number, last: (n: number) => number, fill: (n: number, inside: boolean) => void) => {
+        const size = 1 << (3 * log2);
+        let start = -1;
+        for (let n = 0; n < size; n++) if (isOn(n)) { start = n; break; }
+        if (start < 0) return;
+        let xInside = first(start) < 0;
+        let yInside = xInside, zInside = xInside;
+        const dim = 1 << log2;
+        for (let x = 0; x < dim; x++) {
+            const x00 = x << (2 * log2);
+            if (isOn(x00)) xInside = last(x00) < 0;
+            yInside = xInside;
+            for (let y = 0; y < dim; y++) {
+                const xy0 = x00 + (y << log2);
+                if (isOn(xy0)) yInside = last(xy0) < 0;
+                zInside = yInside;
+                for (let z = 0; z < dim; z++) {
+                    const xyz = xy0 + z;
+                    if (isOn(xyz)) zInside = last(xyz) < 0;
+                    else fill(xyz, zInside);
+                }
+            }
+        }
+    };
+    const leafFirst = (l: Leaf) => l.values[0]!;
+    const leafLast = (l: Leaf) => l.values[511]!;
+    const lowerFirst = (n: Lower) => (n.children.has(0) ? leafFirst(n.children.get(0)!) : n.tiles[0]!);
+    const lowerLast = (n: Lower) => (n.children.has(4095) ? leafLast(n.children.get(4095)!) : n.tiles[4095]!);
+    const insideValue = -outside;
+    for (const up of uppers.values())
+        for (const low of up.children.values())
+            for (const leaf of low.children.values())
+                // Leaf: the values themselves; "on" = active voxel, and first == last == its own value.
+                floodFill(3, (n) => leaf.mask[n] === 1, (n) => leaf.values[n]!, (n) => leaf.values[n]!, (n, inside) => (leaf.values[n] = inside ? insideValue : outside));
+    for (const up of uppers.values())
+        for (const low of up.children.values())
+            floodFill(4, (n) => low.children.has(n), (n) => leafFirst(low.children.get(n)!), (n) => leafLast(low.children.get(n)!), (n, inside) => (low.tiles[n] = inside ? insideValue : outside));
+    for (const up of uppers.values())
+        floodFill(5, (n) => up.children.has(n), (n) => lowerFirst(up.children.get(n)!), (n) => lowerLast(up.children.get(n)!), (n, inside) => (up.tiles[n] = inside ? insideValue : outside));
+    // sdfToFog on voxels and tiles.
+    const w = f(1 / -outside);
+    const fog = (v: number): [number, boolean] => (v > 0 ? [0, false] : [v > -outside ? f(v * w) : 1, true]);
+    // Emit leaves in the web layout (x fastest); active tiles become full leaves of their value.
     const leafOrigins: [number, number, number][] = [];
     const leafMasks: Uint8Array[] = [];
     const leafValues: Float32Array[] = [];
-    for (let lz = leafFloor(minW[2]); lz <= idxCeil(maxW[2]); lz += 8)
-        for (let ly = leafFloor(minW[1]); ly <= idxCeil(maxW[1]); ly += 8)
-            for (let lx = leafFloor(minW[0]); lx <= idxCeil(maxW[0]); lx += 8) {
-                const values = new Float32Array(512);
-                const mask = new Uint8Array(64);
-                let any = false;
-                for (let n = 0; n < 512; n++) {
-                    const ix = lx + (n & 7);
-                    const iy = ly + ((n >> 3) & 7);
-                    const iz = lz + ((n >> 6) & 7);
-                    const d = density(ix * voxelSize, iy * voxelSize, iz * voxelSize);
-                    if (d > 0) {
-                        values[n] = d;
-                        mask[n >> 3]! |= 1 << (n & 7);
-                        any = true;
-                    }
-                }
-                if (any) {
-                    leafOrigins.push([lx, ly, lz]);
-                    leafMasks.push(mask);
-                    leafValues.push(values);
-                }
+    const emit = (origin: [number, number, number], value: (lx: number, ly: number, lz: number) => [number, boolean]) => {
+        const values = new Float32Array(512);
+        const mask = new Uint8Array(64);
+        let any = false;
+        for (let n = 0; n < 512; n++) {
+            const [v, on] = value(n & 7, (n >> 3) & 7, (n >> 6) & 7);
+            if (!on) continue;
+            values[n] = v;
+            mask[n >> 3]! |= 1 << (n & 7);
+            any = true;
+        }
+        if (any) {
+            leafOrigins.push(origin);
+            leafMasks.push(mask);
+            leafValues.push(values);
+        }
+    };
+    for (const up of uppers.values()) {
+        for (const low of up.children.values()) {
+            for (const leaf of low.children.values()) emit(leaf.origin, (x, y, z) => fog(leaf.values[(x << 6) | (y << 3) | z]!));
+            for (let n = 0; n < 4096; n++) {
+                if (low.children.has(n)) continue;
+                const [v, on] = fog(low.tiles[n]!);
+                if (on) emit([low.origin[0] + ((n >> 8) << 3), low.origin[1] + (((n >> 4) & 15) << 3), low.origin[2] + ((n & 15) << 3)], () => [v, true]);
             }
+        }
+        for (let n = 0; n < 32768; n++) {
+            if (up.children.has(n)) continue;
+            const [v, on] = fog(up.tiles[n]!);
+            if (!on) continue;
+            const o = [up.origin[0] + ((n >> 10) << 7), up.origin[1] + (((n >> 5) & 31) << 7), up.origin[2] + ((n & 31) << 7)];
+            for (let a = 0; a < 128; a += 8) for (let b2 = 0; b2 < 128; b2 += 8) for (let c = 0; c < 128; c += 8) emit([o[0]! + a, o[1]! + b2, o[2]! + c], () => [v, true]);
+        }
+    }
     return { translation: [0, 0, 0], scale: voxelSize, background: 0, leafOrigins, leafMasks, leafValues };
 }
 
-/** Procedural unit-density sphere (mirrors Grid::createSphere). */
-export function buildSphereGrid(radius: number, voxelSize: number): ParsedFloatGrid {
-    const r2 = radius * radius;
-    return buildProceduralGrid((x, y, z) => (x * x + y * y + z * z <= r2 ? 1 : 0), [-radius, -radius, -radius], [radius, radius, radius], voxelSize);
+const kEmptyGrid = (voxelSize: number): ParsedFloatGrid => ({ translation: [0, 0, 0], scale: voxelSize, background: 0, leafOrigins: [], leafMasks: [], leafValues: [] });
+
+/** Mirrors Grid::createSphere (nanovdb::createFogVolumeSphere, centered at the origin). */
+export function buildSphereGrid(radius: number, voxelSize: number, blendRange = 3): ParsedFloatGrid {
+    const f = Math.fround;
+    const r0 = f(f(radius) / f(voxelSize));
+    const rmax = f(r0 + f(blendRange));
+    if (r0 < 1.5) return kEmptyGrid(voxelSize); // below the Nyquist frequency
+    const lo = Math.floor(-rmax), hi = Math.ceil(rmax);
+    return buildFogVolume((i, j, k) => f(f(Math.sqrt(f(f(f(j * j) + f(i * i)) + f(k * k)))) - r0), [lo, lo, lo], [hi, hi, hi], voxelSize, blendRange);
 }
 
-/** Procedural unit-density box (mirrors Grid::createBox). */
-export function buildBoxGrid(width: number, height: number, depth: number, voxelSize: number): ParsedFloatGrid {
-    const hx = width / 2;
-    const hy = height / 2;
-    const hz = depth / 2;
-    return buildProceduralGrid((x, y, z) => (Math.abs(x) <= hx && Math.abs(y) <= hy && Math.abs(z) <= hz ? 1 : 0), [-hx, -hy, -hz], [hx, hy, hz], voxelSize);
+/** Mirrors Grid::createBox (nanovdb::createFogVolumeBox, centered at the origin). */
+export function buildBoxGrid(width: number, height: number, depth: number, voxelSize: number, blendRange = 3): ParsedFloatGrid {
+    const f = Math.fround;
+    const two = f(2 * f(voxelSize));
+    const r = [f(f(width) / two), f(f(height) / two), f(f(depth) / two)];
+    if (Math.min(...r) < 1.5) return kEmptyGrid(voxelSize);
+    const lo = r.map((x) => Math.floor(f(-x - f(blendRange)))) as [number, number, number];
+    const hi = r.map((x) => Math.ceil(f(x + f(blendRange)))) as [number, number, number];
+    const pos = (x: number) => (x > 0 ? x : 0);
+    const neg = (x: number) => (x < 0 ? x : 0);
+    return buildFogVolume(
+        (i, j, k) => {
+            const q1 = f(Math.abs(i) - r[0]!), q2 = f(Math.abs(j) - r[1]!), q3 = f(Math.abs(k) - r[2]!);
+            const x2y2 = f(f(pos(q1) * pos(q1)) + f(pos(q2) * pos(q2)));
+            return f(f(Math.sqrt(f(x2y2 + f(pos(q3) * pos(q3))))) + neg(Math.max(Math.max(q1, q2), q3)));
+        },
+        lo,
+        hi,
+        voxelSize,
+        blendRange,
+    );
+}
+
+/** NanoVDB grid statistics and point lookup over a ParsedFloatGrid (python Grid readback). */
+export function parsedGridStats(g: ParsedFloatGrid): { voxelCount: number; minIndex: [number, number, number]; maxIndex: [number, number, number]; minValue: number; maxValue: number } {
+    let voxelCount = 0, minValue = Infinity, maxValue = -Infinity;
+    const minIndex: [number, number, number] = [Infinity, Infinity, Infinity];
+    const maxIndex: [number, number, number] = [-Infinity, -Infinity, -Infinity];
+    g.leafOrigins.forEach(([lx, ly, lz], l) => {
+        const mask = g.leafMasks[l]!, values = g.leafValues[l]!;
+        for (let n = 0; n < 512; n++) {
+            if (!(mask[n >> 3]! & (1 << (n & 7)))) continue;
+            const p = [lx + (n & 7), ly + ((n >> 3) & 7), lz + ((n >> 6) & 7)];
+            voxelCount++;
+            for (let c = 0; c < 3; c++) {
+                minIndex[c] = Math.min(minIndex[c]!, p[c]!);
+                maxIndex[c] = Math.max(maxIndex[c]!, p[c]!);
+            }
+            minValue = Math.min(minValue, values[n]!);
+            maxValue = Math.max(maxValue, values[n]!);
+        }
+    });
+    if (voxelCount === 0) return { voxelCount, minIndex: [0, 0, 0], maxIndex: [0, 0, 0], minValue: 0, maxValue: 0 };
+    return { voxelCount, minIndex, maxIndex, minValue, maxValue };
+}
+
+/** The value at index-space voxel (i, j, k); the background where no voxel is stored. */
+export function parsedGridValue(g: ParsedFloatGrid, i: number, j: number, k: number): number {
+    const [lx, ly, lz] = [Math.floor(i / 8) * 8, Math.floor(j / 8) * 8, Math.floor(k / 8) * 8];
+    const l = g.leafOrigins.findIndex((o) => o[0] === lx && o[1] === ly && o[2] === lz);
+    if (l < 0) return g.background;
+    return g.leafValues[l]![(i - lx) | ((j - ly) << 3) | ((k - lz) << 6)]!;
 }
 
 function halfToFloat(h: number): number {

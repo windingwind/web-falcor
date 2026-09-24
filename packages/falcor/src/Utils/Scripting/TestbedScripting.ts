@@ -25,6 +25,7 @@ import { createPass } from "../../RenderGraph/RenderPass.js";
 import { Properties } from "../Properties.js";
 import { Logger } from "../Logger.js";
 import { RuntimeError } from "../../Core/Error.js";
+import { AssetCategory, AssetResolver } from "../../Core/AssetResolver.js";
 import { getPyodide } from "./Scripting.js";
 import { Testbed, type TestbedOptions } from "./Testbed.js";
 import { MaterialBridge } from "../../Scene/SceneBuilder.js";
@@ -125,6 +126,15 @@ function makeJsModule(device: Device, testbedOptions: TestbedOptions, fsRead: (p
         profilerBegin: (name: string) => device.profilerHook?.startEvent(name),
         profilerEnd: (name: string) => device.profilerHook?.endEvent(name),
         createRenderGraph: (t: Testbed, name: string) => t.createRenderGraph(name),
+        newRenderGraph: (name: string) => new RenderGraph(device, String(name)),
+        createPass: (type: string, props: unknown) => createPass(device, String(type), new Properties((toJs(props) as Record<string, never>) ?? {})),
+        /** A file for load_render_graph: served relative to the media directory when the FS doesn't have it. */
+        fetchText: async (path: string) => {
+            const url = path.startsWith("/") ? path : await AssetResolver.getDefaultResolver().resolvePath(path, AssetCategory.Any);
+            const res = await fetch(url || path);
+            if (!res.ok) throw new RuntimeError(`Can't find render graph file '${path}'`);
+            return res.text();
+        },
         graphCreatePass: (g: RenderGraph, name: string, type: string, props: unknown) => g.addPass(createPass(device, type, new Properties((toJs(props) as Record<string, never>) ?? {})), name),
         setLogVerbosity: (level: number) => (Logger.level = level),
         /** A material of `type` (MaterialType name) for Scene.replaceMaterial, e.g. PBRTDiffuse. */
@@ -150,7 +160,7 @@ function makeJsModule(device: Device, testbedOptions: TestbedOptions, fsRead: (p
 /** The Python side: native names, keyword arguments, numpy conversions. */
 const kFalcorPython = String.raw`
 import sys, types, enum
-from pyodide.ffi import run_sync, to_js
+from pyodide.ffi import run_sync, to_js, create_proxy
 # registerJsModule doesn't replace an imported module: drop the previous script's first.
 sys.modules.pop("_falcor_testbed_js", None)
 import _falcor_testbed_js as _js
@@ -310,16 +320,57 @@ class ComputePass:
         _js.execute(self._o, threads_x, threads_y, threads_z)
 
 class RenderGraph:
-    def __init__(self, o): self._o = o
+    # RenderGraph(name) as in graph scripts, or a wrapper around a JS graph; the JS graph carries
+    # both native spellings (create_pass / createPass, add_edge / addEdge, ...).
+    def __init__(self, o="RenderGraph"):
+        object.__setattr__(self, "_o", _js.newRenderGraph(o) if isinstance(o, str) else o)
     @property
     def name(self): return self._o.name
+    @name.setter
+    def name(self, v): self._o.name = str(v)
     def create_pass(self, name, type, dict={}):
         _js.graphCreatePass(self._o, name, type, to_js(dict))
-    def add_edge(self, src, dst): self._o.addEdge(src, dst)
-    def remove_edge(self, src, dst): self._o.removeEdge(src, dst)
+    createPass = create_pass
+    def addPass(self, render_pass, name): return self._o.addPass(render_pass, name)
     def mark_output(self, name, mask=7): self._o.markOutput(name, mask)
-    def unmark_output(self, name): self._o.unmarkOutput(name)
-    def get_pass(self, name): return self._o.getPass(name)
+    markOutput = mark_output
+    def __getitem__(self, name): return self._o.getPass(name)
+    def __getattr__(self, k): return getattr(object.__getattribute__(self, "_o"), k)
+
+def createPass(type, dict={}):
+    return _js.createPass(type, to_js(dict))
+
+# Input events handed to the Testbed callbacks (native exposes these Key values only).
+class MouseButton:
+    Left = 0
+    Middle = 1
+    Right = 2
+class ModifierFlags:
+    Shift = 1
+    Ctrl = 2
+    Alt = 4
+setattr(ModifierFlags, "None", 0)  # a keyword in python: reachable as getattr(ModifierFlags, "None")
+class Key:
+    Space = "Space"
+    E = "E"
+    R = "R"
+class KeyboardEvent:
+    class Type:
+        KeyPressed = 0
+        KeyReleased = 1
+        KeyRepeated = 2
+        Input = 3
+    def __init__(self, e):
+        self.type = int(e.type); self.key = str(e.key); self.mods = int(e.mods); self.codepoint = int(e.codepoint)
+class MouseEvent:
+    class Type:
+        ButtonDown = 0
+        ButtonUp = 1
+        Move = 2
+        Wheel = 3
+    def __init__(self, e):
+        self.type = int(e.type); self.pos = float2(*e.pos.to_py()); self.screen_pos = float2(*e.screenPos.to_py())
+        self.wheel_delta = float2(*e.wheelDelta.to_py()); self.mods = int(e.mods); self.button = int(e.button)
 
 class MaterialTextureSlot(enum.Enum):
     BaseColor = "BaseColor"
@@ -396,6 +447,43 @@ class Testbed:
         while not self.should_close: self.frame()
     def resize_frame_buffer(self, width, height): self._o.resizeFrameBuffer(width, height)
     def load_scene(self, path, build_flags=0): run_sync(self._o.loadScene(str(path), int(build_flags)))
+    def load_scene_from_string(self, scene, extension="pyscene", build_flags=0): run_sync(self._o.loadSceneFromString(str(scene), str(extension), int(build_flags)))
+    def load_render_graph(self, path):
+        # Mirrors RenderGraph::createFromFile: runs the graph script and returns the graph it adds.
+        try:
+            with open(str(path)) as f: src = f.read()
+        except OSError:
+            src = run_sync(_js.fetchText(str(path)))
+        added = []
+        class _M:
+            def addGraph(self, g): added.append(g)
+        ns = {"m": _M(), "__name__": "__main__"}
+        exec(compile(src, str(path), "exec"), ns)
+        if not added: raise RuntimeError(f"'{path}' did not add a render graph")
+        g = added[-1]
+        return g if isinstance(g, RenderGraph) else RenderGraph(g)
+    def get_import_paths(self): return list(self._o.getImportPaths().to_py())
+    def get_import_dicts(self): return [dict(d) for d in self._o.getImportDicts().to_py()]
+    @property
+    def window(self): return None  # the browser canvas is the window; there is no native Window object
+    @property
+    def keyboard_event_callback(self): return getattr(self, "_kcb", None)
+    @keyboard_event_callback.setter
+    def keyboard_event_callback(self, f):
+        self._kcb = f
+        self._o.keyboardEventCallback = create_proxy(lambda e: bool(f(KeyboardEvent(e)))) if f else None
+    @property
+    def mouse_event_callback(self): return getattr(self, "_mcb", None)
+    @mouse_event_callback.setter
+    def mouse_event_callback(self, f):
+        self._mcb = f
+        self._o.mouseEventCallback = create_proxy(lambda e: bool(f(MouseEvent(e)))) if f else None
+    @property
+    def window_size_change_callback(self): return getattr(self, "_wcb", None)
+    @window_size_change_callback.setter
+    def window_size_change_callback(self, f):
+        self._wcb = f
+        self._o.windowSizeChangeCallback = create_proxy(lambda w, h: f(int(w), int(h))) if f else None
     def capture_output(self, path, output_index=0): run_sync(self._o.captureOutput(str(path), output_index))
     @property
     def screen(self):
@@ -409,6 +497,7 @@ class Testbed:
 for _n, _v in list(globals().items()):
     if _n[:1].isupper() and not _n.startswith("_"):
         setattr(falcor, _n, _v)
+falcor.createPass = createPass  # graph scripts (load_render_graph) call it unqualified
 sys.modules["falcor"] = falcor
 
 def _vector(name, n, scalar):

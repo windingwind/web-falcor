@@ -20,7 +20,26 @@ import { AnimationBridge, CameraBridge, GridVolumeBridge, LightBridge, MaterialB
 import type { Scene } from "../../Scene/Scene.js";
 import { LightType, type StaticVertex } from "../../Scene/SceneData.js";
 import { MaterialType, ShadingModel } from "../../Scene/Material/MaterialData.js";
-import { buildSphereGrid, buildBoxGrid } from "../../Scene/Volume/VDBLoader.js";
+import { buildSphereGrid, buildBoxGrid, parsedGridStats, parsedGridValue, type ParsedFloatGrid } from "../../Scene/Volume/VDBLoader.js";
+
+/** Python `Grid` from Grid.createSphere/createBox: native's read-only stats and getValue. */
+class ProceduralGridHandle {
+    private stats: ReturnType<typeof parsedGridStats> | null = null;
+    constructor(readonly _proceduralGrid: ParsedFloatGrid) {}
+    private get s() {
+        return (this.stats ??= parsedGridStats(this._proceduralGrid));
+    }
+    get voxelCount(): number { return this.s.voxelCount; }
+    /** Rounded down to an 8-brick, as Grid::getMinIndex. */
+    get minIndex(): { x: number; y: number; z: number } { const m = this.s.minIndex; return { x: m[0] & ~7, y: m[1] & ~7, z: m[2] & ~7 }; }
+    /** Rounded up to an 8-brick, as Grid::getMaxIndex. */
+    get maxIndex(): { x: number; y: number; z: number } { const m = this.s.maxIndex; return { x: (m[0] + 7) & ~7, y: (m[1] + 7) & ~7, z: (m[2] + 7) & ~7 }; }
+    get minValue(): number { return this.s.minValue; }
+    get maxValue(): number { return this.s.maxValue; }
+    getValue(ijk: { x: number; y: number; z: number }): number {
+        return parsedGridValue(this._proceduralGrid, Number(ijk.x), Number(ijk.y), Number(ijk.z));
+    }
+}
 import { float2, float3, float4 } from "../Math/Vector.js";
 
 interface PyodideApi {
@@ -219,6 +238,24 @@ class float4:
         if y is None: y = z = w = x
         self.x = float(x); self.y = float(y); self.z = float(z); self.w = float(w)
 
+# Integer and bool vectors (native int2..4, uint2..4, bool2..4).
+def _vec_class(name, n, cast):
+    comps = 'xyzw'[:n]
+    def __init__(self, *args):
+        vals = list(args) if len(args) == n else [args[0] if args else 0] * n
+        for c, v in zip(comps, vals): setattr(self, c, cast(v))
+    def __repr__(self): return f"{name}({', '.join(str(getattr(self, c)) for c in comps)})"
+    def __eq__(self, o): return all(getattr(self, c) == getattr(o, c, None) for c in comps)
+    return type(name, (), {'__init__': __init__, '__repr__': __repr__, '__eq__': __eq__})
+for _n in (2, 3, 4):
+    globals()[f'int{_n}'] = _vec_class(f'int{_n}', _n, int)
+    globals()[f'uint{_n}'] = _vec_class(f'uint{_n}', _n, int)
+    globals()[f'bool{_n}'] = _vec_class(f'bool{_n}', _n, bool)
+
+class GridVolume_EmissionMode:
+    Direct = 0
+    Blackbody = 1
+
 class TriangleMesh:
     def __new__(cls):
         return _TriangleMesh.createEmpty()
@@ -268,6 +305,16 @@ class EnvMap:
     def __new__(cls, path):
         return _makeEnvMap(path)
 
+# Bridge reads return JS vectors: hand them back as the prelude's float3/float4 (with arithmetic).
+def _pyvec(v):
+    try:
+        from pyodide.ffi import JsProxy
+    except ImportError:
+        return v
+    if isinstance(v, JsProxy) and not callable(v) and all(hasattr(v, c) for c in 'xyz'):
+        return float4(v.x, v.y, v.z, v.w) if hasattr(v, 'w') else float3(v.x, v.y, v.z)
+    return v
+
 # Guard: python setattr on JS proxies silently creates properties, so a typo'd
 # or unimplemented bridge property would be DROPPED. Wrap the factories so
 # unknown attribute writes raise instead (mirrors pybind11 strictness).
@@ -286,7 +333,7 @@ def _guarded(factory, known, kwnames=()):
         class Guard:
             __slots__ = ('_o',)
             def __init__(self, o): object.__setattr__(self, '_o', o)
-            def __getattr__(self, k): return getattr(object.__getattribute__(self, '_o'), k)
+            def __getattr__(self, k): return _pyvec(getattr(object.__getattribute__(self, '_o'), k))
             def __setattr__(self, k, v):
                 if k not in known:
                     raise AttributeError(f'unsupported property: {k} (web bridge)')
@@ -378,23 +425,28 @@ class _GridSlot:
     Density = 'density'
     Emission = 'emission'
 _gvProps = {'name', 'densityScale', 'emissionScale', 'albedo', 'anisotropy',
-            'emissionMode', 'emissionTemperature', 'densityGrid',
+            'emissionMode', 'emissionTemperature', 'densityGrid', 'emissionGrid',
             'frameRate', 'startFrame', 'playbackEnabled'}
 _GridVolumeGuarded = _guarded(_GridVolume, _gvProps)
 class GridVolume:
     GridSlot = _GridSlot
+    EmissionMode = GridVolume_EmissionMode
     def __new__(cls, name=''):
         return _GridVolumeGuarded(name)
 Volume = GridVolume  # legacy pyscene alias (volume_test.pyscene)
 
 # Procedural density grids (two_volumes.pyscene).
 class Grid:
+    # blendRange defaults to 3 voxels, as the native binding.
     @staticmethod
-    def createSphere(radius, voxelSize):
-        return _Grid.createSphere(radius, voxelSize)
+    def createSphere(radius, voxelSize, blendRange=3.0):
+        return _Grid.createSphere(radius, voxelSize, blendRange)
     @staticmethod
-    def createBox(width, height, depth, voxelSize):
-        return _Grid.createBox(width, height, depth, voxelSize)
+    def createBox(width, height, depth, voxelSize, blendRange=3.0):
+        return _Grid.createBox(width, height, depth, voxelSize, blendRange)
+    @staticmethod
+    def createFromFile(path, gridname):
+        return _Grid.createFromFile(path, gridname)
 
 # SDF grids: all four representations, built from the procedural generator,
 # a .sdfg corner-value file or a .sdf primitive list.
@@ -532,8 +584,11 @@ async function runSceneScriptInternal(device: Device, source: string, baseUrl: s
         _makeEnvMap: (path: string) => ({ path, intensity: 1 }),
         _GridVolume: (name = "") => new GridVolumeBridge(name),
         _Grid: {
-            createSphere: (radius: number, voxelSize: number) => ({ _proceduralGrid: buildSphereGrid(radius, voxelSize) }),
-            createBox: (width: number, height: number, depth: number, voxelSize: number) => ({ _proceduralGrid: buildBoxGrid(width, height, depth, voxelSize) }),
+            createSphere: (radius: number, voxelSize: number, blendRange = 3) => new ProceduralGridHandle(buildSphereGrid(Number(radius), Number(voxelSize), Number(blendRange))),
+            createBox: (width: number, height: number, depth: number, voxelSize: number, blendRange = 3) =>
+                new ProceduralGridHandle(buildBoxGrid(Number(width), Number(height), Number(depth), Number(voxelSize), Number(blendRange))),
+            // Loaded with the scene (fetches are asynchronous); stats aren't available in the script.
+            createFromFile: (path: string, gridname: string) => ({ _file: { path: String(path), gridname: String(gridname) } }),
         },
         _SDFGridCreate: (type: string, narrowBandThickness = 5.0, brickWidth = 7) => new SDFGridBridge(type as "ndsdf" | "sbs", narrowBandThickness, brickWidth),
         SceneBuilderFlags: kSceneBuilderFlagsPython,
