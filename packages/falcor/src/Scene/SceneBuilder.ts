@@ -21,7 +21,7 @@ import { convertToLinearSweptSphere, convertToPolytube } from "./Curves/CurveTes
 import { optimizeMaterialTextures, removeDuplicateMaterials } from "./Material/MaterialOptimizer.js";
 import { TextureManager } from "./Material/TextureManager.js";
 import { EnvMap } from "./Lights/EnvMap.js";
-import { generateTangents } from "./TangentSpace.js";
+import { generateTangents, generateTangentsAndMerge, loadMikkTSpace } from "./TangentSpace.js";
 import { LightType, type AnalyticLight, type StaticVertex } from "./SceneData.js";
 import { MaterialType, ShadingModel, packTextureHandle, TextureHandleMode } from "./Material/MaterialData.js";
 import { getTextureSlotSrgb } from "./Material/TextureSlots.js";
@@ -100,15 +100,19 @@ export const TriangleMesh = {
         const t0 = new float4(0, 0, 0, 0);
         const vertices: StaticVertex[] = [];
         const indices: number[] = [];
+        // f32 arithmetic as natively: sin(float(pi)) != 0 keeps the bottom pole's vertices apart.
+        const f = Math.fround;
+        const pi = f(Math.PI);
         for (let v = 0; v <= segmentsV; v++) {
             for (let u = 0; u <= segmentsU; u++) {
-                const uu = u / segmentsU;
-                const vv = v / segmentsV;
-                const theta = uu * 2 * Math.PI;
-                const phi = vv * Math.PI;
-                const dir = new float3(Math.cos(theta) * Math.sin(phi), Math.cos(phi), Math.sin(theta) * Math.sin(phi));
+                const uu = f(u / segmentsU);
+                const vv = f(v / segmentsV);
+                const theta = f(f(uu * 2) * pi);
+                const phi = f(vv * pi);
+                const [st, ct, sp, cp] = [f(Math.sin(theta)), f(Math.cos(theta)), f(Math.sin(phi)), f(Math.cos(phi))];
+                const dir = new float3(f(ct * sp), cp, f(st * sp));
                 vertices.push({
-                    position: new float3(dir.x * radius, dir.y * radius, dir.z * radius),
+                    position: new float3(f(dir.x * radius), f(dir.y * radius), f(dir.z * radius)),
                     normal: dir,
                     tangent: t0,
                     texCrd: new float2(uu, vv),
@@ -130,16 +134,17 @@ export const TriangleMesh = {
     /** Disk in the XZ plane, normal +Y (mirrors TriangleMesh::createDisk). */
     createDisk(radius = 1, segments = 32): TriangleMeshDesc {
         const n = new float3(0, 1, 0);
-        const t0 = new float4(1, 0, 0, 1);
+        const t0 = new float4(0, 0, 0, 0);
+        const f = Math.fround;
         const vertices: StaticVertex[] = [{ position: new float3(0, 0, 0), normal: n, tangent: t0, texCrd: new float2(0.5, 0.5) }];
-        for (let i = 0; i <= segments; i++) {
-            const a = (i / segments) * 2 * Math.PI;
-            const x = Math.cos(a);
-            const z = Math.sin(a);
-            vertices.push({ position: new float3(x * radius, 0, z * radius), normal: n, tangent: t0, texCrd: new float2(0.5 + 0.5 * x, 0.5 + 0.5 * z) });
-        }
         const indices: number[] = [];
-        for (let i = 1; i <= segments; i++) indices.push(0, i + 1, i); // CW from +Y for a +Y-facing front
+        for (let i = 0; i < segments; i++) {
+            const phi = f(f(f(i / segments) * 2) * f(Math.PI));
+            const c = f(Math.cos(f(phi)));
+            const s = -f(Math.sin(f(phi)));
+            vertices.push({ position: new float3(f(c * radius), 0, f(s * radius)), normal: n, tangent: t0, texCrd: new float2(f(0.5 + f(c * 0.5)), f(0.5 + f(s * 0.5))) });
+            indices.push(0, i + 1, ((i + 1) % segments) + 1);
+        }
         return { vertices, indices: new Uint32Array(indices) };
     },
 };
@@ -866,6 +871,42 @@ export class SceneBuilderBridge {
         return this.animationHandles;
     }
 
+    /**
+     * Mirrors the tangent part of SceneBuilder::addMesh for every mesh with a tangentSpace mode:
+     * new vertices/indices, with skin, morph and vertex-cache data remapped to the split vertices.
+     */
+    private generateMeshTangents(meshes: SceneMeshDesc[]): void {
+        const keepAsset = this.hasFlag(SceneBuilderFlags.UseOriginalTangentSpace);
+        const done = new Map<StaticVertex[], { indices: Uint32Array; result: ReturnType<typeof generateTangentsAndMerge> }[]>();
+        meshes.forEach((m, i) => {
+            const mode = m.tangentSpace;
+            if (!mode || mode === "keep" || (mode === "asset" && keepAsset)) return;
+            const list = done.get(m.vertices) ?? [];
+            done.set(m.vertices, list);
+            let entry = list.find((e) => e.indices === m.indices);
+            if (!entry) {
+                entry = { indices: m.indices, result: generateTangentsAndMerge(m.vertices, m.indices, { boneIDs: m.skin?.boneIDs, boneWeights: m.skin?.weights }) };
+                if (!entry.result) generateTangents(m.vertices, m.indices); // no wasm: approximate, in place
+                list.push(entry);
+            }
+            const r = entry.result;
+            if (!r) return;
+            const remap = <T extends Float32Array | Uint32Array>(data: T, stride: number): T => {
+                const out = new (data.constructor as { new (n: number): T })(r.source.length * stride);
+                r.source.forEach((src, j) => out.set(data.subarray(src * stride, src * stride + stride), j * stride));
+                return out;
+            };
+            meshes[i] = {
+                ...m,
+                vertices: r.vertices,
+                indices: r.indices,
+                skin: m.skin ? { ...m.skin, boneIDs: remap(m.skin.boneIDs, 4), weights: remap(m.skin.weights, 4) } : undefined,
+                morph: m.morph ? { ...m.morph, targets: m.morph.targets.map((t) => ({ position: remap(t.position, 3), normal: t.normal ? remap(t.normal, 3) : undefined })) } : undefined,
+                vertexCache: m.vertexCache ? { ...m.vertexCache, frames: m.vertexCache.frames.map((f) => Array.from(r.source, (src) => f[src]!)) } : undefined,
+            };
+        });
+    }
+
     importScene(path: string): void {
         this.commands.push({ kind: "import", path });
     }
@@ -1056,6 +1097,7 @@ export class SceneBuilderBridge {
 
     async resolve(device: Device, baseUrl: string): Promise<Scene> {
         this.importedCameras = [];
+        await loadMikkTSpace();
         const textureManager = new TextureManager();
         const meshes: SceneMeshDesc[] = [];
         const materials: SceneMaterialDesc[] = [];
@@ -1317,13 +1359,11 @@ export class SceneBuilderBridge {
                 materials.push(mat.toDesc());
                 materialIDs.set(mat, materialID);
             }
-            // Local-space tangents when the asset provides none (native MikkTSpace);
-            // UseOriginalTangentSpace keeps supplied tangents.
+            // Tangents are generated below (native MikkTSpace); UseOriginalTangentSpace keeps supplied ones.
             const vertices = geo.vertices.map((v) => ({ ...v }));
             const hasTangents = vertices.some((v) => v.tangent.x !== 0 || v.tangent.y !== 0 || v.tangent.z !== 0);
-            if (!(this.hasFlag(SceneBuilderFlags.UseOriginalTangentSpace) && hasTangents)) generateTangents(vertices, geo.indices);
             for (const transform of transforms) {
-                meshes.push({ vertices, indices: geo.indices, materialID, transform });
+                meshes.push({ vertices, indices: geo.indices, materialID, transform, tangentSpace: hasTangents ? "asset" : "generate" });
             }
         });
 
@@ -1387,6 +1427,9 @@ export class SceneBuilderBridge {
             if (!built) throw new RuntimeError(`addSDFGridInstance: unknown SDF grid ${inst.sdfGridID}`);
             sdfGrids.push({ grid: built.grid, materialID: built.materialID, transform: this.nodes[inst.nodeID]! });
         }
+
+        // SceneBuilder::addMesh: MikkTSpace tangents and the vertex merge, once per shared vertex array.
+        this.generateMeshTangents(meshes);
 
         // Flags::DontUseDisplacement: drop displacement maps (meshes stay plain triangles).
         if (this.hasFlag(SceneBuilderFlags.DontUseDisplacement)) for (const m of materials) delete m.basic.texDisplacement;

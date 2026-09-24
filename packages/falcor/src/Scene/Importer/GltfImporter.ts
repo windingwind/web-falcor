@@ -18,7 +18,6 @@ import { LightType, type AnalyticLight, type StaticVertex } from "../SceneData.j
 import { decomposeTRS, type SceneNode, type AnimationChannel, type AnimationPath, type SkinDesc, type MorphDesc, type WeightTrack } from "../Animation/SceneAnimation.js";
 import { TextureManager } from "../Material/TextureManager.js";
 import { TextureHandleMode, packTextureHandle } from "../Material/MaterialData.js";
-import { generateTangents } from "../TangentSpace.js";
 import { fovYToFocalLength } from "../Camera/Camera.js";
 
 interface GltfLight {
@@ -433,8 +432,6 @@ export class GltfImporter {
                         draco ? draco.indices
                         : prim.indices !== undefined ? new Uint32Array(readAccessor(prim.indices))
                         : new Uint32Array(Array.from({ length: count }, (_v, i) => i));
-                    // SceneBuilder generates MikkTSpace tangents when the asset has none.
-                    if (!tangents) generateTangents(vertices, indices);
 
                     // Skinning: per-vertex joints/weights + the skin's joint→node
                     // mapping and inverse-bind matrices (node indices are offset by
@@ -466,7 +463,8 @@ export class GltfImporter {
                         const baseWeights = node.weights ?? json.meshes![node.mesh]!.weights ?? new Array(targets.length).fill(0);
                         morph = { targets, nodeID: nodeIndex, baseWeights };
                     }
-                    meshDescs.push({ vertices, indices, materialID: prim.material ?? 0, transform: world, nodeID: nodeIndex, skin, morph });
+                    // SceneBuilder generates MikkTSpace tangents unless UseOriginalTangentSpace keeps the asset's.
+                    meshDescs.push({ vertices, indices, materialID: prim.material ?? 0, transform: world, nodeID: nodeIndex, skin, morph, tangentSpace: tangents ? "asset" : "generate" });
                 }
             }
             for (const child of node.children ?? []) await visit(child, world);

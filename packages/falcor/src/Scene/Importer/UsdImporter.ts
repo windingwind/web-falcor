@@ -591,8 +591,7 @@ export class UsdImporter {
                 if (refined) {
                     const materialID = getOrAddMaterial(mesh.materialId, bindings.get(node.absPath!), node.absPath);
                     const { vertices, indices } = refinedVertices(refined, texCoordTransforms[materialID]!);
-                    generateTangents(vertices, indices);
-                    meshes.push({ vertices, indices, materialID, transform: world.clone(), nodeID: meshNodeID() });
+                    meshes.push({ vertices, indices, materialID, transform: world.clone(), nodeID: meshNodeID(), tangentSpace: "generate" });
                     for (const child of node.children ?? []) walk(child, world, usdWorld, instanced, ownNode);
                     return;
                 }
@@ -618,8 +617,7 @@ export class UsdImporter {
                         texCrd: uvs && uvs.length === vertexCount * 2 ? new float2(...toTexCrd(uvs[i * 2]!, uvs[i * 2 + 1]!)) : new float2(0, 0),
                     };
                 }
-                generateTangents(vertices, indices);
-                meshes.push({ vertices, indices, materialID, transform: world.clone(), nodeID: meshNodeID() });
+                meshes.push({ vertices, indices, materialID, transform: world.clone(), nodeID: meshNodeID(), tangentSpace: "generate" });
             } else if (node.nodeType !== "xform" && node.nodeType !== "" && !/camera|light/i.test(node.nodeType)) {
                 Logger.warning(`UsdImporter: prim type '${node.nodeType}' ('${node.primName}') not supported (skipped)`);
             }

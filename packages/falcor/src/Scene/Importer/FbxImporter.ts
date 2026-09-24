@@ -16,7 +16,6 @@
 import { float2, float3, float4, normalize3, cross, sub3, add3 } from "../../Utils/Math/Vector.js";
 import { float4x4, mulMat, transformPoint, transformVector } from "../../Utils/Math/Matrix.js";
 import { RuntimeError } from "../../Core/Error.js";
-import { generateTangents } from "../TangentSpace.js";
 import { MaterialType, ShadingModel, packTextureHandle, TextureHandleMode } from "../Material/MaterialData.js";
 import { getTextureSlotSrgb } from "../Material/TextureSlots.js";
 import { WorkerPool } from "../../Utils/Threading/WorkerPool.js";
@@ -508,7 +507,6 @@ export class FbxImporter {
                     });
                 }
                 const idx = new Uint32Array(mesh.triangles);
-                generateTangents(vertices, idx);
                 cached = { vertices, indices: idx };
                 meshVertices.set(mi, cached);
             }
@@ -533,7 +531,7 @@ export class FbxImporter {
             }
             for (const mi of node.meshes ?? []) {
                 const { vertices, indices } = getMesh(mi);
-                meshDescs.push({ vertices, indices, materialID: json.meshes[mi]!.materialindex, transform: world, nodeID });
+                meshDescs.push({ vertices, indices, materialID: json.meshes[mi]!.materialindex, transform: world, nodeID, tangentSpace: "generate" });
                 skinnedDescs.push({ desc: meshDescs[meshDescs.length - 1]!, mi });
             }
             for (const child of node.children ?? []) visit(child, world, nodeID);
@@ -759,7 +757,7 @@ export class FbxImporter {
             }
             vertices.forEach((v, i) => (v.normal = normalize3(acc[i]!)));
         }
-        generateTangents(vertices, idx);
+        // Tangents come from SceneBuilder, as for any TriangleMesh.
         return { vertices, indices: idx };
     }
 }

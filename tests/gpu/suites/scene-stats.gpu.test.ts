@@ -9,7 +9,7 @@ import { AssetCategory, AssetResolver, initScripting, runSceneScript } from "@we
 import { gpuTest, expectEq } from "../harness/registry.js";
 
 const kExact = [
-    "meshCount", "meshInstanceCount", "meshInstanceOpaqueCount", "uniqueTriangleCount", "instancedTriangleCount",
+    "meshCount", "meshInstanceCount", "meshInstanceOpaqueCount", "uniqueTriangleCount", "uniqueVertexCount", "instancedTriangleCount", "instancedVertexCount",
     "curveCount", "curveInstanceCount", "uniqueCurveSegmentCount", "sdfGridCount", "sdfGridInstancesCount", "customPrimitiveCount",
     "materialCount", "materialOpaqueCount", "materialMemoryInBytes", "textureCount", "textureCompressedCount", "textureTexelCount",
     "activeLightCount", "totalLightCount", "pointLightCount", "directionalLightCount", "rectLightCount", "discLightCount", "sphereLightCount", "distantLightCount",

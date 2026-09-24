@@ -260,6 +260,8 @@ export interface SceneMeshDesc {
     vertexCache?: { times: number[]; frames: StaticVertex[][] };
     /** Poly-tube curve cache (CachedCurve, PolyTube): per-sample ring centers, 4 tube vertices per center. */
     polytubeCache?: { times: number[]; curvePoints: Float32Array[]; strandLast: Uint8Array };
+    /** Tangents SceneBuilder.resolve still has to generate (MikkTSpace + vertex merge); unset keeps them. */
+    tangentSpace?: import("./TangentSpace.js").TangentSpaceMode;
 }
 
 /** Tessellated curve geometry (linear swept spheres; CurveTessellation). */
