@@ -3,8 +3,9 @@
  * neither; its layerToString gives the USDA text of usda/usdc/usdz layers alike). Mirrors
  * USDImporter: the stage root transform is scale(metersPerUnit), rotated -90 degrees about X
  * for Z-up stages; lights take their prim's world transform (Distant: -Z direction, Sphere:
- * radius scaling, Rect: (-w/2, h/2, -1), Disk: (-r, r, -1)), intensity is
- * 2^exposure * intensity * color, and a DomeLight becomes the environment map. Cameras follow
+ * radius scaling, Rect: (-w/2, h/2, -1), Disk: (-r, r, -1)), intensity is 2^exposure *
+ * intensity * blackbody(colorTemperature) * color, and a DomeLight becomes the environment
+ * map. Cameras follow
  * ImporterContext::createCamera: pose from the USD world transform, focal length in mm, the
  * aperture from the f-stop, depth range and focus distance in meters, film width when the
  * horizontal aperture is authored (else the height).
@@ -172,15 +173,39 @@ export function usdStageRootTransform(info: { metersPerUnit: number; upAxis: "Y"
     return root;
 }
 
-function lightIntensity(body: string, name: string): float3 {
+// UsdLux's blackbody table, 1000 K to 10000 K in 500 K steps, with end knots repeated.
+const kBlackbodyRgb = [
+    [1.0, 0.02749, 0.0], [1.0, 0.02749, 0.0], [1.0, 0.149664, 0.0], [1.0, 0.256644, 0.008095], [1.0, 0.372033, 0.06745],
+    [1.0, 0.476725, 0.153601], [1.0, 0.570376, 0.259196], [1.0, 0.65348, 0.377155], [1.0, 0.726878, 0.501606],
+    [1.0, 0.791543, 0.62805], [1.0, 0.848462, 0.753228], [1.0, 0.898581, 0.874905], [1.0, 0.942771, 0.991642],
+    [0.906947, 0.890456, 1.0], [0.828247, 0.841838, 1.0], [0.765791, 0.801896, 1.0], [0.715255, 0.768579, 1.0],
+    [0.673683, 0.740423, 1.0], [0.638992, 0.716359, 1.0], [0.609681, 0.695588, 1.0], [0.609681, 0.695588, 1.0], [0.609681, 0.695588, 1.0],
+];
+
+/** UsdLuxBlackbodyTemperatureAsRgb: Catmull-Rom over the table, normalized to Rec.709 luminance 1. */
+export function usdBlackbodyTemperatureAsRgb(temperature: number): [number, number, number] {
+    const x = Math.min(Math.max((temperature - 1000) / 9000, 0), 1) * (kBlackbodyRgb.length - 4);
+    const seg = Math.floor(x);
+    const t = x - seg;
+    const [k0, k1, k2, k3] = [0, 1, 2, 3].map((i) => kBlackbodyRgb[seg + i]!);
+    const rgb = [0, 1, 2].map((c) => {
+        const [a, b, d, e] = [k0![c]!, k1![c]!, k2![c]!, k3![c]!];
+        return 0.5 * (2 * b + (d - a) * t + (2 * a - 5 * b + 4 * d - e) * t * t + (3 * b - a - 3 * d + e) * t * t * t);
+    });
+    const luma = 0.2126 * rgb[0]! + 0.7152 * rgb[1]! + 0.0722 * rgb[2]!;
+    return rgb.map((v) => Math.max(v / luma, 0)) as [number, number, number];
+}
+
+function lightIntensity(body: string): float3 {
     const exposure = attrNumber(body, ["inputs:exposure", "exposure"], 0);
     const intensity = attrNumber(body, ["inputs:intensity", "intensity"], 1);
     const color = attrVector(body, ["inputs:color", "color"], [1, 1, 1]);
+    let blackbody = [1, 1, 1];
     if (attrNumber(body, ["inputs:enableColorTemperature", "enableColorTemperature"], 0)) {
-        Logger.warning(`USDImporter: color temperature of light '${name}' is not supported; using its color only.`);
+        blackbody = usdBlackbodyTemperatureAsRgb(attrNumber(body, ["inputs:colorTemperature", "colorTemperature"], 6500));
     }
     const k = Math.pow(2, exposure) * intensity;
-    return new float3(k * color[0]!, k * color[1]!, k * color[2]!);
+    return new float3(k * blackbody[0]! * color[0]!, k * blackbody[1]! * color[1]!, k * blackbody[2]! * color[2]!);
 }
 
 /** Cameras, analytic lights and the dome light of a USD layer's text. */
@@ -216,23 +241,23 @@ export function extractUsdCamerasAndLights(text: string): { cameras: UsdaCamera[
             }
             case "DistantLight": {
                 const angle = attrNumber(b, ["inputs:angle", "angle"], 0);
-                lights.push({ type: LightType.Distant, name: p.name, intensity: lightIntensity(b, p.name), dirW: normalize3(transformVector(p.world, new float3(0, 0, -1))), angle: 0.5 * angle * deg });
+                lights.push({ type: LightType.Distant, name: p.name, intensity: lightIntensity(b), dirW: normalize3(transformVector(p.world, new float3(0, 0, -1))), angle: 0.5 * angle * deg });
                 break;
             }
             case "SphereLight": {
                 const r = attrNumber(b, ["inputs:radius", "radius"], 0.5);
-                lights.push({ type: LightType.Sphere, name: p.name, intensity: lightIntensity(b, p.name), transMat: mulMat(p.world, matrixFromScaling(new float3(r, r, r))) });
+                lights.push({ type: LightType.Sphere, name: p.name, intensity: lightIntensity(b), transMat: mulMat(p.world, matrixFromScaling(new float3(r, r, r))) });
                 break;
             }
             case "RectLight": {
                 const w = attrNumber(b, ["inputs:width", "width"], 1);
                 const h = attrNumber(b, ["inputs:height", "height"], 1);
-                lights.push({ type: LightType.Rect, name: p.name, intensity: lightIntensity(b, p.name), transMat: mulMat(p.world, matrixFromScaling(new float3(-w / 2, h / 2, -1))) });
+                lights.push({ type: LightType.Rect, name: p.name, intensity: lightIntensity(b), transMat: mulMat(p.world, matrixFromScaling(new float3(-w / 2, h / 2, -1))) });
                 break;
             }
             case "DiskLight": {
                 const r = attrNumber(b, ["inputs:radius", "radius"], 0.5);
-                lights.push({ type: LightType.Disc, name: p.name, intensity: lightIntensity(b, p.name), transMat: mulMat(p.world, matrixFromScaling(new float3(-r, r, -1))) });
+                lights.push({ type: LightType.Disc, name: p.name, intensity: lightIntensity(b), transMat: mulMat(p.world, matrixFromScaling(new float3(-r, r, -1))) });
                 break;
             }
             case "DomeLight": {

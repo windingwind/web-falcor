@@ -3,7 +3,7 @@
  * conversions of native's USDImporter.
  */
 import { describe, expect, it } from "vitest";
-import { extractUsdCamerasAndLights, parseUsdaPrims, usdaStageInfo, usdStageRootTransform } from "../src/Scene/Importer/UsdaScene.js";
+import { extractUsdCamerasAndLights, parseUsdaPrims, usdaStageInfo, usdBlackbodyTemperatureAsRgb, usdStageRootTransform } from "../src/Scene/Importer/UsdaScene.js";
 import { LightType } from "../src/Scene/SceneData.js";
 import { float3 } from "../src/Utils/Math/Vector.js";
 import { float4x4, transformPoint, transformVector } from "../src/Utils/Math/Matrix.js";
@@ -107,5 +107,31 @@ def Camera "Cam"
         expect(cam.depthRange).toEqual([0.5, 200]);
         expect(cam.frameWidth).toBe(36);
         expect(cam.frameHeight).toBeUndefined();
+    });
+
+    it("matches UsdLuxBlackbodyTemperatureAsRgb", () => {
+        // Reference values from the native USD library (clamped to [1000, 10000] K).
+        const ref: [number, number[]][] = [
+            [500, [4.305504, 0.118358, 0]],
+            [1156, [3.946094, 0.225304, 0]],
+            [1322, [3.499856, 0.358056, 0]],
+            [2750, [1.905274, 0.811147, 0.205075]],
+            [4000, [1.414028, 0.924039, 0.533308]],
+            [6500, [1.043333, 0.983624, 1.034613]],
+            [9999, [0.871857, 0.994688, 1.429953]],
+            [12000, [0.871841, 0.994688, 1.429996]],
+        ];
+        for (const [t, rgb] of ref) {
+            const v = usdBlackbodyTemperatureAsRgb(t);
+            for (let c = 0; c < 3; c++) expect(v[c]).toBeCloseTo(rgb[c]!, 5);
+        }
+        const { lights } = extractUsdCamerasAndLights(`#usda 1.0
+def SphereLight "S"
+{
+    bool inputs:enableColorTemperature = true
+    float inputs:intensity = 2
+}
+`);
+        close(lights[0]!.intensity, [2 * 1.043333, 2 * 0.983624, 2 * 1.034613]);
     });
 });
