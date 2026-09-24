@@ -17,7 +17,8 @@ import { DefineList } from "../Core/Program/DefineList.js";
 import type { ShaderVar } from "../Core/Program/ParameterBlock.js";
 import { Camera } from "./Camera/Camera.js";
 import { float4x4, transpose, inverse } from "../Utils/Math/Matrix.js";
-import { buildBvh, buildAabbBvh, refitBvh, type BvhTriangle } from "./SoftwareRT/Bvh.js";
+import { buildBvh, buildBvhParallel, buildAabbBvh, refitBvh, type BvhBuildResult, type BvhTriangle } from "./SoftwareRT/Bvh.js";
+import { WorkerPool } from "../Utils/Threading/WorkerPool.js";
 import { packLights, LightType, type AnalyticLight } from "./SceneData.js";
 import { TextureManager, kMaxTextureBuckets } from "./Material/TextureManager.js";
 import type { EnvMap } from "./Lights/EnvMap.js";
@@ -56,6 +57,9 @@ export interface SceneSDFGridDesc {
     materialID: number;
     transform?: float4x4;
 }
+
+/** Vertex arrays already rounded to f32 (Scene.create rounds before the constructor). */
+const roundedVertexArrays = new WeakSet<StaticVertex[]>();
 
 /** Segment-AABB BVH over curves (prim entries encode instance << 24 | segment), plus its node word count. */
 function buildCurveBvh(curves: SceneCurveDesc[]): { data: Float32Array; nodeWords: number } {
@@ -472,6 +476,72 @@ export class Scene {
     private emissiveFluxes = new Float32Array(0);
     private emissiveTriangles: EmissiveTriangleInput[] = [];
 
+    /** Vertices normalize to f32 up front (native holds f32 StaticVertexData), in place, once per vertex array. */
+    private static roundVertices(meshes: SceneMeshDesc[]): void {
+        const fr = Math.fround;
+        for (const mesh of meshes) {
+            if (roundedVertexArrays.has(mesh.vertices)) continue;
+            roundedVertexArrays.add(mesh.vertices);
+            for (const v of mesh.vertices) {
+                const { position: p, normal: n, tangent: t, texCrd: uv } = v;
+                p.x = fr(p.x); p.y = fr(p.y); p.z = fr(p.z);
+                n.x = fr(n.x); n.y = fr(n.y); n.z = fr(n.z);
+                t.x = fr(t.x); t.y = fr(t.y); t.z = fr(t.z); t.w = fr(t.w);
+                uv.x = fr(uv.x); uv.y = fr(uv.y);
+                if (v.curveRadius !== undefined) v.curveRadius = fr(v.curveRadius);
+            }
+        }
+    }
+
+    /** The BVH's world-space triangles; displaced meshes are excluded (they intersect via their own AABB region). */
+    static collectBvhGeometry(meshes: SceneMeshDesc[], materials: SceneMaterialDesc[]) {
+        const bvhTris: BvhTriangle[] = [];
+        const displacedAabbs: { min: [number, number, number]; max: [number, number, number] }[] = [];
+        const displacedEntries: number[] = [];
+        meshes.forEach((mesh, meshID) => {
+            const m = mesh.transform ?? float4x4.identity();
+            const mat = materials[mesh.materialID];
+            const displaced = mat?.basic.texDisplacement !== undefined;
+            // Conservative displacement range along the normal: mapValue([0,1]).
+            const scaleD = mat?.basic.displacementScale ?? 0;
+            const biasD = mat?.basic.displacementOffset ?? 0;
+            const margin = Math.max(Math.abs(biasD), Math.abs(scaleD + biasD)) + 1e-3;
+            for (let p = 0; p < mesh.indices.length / 3; p++) {
+                const v0 = transformPoint(m, mesh.vertices[mesh.indices[p * 3]!]!.position);
+                const v1 = transformPoint(m, mesh.vertices[mesh.indices[p * 3 + 1]!]!.position);
+                const v2 = transformPoint(m, mesh.vertices[mesh.indices[p * 3 + 2]!]!.position);
+                if (displaced) {
+                    displacedAabbs.push({
+                        min: [Math.min(v0.x, v1.x, v2.x) - margin, Math.min(v0.y, v1.y, v2.y) - margin, Math.min(v0.z, v1.z, v2.z) - margin],
+                        max: [Math.max(v0.x, v1.x, v2.x) + margin, Math.max(v0.y, v1.y, v2.y) + margin, Math.max(v0.z, v1.z, v2.z) + margin],
+                    });
+                    displacedEntries.push(((meshID & 0xff) << 24) | p);
+                } else {
+                    bvhTris.push({ v0, v1, v2, instanceIndex: meshID, primitiveIndex: p });
+                }
+            }
+        });
+        return { bvhTris, displacedAabbs, displacedEntries };
+    }
+
+    /**
+     * `new Scene(...)` with the triangle BVH built on the worker pool for large scenes (native
+     * builds the scene with TaskManager); the tree is byte-identical to the serial build.
+     */
+    static async create(...args: ConstructorParameters<typeof Scene>): Promise<Scene> {
+        const [, meshes, materials = []] = args;
+        Scene.roundVertices(meshes);
+        const geometry = Scene.collectBvhGeometry(meshes, materials);
+        const pool = WorkerPool.get();
+        const bvh =
+            geometry.bvhTris.length >= 100_000 && pool.threadCount > 1
+                ? await buildBvhParallel(geometry.bvhTris, (input) => pool.run("buildBvhSubtree", input, [input.bmin.buffer, input.bmax.buffer, input.cent.buffer]))
+                : undefined;
+        const withBvh = [...args] as ConstructorParameters<typeof Scene>;
+        withBvh[11] = { geometry, bvh };
+        return new Scene(...withBvh);
+    }
+
     constructor(
         public readonly device: Device,
         meshes: SceneMeshDesc[],
@@ -484,26 +554,14 @@ export class Scene {
         cameraNodeID?: number,
         weightTracks: WeightTrack[] = [],
         curves: SceneCurveDesc[] = [],
+        /** From Scene.create: the gathered BVH geometry and the tree built off the main thread. */
+        prebuilt?: { geometry: ReturnType<typeof Scene.collectBvhGeometry>; bvh?: BvhBuildResult },
     ) {
         this.cameraNodeID = cameraNodeID;
         this.sdfGrids = sdfGrids;
         // Vertices normalize to f32 up front (native holds f32 StaticVertexData):
         // vertex packing, the BVH build, and the scene cache then agree bit-exactly.
-        // In place, once per shared vertex array (instances share theirs); fround is idempotent.
-        const fr = Math.fround;
-        const rounded = new Set<StaticVertex[]>();
-        for (const mesh of meshes) {
-            if (rounded.has(mesh.vertices)) continue;
-            rounded.add(mesh.vertices);
-            for (const v of mesh.vertices) {
-                const { position: p, normal: n, tangent: t, texCrd: uv } = v;
-                p.x = fr(p.x); p.y = fr(p.y); p.z = fr(p.z);
-                n.x = fr(n.x); n.y = fr(n.y); n.z = fr(n.z);
-                t.x = fr(t.x); t.y = fr(t.y); t.z = fr(t.z); t.w = fr(t.w);
-                uv.x = fr(uv.x); uv.y = fr(uv.y);
-                if (v.curveRadius !== undefined) v.curveRadius = fr(v.curveRadius);
-            }
-        }
+        Scene.roundVertices(meshes);
         // Geometry-less scenes are legal (pure-volume scenes like smoke.pyscene):
         // buffers pad to one zeroed struct and ray queries simply miss.
         this.hasEmissiveMaterials = materials.some((m) => m.header?.emissive ?? false);
@@ -632,35 +690,9 @@ export class Scene {
         make("worldMatrices", world, 64);
         this.invTransposeOffset = nodeCount;
 
-        // Software RT BVH over world-space triangles (docs §5). Displaced
-        // meshes are excluded — they intersect via their own AABB region.
-        const bvhTris: BvhTriangle[] = [];
-        const displacedAabbs: { min: [number, number, number]; max: [number, number, number] }[] = [];
-        const displacedEntries: number[] = [];
-        meshes.forEach((mesh, meshID) => {
-            const m = mesh.transform ?? float4x4.identity();
-            const mat = materials[mesh.materialID];
-            const displaced = mat?.basic.texDisplacement !== undefined;
-            // Conservative displacement range along the normal: mapValue([0,1]).
-            const scaleD = mat?.basic.displacementScale ?? 0;
-            const biasD = mat?.basic.displacementOffset ?? 0;
-            const margin = Math.max(Math.abs(biasD), Math.abs(scaleD + biasD)) + 1e-3;
-            for (let p = 0; p < mesh.indices.length / 3; p++) {
-                const v0 = transformPoint(m, mesh.vertices[mesh.indices[p * 3]!]!.position);
-                const v1 = transformPoint(m, mesh.vertices[mesh.indices[p * 3 + 1]!]!.position);
-                const v2 = transformPoint(m, mesh.vertices[mesh.indices[p * 3 + 2]!]!.position);
-                if (displaced) {
-                    displacedAabbs.push({
-                        min: [Math.min(v0.x, v1.x, v2.x) - margin, Math.min(v0.y, v1.y, v2.y) - margin, Math.min(v0.z, v1.z, v2.z) - margin],
-                        max: [Math.max(v0.x, v1.x, v2.x) + margin, Math.max(v0.y, v1.y, v2.y) + margin, Math.max(v0.z, v1.z, v2.z) + margin],
-                    });
-                    displacedEntries.push(((meshID & 0xff) << 24) | p);
-                } else {
-                    bvhTris.push({ v0, v1, v2, instanceIndex: meshID, primitiveIndex: p });
-                }
-            }
-        });
-        const bvh = buildBvh(bvhTris);
+        // Software RT BVH over world-space triangles (docs §5); displaced meshes use their own AABB region.
+        const { bvhTris, displacedAabbs, displacedEntries } = prebuilt?.geometry ?? Scene.collectBvhGeometry(meshes, materials);
+        const bvh = prebuilt?.bvh ?? buildBvh(bvhTris);
 
         // Whole-scene AABB = BVH root node bounds (nodes[0] = [min.xyz, _][max.xyz, _]).
         if (bvhTris.length > 0) {

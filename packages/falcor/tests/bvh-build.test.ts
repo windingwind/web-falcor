@@ -10,7 +10,7 @@
  */
 
 import { describe, expect, it } from "vitest";
-import { buildBvh, refitBvh, type BvhTriangle } from "../src/Scene/SoftwareRT/Bvh.js";
+import { buildBvh, buildBvhParallel, buildBvhSubtree, refitBvh, type BvhTriangle } from "../src/Scene/SoftwareRT/Bvh.js";
 import { float3, sub3 } from "../src/Utils/Math/Vector.js";
 
 /** Median-split BVH written the obvious way: one entry list per node. */
@@ -138,6 +138,20 @@ describe("buildBvh", () => {
             expect(bytes(fast.tris)).toEqual(bytes(reference.tris));
         }
     });
+
+    it("builds the same tree with parallel subtrees", async () => {
+        for (const [count, seed, quantize] of [[3, 1, 0], [9, 2, 0], [20000, 3, 0], [5000, 4, 4]] as const) {
+            const triangles = makeTriangles(count, seed, quantize);
+            const serial = buildBvh(triangles);
+            for (const depth of [0, 1, 3, 6]) {
+                const parallel = await buildBvhParallel(triangles, async (input) => buildBvhSubtree(input), depth);
+                expect(parallel.nodeCount, `${count} triangles, depth ${depth}`).toBe(serial.nodeCount);
+                expect(bytes(parallel.nodes)).toEqual(bytes(serial.nodes));
+                expect(bytes(parallel.tris)).toEqual(bytes(serial.tris));
+                expect(Array.from(parallel.order)).toEqual(Array.from(serial.order));
+            }
+        }
+    }, 60000);
 
     it("emits the degenerate leaf for an empty scene", () => {
         const empty = buildBvh([]);

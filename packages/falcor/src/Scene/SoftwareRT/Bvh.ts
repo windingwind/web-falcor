@@ -199,27 +199,24 @@ export function buildAabbBvh(aabbs: { min: [number, number, number]; max: [numbe
     return { nodes: nodes.subarray(0, nodeCount * 8), primIndices: new Uint32Array(ordered), nodeCount };
 }
 
-export function buildBvh(triangles: BvhTriangle[]): BvhBuildResult {
+/** Per-triangle bounds and centroids in flat arrays (what the median-split build consumes). */
+export interface BvhInput {
+    n: number;
+    bmin: Float32Array;
+    bmax: Float32Array;
+    cent: Float64Array;
+}
+
+/** A built (sub)tree: nodes in DFS order, leaves indexing into `ordered` (input triangle indices). */
+export interface BvhSubtree {
+    nodes: Float32Array;
+    nodeCount: number;
+    ordered: Uint32Array;
+}
+
+function bvhInput(triangles: BvhTriangle[]): BvhInput {
     const n = triangles.length;
-
-    // Worst case 2N-1 nodes.
-    const nodes = new Float32Array(2 * n * 8 + 8);
-    const nodesU32 = new Uint32Array(nodes.buffer);
-    let nodeCount = 0;
-
-    // Geometry-less scenes: an all-zero root is a degenerate INTERIOR node
-    // whose child pointer loops back to itself -> the traversal spins forever
-    // for rays crossing the origin. An inverted (+inf/-inf) AABB is no fix:
-    // slab intersectors min/max-swap per axis, so an inverted box HITS
-    // everything. Emit a root LEAF with one degenerate triangle instead --
-    // the leaf branch always terminates and the triangle never intersects.
-    if (n === 0) {
-        nodesU32[3] = 0; // leftFirst
-        nodesU32[7] = 1; // triCount: one degenerate (all-zero) triangle
-        return { nodes: nodes.subarray(0, 8), tris: new Float32Array(12), nodeCount: 1, order: new Uint32Array(0), buildArea: 0 };
-    }
-
-    // Per-triangle bounds and centroids in flat arrays: the build sorts ranges
+    // The build sorts ranges
     // of an index array in place instead of allocating a list per node, which
     // is what dominated the build on scenes with >100k triangles. Centroids stay
     // float64 so the sort keys are bit-identical to computing them inline.
@@ -240,6 +237,16 @@ export function buildBvh(triangles: BvhTriangle[]): BvhBuildResult {
         }
     }
 
+    return { n, bmin, bmax, cent };
+}
+
+/** The median-split builder's state over one input (shared by the whole-tree and subtree builds). */
+function makeBuilder(input: BvhInput, sortOnly = false) {
+    const { n, bmin, bmax, cent } = input;
+    // Worst case 2N-1 nodes (none when only the sort is used).
+    const nodes = new Float32Array(sortOnly ? 8 : 2 * n * 8 + 8);
+    const nodesU32 = new Uint32Array(nodes.buffer);
+    let nodeCount = 0;
     const index = new Uint32Array(n);
     for (let i = 0; i < n; i++) index[i] = i;
     const scratch = new Uint32Array(n);
@@ -350,11 +357,129 @@ export function buildBvh(triangles: BvhTriangle[]): BvhBuildResult {
         writeNode(nodeIndex, min, max, rightIndex, 0);
         return nodeIndex;
     };
-    build(0, n);
+    return {
+        build,
+        sortRange,
+        index,
+        subtree: (): BvhSubtree => ({ nodes: nodes.slice(0, nodeCount * 8), nodeCount, ordered: ordered.slice(0, orderedCount) }),
+    };
+}
 
-    const tris = new Float32Array(orderedCount * 12);
-    const order = ordered.subarray(0, orderedCount);
-    writeTris(tris, triangles, order);
-    const outNodes = nodes.subarray(0, nodeCount * 8);
-    return { nodes: outNodes, tris, nodeCount, order, buildArea: totalArea(outNodes, nodeCount) };
+/** Builds the tree over a whole input (a worker task for buildBvhParallel's subtrees). */
+export function buildBvhSubtree(input: BvhInput): BvhSubtree {
+    const builder = makeBuilder(input);
+    builder.build(0, input.n);
+    return builder.subtree();
+}
+
+/** The empty-scene tree and the tris/order/area of a built tree. */
+function finishBvh(triangles: BvhTriangle[], tree: BvhSubtree): BvhBuildResult {
+    const tris = new Float32Array(tree.ordered.length * 12);
+    writeTris(tris, triangles, tree.ordered);
+    return { nodes: tree.nodes, tris, nodeCount: tree.nodeCount, order: tree.ordered, buildArea: totalArea(tree.nodes, tree.nodeCount) };
+}
+
+// Geometry-less scenes: an all-zero root is a degenerate INTERIOR node
+// whose child pointer loops back to itself -> the traversal spins forever
+// for rays crossing the origin. An inverted (+inf/-inf) AABB is no fix:
+// slab intersectors min/max-swap per axis, so an inverted box HITS
+// everything. Emit a root LEAF with one degenerate triangle instead --
+// the leaf branch always terminates and the triangle never intersects.
+function emptyBvh(): BvhBuildResult {
+    const nodes = new Float32Array(8);
+    const nodesU32 = new Uint32Array(nodes.buffer);
+    nodesU32[3] = 0; // leftFirst
+    nodesU32[7] = 1; // triCount: one degenerate (all-zero) triangle
+    return { nodes, tris: new Float32Array(12), nodeCount: 1, order: new Uint32Array(0), buildArea: 0 };
+}
+
+export function buildBvh(triangles: BvhTriangle[]): BvhBuildResult {
+    if (triangles.length === 0) return emptyBvh();
+    return finishBvh(triangles, buildBvhSubtree(bvhInput(triangles)));
+}
+
+/**
+ * buildBvh with its subtrees built concurrently (`run`: e.g. the WorkerPool). The top `depth`
+ * levels split on this thread, each remaining range is built by `run` from its triangles in
+ * their current order, and the subtrees are stitched in DFS order, so the result is
+ * byte-identical to buildBvh.
+ */
+export async function buildBvhParallel(triangles: BvhTriangle[], run: (input: BvhInput) => Promise<BvhSubtree>, depth = 3): Promise<BvhBuildResult> {
+    const n = triangles.length;
+    if (n === 0) return emptyBvh();
+    const input = bvhInput(triangles);
+    const { bmin, bmax, cent } = input;
+    const { sortRange, index } = makeBuilder(input, true);
+
+    type Top = { kind: "inner"; min: number[]; max: number[]; left: Top; right: Top } | { kind: "job"; lo: number; hi: number; result: Promise<BvhSubtree> };
+    const jobs: Promise<BvhSubtree>[] = [];
+    const split = (lo: number, hi: number, level: number): Top => {
+        const count = hi - lo;
+        if (level === depth || count <= 4 * 2) {
+            // The subtree's triangles, compacted in their current order.
+            const m = new Float32Array(count * 3);
+            const M = new Float32Array(count * 3);
+            const c = new Float64Array(count * 3);
+            for (let i = 0; i < count; i++) {
+                const e = index[lo + i]! * 3;
+                for (let k = 0; k < 3; k++) {
+                    m[i * 3 + k] = bmin[e + k]!;
+                    M[i * 3 + k] = bmax[e + k]!;
+                    c[i * 3 + k] = cent[e + k]!;
+                }
+            }
+            const result = run({ n: count, bmin: m, bmax: M, cent: c });
+            jobs.push(result);
+            return { kind: "job", lo, hi, result };
+        }
+        const min = [Infinity, Infinity, Infinity];
+        const max = [-Infinity, -Infinity, -Infinity];
+        for (let i = lo; i < hi; i++) {
+            const e = index[i]! * 3;
+            for (let k = 0; k < 3; k++) {
+                if (bmin[e + k]! < min[k]!) min[k] = bmin[e + k]!;
+                if (bmax[e + k]! > max[k]!) max[k] = bmax[e + k]!;
+            }
+        }
+        const ex = max[0]! - min[0]!;
+        const ey = max[1]! - min[1]!;
+        const ez = max[2]! - min[2]!;
+        const axis = ex > ey ? (ex > ez ? 0 : 2) : ey > ez ? 1 : 2;
+        sortRange(lo, hi, axis);
+        const half = Math.ceil(count / 2);
+        return { kind: "inner", min, max, left: split(lo, lo + half, level + 1), right: split(lo + half, hi, level + 1) };
+    };
+    const top = split(0, n, 0);
+    await Promise.all(jobs);
+
+    const nodes = new Float32Array(2 * n * 8 + 8);
+    const nodesU32 = new Uint32Array(nodes.buffer);
+    const ordered = new Uint32Array(n);
+    let nodeCount = 0;
+    let orderedCount = 0;
+    const emit = async (t: Top): Promise<number> => {
+        if (t.kind === "job") {
+            const sub = await t.result;
+            const at = nodeCount;
+            nodes.set(sub.nodes, at * 8);
+            for (let k = 0; k < sub.nodeCount; k++) {
+                const o = (at + k) * 8;
+                if (nodesU32[o + 7]! > 0) nodesU32[o + 3] = nodesU32[o + 3]! + orderedCount; // leaf: first triangle
+                else nodesU32[o + 3] = nodesU32[o + 3]! + at; // inner: right child
+            }
+            for (let i = 0; i < sub.ordered.length; i++) ordered[orderedCount + i] = index[t.lo + sub.ordered[i]!]!;
+            nodeCount += sub.nodeCount;
+            orderedCount += sub.ordered.length;
+            return at;
+        }
+        const at = nodeCount++;
+        await emit(t.left); // left = at + 1 by construction order
+        const right = await emit(t.right);
+        nodes.set([t.min[0]!, t.min[1]!, t.min[2]!, 0, t.max[0]!, t.max[1]!, t.max[2]!, 0], at * 8);
+        nodesU32[at * 8 + 3] = right;
+        nodesU32[at * 8 + 7] = 0;
+        return at;
+    };
+    await emit(top);
+    return finishBvh(triangles, { nodes: nodes.slice(0, nodeCount * 8), nodeCount, ordered: ordered.slice(0, orderedCount) });
 }

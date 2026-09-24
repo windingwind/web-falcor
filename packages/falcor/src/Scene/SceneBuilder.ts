@@ -1397,7 +1397,7 @@ export class SceneBuilderBridge {
         const cameraNodeID = animatedCamera >= 0 ? this.importedCameras[animatedCamera]!.nodeID : undefined;
         // MaterialSystem::optimizeMaterials: constant textures become uniform material values.
         if (!this.hasFlag(SceneBuilderFlags.DontOptimizeMaterials)) optimizeMaterialTextures(materials, textureManager);
-        const scene = new Scene(device, meshes, materials, lights, textureManager, sdfGrids, nodes, animations, cameraNodeID, weightTracks, curves);
+        const scene = await Scene.create(device, meshes, materials, lights, textureManager, sdfGrids, nodes, animations, cameraNodeID, weightTracks, curves);
         for (const c of this.customPrimitives) scene.addCustomPrimitive(c.userID, c.aabb);
         // Snapshot for the scene cache (v4: every scene class; grid volumes are
         // read off scene.gridVolumes after finalize, env map off the scene).

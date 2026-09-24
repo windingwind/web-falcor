@@ -501,7 +501,7 @@ export async function buildSceneFromCache(device: Device, cached: CacheableScene
     // SDF grids are rebuilt from their recipes (deterministic generators), shared across instances.
     const builtGrids = cached.sdfGrids.recipes.map(buildSDFGridFromRecipe);
     const sdfGrids: SceneSDFGridDesc[] = cached.sdfGrids.instances.map((i) => ({ grid: builtGrids[i.gridIndex]!, materialID: i.materialID, transform: i.transform }));
-    const scene = new Scene(device, cached.meshes, cached.materials, cached.lights, textureManager, sdfGrids, cached.nodes, cached.animations, cached.cameraNodeID, cached.weightTracks, cached.curves);
+    const scene = await Scene.create(device, cached.meshes, cached.materials, cached.lights, textureManager, sdfGrids, cached.nodes, cached.animations, cached.cameraNodeID, cached.weightTracks, cached.curves);
     for (const c of cached.customPrimitives ?? []) scene.addCustomPrimitive(c.userID, c.aabb);
     for (const v of cached.gridVolumes) {
         const vol = new GridVolume(v.name);

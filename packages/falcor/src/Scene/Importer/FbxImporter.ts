@@ -19,8 +19,8 @@ import { RuntimeError } from "../../Core/Error.js";
 import { generateTangents } from "../TangentSpace.js";
 import { MaterialType, ShadingModel, packTextureHandle, TextureHandleMode } from "../Material/MaterialData.js";
 import { getTextureSlotSrgb } from "../Material/TextureSlots.js";
-import { decodeTGA } from "../../Utils/Image/TGADecoder.js";
-import { ddsCompressedPayload, decodeDDSToRGBA } from "./DDSLoader.js";
+import { WorkerPool } from "../../Utils/Threading/WorkerPool.js";
+import { ddsCompressedPayload } from "./DDSLoader.js";
 import type { SceneMaterialDesc, SceneMeshDesc } from "../Scene.js";
 import { decomposeTRS, type SceneNode, type AnimationChannel, type SkinDesc } from "../Animation/SceneAnimation.js";
 import { LightType, type AnalyticLight, type StaticVertex } from "../SceneData.js";
@@ -387,7 +387,8 @@ export class FbxImporter {
             try {
                 if (ext === ".tga") {
                     // Browsers cannot decode TGA; native reads it through FreeImage.
-                    const image = decodeTGA(await res.arrayBuffer());
+                    const buffer = await res.arrayBuffer();
+                    const image = await WorkerPool.get().run("decodeTGA", { buffer }, [buffer]);
                     bitmap = await createImageBitmap(new ImageData(new Uint8ClampedArray(image.rgba), image.width, image.height), {
                         premultiplyAlpha: "none",
                         colorSpaceConversion: "none",
@@ -397,7 +398,8 @@ export class FbxImporter {
                     // The GPU gets the full-resolution BC chain; the capped decode serves CPU analysis.
                     compressed = ddsCompressedPayload(buffer, srgb);
                     ddsBytes = new Uint8Array(buffer);
-                    const { width, height, rgba } = decodeDDSToRGBA(buffer, srgb, 512);
+                    const copy = buffer.slice(0);
+                    const { width, height, rgba } = await WorkerPool.get().run("decodeDDS", { buffer: copy, srgb, maxDim: 512 }, [copy]);
                     // ImageData holds raw RGBA already — no colour-space/premultiply
                     // decode step applies, so createImageBitmap needs no options.
                     const imageData = new ImageData(new Uint8ClampedArray(rgba), width, height);
