@@ -6,7 +6,8 @@ import { quatf, slerp, matrixFromQuat } from "../../Utils/Math/Quaternion.js";
 import { float4x4, mulMat, matrixFromTranslation, matrixFromScaling, transformPoint, transformVector } from "../../Utils/Math/Matrix.js";
 import type { StaticVertex } from "../SceneData.js";
 
-export type AnimationPath = "translation" | "rotation" | "scale";
+/** "transform": a scripted KeyframeAnimation driving the whole local TRS (native Animation). */
+export type AnimationPath = "translation" | "rotation" | "scale" | "transform";
 
 /** Mirrors Animation::Behavior (native enum order; the pyscene bridge passes the ints). */
 export enum AnimationBehavior {
@@ -29,6 +30,8 @@ export interface AnimationChannel {
     /** Pre/post-infinity behaviors outside the key range (default Constant). */
     preInfinity?: AnimationBehavior;
     postInfinity?: AnimationBehavior;
+    /** path "transform": the keyframes (times then only span [0, duration] for the loop length). */
+    keyframes?: import("./KeyframeAnimation.js").KeyframeAnimation;
 }
 
 /** Retained scene-graph node with its bind-pose local TRS. Parents precede children. */
@@ -291,7 +294,12 @@ export function evaluateGlobals(anim: SceneAnimations, time: number): float4x4[]
     const n = anim.nodes.length;
     const locals = anim.nodes.map((nd) => ({ t: nd.t, r: nd.r, s: nd.s }));
     for (const ch of anim.channels) {
-        if (ch.path === "translation") locals[ch.nodeID]!.t = sampleVec3(ch, time);
+        if (ch.path === "transform") {
+            if (ch.keyframes && ch.keyframes.getKeyframes().length > 0) {
+                const k = ch.keyframes.animate(time);
+                locals[ch.nodeID] = { t: k.translation, r: k.rotation, s: k.scaling };
+            }
+        } else if (ch.path === "translation") locals[ch.nodeID]!.t = sampleVec3(ch, time);
         else if (ch.path === "scale") locals[ch.nodeID]!.s = sampleVec3(ch, time);
         else locals[ch.nodeID]!.r = sampleQuat(ch, time);
     }

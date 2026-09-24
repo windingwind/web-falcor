@@ -13,7 +13,9 @@ import { buildSDFGridFromRecipe, type SDFGridRecipe, type SDFGridType } from "./
 import type { SceneSDFGridDesc } from "./Scene.js";
 import { Camera } from "./Camera/Camera.js";
 import { Scene, type SceneMaterialDesc, type SceneMeshDesc, type SceneMetadata } from "./Scene.js";
-import type { SceneNode, AnimationChannel, WeightTrack } from "./Animation/SceneAnimation.js";
+import { decomposeTRS, type SceneNode, type AnimationChannel, type WeightTrack } from "./Animation/SceneAnimation.js";
+import { KeyframeAnimation, type Keyframe } from "./Animation/KeyframeAnimation.js";
+import { eulerAngles, matrixFromQuat, quatFromEulerAngles, quatFromLookAt, quatf } from "../Utils/Math/Quaternion.js";
 import { GltfImporter } from "./Importer/GltfImporter.js";
 import { FbxImporter, kAssimpSceneExtensions, objMaterialLibraries, type ImportedCamera } from "./Importer/FbxImporter.js";
 import { UsdImporter } from "./Importer/UsdImporter.js";
@@ -197,6 +199,8 @@ function applyMaterialEdit(mat: SceneMaterialDesc, prop: string, value: unknown)
 /** Camera description assembled in pyscenes (Camera() + sceneBuilder.addCamera). */
 export class CameraBridge {
     constructor(public name = "") {}
+    /** Node set by createAnimation (Animatable::setNodeID). */
+    nodeID?: number;
     private _position = new float3(0, 0, 3);
     private _target = new float3(0, 0, 0);
     private _up = new float3(0, 1, 0);
@@ -475,6 +479,8 @@ export class MaterialBridge {
 }
 
 export class LightBridge {
+    /** Node set by createAnimation (Animatable::setNodeID). */
+    nodeID?: number;
     private _position = new float3(0, 0, 0);
     private _intensity = new float3(1, 1, 1);
     private _direction = new float3(0, -1, 0);
@@ -523,6 +529,79 @@ export class LightBridge {
 
 /** Transform bridge (composition order Translate * Rotate * Scale, as native). */
 type VecLike = { x: number; y: number; z: number };
+/** Mirrors Transform::CompositionOrder (Default = ScaleRotateTranslate). */
+export enum CompositionOrder {
+    Unknown = 0,
+    ScaleRotateTranslate = 1,
+    ScaleTranslateRotate = 2,
+    RotateScaleTranslate = 3,
+    RotateTranslateScale = 4,
+    TranslateRotateScale = 5,
+    TranslateScaleRotate = 6,
+}
+
+/** Mirrors Falcor's Transform (python `Transform`): translation, quaternion rotation, scaling. */
+export class TransformBridge {
+    private _translation = new float3(0, 0, 0);
+    private _scaling = new float3(1, 1, 1);
+    private _rotation = quatf.identity();
+    order = CompositionOrder.ScaleRotateTranslate;
+
+    get translation(): float3 { return this._translation; }
+    set translation(v: VecLike) { this._translation = toF3(v); }
+    get scaling(): float3 { return this._scaling; }
+    set scaling(v: VecLike | number) { this._scaling = typeof v === "number" ? new float3(v, v, v) : toF3(v); }
+    get rotation(): quatf { return this._rotation; }
+    set rotation(q: quatf) { this._rotation = new quatf(q.x, q.y, q.z, q.w); }
+    get rotationEuler(): float3 { return eulerAngles(this._rotation); }
+    set rotationEuler(v: VecLike) { this._rotation = quatFromEulerAngles(toF3(v)); }
+    get rotationEulerDeg(): float3 {
+        const e = this.rotationEuler;
+        return new float3((e.x * 180) / Math.PI, (e.y * 180) / Math.PI, (e.z * 180) / Math.PI);
+    }
+    set rotationEulerDeg(v: VecLike) {
+        const d = toF3(v);
+        this.rotationEuler = new float3((d.x * Math.PI) / 180, (d.y * Math.PI) / 180, (d.z * Math.PI) / 180);
+    }
+    /** Mirrors Transform::lookAt (right-handed: forward maps onto -Z). */
+    lookAt(position: VecLike, target: VecLike, up: VecLike): void {
+        const [p, t] = [toF3(position), toF3(target)];
+        const d = new float3(t.x - p.x, t.y - p.y, t.z - p.z);
+        const l = Math.hypot(d.x, d.y, d.z) || 1;
+        this._translation = p;
+        this._rotation = quatFromLookAt(new float3(d.x / l, d.y / l, d.z / l), toF3(up));
+    }
+    /** Mirrors Transform::getMatrix for each composition order. */
+    get matrix(): float4x4 {
+        const [T, R, S] = [matrixFromTranslation(this._translation), matrixFromQuat(this._rotation), matrixFromScaling(this._scaling)];
+        const m = (a: float4x4, b: float4x4, c: float4x4) => mulMat(mulMat(a, b), c);
+        switch (Number(this.order)) {
+            case CompositionOrder.ScaleTranslateRotate: return m(R, T, S);
+            case CompositionOrder.RotateScaleTranslate: return m(T, S, R);
+            case CompositionOrder.RotateTranslateScale: return m(S, T, R);
+            case CompositionOrder.TranslateRotateScale: return m(S, R, T);
+            case CompositionOrder.TranslateScaleRotate: return m(R, S, T);
+            case CompositionOrder.ScaleRotateTranslate: return m(T, R, S);
+            default: throw new RuntimeError("Unknown transform composition order.");
+        }
+    }
+}
+
+/** A node transform from a TransformBridge or an already composed matrix. */
+export function transformMatrix(t: TransformBridge | float4x4 | null | undefined): float4x4 {
+    if (!t) return float4x4.identity();
+    return t instanceof float4x4 ? t : (t as TransformBridge).matrix;
+}
+
+/** Python `Animation(name, nodeID, duration)`: a KeyframeAnimation with the python addKeyframe(time, transform). */
+export class AnimationBridge extends KeyframeAnimation {
+    override addKeyframe(timeOrKeyframe: number | Keyframe, transform?: TransformBridge): void {
+        if (typeof timeOrKeyframe !== "number") return super.addKeyframe(timeOrKeyframe);
+        const t = transform ?? new TransformBridge();
+        super.addKeyframe({ time: Number(timeOrKeyframe), translation: t.translation, scaling: t.scaling, rotation: t.rotation });
+    }
+}
+
 export function makeTransform(
     translationIn: VecLike | null,
     rotationEulerIn: VecLike | null,
@@ -806,7 +885,7 @@ export class SceneBuilderBridge {
     private commands: Command[] = [];
     private meshMaterials: MaterialBridge[] = []; // by meshID
     private meshGeometry: TriangleMeshDesc[] = [];
-    private meshInstanced = new Map<number, float4x4[]>();
+    private meshInstanced = new Map<number, { transform: float4x4; nodeID: number }[]>();
     private nodes: float4x4[] = [];
     private lights: LightBridge[] = [];
     /** Cameras from imported files (native adds them at import, ahead of later pyscene cameras). */
@@ -925,13 +1004,64 @@ export class SceneBuilderBridge {
         return this.meshGeometry.length - 1;
     }
 
-    addNode(_name: string, transform: float4x4, parentID?: number): number {
+    addNode(_name: string, transformIn?: float4x4 | TransformBridge | null, parentID?: number | null): number {
         // Nodes store WORLD matrices (static scenes): compose under the parent
         // (native SceneBuilder::addNode's third argument was silently dropped
         // before — parented pyscene nodes lost the parent transform).
-        const parent = parentID !== undefined && parentID >= 0 ? this.nodes[parentID] : undefined;
+        const transform = transformMatrix(transformIn);
+        const parentIndex = parentID !== undefined && parentID !== null && parentID >= 0 && this.nodes[parentID] ? parentID : -1;
+        const parent = parentIndex >= 0 ? this.nodes[parentIndex] : undefined;
         this.nodes.push(parent ? mulMat(parent, transform) : transform);
+        // Local transform and parent, for scripted animations (Animation / createAnimation).
+        this.nodeLocals.push(transform);
+        this.nodeParents.push(parentIndex);
         return this.nodes.length - 1;
+    }
+    private nodeLocals: float4x4[] = [];
+    private nodeParents: number[] = [];
+
+    /**
+     * With scripted animations, appends every builder node (local transform, parent) to the scene
+     * graph and each animation as a "transform" channel. Returns scene node IDs for builder nodes in
+     * animated subtrees; the rest stay static (world matrices baked into their instances).
+     */
+    private appendAnimatedBuilderNodes(nodes: SceneNode[], animations: AnimationChannel[]): Map<number, number> {
+        const ids = new Map<number, number>();
+        if (this.builderAnimations.length === 0) return ids;
+        const offset = nodes.length;
+        this.nodeLocals.forEach((local, i) => nodes.push({ parent: this.nodeParents[i]! >= 0 ? offset + this.nodeParents[i]! : -1, ...decomposeTRS(local) }));
+        const animated = new Set(this.builderAnimations.map((a) => a.nodeID));
+        const inAnimatedSubtree = (i: number): boolean => i >= 0 && (animated.has(i) || inAnimatedSubtree(this.nodeParents[i]!));
+        this.nodeLocals.forEach((_l, i) => inAnimatedSubtree(i) && ids.set(i, offset + i));
+        for (const a of this.builderAnimations) {
+            if (a.getKeyframes().length === 0) continue;
+            animations.push({ nodeID: offset + a.nodeID, path: "transform", times: new Float32Array([0, a.duration]), values: new Float32Array(0), interp: "LINEAR", keyframes: a });
+        }
+        return ids;
+    }
+
+    /** Scripted animations (python Animation / createAnimation), in native addAnimation order. */
+    private builderAnimations: AnimationBridge[] = [];
+
+    /** Mirrors SceneBuilder::addAnimation. */
+    addAnimation(animation: AnimationBridge): void {
+        this.builderAnimations.push(unwrapGuard(animation));
+    }
+
+    /**
+     * Mirrors SceneBuilder::createAnimation: binds a light or camera to a new identity node (unless
+     * it has one) and returns an Animation for that node, or null when it is already animated.
+     */
+    createAnimation(animatable: LightBridge | CameraBridge, name: string, duration: number): AnimationBridge | null {
+        const target = unwrapGuard(animatable) as LightBridge | CameraBridge;
+        if (target.nodeID !== undefined && this.builderAnimations.some((a) => a.nodeID === target.nodeID)) {
+            Logger.warning("Animatable object is already animated.");
+            return null;
+        }
+        target.nodeID ??= this.addNode(String(name), float4x4.identity());
+        const animation = new AnimationBridge(String(name), target.nodeID, Number(duration));
+        this.addAnimation(animation);
+        return animation;
     }
 
     /** Curve geometry added by importers (linear swept spheres), with its material. */
@@ -952,8 +1082,8 @@ export class SceneBuilderBridge {
         // One mesh may be instanced under many nodes (e.g. nested_dielectrics
         // instances one cube 30x) — accumulate, don't overwrite.
         const list = this.meshInstanced.get(meshID);
-        if (list) list.push(transform);
-        else this.meshInstanced.set(meshID, [transform]);
+        if (list) list.push({ transform, nodeID });
+        else this.meshInstanced.set(meshID, [{ transform, nodeID }]);
     }
 
     /** Recorded SceneBuilder::addCustomPrimitive calls (user ID + AABB). */
@@ -1355,6 +1485,9 @@ export class SceneBuilderBridge {
             await mat.resolveMeasured(baseUrl, this.assetResolver);
         }
 
+        // Scripted animations: builder nodes join the scene graph so their subtrees can animate.
+        const builderNodeIDs = this.appendAnimatedBuilderNodes(nodes, animations);
+
         // Builder-added meshes (instanced via nodes).
         const materialIDs = new Map<MaterialBridge, number>();
         this.meshGeometry.forEach((geo, meshID) => {
@@ -1370,8 +1503,9 @@ export class SceneBuilderBridge {
             // Tangents are generated below (native MikkTSpace); UseOriginalTangentSpace keeps supplied ones.
             const vertices = geo.vertices.map((v) => ({ ...v }));
             const hasTangents = vertices.some((v) => v.tangent.x !== 0 || v.tangent.y !== 0 || v.tangent.z !== 0);
-            for (const transform of transforms) {
-                meshes.push({ vertices, indices: geo.indices, materialID, transform, tangentSpace: hasTangents ? "asset" : "generate" });
+            for (const { transform, nodeID } of transforms) {
+                const animatedNode = builderNodeIDs.get(nodeID);
+                meshes.push({ vertices, indices: geo.indices, materialID, transform, nodeID: animatedNode, tangentSpace: hasTangents ? "asset" : "generate" });
             }
         });
 
@@ -1398,6 +1532,7 @@ export class SceneBuilderBridge {
                 openingAngle: l.lightType === LightType.Point ? l.openingAngle : undefined,
                 penumbraAngle: l.penumbraAngle,
                 transMat: isArea ? l.getTransMat() : undefined,
+                nodeID: l.nodeID !== undefined ? builderNodeIDs.get(l.nodeID) : undefined,
             };
         });
         lights.push(...importedLights); // lights imported from FBX/assets
@@ -1457,8 +1592,14 @@ export class SceneBuilderBridge {
         // Native camera list: the imported camera (bound to its node) precedes the pyscene
         // cameras, and camera 0 is selected unless the pyscene selects one.
         // The scene animates one camera node: the first imported camera that has one.
-        const animatedCamera = this.importedCameras.findIndex((c) => c.nodeID !== undefined);
-        const cameraNodeID = animatedCamera >= 0 ? this.importedCameras[animatedCamera]!.nodeID : undefined;
+        // Otherwise a pyscene camera given a node by createAnimation.
+        let animatedCamera = this.importedCameras.findIndex((c) => c.nodeID !== undefined);
+        let cameraNodeID = animatedCamera >= 0 ? this.importedCameras[animatedCamera]!.nodeID : undefined;
+        const scriptedCamera = this._cameras.findIndex((c) => c.nodeID !== undefined && builderNodeIDs.has(c.nodeID));
+        if (animatedCamera < 0 && scriptedCamera >= 0) {
+            animatedCamera = this.importedCameras.length + scriptedCamera;
+            cameraNodeID = builderNodeIDs.get(this._cameras[scriptedCamera]!.nodeID!);
+        }
         // MaterialSystem::optimizeMaterials: constant textures become uniform material values.
         if (!this.hasFlag(SceneBuilderFlags.DontOptimizeMaterials)) optimizeMaterialTextures(materials, textureManager);
         // MaterialSystem::removeDuplicateMaterials, after the optimization so more materials match.
@@ -1487,7 +1628,7 @@ export class SceneBuilderBridge {
                 instances: this.sdfInstances.map((inst) => ({ gridIndex: inst.sdfGridID, materialID: builtSdfGrids[inst.sdfGridID]!.materialID, transform: this.nodes[inst.nodeID] })),
             },
             // Vertex caches aren't serialized by the web scene cache yet.
-            cacheable: !meshes.some((m) => m.vertexCache),
+            cacheable: !meshes.some((m) => m.vertexCache) && this.builderAnimations.length === 0,
         };
         const cameraList: Camera[] = [];
         for (const { name, pose, aspectRatio } of this.importedCameras) {

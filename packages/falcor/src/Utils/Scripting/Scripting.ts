@@ -16,7 +16,7 @@ import { createPass, type RenderPass } from "../../RenderGraph/RenderPass.js";
 import { Properties } from "../Properties.js";
 import { RuntimeError } from "../../Core/Error.js";
 import { AssetResolver, withScriptSearchPath } from "../../Core/AssetResolver.js";
-import { CameraBridge, GridVolumeBridge, LightBridge, MaterialBridge, SceneBuilderBridge, SceneBuilderFlags, SDFGridBridge, TriangleMesh, kSceneBuilderFlagsPython, makeTransform } from "../../Scene/SceneBuilder.js";
+import { AnimationBridge, CameraBridge, GridVolumeBridge, LightBridge, MaterialBridge, SceneBuilderBridge, SceneBuilderFlags, SDFGridBridge, TransformBridge, TriangleMesh, kSceneBuilderFlagsPython, makeTransform } from "../../Scene/SceneBuilder.js";
 import type { Scene } from "../../Scene/Scene.js";
 import { LightType, type StaticVertex } from "../../Scene/SceneData.js";
 import { MaterialType, ShadingModel } from "../../Scene/Material/MaterialData.js";
@@ -193,7 +193,7 @@ from webfalcor_scene import (sceneBuilder, SceneBuilderFlags, _TriangleMesh,
     StandardMaterial, ClothMaterial, HairMaterial,
     PBRTDiffuseMaterial, PBRTConductorMaterial, PBRTDiffuseTransmissionMaterial, PBRTDielectricMaterial,
     PBRTCoatedConductorMaterial, PBRTCoatedDiffuseMaterial, _MERLMaterial, _MERLMixMaterial, _RGLMaterial,
-    Camera, _makeTransform, _makeAABB, _makeEnvMap, _GridVolume, _Grid, _SDFGridCreate)
+    Camera, _makeTransform, _makeAABB, _makeEnvMap, _GridVolume, _Grid, _SDFGridCreate, _Transform, _Animation)
 
 # Python-side vector types with arithmetic (upstream pyscenes do e.g. size / 2);
 # the JS bridge reads .x/.y/.z/.w off any object.
@@ -238,8 +238,25 @@ class TriangleMesh:
     def createFromFile(path, smoothNormals=False, flags=None):
         return _TriangleMesh.createFromFile(path, smoothNormals)
 
-def Transform(translation=None, rotationEuler=None, rotationEulerDeg=None, scaling=None):
-    return _makeTransform(translation, rotationEuler, rotationEulerDeg, scaling)
+class CompositionOrder:
+    Default = 1
+    SRT = 1
+    STR = 2
+    RST = 3
+    RTS = 4
+    TRS = 5
+    TSR = 6
+
+def Transform(translation=None, rotationEuler=None, rotationEulerDeg=None, scaling=None, position=None, target=None, up=None, order=None):
+    # Mirrors the Transform(**kwargs) binding: position/target/up together make a lookAt.
+    t = _Transform()
+    if translation is not None: t.translation = translation
+    if scaling is not None: t.scaling = scaling
+    if rotationEuler is not None: t.rotationEuler = rotationEuler
+    if rotationEulerDeg is not None: t.rotationEulerDeg = rotationEulerDeg
+    if order is not None: t.order = order
+    if position is not None and target is not None and up is not None: t.lookAt(position, target, up)
+    return t
 
 def AABB(min=None, max=None):
     return _makeAABB(min, max)
@@ -332,6 +349,12 @@ class Animation:
         Linear = 1
         Cycle = 2
         Oscillate = 3
+    class InterpolationMode:
+        Linear = 0
+        Hermite = 1
+    # Animation(name, nodeID, duration): scripted keyframes (sceneBuilder.addAnimation).
+    def __new__(cls, name, nodeID, duration):
+        return _Animation(name, nodeID, duration)
 
 # Enums accepted for parity (values map to the web material/import defaults).
 class ShadingModel:
@@ -503,6 +526,8 @@ async function runSceneScriptInternal(device: Device, source: string, baseUrl: s
             return m;
         },
         _makeTransform: makeTransform,
+        _Transform: () => new TransformBridge(),
+        _Animation: (name: string, nodeID: number, duration: number) => new AnimationBridge(String(name), Number(nodeID), Number(duration)),
         _makeAABB: (min?: VecLike, max?: VecLike) => new AABB(min, max),
         _makeEnvMap: (path: string) => ({ path, intensity: 1 }),
         _GridVolume: (name = "") => new GridVolumeBridge(name),

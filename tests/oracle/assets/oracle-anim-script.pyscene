@@ -1,0 +1,45 @@
+# Native oracle scene for scripted animation (Animation, addKeyframe, createAnimation, Transform).
+from falcor import *
+
+quad = TriangleMesh.createQuad()
+cube = TriangleMesh.createCube()
+white = StandardMaterial('White')
+white.baseColor = float4(0.8, 0.8, 0.8, 1.0)
+red = StandardMaterial('Red')
+red.baseColor = float4(0.8, 0.1, 0.1, 1.0)
+
+floorID = sceneBuilder.addTriangleMesh(quad, white)
+cubeID = sceneBuilder.addTriangleMesh(cube, red)
+sceneBuilder.addMeshInstance(sceneBuilder.addNode('Floor', Transform(scaling=4.0)), floorID)
+
+# A cube on an explicitly animated node: Linear keys, rotation + scaling, Oscillate after the keys.
+cubeNode = sceneBuilder.addNode('CubeNode', Transform(translation=float3(0, 0.5, 0)))
+sceneBuilder.addMeshInstance(cubeNode, cubeID)
+a = Animation('CubeAnim', cubeNode, 4.0)
+a.addKeyframe(0.0, Transform(translation=float3(-1, 0.5, 0)))
+a.addKeyframe(1.0, Transform(translation=float3(0, 1.0, 0), rotationEulerDeg=float3(0, 45, 0), scaling=float3(1.5, 1, 1)))
+a.addKeyframe(2.0, Transform(translation=float3(1, 0.5, 0.5), rotationEulerDeg=float3(30, 90, 0)))
+a.postInfinityBehavior = Animation.Behavior.Oscillate
+sceneBuilder.addAnimation(a)
+
+# A point light animated through createAnimation: Hermite with warping.
+light = PointLight('ScriptLight')
+light.intensity = float3(20, 20, 20)
+sceneBuilder.addLight(light)
+la = sceneBuilder.createAnimation(light, 'LightAnim', 4.0)
+la.interpolationMode = Animation.InterpolationMode.Hermite
+la.enableWarping = True
+for i, p in enumerate([float3(0, 3, 2), float3(2, 2.5, 0), float3(0, 2, -2), float3(-2, 2.5, 0)]):
+    la.addKeyframe(float(i), Transform(translation=p))
+
+# The camera animated through createAnimation: a lookAt Transform per key, Cycle after them.
+camera = Camera('ScriptCamera')
+camera.position = float3(0, 3, 6)
+camera.target = float3(0, 0.5, 0)
+camera.up = float3(0, 1, 0)
+sceneBuilder.addCamera(camera)
+ca = sceneBuilder.createAnimation(camera, 'CameraAnim', 3.0)
+ca.postInfinityBehavior = Animation.Behavior.Cycle
+ca.addKeyframe(0.0, Transform(position=float3(0, 3, 6), target=float3(0, 0.5, 0), up=float3(0, 1, 0)))
+ca.addKeyframe(1.5, Transform(position=float3(4, 3, 4), target=float3(0, 0.5, 0), up=float3(0, 1, 0)))
+ca.addKeyframe(3.0, Transform(position=float3(6, 2, 0), target=float3(0, 0.5, 0), up=float3(0, 1, 0)))
