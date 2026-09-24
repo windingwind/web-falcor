@@ -14,7 +14,6 @@
     "test": "vitest run"
   },
   "dependencies": {
-    "assimpjs": "^0.0.10",
     "draco3d": "1.5.7",
     "parse-exr": "^1.0.2",
     "tinyusdz": "^0.9.1"

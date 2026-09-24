@@ -2,7 +2,7 @@
  * Draco mesh decoding for `KHR_draco_mesh_compression`.
  *
  * Wraps Google's official decoder (the `draco3d` package's emscripten build,
- * loaded the same way `assimpjs` is). Native Falcor gets Draco support through
+ * loaded like the other wasm modules). Native Falcor gets Draco support through
  * assimp; the web importer is its own TS reader, so it drives the decoder here.
  */
 

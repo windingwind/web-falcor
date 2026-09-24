@@ -69,7 +69,9 @@ not the browser). Mitigation, in order:
 Importers (plugin package, like upstream; status per §8.4):
 - **glTF**: native TS loader ✅ (meshes, skinning, morph targets, animations,
   cameras, lights; KTX2/Draco ⏳).
-- **Assimp (FBX, DAE, OBJ, PLY, …)**: `assimpjs` (official Emscripten build) 🔶 —
+- **Assimp (FBX, DAE, OBJ, PLY, …)**: Assimp 5.2.5 (native's version) built to wasm by
+  `scripts/build-assimp-wasm.mjs` (`packages/falcor/wasm/assimp.*`), run with native's
+  post-process flags 🔶 —
   full-scene import is `.fbx`-only today; other formats load mesh-only via
   `TriangleMesh.createFromFile` ⏳.
 - **PBRT**: TS port of Falcor's parser ✅ subset (materials map to Standard;

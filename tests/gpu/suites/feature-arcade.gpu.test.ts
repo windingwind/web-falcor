@@ -1,7 +1,7 @@
 /**
  * FEATURE VERIFY — FBX import (Arcade) vs native. The upstream GBufferRT.py
  * image-test graph over the upstream Arcade.pyscene (its real test scene):
- * validates the web FBX importer (assimpjs + ported AssimpImporter mapping)
+ * validates the web FBX importer (Assimp 5.2.5 wasm + ported AssimpImporter mapping)
  * end-to-end — node transforms, geometry, material colors and textures —
  * through GBuffer channels.
  *

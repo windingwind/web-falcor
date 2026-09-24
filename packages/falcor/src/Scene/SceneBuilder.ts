@@ -1197,6 +1197,8 @@ export class SceneBuilderBridge {
                         ...this.importOptions,
                         useSpecGloss: this.hasFlag(SceneBuilderFlags.UseSpecGlossMaterials),
                         useMetalRough: this.hasFlag(SceneBuilderFlags.UseMetalRoughMaterials),
+                        dontMergeMeshes: this.hasFlag(SceneBuilderFlags.DontMergeMeshes),
+                        useOriginalTangentSpace: this.hasFlag(SceneBuilderFlags.UseOriginalTangentSpace),
                         fileName,
                         extraFiles,
                     });

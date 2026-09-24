@@ -1,17 +1,16 @@
 /**
  * FBX importer mirroring plugins/importers/AssimpImporter (Default import
- * mode). Parsing runs through assimpjs (the same Assimp library compiled to
- * WASM, npm package) emitting the aiScene as JSON; this module ports the
+ * mode). Parsing runs through Assimp compiled to WASM (see below), emitting the
+ * aiScene as JSON; this module ports the
  * native mapping: node-hierarchy flattening, Default-mode material semantics
  * (diffuse/specular/emissive colors, shininess into specular.a, opacity ->
  * specular transmission, ".DoubleSided" name suffix) and the Default-mode
  * texture-slot table (DIFFUSE->BaseColor, SPECULAR->Specular,
  * EMISSIVE->Emissive, NORMALS->Normal).
  *
- * Divergence (documented): native runs Assimp with
- * aiProcessPreset_TargetRealtime_MaxQuality; assimpjs uses its own fixed
- * post-process flags, so vertex counts may differ (JoinIdenticalVertices) —
- * geometry is verified against native renders instead of buffer equality.
+ * Parsing runs native's Assimp version (5.2.5, compiled to wasm) with native's post-process
+ * flags (aiProcessPreset_TargetRealtime_MaxQuality | FlipUVs | RemoveComponent, minus its
+ * exclusions; DontMergeMeshes and UseOriginalTangentSpace honoured) and component removal.
  */
 
 import { float2, float3, float4, normalize3, cross, sub3, add3 } from "../../Utils/Math/Vector.js";
@@ -115,34 +114,65 @@ interface AiCamera {
     lookat?: number[];
 }
 
-let assimpModule: unknown | null = null;
-
-interface AssimpApi {
-    FileList: new () => { AddFile(name: string, data: Uint8Array): void };
-    ConvertFileList(
-        files: unknown,
-        format: string,
-    ): { IsSuccess(): boolean; GetErrorCode(): string; FileCount(): number; GetFile(i: number): { GetContent(): Uint8Array } };
+interface AssimpModule {
+    HEAPU8: Uint8Array;
+    _malloc(bytes: number): number;
+    _free(ptr: number): void;
+    _ai_clear_files(): void;
+    _ai_add_file(name: number, data: number, size: number): void;
+    _ai_import(mainFile: number, flags: number, removeComponents: number): number;
+    _ai_result(): number;
+    _ai_result_size(): number;
+    _ai_error(): number;
+    _ai_free_result(): void;
+    UTF8ToString(ptr: number): string;
+    stringToNewUTF8(s: string): number;
 }
 
-/** Loads the assimpjs WASM module (emscripten UMD script from node_modules). */
-async function getAssimp(): Promise<AssimpApi> {
-    if (!assimpModule) {
-        const g = globalThis as { assimpjs?: (opts?: object) => Promise<unknown> };
-        if (!g.assimpjs) {
-            await new Promise<void>((resolveScript, reject) => {
-                const script = document.createElement("script");
-                script.src = "/node_modules/assimpjs/dist/assimpjs.js";
-                script.onload = () => resolveScript();
-                script.onerror = () => reject(new RuntimeError("FbxImporter: failed to load assimpjs"));
-                document.head.appendChild(script);
-            });
-        }
-        assimpModule = await g.assimpjs!({
-            locateFile: (file: string) => `/node_modules/assimpjs/dist/${file}`,
-        });
+let assimpModule: Promise<AssimpModule> | null = null;
+
+/** Assimp 5.2.5 (native's version) compiled to wasm (packages/falcor/wasm, scripts/build-assimp-wasm.mjs). */
+function getAssimp(): Promise<AssimpModule> {
+    // Literal URLs so bundlers emit both files; the wasm is located explicitly.
+    const wasmUrl = new URL("../../../wasm/assimp.wasm", import.meta.url).href;
+    assimpModule ??= import(/* @vite-ignore */ new URL("../../../wasm/assimp.mjs", import.meta.url).href).then((m: { default: (opts: object) => Promise<AssimpModule> }) =>
+        m.default({ locateFile: () => wasmUrl }),
+    );
+    return assimpModule;
+}
+
+/** aiPostProcessSteps (assimp/postprocess.h). */
+const aiProcess = {
+    CalcTangentSpace: 0x1, JoinIdenticalVertices: 0x2, Triangulate: 0x8, RemoveComponent: 0x10, GenNormals: 0x20, GenSmoothNormals: 0x40,
+    SplitLargeMeshes: 0x80, PreTransformVertices: 0x100, LimitBoneWeights: 0x200, ValidateDataStructure: 0x400, ImproveCacheLocality: 0x800,
+    RemoveRedundantMaterials: 0x1000, SortByPType: 0x8000, FindDegenerates: 0x10000, FindInvalidData: 0x20000, GenUVCoords: 0x40000,
+    FindInstances: 0x100000, OptimizeMeshes: 0x200000, OptimizeGraph: 0x400000, FlipUVs: 0x800000,
+} as const;
+const kTargetRealtimeMaxQuality =
+    aiProcess.CalcTangentSpace | aiProcess.GenSmoothNormals | aiProcess.JoinIdenticalVertices | aiProcess.ImproveCacheLocality | aiProcess.LimitBoneWeights |
+    aiProcess.RemoveRedundantMaterials | aiProcess.SplitLargeMeshes | aiProcess.Triangulate | aiProcess.GenUVCoords | aiProcess.SortByPType |
+    aiProcess.FindDegenerates | aiProcess.FindInvalidData | aiProcess.FindInstances | aiProcess.ValidateDataStructure | aiProcess.OptimizeMeshes;
+
+/** Runs assimp over `files` (the first is the scene) with the given flags and AI_CONFIG_PP_RVC_FLAGS; returns the assjson scene. */
+async function assimpImport(files: { name: string; bytes: Uint8Array }[], flags: number, removeComponents: number, what: string): Promise<AiScene> {
+    const ai = await getAssimp();
+    ai._ai_clear_files();
+    for (const f of files) {
+        const name = ai.stringToNewUTF8(f.name);
+        const data = ai._malloc(Math.max(1, f.bytes.length));
+        ai.HEAPU8.set(f.bytes, data);
+        ai._ai_add_file(name, data, f.bytes.length);
+        ai._free(data);
+        ai._free(name);
     }
-    return assimpModule as AssimpApi;
+    const main = ai.stringToNewUTF8(files[0]!.name);
+    const ok = ai._ai_import(main, flags >>> 0, removeComponents >>> 0);
+    ai._free(main);
+    ai._ai_clear_files();
+    if (!ok) throw new RuntimeError(`${what}: assimp failed (${ai.UTF8ToString(ai._ai_error())})`);
+    const json = new TextDecoder().decode(ai.HEAPU8.subarray(ai._ai_result(), ai._ai_result() + ai._ai_result_size()));
+    ai._ai_free_result();
+    return JSON.parse(json) as AiScene;
 }
 
 function decodeProp(p: AiProperty): unknown {
@@ -221,6 +251,10 @@ export interface AssimpImportOptions {
     fileName?: string;
     /** Side files assimp reads next to the scene (an OBJ's `mtllib` files). */
     extraFiles?: { name: string; bytes: Uint8Array }[];
+    /** SceneBuilderFlags::DontMergeMeshes (keeps aiProcess_OptimizeMeshes off). */
+    dontMergeMeshes?: boolean;
+    /** SceneBuilderFlags::UseOriginalTangentSpace (keeps the file's tangents). */
+    useOriginalTangentSpace?: boolean;
 }
 
 /** `mtllib` references of an OBJ, which assimp resolves by file name. */
@@ -254,13 +288,15 @@ export class FbxImporter {
         const shadingModel =
             options.useSpecGloss || (importMode === ImportMode.OBJ && !options.useMetalRough) ? ShadingModel.SpecGloss : ShadingModel.MetalRough;
 
-        const ajs = await getAssimp();
-        const files = new ajs.FileList();
-        files.AddFile(fileName, bytes);
-        for (const extra of options.extraFiles ?? []) files.AddFile(extra.name, extra.bytes);
-        const result = ajs.ConvertFileList(files, "assjson");
-        if (!result.IsSuccess()) throw new RuntimeError(`FbxImporter: assimp failed (${result.GetErrorCode()})`);
-        const json = JSON.parse(new TextDecoder().decode(result.GetFile(0).GetContent())) as AiScene;
+        // AssimpImporter::importInternal's flags and component removal.
+        let flags = kTargetRealtimeMaxQuality | aiProcess.FlipUVs | aiProcess.RemoveComponent;
+        flags &= ~(aiProcess.CalcTangentSpace | aiProcess.FindDegenerates | aiProcess.OptimizeGraph | aiProcess.RemoveRedundantMaterials | aiProcess.SplitLargeMeshes);
+        if (options.dontMergeMeshes) flags &= ~aiProcess.OptimizeMeshes;
+        // aiComponent_COLORS | aiComponent_TEXCOORDSn(1..7) (n = 7 shifts out of 32 bits), plus tangents.
+        let removeComponents = 0x8;
+        for (let layer = 1; layer < 7; layer++) removeComponents |= 1 << (layer + 25);
+        if (!options.useOriginalTangentSpace) removeComponents |= 0x4;
+        const json = await assimpImport([{ name: fileName, bytes }, ...(options.extraFiles ?? [])], flags, removeComponents, "FbxImporter");
 
         // Textures (loaded per unique path; slot decides sRGB like loadMaterialTexture).
         const textureIDs = new Map<string, number>();
@@ -387,9 +423,8 @@ export class FbxImporter {
                             ? new float3(mesh.normals[i * 3]!, mesh.normals[i * 3 + 1]!, mesh.normals[i * 3 + 2]!)
                             : new float3(0, 0, 1),
                         tangent: new float4(0, 0, 0, 0),
-                        // Native imports with aiProcess_FlipUVs; assimpjs does not
-                        // flip (verified vs the Arcade oracle: unflipped is worse).
-                        texCrd: uvs ? new float2(uvs[i * 2]!, 1 - uvs[i * 2 + 1]!) : new float2(0, 0),
+                        // aiProcess_FlipUVs already flipped V.
+                        texCrd: uvs ? new float2(uvs[i * 2]!, uvs[i * 2 + 1]!) : new float2(0, 0),
                     });
                 }
                 const indices: number[] = [];
@@ -571,12 +606,9 @@ export class FbxImporter {
      *  Materials are ignored (the caller assigns its own material/instance).
      *  `filename` must keep the real extension so assimp picks the right importer. */
     static async parseMeshOnly(bytes: Uint8Array, filename: string, smoothNormals = false): Promise<{ vertices: StaticVertex[]; indices: Uint32Array }> {
-        const ajs = await getAssimp();
-        const files = new ajs.FileList();
-        files.AddFile(filename, bytes);
-        const result = ajs.ConvertFileList(files, "assjson");
-        if (!result.IsSuccess()) throw new RuntimeError(`TriangleMesh.createFromFile('${filename}'): assimp failed (${result.GetErrorCode()})`);
-        const json = JSON.parse(new TextDecoder().decode(result.GetFile(0).GetContent())) as AiScene;
+        // TriangleMesh::createFromFile's flags (default ImportFlags: no JoinIdenticalVertices).
+        const flags = aiProcess.FlipUVs | aiProcess.Triangulate | aiProcess.PreTransformVertices | (smoothNormals ? aiProcess.GenSmoothNormals : aiProcess.GenNormals);
+        const json = await assimpImport([{ name: filename.split("/").pop()!, bytes }], flags, 0, `TriangleMesh.createFromFile('${filename}')`);
 
         // Bake node transforms (native aiProcess_PreTransformVertices).
         const meshWorld = new Map<number, float4x4>();
@@ -605,15 +637,15 @@ export class FbxImporter {
                     position: p,
                     normal: n,
                     tangent: new float4(0, 0, 0, 0),
-                    // Native imports with aiProcess_FlipUVs.
-                    texCrd: uvs ? new float2(uvs[i * 2]!, 1 - uvs[i * 2 + 1]!) : new float2(0, 0),
+                    // aiProcess_FlipUVs already flipped V.
+                    texCrd: uvs ? new float2(uvs[i * 2]!, uvs[i * 2 + 1]!) : new float2(0, 0),
                 });
             }
             for (const face of mesh.faces) if (face.length === 3) indices.push(base + face[0]!, base + face[1]!, base + face[2]!);
         });
         if (vertices.length === 0) throw new RuntimeError(`TriangleMesh.createFromFile('${filename}'): no geometry`);
 
-        // Generate normals when the asset has none (assimpjs runs no GenNormals pass).
+        // aiProcess_GenNormals / GenSmoothNormals normally leave none missing; kept as a fallback.
         const missingNormals = (json.meshes ?? []).some((m) => !m.normals);
         let idx = new Uint32Array(indices);
         if (missingNormals && !smoothNormals) {
@@ -630,7 +662,7 @@ export class FbxImporter {
             for (let i = 0; i < flat.length; i++) idx[i] = i;
         } else if (missingNormals) {
             // Smooth normals (aiProcess_GenSmoothNormals): area-weighted average
-            // over the faces sharing each vertex (assimpjs already joined
+            // over the faces sharing each vertex (assimp already joined
             // identical vertices).
             const acc = vertices.map(() => new float3(0, 0, 0));
             for (let f = 0; f < idx.length; f += 3) {
