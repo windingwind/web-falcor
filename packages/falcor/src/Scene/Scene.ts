@@ -56,6 +56,83 @@ export interface SceneSDFGridDesc {
     transform?: float4x4;
 }
 
+/** Segment-AABB BVH over curves (prim entries encode instance << 24 | segment), plus its node word count. */
+function buildCurveBvh(curves: SceneCurveDesc[]): { data: Float32Array; nodeWords: number } {
+    const segAabbs: { min: [number, number, number]; max: [number, number, number] }[] = [];
+    curves.forEach((curve) => {
+        const m = curve.transform ?? float4x4.identity();
+        const scale = Math.hypot(m.get(0, 0), m.get(0, 1), m.get(0, 2));
+        for (const seg of curve.indices) {
+            const lo: [number, number, number] = [Infinity, Infinity, Infinity];
+            const hi: [number, number, number] = [-Infinity, -Infinity, -Infinity];
+            for (const v of [seg, seg + 1]) {
+                const p = transformPoint(m, new float3(curve.positionsRadii[v * 4]!, curve.positionsRadii[v * 4 + 1]!, curve.positionsRadii[v * 4 + 2]!));
+                const r = curve.positionsRadii[v * 4 + 3]! * scale;
+                for (const [a, c] of [[0, p.x], [1, p.y], [2, p.z]] as const) {
+                    lo[a] = Math.min(lo[a], c - r);
+                    hi[a] = Math.max(hi[a], c + r);
+                }
+            }
+            segAabbs.push({ min: lo, max: hi });
+        }
+    });
+    const curveBvh = buildAabbBvh(segAabbs);
+    const encoded = new Uint32Array(curveBvh.primIndices.length);
+    const segToEnc: number[] = [];
+    curves.forEach((curve, ci) => {
+        for (let sIdx = 0; sIdx < curve.indices.length; sIdx++) segToEnc.push(((ci & 0xff) << 24) | sIdx);
+    });
+    for (let i = 0; i < curveBvh.primIndices.length; i++) encoded[i] = segToEnc[curveBvh.primIndices[i]!] ?? 0;
+    const primWords = Math.ceil(encoded.length / 4) * 4;
+    const data = new Float32Array(curveBvh.nodes.length + primWords);
+    data.set(curveBvh.nodes, 0);
+    new Uint32Array(data.buffer, curveBvh.nodes.length * 4).set(encoded);
+    return { data, nodeWords: curveBvh.nodes.length };
+}
+
+/** Curve vertex/index/metadata buffers. */
+function packCurves(curves: SceneCurveDesc[]): { cv: Float32Array; ci: Uint32Array; cd: Uint32Array } {
+            // StaticCurveVertexData WGSL layout: position@0, radius@12, texCrd@16, stride 32.
+    const totalVerts = curves.reduce((acc, c) => acc + c.positionsRadii.length / 4, 0);
+    const cv = new Float32Array(totalVerts * 8);
+    const totalSegs = curves.reduce((acc, c) => acc + c.indices.length, 0);
+    const ci = new Uint32Array(totalSegs);
+    const cd = new Uint32Array(curves.length * 6);
+    let vtx = 0;
+    let seg = 0;
+    curves.forEach((curve, i) => {
+        const count = curve.positionsRadii.length / 4;
+        for (let v = 0; v < count; v++) {
+            cv.set(curve.positionsRadii.subarray(v * 4, v * 4 + 4), (vtx + v) * 8);
+            if (curve.texCrds) cv.set(curve.texCrds.subarray(v * 2, v * 2 + 2), (vtx + v) * 8 + 4);
+        }
+        ci.set(curve.indices, seg);
+        cd.set([vtx, seg, count, curve.indices.length, 1, curve.materialID], i * 6);
+        vtx += count;
+        seg += curve.indices.length;
+    });
+    return { cv, ci, cd };
+}
+
+/** A cached curve's positions at `time` (calculateInterpolation, post-infinity Constant); radii and texcoords stay. */
+function sampleCurveCache(curve: SceneCurveDesc, time: number, preCycle: boolean): Float32Array {
+    const { times: ts, positions } = curve.vertexCache!;
+    let [a, b, t] = [0, 0, 0];
+    time = Math.max(time, 0);
+    if (time > ts[ts.length - 1]!) [a, b] = [ts.length - 1, ts.length - 1];
+    else if (time <= ts[0]!) {
+        if (preCycle) [a, b, t] = [ts.length - 1, 0, time / ts[0]!];
+    } else {
+        b = ts.findIndex((x) => x >= time);
+        a = b - 1;
+        t = (time - ts[a]!) / (ts[b]! - ts[a]!);
+    }
+    const out = curve.positionsRadii.slice();
+    const [pa, pb] = [positions[a]!, positions[b]!];
+    for (let v = 0; v < out.length / 4; v++) for (let k = 0; k < 3; k++) out[v * 4 + k] = pa[v * 3 + k]! + (pb[v * 3 + k]! - pa[v * 3 + k]!) * t;
+    return out;
+}
+
 /**
  * AnimatedVertexCache's mesh interpolation (calculateInterpolation + UpdateMeshVertices): looped
  * past the last sample, held or cycled before the first; positions and tangents lerp, normals and
@@ -134,6 +211,8 @@ export interface SceneCurveDesc {
     materialID: number;
     /** World transform; identity if omitted. */
     transform?: float4x4;
+    /** Curve vertex cache (CachedCurve): per-sample positions (xyz per vertex), times in seconds. */
+    vertexCache?: { times: number[]; positions: Float32Array[] };
 }
 
 export interface SceneMaterialDesc {
@@ -309,6 +388,7 @@ export class Scene {
     private curveBvhOffset = 0;
     private curvePrimOffset = 0;
     private curveBvhBytes: Float32Array | null = null;
+    private sceneCurves: SceneCurveDesc[] = [];
     private displacedBvhOffset = 0;
     private displacedPrimOffset = 0;
     private hasDisplaced = false;
@@ -524,41 +604,13 @@ export class Scene {
         }
         // Curve segment-AABB BVH appended into the same merged buffer (16-
         // storage-buffer budget): prim entries encode (instance << 24 | segment).
-        let curveBvhData = new Float32Array(0);
+        let curveBvhData: Float32Array = new Float32Array(0);
+        this.sceneCurves = curves;
         if (curves.length > 0) {
-            const segAabbs: { min: [number, number, number]; max: [number, number, number] }[] = [];
-            curves.forEach((curve, ci) => {
-                const m = curve.transform ?? float4x4.identity();
-                const scale = Math.hypot(m.get(0, 0), m.get(0, 1), m.get(0, 2));
-                for (const seg of curve.indices) {
-                    const lo: [number, number, number] = [Infinity, Infinity, Infinity];
-                    const hi: [number, number, number] = [-Infinity, -Infinity, -Infinity];
-                    for (const v of [seg, seg + 1]) {
-                        const p = transformPoint(m, new float3(curve.positionsRadii[v * 4]!, curve.positionsRadii[v * 4 + 1]!, curve.positionsRadii[v * 4 + 2]!));
-                        const r = curve.positionsRadii[v * 4 + 3]! * scale;
-                        for (const [a, c] of [[0, p.x], [1, p.y], [2, p.z]] as const) {
-                            lo[a] = Math.min(lo[a], c - r);
-                            hi[a] = Math.max(hi[a], c + r);
-                        }
-                    }
-                    segAabbs.push({ min: lo, max: hi });
-                }
-                void ci;
-            });
-            const curveBvh = buildAabbBvh(segAabbs);
-            // Remap prim indices to (instance << 24 | local segment).
-            const encoded = new Uint32Array(curveBvh.primIndices.length);
-            const segToEnc: number[] = [];
-            curves.forEach((curve, ci) => {
-                for (let sIdx = 0; sIdx < curve.indices.length; sIdx++) segToEnc.push(((ci & 0xff) << 24) | sIdx);
-            });
-            for (let i = 0; i < curveBvh.primIndices.length; i++) encoded[i] = segToEnc[curveBvh.primIndices[i]!] ?? 0;
-            const primWords = Math.ceil(encoded.length / 4) * 4;
-            curveBvhData = new Float32Array(curveBvh.nodes.length + primWords);
-            curveBvhData.set(curveBvh.nodes, 0);
-            new Uint32Array(curveBvhData.buffer, curveBvh.nodes.length * 4).set(encoded);
+            const built = buildCurveBvh(curves);
+            curveBvhData = built.data;
             this.curveBvhOffset = 0; // patched after the triangle merge below
-            this.curvePrimOffset = curveBvh.nodes.length / 4;
+            this.curvePrimOffset = built.nodeWords / 4;
         }
 
         // Displaced-triangle AABB BVH rides in the same merged buffer.
@@ -594,14 +646,17 @@ export class Scene {
         }
         // A scene animates if it has keyframe channels, morph-weight tracks, or
         // morph meshes (weights may be static-but-nonzero) — all rebuild per frame.
-        const hasAnimation = ((animations.length > 0 || weightTracks.length > 0 || meshes.some((m) => m.morph)) && nodes.length > 0) || meshes.some((m) => m.vertexCache);
+        const hasAnimation = ((animations.length > 0 || weightTracks.length > 0 || meshes.some((m) => m.morph)) && nodes.length > 0) || meshes.some((m) => m.vertexCache) || curves.some((c) => c.vertexCache);
         if (hasAnimation) {
             // Animated scenes rebuild the BVH every frame; over-allocate to the
             // worst-case size (≤2N nodes + N tris) so animate() setBlobs in place —
             // destroying/recreating a buffer still referenced by an in-flight submit
             // is illegal.
             const numTris = allIndices.length / 3;
-            this.bvhCapacityBytes = ((2 * numTris + 2) * 8 + numTris * 12) * 4 + curveBvhData.byteLength;
+            // Curve caches rebuild their BVH too: reserve its worst case (2n nodes + prim words).
+            const curveSegs = curves.reduce((n, c) => n + c.indices.length, 0);
+            const curveWorst = curves.some((c) => c.vertexCache) ? (2 * curveSegs * 8 + Math.ceil(curveSegs / 4) * 4) * 4 : 0;
+            this.bvhCapacityBytes = ((2 * numTris + 2) * 8 + numTris * 12) * 4 + Math.max(curveBvhData.byteLength, curveWorst);
             const buf = new Buffer(this.device, { size: Math.max(this.bvhCapacityBytes, 16), structSize: 16, bindFlags: storage, memoryType: MemoryType.DeviceLocal, name: "Scene::bvhNodes" });
             buf.setBlob(bvhMerged);
             this.buffers["bvhNodes"] = buf;
@@ -734,25 +789,7 @@ export class Scene {
         make("materialBuffer0", materialBuffer, 4);
         make("curveDummy", new Uint32Array(16), 32); // StaticCurveVertexData-sized dummy
         if (curves.length > 0) {
-            // StaticCurveVertexData WGSL layout: position@0, radius@12, texCrd@16, stride 32.
-            const totalVerts = curves.reduce((acc, c) => acc + c.positionsRadii.length / 4, 0);
-            const cv = new Float32Array(totalVerts * 8);
-            const totalSegs = curves.reduce((acc, c) => acc + c.indices.length, 0);
-            const ci = new Uint32Array(totalSegs);
-            const cd = new Uint32Array(curves.length * 6);
-            let vtx = 0;
-            let seg = 0;
-            curves.forEach((curve, i) => {
-                const count = curve.positionsRadii.length / 4;
-                for (let v = 0; v < count; v++) {
-                    cv.set(curve.positionsRadii.subarray(v * 4, v * 4 + 4), (vtx + v) * 8);
-                    if (curve.texCrds) cv.set(curve.texCrds.subarray(v * 2, v * 2 + 2), (vtx + v) * 8 + 4);
-                }
-                ci.set(curve.indices, seg);
-                cd.set([vtx, seg, count, curve.indices.length, 1, curve.materialID], i * 6);
-                vtx += count;
-                seg += curve.indices.length;
-            });
+            const { cv, ci, cd } = packCurves(curves);
             make("curveVertices", cv, 32);
             make("curveIndices", ci, 4);
             make("curves", cd, 24);
@@ -1132,6 +1169,7 @@ export class Scene {
         };
         meshes.forEach((_m, i) => putNode(i, worldMats[i]!));
         this.sdfGrids.forEach((desc, i) => putNode(meshes.length + i, desc.transform ?? float4x4.identity()));
+        this.sceneCurves.forEach((desc, i) => putNode(meshes.length + this.sdfGrids.length + i, desc.transform ?? float4x4.identity()));
         // Prev matrices = the ones used last frame (mirrors Scene::updateMatrices).
         if (this.lastWorldMats && this.buffers["prevWorldMatrices"]) {
             this.buffers["prevWorldMatrices"]!.setBlob(this.lastWorldMats);
@@ -1159,6 +1197,17 @@ export class Scene {
         if (bvhTris.length > 0) {
             this.worldBounds = { min: [bvh.nodes[0]!, bvh.nodes[1]!, bvh.nodes[2]!], max: [bvh.nodes[4]!, bvh.nodes[5]!, bvh.nodes[6]!] };
         }
+        // Curve vertex caches (AnimatedVertexCache's curves): positions lerp, radii stay; curves loop
+        // over their own length and hold after the last sample; their BVH is rebuilt.
+        if (this.sceneCurves.some((c) => c.vertexCache)) {
+            const curveLength = this.sceneCurves.reduce((d, c) => Math.max(d, c.vertexCache?.times.at(-1) ?? 0), 0);
+            const curveTime = curveLength > 0 ? cacheTime % curveLength : cacheTime;
+            const posed = this.sceneCurves.map((c) => (c.vertexCache ? { ...c, positionsRadii: sampleCurveCache(c, curveTime, curveLength < (this.animData?.duration ?? 0)) } : c));
+            this.buffers["curveVertices"]!.setBlob(packCurves(posed).cv);
+            const built = buildCurveBvh(posed);
+            this.curveBvhBytes = built.data;
+            this.curvePrimOffset = this.curveBvhOffset + built.nodeWords / 4;
+        }
         const curveExtra = this.curveBvhBytes ?? new Float32Array(0);
         const bvhMerged = new Float32Array(bvh.nodes.length + bvh.tris.length + curveExtra.length);
         bvhMerged.set(bvh.nodes, 0);
@@ -1167,7 +1216,7 @@ export class Scene {
         if (curveExtra.length > 0) {
             // Static curve BVH rides after the rebuilt triangle data.
             bvhMerged.set(curveExtra, bvh.nodes.length + bvh.tris.length);
-            const nodeWords = this.curvePrimOffset - this.curveBvhOffset;
+            const nodeWords = this.curvePrimOffset - this.curveBvhOffset; // this frame's curve BVH node words
             this.curveBvhOffset = (bvh.nodes.length + bvh.tris.length) / 4;
             this.curvePrimOffset = this.curveBvhOffset + nodeWords;
         }

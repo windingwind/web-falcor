@@ -130,6 +130,8 @@ export interface BasisCurvesDesc {
     points: Float32Array;
     /** Per-vertex widths (diameters, USD convention). */
     widths: Float32Array;
+    /** Time-sampled points (time codes >= 1, as native's processCurve keeps); `points` is the first. */
+    pointsSamples?: { time: number; points: Float32Array }[];
 }
 
 /** Extracts BasisCurves prims from USDA text (tinyusdz's RenderScene API
@@ -155,7 +157,21 @@ export function extractBasisCurvesFromUsda(source: string): BasisCurvesDesc[] {
             return (a[1]!.match(/-?[\d.eE+]+/g) ?? []).map(Number);
         };
         const counts = nums("int\\[\\] curveVertexCounts");
-        const pts = nums("point3f\\[\\] points");
+        let pts = nums("point3f\\[\\] points");
+        // points.timeSamples = { time: [...], ... }; native drops samples with time code < 1.
+        let pointsSamples: { time: number; points: Float32Array }[] | undefined;
+        const ts = /points\.timeSamples\s*=\s*\{/.exec(body);
+        if (ts) {
+            let k = ts.index + ts[0].length;
+            const from = k;
+            for (let d = 1; k < body.length && d > 0; k++) d += body[k] === "{" ? 1 : body[k] === "}" ? -1 : 0;
+            pointsSamples = [...body.slice(from, k - 1).matchAll(/([-+]?[\d.]+(?:[eE][-+]?\d+)?)\s*:\s*\[([^\]]*)\]/g)]
+                .map((e) => ({ time: Number(e[1]), points: new Float32Array((e[2]!.match(/-?[\d.eE+]+/g) ?? []).map(Number)) }))
+                .sort((a, b) => a.time - b.time)
+                .filter((e) => e.time >= 1);
+            if (pointsSamples.length > 0) pts = Array.from(pointsSamples[0]!.points);
+            if (pointsSamples.length < 2) pointsSamples = undefined;
+        }
         const widths = nums("float\\[\\] widths");
         if (!counts || !pts) continue;
         const vertexTotal = counts.reduce((acc, c) => acc + c, 0);
@@ -165,6 +181,7 @@ export function extractBasisCurvesFromUsda(source: string): BasisCurvesDesc[] {
             curveVertexCounts: new Uint32Array(counts),
             points: new Float32Array(pts),
             widths: new Float32Array(widths ?? new Array<number>(vertexTotal).fill(1)),
+            pointsSamples,
         });
     }
     return out;

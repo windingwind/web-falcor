@@ -17,7 +17,7 @@ import type { SceneNode, AnimationChannel, WeightTrack } from "./Animation/Scene
 import { GltfImporter } from "./Importer/GltfImporter.js";
 import { FbxImporter, kAssimpSceneExtensions, objMaterialLibraries, type ImportedCamera } from "./Importer/FbxImporter.js";
 import { UsdImporter } from "./Importer/UsdImporter.js";
-import { convertToLinearSweptSphere, convertToPolytube, extractBasisCurvesFromUsda } from "./Curves/CurveTessellation.js";
+import { convertToLinearSweptSphere, convertToPolytube } from "./Curves/CurveTessellation.js";
 import { TextureManager } from "./Material/TextureManager.js";
 import { EnvMap } from "./Lights/EnvMap.js";
 import { generateTangents } from "./TangentSpace.js";
@@ -1062,13 +1062,10 @@ export class SceneBuilderBridge {
                 const materialOffset = materials.length;
                 if (/\.usd[acz]?$/.test(cmd.path.toLowerCase())) {
                     const dir = url.slice(0, url.lastIndexOf("/"));
-                    // Curve prims import as real curves below; tinyusdz also
-                    // tessellates them into meshes — exclude those duplicates.
-                    const curvePrims = cmd.path.toLowerCase().endsWith(".usda")
-                        ? extractBasisCurvesFromUsda(new TextDecoder().decode(bytes))
-                        : [];
                     const settings = (await import("../Utils/Scripting/Scripting.js")).getGlobalSettings();
-                    const parsed = await UsdImporter.parseToDescs(bytes, textureManager, dir, new Set(curvePrims.map((c) => c.name)), { ...this.importOptions, settings });
+                    // BasisCurves come back from the (composed) layer text; the importer drops tinyusdz's tessellated duplicates.
+                    const parsed = await UsdImporter.parseToDescs(bytes, textureManager, dir, undefined, { ...this.importOptions, settings });
+                    const curvePrims = parsed.curves;
                     materials.push(...parsed.materials);
                     importedMaterialNames.push(...parsed.materialNames);
                     // Time-sampled xforms: node animations, one clip per animated prim.
@@ -1156,10 +1153,19 @@ export class SceneBuilderBridge {
                                     meshes.push({ vertices, indices: tube.faceVertexIndices, materialID });
                                     continue;
                                 }
-                                const r = convertToLinearSweptSphere(strandCount, strand.curveVertexCounts, strand.points, strand.widths, null, 1, subdiv, keepStrands, keepVertices, widthScale, float4x4.identity());
+                                const lss = (points: Float32Array) => convertToLinearSweptSphere(strandCount, strand.curveVertexCounts, points, strand.widths, null, 1, subdiv, keepStrands, keepVertices, widthScale, float4x4.identity());
+                                const r = lss(strand.points);
                                 const positionsRadii = new Float32Array(r.points.length * 4);
                                 r.points.forEach((pnt, vi) => positionsRadii.set([pnt.x, pnt.y, pnt.z, r.radius[vi]!], vi * 4));
-                                curves.push({ positionsRadii, texCrds: null, indices: r.indices, materialID });
+                                // Time-sampled points: a curve vertex cache (CachedCurve), each sample tessellated alike.
+                                const motion = strand.pointsSamples && Boolean(settings.getAttribute<boolean | number>(strand.path, "usdImporter:enableMotion", true));
+                                const vertexCache = motion
+                                    ? {
+                                          times: strand.pointsSamples!.map((s) => s.time / parsed.timeCodesPerSecond),
+                                          positions: strand.pointsSamples!.map((s) => Float32Array.from(lss(s.points).points.flatMap((p) => [p.x, p.y, p.z]))),
+                                      }
+                                    : undefined;
+                                curves.push({ positionsRadii, texCrds: null, indices: r.indices, materialID, vertexCache });
                             }
                         }
                     }

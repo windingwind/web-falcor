@@ -43,3 +43,15 @@ describe("triangulateUsdMesh", () => {
         expect(Array.from(m.normals.slice(0, 3))).toEqual([0, 0, -1]);
     });
 });
+
+describe("extractBasisCurvesFromUsda", () => {
+    it("reads time-sampled points, dropping samples before time code 1 like native", async () => {
+        const { extractBasisCurvesFromUsda } = await import("../src/Scene/Curves/CurveTessellation.js");
+        const { readFileSync } = await import("node:fs");
+        const text = readFileSync(new URL("../../../tests/oracle/assets/usd-curves-anim.usda", import.meta.url), "utf8");
+        const [curve0, curve1] = extractBasisCurvesFromUsda(text);
+        expect(curve0!.pointsSamples!.map((s) => s.time)).toEqual([12, 36]);
+        expect(curve1!.pointsSamples!.map((s) => s.time)).toEqual([12, 36]); // 0 dropped
+        expect(Array.from(curve1!.points.slice(0, 3))).toEqual([3, 0, 0]); // the first kept sample
+    });
+});

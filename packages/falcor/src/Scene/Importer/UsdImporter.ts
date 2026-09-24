@@ -16,6 +16,7 @@ import { float4x4, inverse, mulMat, transformPoint } from "../../Utils/Math/Matr
 import { RuntimeError } from "../../Core/Error.js";
 import { Logger } from "../../Utils/Logger.js";
 import { decomposeTRS, type AnimationChannel, type SceneNode, type SkinDesc } from "../Animation/SceneAnimation.js";
+import { extractBasisCurvesFromUsda, type BasisCurvesDesc } from "../Curves/CurveTessellation.js";
 import { loadOpenSubdiv, tessellateUsdMesh, type TessellatedMesh } from "./Subdivision.js";
 import { refinedCorners, triangulateUsdMesh, type CornerMesh } from "./UsdTriangulate.js";
 import { extractUsdCamerasAndLights, extractUsdDisplayColors, extractUsdMaterialBindings, extractUsdMaterialTextures, extractUsdPointInstancers, extractUsdMeshes, extractUsdSkeletons, extractUsdXformAnimations, sampleAt, usdRenderSettings, usdTimeCodesPerSecond, usdaStageInfo, usdChannelIndex, usdStageRootTransform, usdTexCoordTransform, type UsdaCamera, type UsdaDomeLight, type UsdaSkeleton, type UsdaSubdivMesh, type UsdaTextureInput, type UsdaXformAnimation } from "./UsdaScene.js";
@@ -285,7 +286,7 @@ export class UsdImporter {
             /** Per-prim Settings attributes (native's "refinementLevel" override by mesh path). */
             settings?: { getAttribute(path: string, name: string, fallback: number): unknown };
         } = {},
-    ): Promise<{ meshes: SceneMeshDesc[]; materials: SceneMaterialDesc[]; materialNames: string[]; cameras: UsdaCamera[]; lights: AnalyticLight[]; domeLight: UsdaDomeLight | null; stage: UsdStageBounds | null; metadata: SceneMetadata | null; nodes: SceneNode[]; animations: AnimationChannel[] }> {
+    ): Promise<{ meshes: SceneMeshDesc[]; materials: SceneMaterialDesc[]; materialNames: string[]; cameras: UsdaCamera[]; lights: AnalyticLight[]; domeLight: UsdaDomeLight | null; stage: UsdStageBounds | null; metadata: SceneMetadata | null; nodes: SceneNode[]; animations: AnimationChannel[]; curves: BasisCurvesDesc[]; timeCodesPerSecond: number }> {
         const native = await loadTinyUsdz();
         let usd = new native.TinyUSDZLoaderNative();
         // Files with composition arcs are composed first.
@@ -486,6 +487,9 @@ export class UsdImporter {
             for (let p = path ?? ""; p !== ""; p = p.slice(0, p.lastIndexOf("/"))) if (xformAnims.has(p)) return true;
             return false;
         };
+        // BasisCurves (RenderScene has no curve API; tinyusdz tessellates them into meshes instead).
+        const curves = layerText ? extractBasisCurvesFromUsda(layerText) : [];
+        const curvePaths = new Set(curves.map((c) => c.path));
         // Stage bounds in USD space (UsdGeomBBoxCache's world bound, without the root transform).
         const lo = [Infinity, Infinity, Infinity];
         const hi = [-Infinity, -Infinity, -Infinity];
@@ -537,7 +541,7 @@ export class UsdImporter {
                     });
                 }
             }
-            if (node.nodeType === "mesh" && !excludePrims?.has(node.primName)) {
+            if (node.nodeType === "mesh" && !excludePrims?.has(node.primName) && !curvePaths.has(node.absPath ?? "")) {
                 const mesh = usd.getMesh(node.contentId);
                 const level = node.absPath ? refinementLevels.get(node.absPath) : undefined;
                 const usdaMesh = node.absPath ? usdaMeshes.get(node.absPath) : undefined;
@@ -635,7 +639,7 @@ export class UsdImporter {
             }
         }
         const metadata = layerText ? (usdRenderSettings(layerText)?.metadata ?? null) : null;
-        return { meshes, materials, materialNames, ...extracted, stage, metadata, nodes, animations };
+        return { meshes, materials, materialNames, ...extracted, stage, metadata, nodes, animations, curves, timeCodesPerSecond: tcps };
     }
 }
 
