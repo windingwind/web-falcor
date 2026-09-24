@@ -13,7 +13,7 @@
 
 import { float3, normalize3 } from "../../Utils/Math/Vector.js";
 import { extractEulerAngleXYZ, float4x4, inverse, matrixFromRotationAxisAngle, matrixFromScaling, matrixFromTranslation, mulMat, transformPoint, transformVector } from "../../Utils/Math/Matrix.js";
-import { matrixFromQuat, mulQuat, quatf, slerp } from "../../Utils/Math/Quaternion.js";
+import { matrixFromQuat, mulQuat, quatFromAngleAxis, quatf, slerp } from "../../Utils/Math/Quaternion.js";
 import { decomposeTRS } from "../Animation/SceneAnimation.js";
 import { LightType, type AnalyticLight } from "../SceneData.js";
 import type { SceneMetadata } from "../Scene.js";
@@ -457,9 +457,39 @@ export function extractUsdPointInstancers(text: string): UsdaPointInstancer[] {
                             return [q.w, q.x, q.y, q.z];
                         });
                     };
+                    // Native samples at baseTime = EarliestTime: authored velocities extrapolate from the first
+                    // sample, used only when their first sample is at the same time (else USD warns and ignores them).
+                    const tcps = usdTimeCodesPerSecond(text);
+                    const alignedAt = (name: string, t0: number | undefined, size: number) => {
+                        const v = attrTimeSamples(b, name)?.[0];
+                        return v && v.time === t0 && v.value.length === size ? v.value : undefined;
+                    };
+                    const [p0, t0] = [posSamples[0]!.value, posSamples[0]!.time];
+                    const velocities = alignedAt("velocities", t0, p0.length);
+                    const accelerations = velocities && alignedAt("accelerations", t0, p0.length);
+                    const posAt = (x: { time: number; value: number[] }) => {
+                        if (!velocities) return x.value;
+                        const dt = (x.time - t0) / tcps;
+                        return p0.map((p, k) => p + velocities[k]! * dt + (accelerations ? 0.5 * accelerations[k]! * dt * dt : 0));
+                    };
+                    const o0 = oriSamples?.[0];
+                    const angular = o0 && alignedAt("angularVelocities", o0.time, (o0.value.length / 4) * 3);
+                    const rotAt = (t: number): number[] => {
+                        if (!angular || !o0) return oriAt(t);
+                        const dt = (t - o0.time) / tcps;
+                        return o0.value.flatMap((_, i) => {
+                            if (i % 4) return [];
+                            const k = (i / 4) * 3;
+                            const w = new float3(angular[k]!, angular[k + 1]!, angular[k + 2]!);
+                            const len = Math.hypot(w.x, w.y, w.z);
+                            const base = new quatf(o0.value[i + 1]!, o0.value[i + 2]!, o0.value[i + 3]!, o0.value[i]!);
+                            const q = len > 0 ? mulQuat(quatFromAngleAxis(((len * dt) * Math.PI) / 180, new float3(w.x / len, w.y / len, w.z / len)), base) : base;
+                            return [q.w, q.x, q.y, q.z];
+                        });
+                    };
                     const animation = {
                         times: posSamples.map((x) => x.time),
-                        transforms: posSamples.map((x) => indices.map((_, i) => instanceMatrix(x.value, oriAt(x.time), scSamples?.length ? sampleAt(scSamples, x.time) : scales, i))),
+                        transforms: posSamples.map((x) => indices.map((_, i) => instanceMatrix(posAt(x), rotAt(x.time), scSamples?.length ? sampleAt(scSamples, x.time) : scales, i))),
                     };
                     const first = animation.transforms[0]!;
                     out.push({ path: p.path, usdWorld: p.usdWorld, prototypes, instances: indices.map((proto, i) => ({ proto, transform: first[i]! })), animation });

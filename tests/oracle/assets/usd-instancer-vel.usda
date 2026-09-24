@@ -1,0 +1,96 @@
+#usda 1.0
+(
+    defaultPrim = "World"
+    metersPerUnit = 1
+    upAxis = "Y"
+    timeCodesPerSecond = 24
+    startTimeCode = 0
+    endTimeCode = 48
+)
+# PointInstancers with velocities, accelerations and angularVelocities. Native samples the
+# instance transforms at the positions' sample times with baseTime = EarliestTime, so USD
+# extrapolates from the first positions/orientations samples (positions + v dt + a dt^2 / 2,
+# orientations times the angular-velocity rotation) instead of reading the later samples.
+def Xform "World"
+{
+    # Sampled velocities/accelerations/angularVelocities at the positions' own sample times.
+    def PointInstancer "Sampled"
+    {
+        double3 xformOp:translate = (-2.5, 0.5, 0)
+        uniform token[] xformOpOrder = ["xformOp:translate"]
+        rel prototypes = [</World/Protos/Quad>]
+        int[] protoIndices = [0, 0]
+        point3f[] positions.timeSamples = {
+            0: [(-0.8, 0, 0), (0.8, 0, 0)],
+            24: [(-0.8, 3, 0), (0.8, -3, 0)],
+            48: [(-0.8, 0, 0), (0.8, 0, 0)],
+        }
+        vector3f[] velocities.timeSamples = {
+            0: [(0.4, 0.2, 0), (-0.2, 0.3, 0)],
+            24: [(9, 9, 0), (9, 9, 0)],
+        }
+        vector3f[] accelerations.timeSamples = {
+            0: [(0, -0.3, 0), (0.1, 0, 0)],
+        }
+        quath[] orientations.timeSamples = {
+            0: [(0.9238795, 0, 0, 0.3826834), (0.9659258, 0.2588190, 0, 0)],
+            48: [(1, 0, 0, 0), (1, 0, 0, 0)],
+        }
+        vector3f[] angularVelocities.timeSamples = {
+            0: [(0, 40, 0), (30, 0, 20)],
+        }
+    }
+    # Default-valued (unsampled) velocities.
+    def PointInstancer "Default"
+    {
+        double3 xformOp:translate = (0.5, 0.5, 0)
+        uniform token[] xformOpOrder = ["xformOp:translate"]
+        rel prototypes = [</World/Protos/Quad>]
+        int[] protoIndices = [0, 0]
+        point3f[] positions.timeSamples = {
+            0: [(-0.6, 0, 0), (0.6, 0, 0)],
+            48: [(-0.6, 3, 0), (0.6, -3, 0)],
+        }
+        vector3f[] velocities = [(0.3, -0.2, 0), (0, 0.4, 0)]
+        quath[] orientations = [(0.9238795, 0.3826834, 0, 0), (1, 0, 0, 0)]
+        vector3f[] angularVelocities = [(0, 0, 45), (0, 30, 0)]
+    }
+    # Velocities sampled at another time than the positions.
+    def PointInstancer "Offset"
+    {
+        double3 xformOp:translate = (3, 0.5, 0)
+        uniform token[] xformOpOrder = ["xformOp:translate"]
+        rel prototypes = [</World/Protos/Quad>]
+        int[] protoIndices = [0]
+        point3f[] positions.timeSamples = {
+            0: [(0, 0, 0)],
+            48: [(0, -1, 0)],
+        }
+        vector3f[] velocities.timeSamples = {
+            6: [(0.5, 0.5, 0)],
+        }
+    }
+    def Scope "Protos"
+    {
+        def Mesh "Quad"
+        {
+            uniform token subdivisionScheme = "none"
+            int[] faceVertexCounts = [3, 3]
+            int[] faceVertexIndices = [0, 1, 2, 0, 2, 3]
+            point3f[] points = [(-0.4, -0.4, 0), (0.4, -0.4, 0), (0.4, 0.4, 0), (-0.4, 0.4, 0)]
+            normal3f[] normals = [(0, 0, 1), (0, 0, 1), (0, 0, 1), (0, 0, 1)] (
+                interpolation = "vertex"
+            )
+        }
+    }
+    def Mesh "Floor"
+    {
+        uniform token subdivisionScheme = "none"
+        int[] faceVertexCounts = [3, 3]
+        int[] faceVertexIndices = [0, 1, 2, 0, 2, 3]
+        point3f[] points = [(-5, -1.5, -2), (5, -1.5, -2), (5, -1.5, 2), (-5, -1.5, 2)]
+        normal3f[] normals = [(0, 1, 0), (0, 1, 0), (0, 1, 0), (0, 1, 0)] (
+            interpolation = "vertex"
+        )
+    }
+}
