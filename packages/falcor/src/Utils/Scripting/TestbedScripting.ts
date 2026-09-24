@@ -27,6 +27,8 @@ import { Logger } from "../Logger.js";
 import { RuntimeError } from "../../Core/Error.js";
 import { getPyodide } from "./Scripting.js";
 import { Testbed, type TestbedOptions } from "./Testbed.js";
+import { MaterialBridge } from "../../Scene/SceneBuilder.js";
+import { MaterialType } from "../../Scene/Material/MaterialData.js";
 
 interface Pyodide {
     registerJsModule(name: string, module: object): void;
@@ -125,6 +127,19 @@ function makeJsModule(device: Device, testbedOptions: TestbedOptions, fsRead: (p
         createRenderGraph: (t: Testbed, name: string) => t.createRenderGraph(name),
         graphCreatePass: (g: RenderGraph, name: string, type: string, props: unknown) => g.addPass(createPass(device, type, new Properties((toJs(props) as Record<string, never>) ?? {})), name),
         setLogVerbosity: (level: number) => (Logger.level = level),
+        /** A material of `type` (MaterialType name) for Scene.replaceMaterial, e.g. PBRTDiffuse. */
+        createMaterial: (type: string, name: string) => {
+            const t = MaterialType[type as keyof typeof MaterialType];
+            if (t === undefined) throw new RuntimeError(`Unknown material type '${type}'`);
+            return new MaterialBridge(t, name);
+        },
+        /** Mirrors Scene::replaceMaterial: loads the material's textures, swaps it in, re-binds the graph if defines changed. */
+        replaceMaterial: async (t: Testbed, index: number, material: MaterialBridge) => {
+            const scene = t.scene;
+            if (!scene) throw new RuntimeError("Testbed has no scene");
+            await material.resolveTextures(t.sceneBaseUrl, scene.textureManager, undefined, false, device);
+            if (scene.replaceMaterial(index, material.toDesc()) && t.renderGraph) t.renderGraph.setScene(scene);
+        },
         submit: async (wait: boolean) => {
             device.renderContext.submit();
             if (wait) await device.gpuDevice.queue.onSubmittedWorkDone();
@@ -306,6 +321,45 @@ class RenderGraph:
     def unmark_output(self, name): self._o.unmarkOutput(name)
     def get_pass(self, name): return self._o.getPass(name)
 
+class MaterialTextureSlot(enum.Enum):
+    BaseColor = "BaseColor"
+    Specular = "Specular"
+    Emissive = "Emissive"
+    Normal = "Normal"
+    Transmission = "Transmission"
+    Displacement = "Displacement"
+    Index = "Index"
+
+class Material:
+    _type = "Standard"
+    def __init__(self, device=None, name=""):
+        if isinstance(device, str): device, name = None, device
+        object.__setattr__(self, "_o", _js.createMaterial(self._type, name))
+    def load_texture(self, slot, path, use_srgb=True):
+        self._o.loadTexture(getattr(slot, "name", str(slot)), str(path))
+        return True
+    loadTexture = load_texture
+    @property
+    def name(self): return self._o.name
+    def __getattr__(self, k): return getattr(object.__getattribute__(self, "_o"), k)
+    def __setattr__(self, k, v): setattr(object.__getattribute__(self, "_o"), k, _unwrap(v))
+
+def _material_class(name, type_name):
+    return type(name, (Material,), {"_type": type_name})
+
+for _n, _t in [("StandardMaterial", "Standard"), ("ClothMaterial", "Cloth"), ("HairMaterial", "Hair"), ("PBRTDiffuseMaterial", "PBRTDiffuse"),
+               ("PBRTDiffuseTransmissionMaterial", "PBRTDiffuseTransmission"), ("PBRTConductorMaterial", "PBRTConductor"), ("PBRTDielectricMaterial", "PBRTDielectric"),
+               ("PBRTCoatedConductorMaterial", "PBRTCoatedConductor"), ("PBRTCoatedDiffuseMaterial", "PBRTCoatedDiffuse")]:
+    globals()[_n] = _material_class(_n, _t)
+
+class _Scene:
+    """The testbed's scene: native Scene methods, forwarding everything else to the JS Scene."""
+    def __init__(self, testbed): object.__setattr__(self, "_t", testbed)
+    def replace_material(self, index, replacement_material):
+        run_sync(_js.replaceMaterial(self._t, int(index), replacement_material._o))
+    def __getattr__(self, k): return getattr(object.__getattribute__(self, "_t").scene, k)
+    def __setattr__(self, k, v): setattr(object.__getattribute__(self, "_t").scene, k, _unwrap(v))
+
 class Testbed:
     def __init__(self, width=1920, height=1080, create_window=False, device_type=DeviceType.Default, gpu=0, enable_debug_layers=False, enable_aftermath=False, title="Falcor Sample", show_fps=True, device=None):
         self._o = _js.createTestbed(width, height, create_window, title, show_fps)
@@ -316,7 +370,7 @@ class Testbed:
     @property
     def profiler(self): return _profiler
     @property
-    def scene(self): return self._o.scene
+    def scene(self): return _Scene(self._o) if self._o.scene is not None else None
     @property
     def clock(self): return self._o.clock
     @property

@@ -7,7 +7,7 @@
  */
 import { float3, float4 } from "../../Utils/Math/Vector.js";
 import type { SceneMaterialDesc } from "../Scene.js";
-import { MaterialType, ShadingModel, TextureHandleMode } from "./MaterialData.js";
+import { MaterialType, ShadingModel, TextureHandleMode, packBasicMaterialBlob } from "./MaterialData.js";
 import type { TextureManager } from "./TextureManager.js";
 
 /** Channel masks as TextureChannelFlags bits: R 1, G 2, B 4, A 8. */
@@ -71,4 +71,25 @@ export function optimizeMaterialTextures(materials: SceneMaterialDesc[], texture
         }
     }
     return removed;
+}
+
+/**
+ * MaterialSystem::removeDuplicateMaterials: materials equal in everything but their name merge
+ * into the first one, in place; returns the old-to-new ID map. Measured materials never merge.
+ */
+export function removeDuplicateMaterials(materials: SceneMaterialDesc[]): number[] {
+    const unique: SceneMaterialDesc[] = [];
+    const keys: string[] = [];
+    const idMap = materials.map((m) => {
+        const type = m.header?.materialType ?? MaterialType.Standard;
+        const measured = m.merl || m.rgl || m.merlMix || type === MaterialType.MERL || type === MaterialType.MERLMix || type === MaterialType.RGL;
+        const key = measured ? "" : Array.from(packBasicMaterialBlob({ materialType: MaterialType.Standard, ...m.header }, m.basic)).join(",");
+        const found = measured ? -1 : keys.indexOf(key);
+        if (found >= 0) return found;
+        unique.push(m);
+        keys.push(measured ? `\0${unique.length}` : key);
+        return unique.length - 1;
+    });
+    materials.splice(0, materials.length, ...unique);
+    return idMap;
 }

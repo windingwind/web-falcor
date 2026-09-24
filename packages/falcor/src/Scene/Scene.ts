@@ -395,7 +395,7 @@ export class Scene {
     }
     private buffers: Record<string, Buffer> = {};
     /** Material texture arrays (TextureManager buckets); the shader binds kMaxTextureBuckets. */
-    private textureBuckets: Texture[];
+    private textureBuckets: Texture[] = [];
     private texInfoTexture!: Texture;
     private dummyTexture: Texture;
     /** IES profile shared by materials with `lightProfileEnabled` (MaterialSystem::mpLightProfile). */
@@ -415,6 +415,8 @@ export class Scene {
     private triangleTotal = 0;
     private maxPrimitiveCount = 0;
     private textureCount = 1;
+    /** Textures in the built buckets (textureCount is clamped to 1). */
+    private builtTextureCount = 0;
     private drawList: { indexCount: number; firstIndex: number; baseVertex: number; firstInstance: number }[] = [];
 
     private lightCount = 0;
@@ -903,22 +905,7 @@ export class Scene {
         make("gridVolumeDummy", new Uint32Array(64), 256); // GridVolumeData-sized dummy (2x float4x4 + params)
 
         // Material textures in per-format/size arrays (docs §6.2).
-        const packed = textureManager.build(this.device);
-        this.textureBuckets = packed.buckets.map((b) => b.texture);
-        // Mip chains for texture-LOD (uploads are queue-ordered before the blits); BC arrays carry theirs.
-        for (const b of packed.buckets) if (b.generateMips) b.texture.generateMips(this.device.renderContext);
-
-        this.textureCount = Math.max(textureManager.count, 1);
-        // 1-row texture (16-storage-buffer budget: frees a slot in every scene-bound kernel).
-        this.texInfoTexture = new Texture(this.device, {
-            type: ResourceType.Texture2D,
-            width: packed.texInfo.length / 4,
-            height: 1,
-            format: ResourceFormat.RGBA32Float,
-            bindFlags: ResourceBindFlags.ShaderResource,
-            name: "Scene::materialTextureUvScale",
-        });
-        this.texInfoTexture.setSubresourceBlob(0, 0, new Uint8Array(packed.texInfo.buffer, packed.texInfo.byteOffset, packed.texInfo.byteLength));
+        this.buildMaterialTextures(textureManager);
         this.dummyTexture = this.device.createTexture2D(1, 1, ResourceFormat.RGBA32Float, 1, 1, new Float32Array([0, 0, 0, 0]));
         // Standalone displacement texture (v1: one displaced material per scene).
         const dispHandle = materials.map((m) => m.basic.texDisplacement).find((h) => h !== undefined);
@@ -949,6 +936,49 @@ export class Scene {
     private gridRangeTex: Texture;
     private gridIndirectionTex: Texture;
     private gridAtlasTex: Texture;
+
+    /** Uploads the texture manager's textures as per-format/size arrays (docs §6.2). */
+    private buildMaterialTextures(textureManager: TextureManager): void {
+        const packed = textureManager.build(this.device);
+        this.textureBuckets = packed.buckets.map((b) => b.texture);
+        // Mip chains for texture-LOD (uploads are queue-ordered before the blits); BC arrays carry theirs.
+        for (const b of packed.buckets) if (b.generateMips) b.texture.generateMips(this.device.renderContext);
+
+        this.textureCount = Math.max(textureManager.count, 1);
+        this.builtTextureCount = textureManager.count;
+        // 1-row texture (16-storage-buffer budget: frees a slot in every scene-bound kernel).
+        this.texInfoTexture = new Texture(this.device, {
+            type: ResourceType.Texture2D,
+            width: packed.texInfo.length / 4,
+            height: 1,
+            format: ResourceFormat.RGBA32Float,
+            bindFlags: ResourceBindFlags.ShaderResource,
+            name: "Scene::materialTextureUvScale",
+        });
+        this.texInfoTexture.setSubresourceBlob(0, 0, new Uint8Array(packed.texInfo.buffer, packed.texInfo.byteOffset, packed.texInfo.byteLength));
+    }
+
+    /** The material system's texture manager (Scene::getMaterialSystem().getTextureManager()). */
+    get textureManager(): TextureManager {
+        return this.lcTextureManager;
+    }
+
+    /**
+     * Mirrors Scene::replaceMaterial (MaterialSystem::replaceMaterial): material `index` becomes
+     * `desc`, whose textures must already be in `textureManager`. Returns true when the scene
+     * defines changed (a new material type or texture count), i.e. passes must recompile.
+     */
+    replaceMaterial(index: number, desc: SceneMaterialDesc): boolean {
+        if (!(index >= 0 && index < this.materialDescs.length)) throw new RuntimeError("Material ID is invalid.");
+        if (desc.merl || desc.rgl || desc.merlMix) throw new RuntimeError("Scene.replaceMaterial: measured materials can't replace at runtime (their data lives in the shared material buffer)");
+        const definesBefore = this.getSceneDefines().key();
+        this.materialDescs[index] = desc;
+        if (this.lcTextureManager.count !== this.builtTextureCount) this.buildMaterialTextures(this.lcTextureManager);
+        this.materialTypes = new Set(this.materialDescs.map((m) => (m.merl ? MaterialType.MERL : m.rgl ? MaterialType.RGL : m.merlMix ? MaterialType.MERLMix : (m.header?.materialType ?? MaterialType.Standard))));
+        this.materialDescs.forEach((m, i) => this.buffers["materialData"]!.setBlob(this.packMaterial(m, i), i * 128));
+        this.rebuildLightCollection();
+        return this.getSceneDefines().key() !== definesBefore;
+    }
 
     setEnvMap(envMap: EnvMap | null): void {
         this.envMap = envMap;

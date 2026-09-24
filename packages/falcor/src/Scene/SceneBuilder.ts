@@ -18,7 +18,7 @@ import { GltfImporter } from "./Importer/GltfImporter.js";
 import { FbxImporter, kAssimpSceneExtensions, objMaterialLibraries, type ImportedCamera } from "./Importer/FbxImporter.js";
 import { UsdImporter } from "./Importer/UsdImporter.js";
 import { convertToLinearSweptSphere, convertToPolytube } from "./Curves/CurveTessellation.js";
-import { optimizeMaterialTextures } from "./Material/MaterialOptimizer.js";
+import { optimizeMaterialTextures, removeDuplicateMaterials } from "./Material/MaterialOptimizer.js";
 import { TextureManager } from "./Material/TextureManager.js";
 import { EnvMap } from "./Lights/EnvMap.js";
 import { generateTangents } from "./TangentSpace.js";
@@ -1401,6 +1401,12 @@ export class SceneBuilderBridge {
         const cameraNodeID = animatedCamera >= 0 ? this.importedCameras[animatedCamera]!.nodeID : undefined;
         // MaterialSystem::optimizeMaterials: constant textures become uniform material values.
         if (!this.hasFlag(SceneBuilderFlags.DontOptimizeMaterials)) optimizeMaterialTextures(materials, textureManager);
+        // MaterialSystem::removeDuplicateMaterials, after the optimization so more materials match.
+        if (!this.hasFlag(SceneBuilderFlags.DontMergeMaterials)) {
+            const idMap = removeDuplicateMaterials(materials);
+            for (const m of [...meshes, ...curves, ...sdfGrids]) m.materialID = idMap[m.materialID]!;
+            for (const b of builtSdfGrids) b.materialID = idMap[b.materialID]!;
+        }
         const scene = await Scene.create(device, meshes, materials, lights, textureManager, sdfGrids, nodes, animations, cameraNodeID, weightTracks, curves);
         for (const c of this.customPrimitives) scene.addCustomPrimitive(c.userID, c.aabb);
         // Snapshot for the scene cache (v4: every scene class; grid volumes are

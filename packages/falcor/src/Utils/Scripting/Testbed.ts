@@ -46,6 +46,8 @@ export class Testbed {
     renderGraph: RenderGraph | null = null;
     renderTexture: Texture | null = null;
     scene: Scene | null = null;
+    /** Directory of the loaded scene file (relative texture paths resolve against it). */
+    sceneBaseUrl = "";
     showUI = true;
     private targetFbo: Fbo;
     private context: GPUCanvasContext | null = null;
@@ -135,8 +137,8 @@ export class Testbed {
     async loadScene(path: string, buildFlags = 0): Promise<void> {
         const url = path.startsWith("/") ? path : await AssetResolver.getDefaultResolver().resolvePath(path, AssetCategory.Scene);
         const baseUrl = url.slice(0, url.lastIndexOf("/"));
+        this.sceneBaseUrl = baseUrl;
         this.scene = await runSceneScript(this.device, await (await fetch(url)).text(), baseUrl, { flags: buildFlags });
-        this.scene.camera.setAspectRatio(this.targetFbo.width / this.targetFbo.height);
         if (this.renderGraph) {
             this.renderGraph.setScene(this.scene);
             this.graphNeedsInit = true;
