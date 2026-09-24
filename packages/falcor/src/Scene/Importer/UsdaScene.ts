@@ -13,7 +13,7 @@
 
 import { float3, normalize3 } from "../../Utils/Math/Vector.js";
 import { extractEulerAngleXYZ, float4x4, inverse, matrixFromRotationAxisAngle, matrixFromScaling, matrixFromTranslation, mulMat, transformPoint, transformVector } from "../../Utils/Math/Matrix.js";
-import { matrixFromQuat, mulQuat, quatFromAngleAxis, quatf } from "../../Utils/Math/Quaternion.js";
+import { matrixFromQuat, mulQuat, quatf } from "../../Utils/Math/Quaternion.js";
 import { LightType, type AnalyticLight } from "../SceneData.js";
 import type { SceneMetadata } from "../Scene.js";
 import { Logger } from "../../Utils/Logger.js";
@@ -532,6 +532,12 @@ export interface UsdaSubdivMesh {
     skinned: boolean;
     /** normals or primvars:normals is authored (tinyusdz generates smooth ones otherwise). */
     hasNormals: boolean;
+    /** Authored normals and their interpolation (normals defaults to vertex). */
+    normals?: { values: number[]; interpolation: string };
+    holeIndices: number[];
+    /** Time-sampled points / normals (time codes), for vertex caches. */
+    pointsSamples?: { time: number; value: number[] }[];
+    normalsSamples?: { time: number; value: number[] }[];
 }
 
 /** Every Mesh prim's topology and subdivision settings (USD's default scheme is catmullClark), by path. */
@@ -551,7 +557,10 @@ export function extractUsdMeshes(text: string): Map<string, UsdaSubdivMesh> {
                 faceVertexCounts: num(attrMultiline(b, ["faceVertexCounts"])?.value ?? ""),
                 faceVertexIndices: num(attrMultiline(b, ["faceVertexIndices"])?.value ?? ""),
                 skinned: attr(b, ["primvars:skel:jointIndices"]) !== undefined && attr(b, ["primvars:skel:jointWeights"]) !== undefined,
-                hasNormals: attrMultiline(b, ["normals", "primvars:normals"]) !== undefined,
+                hasNormals: attrMultiline(b, ["normals", "primvars:normals"]) !== undefined || attrTimeSamples(b, "normals") !== undefined,
+                holeIndices: num(attrMultiline(b, ["holeIndices"])?.value ?? ""),
+                pointsSamples: attrTimeSamples(b, "points"),
+                normalsSamples: attrTimeSamples(b, "normals"),
             };
             // getTexCoordPrimvar: primvars:st, primvars:st_0, else a texCoord2-typed primvar.
             const typed = b.match(/^\s*texCoord2[fdh]\[\]\s+(primvars:[\w:]+?)\s*=/m)?.[1];
@@ -563,6 +572,14 @@ export function extractUsdMeshes(text: string): Map<string, UsdaSubdivMesh> {
                 if (indices !== undefined) st = num(indices.value).flatMap((i) => [st[i * 2]!, st[i * 2 + 1]!]);
                 mesh.st = { values: st, interpolation: values.metadata.match(/interpolation\s*=\s*"(\w+)"/)?.[1] ?? "constant" };
                 break;
+            }
+            const normals = attrMultiline(b, ["primvars:normals"]) ?? attrMultiline(b, ["normals"]);
+            if (normals) {
+                const fallback = attrMultiline(b, ["primvars:normals"]) ? "constant" : "vertex";
+                mesh.normals = { values: num(normals.value), interpolation: normals.metadata.match(/interpolation\s*=\s*"(\w+)"/)?.[1] ?? fallback };
+            } else if (mesh.normalsSamples) {
+                const meta = b.match(/normals\.timeSamples[^]*?\}\s*\(([^)]*)\)/)?.[1] ?? "";
+                mesh.normals = { values: mesh.normalsSamples[0]!.value, interpolation: meta.match(/interpolation\s*=\s*"(\w+)"/)?.[1] ?? "vertex" };
             }
             if (attr(b, ["refinementEnableOverride"]) !== "false" && attr(b, ["refinementLevel"]) !== undefined) mesh.refinementLevel = attrNumber(b, ["refinementLevel"], 0);
             out.set(p.path, mesh);
@@ -581,12 +598,12 @@ function attrTimeSamples(body: string, name: string): { time: number; value: num
     let i = m.index + m[0].length;
     const from = i;
     for (let depth = 1; i < body.length && depth > 0; i++) depth += body[i] === "{" ? 1 : body[i] === "}" ? -1 : 0;
-    const samples = [...body.slice(from, i - 1).matchAll(/([-+]?[\d.]+(?:[eE][-+]?\d+)?)\s*:\s*(\([^)]*\)|[-+\w.]+)/g)].map((s) => ({ time: Number(s[1]), value: num(s[2]!) }));
+    const samples = [...body.slice(from, i - 1).matchAll(/([-+]?[\d.]+(?:[eE][-+]?\d+)?)\s*:\s*(\[[^\]]*\]|\([^)]*\)|[-+\w.]+)/g)].map((s) => ({ time: Number(s[1]), value: num(s[2]!) }));
     return samples.sort((a, b) => a.time - b.time);
 }
 
 /** USD's linear interpolation of time samples (held outside the range). */
-function sampleAt(samples: { time: number; value: number[] }[], t: number): number[] {
+export function sampleAt(samples: { time: number; value: number[] }[], t: number): number[] {
     if (t <= samples[0]!.time) return samples[0]!.value;
     const last = samples[samples.length - 1]!;
     if (t >= last.time) return last.value;
@@ -594,6 +611,17 @@ function sampleAt(samples: { time: number; value: number[] }[], t: number): numb
     const [a, b] = [samples[k - 1]!, samples[k]!];
     const u = (t - a.time) / (b.time - a.time);
     return a.value.map((v, c) => v + (b.value[c]! - v) * u);
+}
+
+/**
+ * quatFromAngleAxis(radians(degrees)) in float precision, as native builds keyframes: cos(90°) is
+ * then -4.4e-8, not +6e-17, which decides slerp's direction for 180° turns.
+ */
+function quatFromAngleAxisF32(degrees: number, axis: float3): quatf {
+    const f = Math.fround;
+    const half = f(f(f(degrees) * f(Math.PI / 180)) * 0.5);
+    const [sn, cs] = [f(Math.sin(half)), f(Math.cos(half))];
+    return new quatf(axis.x * sn, axis.y * sn, axis.z * sn, cs);
 }
 
 /** An animated xformable's keyframes (ImporterContext::createKeyframe), times in seconds. */
@@ -647,9 +675,9 @@ export function extractUsdXformAnimations(text: string): Map<string, UsdaXformAn
                     else if (kind === "scale") sc = new float3(v[0] ?? 1, v[1] ?? 1, v[2] ?? 1);
                     else if (/^rotate[XYZ]{1,3}$/.test(kind)) {
                         const letters = kind.slice(6).split("") as ("X" | "Y" | "Z")[];
-                        const angle = (l: "X" | "Y" | "Z") => (letters.length === 1 ? (v[0] ?? 0) : (v["XYZ".indexOf(l)] ?? 0)) * deg;
+                        const degrees = (l: "X" | "Y" | "Z") => (letters.length === 1 ? (v[0] ?? 0) : (v["XYZ".indexOf(l)] ?? 0));
                         // The first axis applies first: q = q_last * ... * q_first (native's order table).
-                        rot = letters.reduce((q, l) => mulQuat(quatFromAngleAxis(angle(l), axes[l]), q), new quatf(0, 0, 0, 1));
+                        rot = letters.reduce((q, l) => mulQuat(quatFromAngleAxisF32(degrees(l), axes[l]), q), new quatf(0, 0, 0, 1));
                     } else {
                         Logger.warning(`USDImporter: time-sampled xformOp '${op}' on '${p.path}' is not an XformCommonAPI op; ignored.`);
                     }

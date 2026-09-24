@@ -17,7 +17,8 @@ import { RuntimeError } from "../../Core/Error.js";
 import { Logger } from "../../Utils/Logger.js";
 import { decomposeTRS, type AnimationChannel, type SceneNode } from "../Animation/SceneAnimation.js";
 import { loadOpenSubdiv, tessellateUsdMesh, type TessellatedMesh } from "./Subdivision.js";
-import { extractUsdCamerasAndLights, extractUsdDisplayColors, extractUsdMaterialBindings, extractUsdMaterialTextures, extractUsdPointInstancers, extractUsdMeshes, extractUsdXformAnimations, usdRenderSettings, usdaStageInfo, usdChannelIndex, usdStageRootTransform, usdTexCoordTransform, type UsdaCamera, type UsdaDomeLight, type UsdaSubdivMesh, type UsdaTextureInput, type UsdaXformAnimation } from "./UsdaScene.js";
+import { refinedCorners, triangulateUsdMesh, type CornerMesh } from "./UsdTriangulate.js";
+import { extractUsdCamerasAndLights, extractUsdDisplayColors, extractUsdMaterialBindings, extractUsdMaterialTextures, extractUsdPointInstancers, extractUsdMeshes, extractUsdXformAnimations, sampleAt, usdRenderSettings, usdTimeCodesPerSecond, usdaStageInfo, usdChannelIndex, usdStageRootTransform, usdTexCoordTransform, type UsdaCamera, type UsdaDomeLight, type UsdaSubdivMesh, type UsdaTextureInput, type UsdaXformAnimation } from "./UsdaScene.js";
 import type { AnalyticLight } from "../SceneData.js";
 
 interface UsdNode {
@@ -152,6 +153,21 @@ function flatNormals(points: Float32Array, indices: Uint32Array, uvs: Float32Arr
         if (outUvs) outUvs.set([uvs![i * 2]!, uvs![i * 2 + 1]!], c * 2);
     }
     return { positions, indices: Uint32Array.from(indices.keys()), normals, uvs: outUvs };
+}
+
+/** Static vertices from per-corner attributes (normals normalized, as native's keyframes). */
+function cornerVertices(m: CornerMesh, toTexCrd: (s: number, t: number) => [number, number]): StaticVertex[] {
+    const unit = (c: number) => {
+        const [x, y, z] = [m.normals[c * 3]!, m.normals[c * 3 + 1]!, m.normals[c * 3 + 2]!];
+        const l = Math.hypot(x, y, z) || 1;
+        return new float3(x / l, y / l, z / l);
+    };
+    return Array.from({ length: m.positions.length / 3 }, (_, c) => ({
+        position: new float3(m.positions[c * 3]!, m.positions[c * 3 + 1]!, m.positions[c * 3 + 2]!),
+        normal: unit(c),
+        tangent: new float4(0, 0, 0, 0),
+        texCrd: m.uvs ? new float2(...toTexCrd(m.uvs[c * 2]!, m.uvs[c * 2 + 1]!)) : new float2(0, 0),
+    }));
 }
 
 /** Static vertices of a refined mesh; face-varying and uniform texcoords split vertices per triangle corner. */
@@ -450,6 +466,33 @@ export class UsdImporter {
             if (node.nodeType === "mesh" && !excludePrims?.has(node.primName)) {
                 const mesh = usd.getMesh(node.contentId);
                 const level = node.absPath ? refinementLevels.get(node.absPath) : undefined;
+                const usdaMesh = node.absPath ? usdaMeshes.get(node.absPath) : undefined;
+                const samples = usdaMesh?.pointsSamples;
+                const motion = samples && samples.length > 1 && options.settings?.getAttribute(node.absPath!, "usdImporter:enableMotion", 1) !== false && options.settings?.getAttribute(node.absPath!, "usdImporter:enableMotion", 1) !== 0;
+                if (motion && usdaMesh) {
+                    // Time-sampled points: a vertex cache (CachedMesh), each sample converted like the base mesh.
+                    const materialID = getOrAddMaterial(mesh.materialId, bindings.get(node.absPath!), node.absPath);
+                    const toTexCrd = texCoordTransforms[materialID]!;
+                    const frames = samples.map((s) => {
+                        const normals = usdaMesh.normalsSamples ? sampleAt(usdaMesh.normalsSamples, s.time) : usdaMesh.normals?.values;
+                        const refinedSample = level && osd ? tessellateUsdMesh(osd, node.absPath!, { ...usdaMesh, points: s.value }, level) : null;
+                        const corners = refinedSample ? refinedCorners(refinedSample) : triangulateUsdMesh(usdaMesh, s.value, normals);
+                        const vertices = cornerVertices(corners, toTexCrd);
+                        generateTangents(vertices, Uint32Array.from(vertices.keys()));
+                        return vertices;
+                    });
+                    const tcps = usdTimeCodesPerSecond(layerText!);
+                    meshes.push({
+                        vertices: frames[0]!,
+                        indices: Uint32Array.from(frames[0]!.keys()),
+                        materialID,
+                        transform: world.clone(),
+                        nodeID: !instanced && isAnimated(node.absPath) ? nodeFor(node.absPath!) : undefined,
+                        vertexCache: { times: samples.map((s) => s.time / tcps), frames },
+                    });
+                    for (const child of node.children ?? []) walk(child, world, usdWorld, instanced);
+                    return;
+                }
                 const refined = level && osd ? tessellateUsdMesh(osd, node.absPath!, usdaMeshes.get(node.absPath!)!, level) : null;
                 if (refined) {
                     const materialID = getOrAddMaterial(mesh.materialId, bindings.get(node.absPath!), node.absPath);
@@ -461,7 +504,6 @@ export class UsdImporter {
                 }
                 let positions: Float32Array = mesh.points;
                 let indices: Uint32Array = new Uint32Array(mesh.faceVertexIndices);
-                const usdaMesh = node.absPath ? usdaMeshes.get(node.absPath) : undefined;
                 let normals = mesh.normals && mesh.normals.length === positions.length && usdaMesh?.hasNormals !== false ? mesh.normals : null;
                 let uvs = mesh.texcoords;
                 if (!normals) {

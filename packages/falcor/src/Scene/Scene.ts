@@ -56,6 +56,44 @@ export interface SceneSDFGridDesc {
     transform?: float4x4;
 }
 
+/**
+ * AnimatedVertexCache's mesh interpolation (calculateInterpolation + UpdateMeshVertices): looped
+ * past the last sample, held or cycled before the first; positions and tangents lerp, normals and
+ * tangent directions renormalize, texcoords stay the base mesh's.
+ */
+export function sampleVertexCache(cache: { times: number[]; frames: StaticVertex[][] }, time: number, preCycle: boolean, base: StaticVertex[]): StaticVertex[] {
+    const ts = cache.times;
+    let [a, b, t] = [0, 0, 0];
+    if (Number.isFinite(time)) {
+        time = Math.max(time, 0);
+        const last = ts[ts.length - 1]!;
+        if (time > last) time = time % last;
+        if (time <= ts[0]!) {
+            if (preCycle) [a, b, t] = [ts.length - 1, 0, time / ts[0]!];
+        } else {
+            b = ts.findIndex((x) => x >= time);
+            a = b - 1;
+            t = (time - ts[a]!) / (ts[b]! - ts[a]!);
+        }
+    }
+    const [fa, fb] = [cache.frames[a]!, cache.frames[b]!];
+    const lerp3 = (x: float3, y: float3) => new float3(x.x + (y.x - x.x) * t, x.y + (y.y - x.y) * t, x.z + (y.z - x.z) * t);
+    const unit = (v: float3) => {
+        const l = Math.hypot(v.x, v.y, v.z) || 1;
+        return new float3(v.x / l, v.y / l, v.z / l);
+    };
+    return base.map((v, i) => {
+        const [va, vb] = [fa[i]!, fb[i]!];
+        const tan = unit(lerp3(new float3(va.tangent.x, va.tangent.y, va.tangent.z), new float3(vb.tangent.x, vb.tangent.y, vb.tangent.z)));
+        return {
+            position: lerp3(va.position, vb.position),
+            normal: unit(lerp3(va.normal, vb.normal)),
+            tangent: new float4(tan.x, tan.y, tan.z, va.tangent.w + (vb.tangent.w - va.tangent.w) * t),
+            texCrd: v.texCrd,
+        };
+    });
+}
+
 /** Mirrors Scene::Metadata: optional settings an importer found in the asset. */
 export interface SceneMetadata {
     fNumber?: number;
@@ -81,6 +119,8 @@ export interface SceneMeshDesc {
     skin?: SkinDesc;
     /** Morph-target meshes: blend-shape deltas applied before skinning in animate(). */
     morph?: MorphDesc;
+    /** Vertex cache (AnimatedVertexCache's CachedMesh): per-sample vertices, times in seconds. */
+    vertexCache?: { times: number[]; frames: StaticVertex[][] };
 }
 
 /** Tessellated curve geometry (linear swept spheres; CurveTessellation). */
@@ -554,7 +594,7 @@ export class Scene {
         }
         // A scene animates if it has keyframe channels, morph-weight tracks, or
         // morph meshes (weights may be static-but-nonzero) — all rebuild per frame.
-        const hasAnimation = (animations.length > 0 || weightTracks.length > 0 || meshes.some((m) => m.morph)) && nodes.length > 0;
+        const hasAnimation = ((animations.length > 0 || weightTracks.length > 0 || meshes.some((m) => m.morph)) && nodes.length > 0) || meshes.some((m) => m.vertexCache);
         if (hasAnimation) {
             // Animated scenes rebuild the BVH every frame; over-allocate to the
             // worst-case size (≤2N nodes + N tris) so animate() setBlobs in place —
@@ -1017,6 +1057,11 @@ export class Scene {
         // samplers clamp to it (native Constant pre-behavior).
         const sampleTime = this.animData.duration > 0 ? timeSec % this.animData.duration : 0;
         const globals = evaluateGlobals(this.animData, sampleTime);
+        // AnimationController: vertex caches take the looped time, or the raw time without node animations,
+        // and cycle before their first sample when they are shorter than the node animations.
+        const cacheTime = this.animData.duration > 0 ? sampleTime : timeSec;
+        const cacheLength = meshes.reduce((d, m) => Math.max(d, m.vertexCache?.times.at(-1) ?? 0), 0);
+        const cachePreCycle = cacheLength < this.animData.duration;
 
         // Animatable camera/lights: rederive their pose from the node globals
         // (glTF cameras/lights aim down local -Z; up is local +Y).
@@ -1035,7 +1080,11 @@ export class Scene {
         for (const [meshID, mesh] of meshes.entries()) {
             // Morph (blend shapes) deform the bind pose first (glTF applies morph
             // before skinning); the morphed object-space verts feed skin or matrix.
-            const base = mesh.morph ? applyMorph(mesh.vertices, mesh.morph, sampleMorphWeights(mesh.morph, this.animData.weightTracks, sampleTime)) : mesh.vertices;
+            const base = mesh.vertexCache
+                ? sampleVertexCache(mesh.vertexCache, cacheTime, cachePreCycle, mesh.vertices)
+                : mesh.morph
+                  ? applyMorph(mesh.vertices, mesh.morph, sampleMorphWeights(mesh.morph, this.animData.weightTracks, sampleTime))
+                  : mesh.vertices;
             const isEmissive = this.materialDescs[mesh.materialID]?.header?.emissive === true;
             if (mesh.skin) {
                 const skinned = skinVertices(base, mesh.skin, computeSkinMatrices(mesh.skin, globals));
@@ -1047,8 +1096,8 @@ export class Scene {
                 if (isEmissive) emissiveChanged = true; // deformed every frame
             } else {
                 const m = mesh.nodeID !== undefined && globals[mesh.nodeID] ? globals[mesh.nodeID]! : (mesh.transform ?? float4x4.identity());
-                // Morphed non-skinned meshes: re-upload deformed object-space verts.
-                if (mesh.morph) {
+                // Morphed / vertex-cached non-skinned meshes: re-upload deformed object-space verts.
+                if (mesh.morph || mesh.vertexCache) {
                     this.rollPrevVertices(meshID, vbOffset, base);
                     this.buffers["vertices"]!.setBlob(packStaticVertices(base), vbOffset * 48);
                     if (isEmissive) emissiveChanged = true;

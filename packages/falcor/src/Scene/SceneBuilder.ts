@@ -1385,7 +1385,8 @@ export class SceneBuilderBridge {
                 recipes: sdfRecipes,
                 instances: this.sdfInstances.map((inst) => ({ gridIndex: inst.sdfGridID, materialID: builtSdfGrids[inst.sdfGridID]!.materialID, transform: this.nodes[inst.nodeID] })),
             },
-            cacheable: true,
+            // Vertex caches aren't serialized by the web scene cache yet.
+            cacheable: !meshes.some((m) => m.vertexCache),
         };
         const cameraList: Camera[] = [];
         for (const { name, pose, aspectRatio } of this.importedCameras) {

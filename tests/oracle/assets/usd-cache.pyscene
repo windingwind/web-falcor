@@ -1,0 +1,9 @@
+# Time-sampled USD points (see usd-cache.usda).
+sceneBuilder.importScene('usd-cache.usda')
+
+camera = Camera()
+camera.position = float3(0, 0.5, 5)
+camera.target = float3(0, 0.2, 0)
+camera.up = float3(0, 1, 0)
+sceneBuilder.addCamera(camera)
+sceneBuilder.selectedCamera = camera

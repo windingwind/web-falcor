@@ -1,0 +1,62 @@
+#usda 1.0
+(
+    defaultPrim = "World"
+    metersPerUnit = 1
+    upAxis = "Y"
+    timeCodesPerSecond = 24
+    startTimeCode = 0
+    endTimeCode = 48
+)
+# Time-sampled points become vertex caches like native's CachedMesh: a quad grid
+# with generated flat normals and face-varying texcoords, and a triangle with
+# time-sampled vertex normals. The samples (0.25s..1.25s) are shorter than the
+# spinner's 2s node animation, so native cycles before the first sample too.
+def Xform "World"
+{
+    def Mesh "Wave"
+    {
+        uniform token subdivisionScheme = "none"
+        int[] faceVertexCounts = [4, 4]
+        int[] faceVertexIndices = [0, 1, 4, 3, 1, 2, 5, 4]
+        point3f[] points.timeSamples = {
+            6: [(-2.6000, -0.6000, 0.0959), (-1.6000, -0.6000, 0.1819), (-0.6000, -0.6000, -0.0702), (-2.6000, 0.6000, 0.1918), (-1.6000, 0.6000, 0.3637), (-0.6000, 0.6000, -0.1403)],
+            18: [(-2.6000, -0.6000, 0.1995), (-1.6000, -0.6000, 0.0282), (-0.6000, -0.6000, -0.1955), (-2.6000, 0.6000, 0.3990), (-1.6000, 0.6000, 0.0564), (-0.6000, 0.6000, -0.3910)],
+            30: [(-2.6000, -0.6000, 0.1197), (-1.6000, -0.6000, -0.1514), (-0.6000, -0.6000, -0.1411), (-2.6000, 0.6000, 0.2394), (-1.6000, 0.6000, -0.3027), (-0.6000, 0.6000, -0.2822)],
+        }
+        texCoord2f[] primvars:st = [(0, 0), (0.5, 0), (0.5, 1), (0, 1), (0.5, 0), (1, 0), (1, 1), (0.5, 1)] (
+            interpolation = "faceVarying"
+        )
+    }
+    def Mesh "Tri"
+    {
+        uniform token subdivisionScheme = "none"
+        int[] faceVertexCounts = [3]
+        int[] faceVertexIndices = [0, 1, 2]
+        point3f[] points.timeSamples = {
+            6: [(1.0, -0.5, 0), (2.2000, -0.5, 0), (1.4, 0.6000, 0.0000)],
+            18: [(1.0, -0.5, 0), (2.8000, -0.5, 0), (1.4, 1.1500, 0.3000)],
+            30: [(1.0, -0.5, 0), (3.4000, -0.5, 0), (1.4, 1.7000, 0.6000)],
+        }
+        normal3f[] normals.timeSamples = {
+            6: [(0, 0, 1), (0.0000, 0, 1), (0, -0.0000, 1)],
+            18: [(0, 0, 1), (0.3000, 0, 1), (0, -0.4000, 1)],
+            30: [(0, 0, 1), (0.6000, 0, 1), (0, -0.8000, 1)],
+        }
+    }
+    def Xform "Spinner"
+    {
+        double3 xformOp:translate = (0, 1.2, 0)
+        float3 xformOp:rotateXYZ.timeSamples = {
+            0: (0, 0, 0),
+            48: (0, 180, 0),
+        }
+        uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:rotateXYZ"]
+        def Mesh "Bar"
+        {
+            uniform token subdivisionScheme = "none"
+            int[] faceVertexCounts = [4]
+            int[] faceVertexIndices = [0, 1, 2, 3]
+            point3f[] points = [(-0.8, -0.1, 0), (0.8, -0.1, 0), (0.8, 0.1, 0), (-0.8, 0.1, 0)]
+        }
+    }
+}
