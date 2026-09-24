@@ -16,7 +16,8 @@ import type { Device } from "../../Core/API/Device.js";
 import type { Buffer } from "../../Core/API/Buffer.js";
 import type { Texture } from "../../Core/API/Texture.js";
 import { Texture as TextureClass, kMaxPossible } from "../../Core/API/Texture.js";
-import { ResourceBindFlags, MemoryType, ResourceType } from "../../Core/API/Types.js";
+import { ResourceBindFlags, MemoryType, ResourceType, ComparisonFunc } from "../../Core/API/Types.js";
+import { TextureAddressingMode, TextureFilteringMode, TextureReductionMode } from "../../Core/API/Sampler.js";
 import { FormatType, ResourceFormat, getFormatChannelCount, getFormatType, getNumChannelBits } from "../../Core/API/Formats.js";
 import { ComputePass } from "../../Core/Pass/ComputePass.js";
 import { StandaloneParameterBlock } from "../../Core/Program/ParameterBlock.js";
@@ -127,6 +128,31 @@ function makeJsModule(device: Device, testbedOptions: TestbedOptions, fsRead: (p
         profilerEnd: (name: string) => device.profilerHook?.endEvent(name),
         createRenderGraph: (t: Testbed, name: string) => t.createRenderGraph(name),
         newRenderGraph: (name: string) => new RenderGraph(device, String(name)),
+        /** Device::createSampler; enum values arrive as native's and map to the web enums by name. */
+        createSampler: (d: Record<string, unknown>) => {
+            const addr = ["Wrap", "Mirror", "Clamp", "Border", "MirrorOnce"] as const;
+            const a = (v: unknown) => TextureAddressingMode[addr[Number(v)] ?? "Wrap"];
+            return device.createSampler({
+                magFilter: Number(d["mag_filter"]) as TextureFilteringMode,
+                minFilter: Number(d["min_filter"]) as TextureFilteringMode,
+                mipFilter: Number(d["mip_filter"]) as TextureFilteringMode,
+                maxAnisotropy: Number(d["max_anisotropy"]),
+                minLod: Number(d["min_lod"]),
+                maxLod: Number(d["max_lod"]),
+                lodBias: Number(d["lod_bias"]),
+                comparisonFunc: Number(d["comparison_func"]) as ComparisonFunc,
+                reductionMode: Number(d["reduction_mode"]) as TextureReductionMode,
+                addressModeU: a(d["address_mode_u"]),
+                addressModeV: a(d["address_mode_v"]),
+                addressModeW: a(d["address_mode_w"]),
+            });
+        },
+        waitForGpu: () => device.gpuDevice.queue.onSubmittedWorkDone(),
+        adapterInfo: () => {
+            const info = (device.gpuDevice as unknown as { adapterInfo?: { vendor?: string; architecture?: string; device?: string; description?: string } }).adapterInfo;
+            return info ? [info.description || info.device || info.architecture || "", info.vendor ?? ""].join("|") : "|";
+        },
+        limits: () => [device.gpuDevice.limits.maxComputeWorkgroupsPerDimension, device.gpuDevice.limits.maxSamplersPerShaderStage],
         createPass: (type: string, props: unknown) => createPass(device, String(type), new Properties((toJs(props) as Record<string, never>) ?? {})),
         /** A file for load_render_graph: served relative to the media directory when the FS doesn't have it. */
         fetchText: async (path: string) => {
@@ -265,9 +291,65 @@ class Texture:
         if info.channels > 1: shape.append(info.channels)
         return raw.view(info.dtype).reshape(shape)
 
+class TextureFilteringMode(enum.IntEnum):
+    Point = 0
+    Linear = 1
+class TextureAddressingMode(enum.IntEnum):
+    Wrap = 0
+    Mirror = 1
+    Clamp = 2
+    Border = 3
+    MirrorOnce = 4
+class ComparisonFunc(enum.IntEnum):
+    Disabled = 0
+    Never = 1
+    Always = 2
+    Less = 3
+    Equal = 4
+    NotEqual = 5
+    LessEqual = 6
+    Greater = 7
+    GreaterEqual = 8
+class TextureReductionMode(enum.IntEnum):
+    Standard = 0
+    Comparison = 1
+    Min = 2
+    Max = 3
+
+class AdapterInfo:
+    def __init__(self, name, vendor):
+        self.name = name; self.vendor_id = vendor; self.device_id = 0; self.luid = [0] * 16
+
 class Device:
+    class Info:
+        def __init__(self, adapter_name): self.adapter_name = adapter_name; self.api_name = "WebGPU"
+    class Limits:
+        def __init__(self, groups, samplers):
+            self.max_compute_dispatch_thread_groups = uint3(groups, groups, groups); self.max_shader_visible_samplers = samplers
     def __init__(self, type=DeviceType.Default, gpu=0, enable_debug_layer=False, enable_aftermath=False, _o=None):
         self._o = _o if _o is not None else _js_device
+    @property
+    def type(self): return DeviceType.Default  # WebGPU (the browser picks the native API)
+    @property
+    def info(self): return Device.Info(str(_js.adapterInfo()).split("|")[0])
+    @property
+    def limits(self):
+        g, s = _js.limits()
+        return Device.Limits(int(g), int(s))
+    @staticmethod
+    def get_gpus(type=DeviceType.Default):
+        name, vendor = str(_js.adapterInfo()).split("|")
+        return [AdapterInfo(name, vendor)]
+    def wait(self): run_sync(_js.waitForGpu())
+    def end_frame(self): run_sync(_js.submit(False))
+    def create_sampler(self, mag_filter=TextureFilteringMode.Linear, min_filter=TextureFilteringMode.Linear, mip_filter=TextureFilteringMode.Linear,
+                       max_anisotropy=1, min_lod=-1000.0, max_lod=1000.0, lod_bias=0.0, comparison_func=ComparisonFunc.Disabled,
+                       reduction_mode=TextureReductionMode.Standard, address_mode_u=TextureAddressingMode.Wrap, address_mode_v=TextureAddressingMode.Wrap,
+                       address_mode_w=TextureAddressingMode.Wrap, border_color_r=None, border_color_g=None, border_color_b=None, border_color_a=None, border_color=None):
+        return _js.createSampler(to_js({k: int(v) if isinstance(v, enum.IntEnum) else v for k, v in dict(
+            mag_filter=mag_filter, min_filter=min_filter, mip_filter=mip_filter, max_anisotropy=max_anisotropy, min_lod=min_lod, max_lod=max_lod,
+            lod_bias=lod_bias, comparison_func=comparison_func, reduction_mode=reduction_mode,
+            address_mode_u=address_mode_u, address_mode_v=address_mode_v, address_mode_w=address_mode_w).items()}, dict_converter=__import__("js").Object.fromEntries))
     def create_buffer(self, size, bind_flags=ResourceBindFlags(0), memory_type=MemoryType.DeviceLocal):
         return Buffer(_js.createBuffer(size, int(bind_flags), int(memory_type)))
     def create_typed_buffer(self, format, element_count, bind_flags=ResourceBindFlags(0), memory_type=MemoryType.DeviceLocal):

@@ -27,3 +27,13 @@ testbed.window_size_change_callback = lambda w, h: sizes.append((w, h))
 testbed.resize_frame_buffer(32, 16)
 assert sizes == [(32, 16)], sizes
 testbed.frame()
+
+# Device binding.
+device = testbed.device
+assert device.info.api_name == "WebGPU" and isinstance(device.info.adapter_name, str)
+assert device.limits.max_compute_dispatch_thread_groups.x >= 65535
+assert len(falcor.Device.get_gpus()) == 1
+sampler = device.create_sampler(mag_filter=falcor.TextureFilteringMode.Point, address_mode_u=falcor.TextureAddressingMode.Clamp)
+assert sampler is not None
+device.end_frame()
+device.wait()

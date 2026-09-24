@@ -266,6 +266,14 @@ export class MaterialBridge {
         this._volumeScattering = toF3(v);
     }
     volumeAnisotropy = 0;
+    /** Python `material.type` (Material::getType). */
+    get type(): MaterialType {
+        return this.materialType;
+    }
+    /** Material::setAlphaMode (AlphaMode.Opaque / Mask); unset keeps native's texture-derived mode. */
+    alphaMode?: number;
+    /** Material::setAlphaThreshold. */
+    alphaThreshold = 0.5;
 
     constructor(
         public readonly materialType: MaterialType,
@@ -470,6 +478,9 @@ export class MaterialBridge {
                 ior: this.indexOfRefraction,
                 thinSurface: this.thinSurface,
                 nestedPriority: this.nestedPriority,
+                // Unset: derived from the base color alpha when packed (BasicMaterial::updateAlphaMode).
+                alphaMode: this.alphaMode,
+                alphaThreshold: this.alphaThreshold,
             },
             basic: {
                 baseColor: this._baseColor,

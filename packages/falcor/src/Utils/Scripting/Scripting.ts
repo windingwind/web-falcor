@@ -142,6 +142,7 @@ export async function runGraphScript(device: Device, source: string, extras: Rec
         ...extras,
     };
     pyodide.globals.set("m", mogwai);
+    pyodide.runPython(kMogwaiShim);
 
     // Import falcor afresh: registerJsModule doesn't replace an already imported module.
     pyodide.runPython(`import sys\nsys.modules.pop("falcor", None)`);
@@ -193,6 +194,7 @@ export function runConsoleCommand(
     const py = pyodide as unknown as { setStdout(opts: { batched: (s: string) => void }): void; runPython(src: string): unknown };
     py.setStdout({ batched: (s) => lines.push(s) });
     try {
+        py.runPython(kMogwaiShim);
         const result = py.runPython('import sys\nsys.modules.pop("falcor", None)\nfrom falcor import *\n' + source);
         // Echo like python's repr for the scalars pyodide converts to JS.
         if (result !== undefined && result !== null) lines.push(typeof result === "boolean" ? (result ? "True" : "False") : String(result));
@@ -201,6 +203,29 @@ export function runConsoleCommand(
     }
     return lines.join("\n");
 }
+
+/**
+ * Wraps the script's `m` so `m.profiler.event(name)` is native's ProfilerEvent context manager
+ * (a JS object can't be used in `with`); everything else passes through to the JS object.
+ */
+const kMogwaiShim = `
+class _PyProfilerEvent:
+    def __init__(self, p, name): self._p, self._n = p, name
+    def __enter__(self): self._p.begin_event(self._n); return self
+    def __exit__(self, *args): self._p.end_event(self._n); return False
+class _MogwaiProfiler:
+    def __init__(self, p): object.__setattr__(self, '_p', p)
+    def __getattr__(self, k): return getattr(object.__getattribute__(self, '_p'), k)
+    def __setattr__(self, k, v): setattr(object.__getattribute__(self, '_p'), k, v)
+    def event(self, name): return _PyProfilerEvent(object.__getattribute__(self, '_p'), name)
+class _Mogwai:
+    def __init__(self, o): object.__setattr__(self, '_o', o)
+    def __getattr__(self, k):
+        v = getattr(object.__getattribute__(self, '_o'), k)
+        return _MogwaiProfiler(v) if k == 'profiler' and v is not None else v
+    def __setattr__(self, k, v): setattr(object.__getattribute__(self, '_o'), k, v)
+if not isinstance(m, _Mogwai): m = _Mogwai(m)
+`;
 
 /** Python prelude adapting pythonic pyscene API (kwargs, class-style ctors)
  *  to the JS SceneBuilder bridge. */
@@ -344,7 +369,7 @@ def _guarded(factory, known, kwnames=()):
 _matProps = {'baseColor', 'specularParams', 'transmissionColor', 'emissiveColor',
              'emissiveFactor', 'doubleSided', 'roughness', 'metallic',
              'indexOfRefraction', 'specularTransmission', 'diffuseTransmission', 'thinSurface',
-             'nestedPriority', 'volumeAbsorption', 'volumeScattering', 'volumeAnisotropy',
+             'nestedPriority', 'volumeAbsorption', 'volumeScattering', 'volumeAnisotropy', 'alphaMode', 'alphaThreshold',
              'displacementScale', 'displacementOffset', 'lightProfileEnabled'}
 _lightProps = {'position', 'intensity', 'direction', 'angle',
                'openingAngle', 'penumbraAngle', 'scaling', 'rotation'}
@@ -402,6 +427,25 @@ class Animation:
     # Animation(name, nodeID, duration): scripted keyframes (sceneBuilder.addAnimation).
     def __new__(cls, name, nodeID, duration):
         return _Animation(name, nodeID, duration)
+
+class AlphaMode:
+    Opaque = 0
+    Mask = 1
+
+class MaterialType:
+    Unknown = 0
+    Standard = 1
+    Cloth = 2
+    Hair = 3
+    MERL = 4
+    MERLMix = 5
+    PBRTDiffuse = 6
+    PBRTDiffuseTransmission = 7
+    PBRTConductor = 8
+    PBRTDielectric = 9
+    PBRTCoatedConductor = 10
+    PBRTCoatedDiffuse = 11
+    RGL = 12
 
 # Enums accepted for parity (values map to the web material/import defaults).
 class ShadingModel:
@@ -839,6 +883,8 @@ export function recordMogwaiScript(device: Device, source: string, files: Record
         frameCapture: recorder("frameCapture"),
         scene: recorder("scene"),
         ui: false,
+        // Profiler reads/events take effect at record time (the profiler isn't replayed).
+        profiler: device.profilerHook?.pythonBindings((v) => pyodide!.toPy(v)) ?? null,
         settings: recordedSettings,
         getSettings: () => recordedSettings,
     });
@@ -852,6 +898,7 @@ export function recordMogwaiScript(device: Device, source: string, files: Record
     );
     try {
         pyodide.globals.set("__mogwai_script", source);
+        pyodide.runPython(kMogwaiShim);
         pyodide.runPython(`try:\n    exec(compile(__mogwai_script, "script", "exec"), globals())\nexcept SystemExit:\n    pass\n`);
     } finally {
         // The recording falcor module must not leak into later graph/console scripts.

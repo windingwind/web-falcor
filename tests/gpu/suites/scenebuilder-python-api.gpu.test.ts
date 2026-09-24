@@ -22,6 +22,9 @@ gpuTest("Scripting.sceneBuilderPythonApi", async ({ device }) => {
             "unused.baseColor = float4(1, 0, 0, 1)  # distinct, or native's duplicate merge folds it into 'Quad'",
             "assert sceneBuilder.addMaterial(unused) == 0",
             "m = StandardMaterial('Quad')",
+            "m.alphaMode = AlphaMode.Mask",
+            "m.alphaThreshold = 0.25",
+            "assert m.type == MaterialType.Standard",
             "sceneBuilder.addMeshInstance(sceneBuilder.addNode('q', Transform()), sceneBuilder.addTriangleMesh(TriangleMesh.createQuad(), m))",
             "assert (l.intensity * 2).x == 4.0  # bridge reads come back as python vectors",
             "m.roughness = 0.25",
@@ -37,5 +40,6 @@ gpuTest("Scripting.sceneBuilderPythonApi", async ({ device }) => {
     expectEq(scene.getMaterialCount(), 2, "addMaterial keeps an unused material");
     expectEq(scene.getMaterial(0).name, "Unused", "added material comes first");
     expectEq(scene.renderSettings.useEnvLight, false, "renderSettings applied");
+    expectEq([scene.getMaterial(1).header?.alphaMode, scene.getMaterial(1).header?.alphaThreshold].join(), "1,0.25", "alphaMode / alphaThreshold");
     expectEq(scene.getSceneDefines().get("SCENE_DIFFUSE_ALBEDO_MULTIPLIER"), "0.500000", "diffuseAlbedoMultiplier define");
 });

@@ -5,14 +5,15 @@
  * loopAnimations. Edits must reach the GPU-side data (light buffer, material blob, camera).
  */
 
-import { SceneLight, initScripting, runConsoleCommand, runSceneScript } from "@web-falcor/falcor";
+import { Profiler, SceneLight, initScripting, runConsoleCommand, runSceneScript } from "@web-falcor/falcor";
 import { gpuTest, expectEq } from "../harness/registry.js";
 
 gpuTest("Scripting.liveScenePythonProperties", async ({ device }) => {
     await initScripting("/node_modules/pyodide");
     const base = "/tests/oracle/assets";
     const scene = await runSceneScript(device, await (await fetch(`${base}/oracle-pt.pyscene`)).text(), base);
-    const run = (src: string) => runConsoleCommand(device, src, { scene, graph: null });
+    const profiler = new Profiler(device);
+    const run = (src: string) => runConsoleCommand(device, src, { scene, graph: null, profiler });
 
     // Lights.
     expectEq(run("len(m.scene.lights)"), "1", "scene.lights");
@@ -50,6 +51,10 @@ gpuTest("Scripting.liveScenePythonProperties", async ({ device }) => {
     expectEq(script.length === 3 && script[2]!.startsWith("30, Transform(position = float3("), true, `viewpoints script ${script.join(" | ")}`);
     run("m.scene.removeViewpoint()");
     expectEq(scene.getViewpointCount(), 1, "removeViewpoint");
+
+    // m.profiler.event(name) is a context manager (native ProfilerEvent).
+    run("with m.profiler.event('scriptEvent'):\n    pass");
+    expectEq(profiler.findEvent("/scriptEvent") !== undefined, true, "profiler event recorded");
 
     // updateCallback(scene, time) runs at each frame's scene update.
     run("def _update(scene, time):\n    scene.camera.position = float3(time, 0, 0)\nm.scene.updateCallback = _update");

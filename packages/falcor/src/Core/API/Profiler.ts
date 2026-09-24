@@ -394,6 +394,9 @@ export class Profiler {
             end_capture: () => { const c = self.endCapture(); return c ? toPy(c.toJson()) : null; },
             end_frame: () => self.endFrame(null),
             reset_stats: () => self.resetStats(),
+            // For the python ProfilerEvent context manager (`with m.profiler.event(name):`).
+            begin_event: (name: string) => self.startEvent(String(name)),
+            end_event: (name: string) => self.endEvent(String(name)),
         };
     }
 }
