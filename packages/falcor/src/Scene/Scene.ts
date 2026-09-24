@@ -27,6 +27,7 @@ import { decodeNormal2x16Host, type Vec3 } from "../Rendering/Lights/LightBVHTyp
 import type { EmissiveTriangleInput } from "../Rendering/Lights/LightBVHBuilder.js";
 import { transformPoint, transformVector } from "../Utils/Math/Matrix.js";
 import { float2, float3, float4, normalize3 } from "../Utils/Math/Vector.js";
+import { quatf, rotateVector } from "../Utils/Math/Quaternion.js";
 import { float16ToFloat32, float32ToFloat16 } from "../Utils/Math/Float16.js";
 import {
     GeometryType,
@@ -114,9 +115,8 @@ function packCurves(curves: SceneCurveDesc[]): { cv: Float32Array; ci: Uint32Arr
     return { cv, ci, cd };
 }
 
-/** A cached curve's positions at `time` (calculateInterpolation, post-infinity Constant); radii and texcoords stay. */
-function sampleCurveCache(curve: SceneCurveDesc, time: number, preCycle: boolean): Float32Array {
-    const { times: ts, positions } = curve.vertexCache!;
+/** calculateInterpolation for curve caches (post-infinity Constant): keyframes a, b and fraction t. */
+function curveInterpolation(ts: number[], time: number, preCycle: boolean): [number, number, number] {
     let [a, b, t] = [0, 0, 0];
     time = Math.max(time, 0);
     if (time > ts[ts.length - 1]!) [a, b] = [ts.length - 1, ts.length - 1];
@@ -127,6 +127,60 @@ function sampleCurveCache(curve: SceneCurveDesc, time: number, preCycle: boolean
         a = b - 1;
         t = (time - ts[a]!) / (ts[b]! - ts[a]!);
     }
+    return [a, b, t];
+}
+
+/**
+ * UpdateCurvePolyTubeVertices: each tube vertex's ring center follows the interpolated curve, its
+ * normal turns by the rotation from its tangent to the curve's (forward difference, backward at a
+ * strand's end) and it sits at center + radius * normal. Native applies this frame to frame; after
+ * a load it first poses time 0, then the current time, which this reproduces from the base mesh.
+ */
+function posePolytube(mesh: SceneMeshDesc, time: number, preCycle: boolean): StaticVertex[] {
+    return stepPolytube(mesh, stepPolytube(mesh, mesh.vertices, 0, preCycle), time, preCycle);
+}
+
+function stepPolytube(mesh: SceneMeshDesc, from: StaticVertex[], time: number, preCycle: boolean): StaticVertex[] {
+    const { times, curvePoints, strandLast } = mesh.polytubeCache!;
+    const [a, b, t] = curveInterpolation(times, time, preCycle);
+    const [pa, pb] = [curvePoints[a]!, curvePoints[b]!];
+    const center = (v: number) => new float3(pa[v * 3]! + (pb[v * 3]! - pa[v * 3]!) * t, pa[v * 3 + 1]! + (pb[v * 3 + 1]! - pa[v * 3 + 1]!) * t, pa[v * 3 + 2]! + (pb[v * 3 + 2]! - pa[v * 3 + 2]!) * t);
+    const unit = (v: float3) => {
+        const l = Math.hypot(v.x, v.y, v.z);
+        return new float3(v.x / l, v.y / l, v.z / l);
+    };
+    return from.map((base, i) => {
+        const cv = Math.floor(i / 4);
+        const p = center(cv);
+        const q = strandLast[cv] ? center(cv - 1) : center(cv + 1);
+        const tangent = strandLast[cv] ? unit(new float3(p.x - q.x, p.y - q.y, p.z - q.z)) : unit(new float3(q.x - p.x, q.y - p.y, q.z - p.z));
+        const normal = rotateVector(fromToRotation(unit(new float3(base.tangent.x, base.tangent.y, base.tangent.z)), tangent), base.normal);
+        const r = base.curveRadius ?? 0;
+        let position = new float3(p.x + r * normal.x, p.y + r * normal.y, p.z + r * normal.z);
+        if (![position.x, position.y, position.z].every(Number.isFinite)) position = p;
+        return { ...base, position, normal, tangent: new float4(tangent.x, tangent.y, tangent.z, 1) };
+    });
+}
+
+/** from_to_rotation (Utils/Math/Quaternion.slang). */
+function fromToRotation(v1: float3, v2: float3): quatf {
+    const d = v1.x * v2.x + v1.y * v2.y + v1.z * v2.z;
+    if (d < -0.999999) {
+        let tmp = new float3(0, -v1.z, v1.y); // cross((1, 0, 0), v1)
+        if (Math.hypot(tmp.x, tmp.y, tmp.z) < 0.000001) tmp = new float3(v1.z, 0, -v1.x); // cross((0, 1, 0), v1)
+        const l = Math.hypot(tmp.x, tmp.y, tmp.z);
+        return new quatf(tmp.x / l, tmp.y / l, tmp.z / l, 0); // rotate_angle_axis(pi, tmp)
+    }
+    if (d > 0.999999) return new quatf(0, 0, 0, 1);
+    const c = new float3(v1.y * v2.z - v1.z * v2.y, v1.z * v2.x - v1.x * v2.z, v1.x * v2.y - v1.y * v2.x);
+    const l = Math.hypot(c.x, c.y, c.z, 1 + d);
+    return new quatf(c.x / l, c.y / l, c.z / l, (1 + d) / l);
+}
+
+/** A cached curve's positions at `time` (calculateInterpolation, post-infinity Constant); radii and texcoords stay. */
+function sampleCurveCache(curve: SceneCurveDesc, time: number, preCycle: boolean): Float32Array {
+    const { times: ts, positions } = curve.vertexCache!;
+    const [a, b, t] = curveInterpolation(ts, time, preCycle);
     const out = curve.positionsRadii.slice();
     const [pa, pb] = [positions[a]!, positions[b]!];
     for (let v = 0; v < out.length / 4; v++) for (let k = 0; k < 3; k++) out[v * 4 + k] = pa[v * 3 + k]! + (pb[v * 3 + k]! - pa[v * 3 + k]!) * t;
@@ -198,6 +252,8 @@ export interface SceneMeshDesc {
     morph?: MorphDesc;
     /** Vertex cache (AnimatedVertexCache's CachedMesh): per-sample vertices, times in seconds. */
     vertexCache?: { times: number[]; frames: StaticVertex[][] };
+    /** Poly-tube curve cache (CachedCurve, PolyTube): per-sample ring centers, 4 tube vertices per center. */
+    polytubeCache?: { times: number[]; curvePoints: Float32Array[]; strandLast: Uint8Array };
 }
 
 /** Tessellated curve geometry (linear swept spheres; CurveTessellation). */
@@ -646,7 +702,7 @@ export class Scene {
         }
         // A scene animates if it has keyframe channels, morph-weight tracks, or
         // morph meshes (weights may be static-but-nonzero) — all rebuild per frame.
-        const hasAnimation = ((animations.length > 0 || weightTracks.length > 0 || meshes.some((m) => m.morph)) && nodes.length > 0) || meshes.some((m) => m.vertexCache) || curves.some((c) => c.vertexCache);
+        const hasAnimation = ((animations.length > 0 || weightTracks.length > 0 || meshes.some((m) => m.morph)) && nodes.length > 0) || meshes.some((m) => m.vertexCache || m.polytubeCache) || curves.some((c) => c.vertexCache);
         if (hasAnimation) {
             // Animated scenes rebuild the BVH every frame; over-allocate to the
             // worst-case size (≤2N nodes + N tris) so animate() setBlobs in place —
@@ -1099,6 +1155,12 @@ export class Scene {
         const cacheTime = this.animData.duration > 0 ? sampleTime : timeSec;
         const cacheLength = meshes.reduce((d, m) => Math.max(d, m.vertexCache?.times.at(-1) ?? 0), 0);
         const cachePreCycle = cacheLength < this.animData.duration;
+        // Curves (LSS and poly-tube) loop over their own length.
+        const curveLength = Math.max(
+            this.sceneCurves.reduce((d, c) => Math.max(d, c.vertexCache?.times.at(-1) ?? 0), 0),
+            meshes.reduce((d, m) => Math.max(d, m.polytubeCache?.times.at(-1) ?? 0), 0),
+        );
+        const curveTime = curveLength > 0 ? cacheTime % curveLength : cacheTime;
 
         // Animatable camera/lights: rederive their pose from the node globals
         // (glTF cameras/lights aim down local -Z; up is local +Y).
@@ -1117,7 +1179,9 @@ export class Scene {
         for (const [meshID, mesh] of meshes.entries()) {
             // Morph (blend shapes) deform the bind pose first (glTF applies morph
             // before skinning); the morphed object-space verts feed skin or matrix.
-            const base = mesh.vertexCache
+            const base = mesh.polytubeCache
+                ? posePolytube(mesh, curveTime, curveLength < this.animData.duration)
+                : mesh.vertexCache
                 ? sampleVertexCache(mesh.vertexCache, cacheTime, cachePreCycle, mesh.vertices)
                 : mesh.morph
                   ? applyMorph(mesh.vertices, mesh.morph, sampleMorphWeights(mesh.morph, this.animData.weightTracks, sampleTime))
@@ -1134,7 +1198,7 @@ export class Scene {
             } else {
                 const m = mesh.nodeID !== undefined && globals[mesh.nodeID] ? globals[mesh.nodeID]! : (mesh.transform ?? float4x4.identity());
                 // Morphed / vertex-cached non-skinned meshes: re-upload deformed object-space verts.
-                if (mesh.morph || mesh.vertexCache) {
+                if (mesh.morph || mesh.vertexCache || mesh.polytubeCache) {
                     this.rollPrevVertices(meshID, vbOffset, base);
                     this.buffers["vertices"]!.setBlob(packStaticVertices(base), vbOffset * 48);
                     if (isEmissive) emissiveChanged = true;
@@ -1200,8 +1264,6 @@ export class Scene {
         // Curve vertex caches (AnimatedVertexCache's curves): positions lerp, radii stay; curves loop
         // over their own length and hold after the last sample; their BVH is rebuilt.
         if (this.sceneCurves.some((c) => c.vertexCache)) {
-            const curveLength = this.sceneCurves.reduce((d, c) => Math.max(d, c.vertexCache?.times.at(-1) ?? 0), 0);
-            const curveTime = curveLength > 0 ? cacheTime % curveLength : cacheTime;
             const posed = this.sceneCurves.map((c) => (c.vertexCache ? { ...c, positionsRadii: sampleCurveCache(c, curveTime, curveLength < (this.animData?.duration ?? 0)) } : c));
             this.buffers["curveVertices"]!.setBlob(packCurves(posed).cv);
             const built = buildCurveBvh(posed);

@@ -1139,7 +1139,8 @@ export class SceneBuilderBridge {
                                 if (polytube) {
                                     // CurveTessellationMode::PolyTube: the curve becomes a
                                     // triangle mesh (4-gon cross sections, as natively).
-                                    const tube = convertToPolytube(strandCount, strand.curveVertexCounts, strand.points, strand.widths, null, subdiv, keepStrands, keepVertices, widthScale, 4);
+                                    // The tube mesh is built at the earliest time sample, as natively.
+                                    const tube = convertToPolytube(strandCount, strand.curveVertexCounts, strand.earliestPoints ?? strand.points, strand.widths, null, subdiv, keepStrands, keepVertices, widthScale, 4);
                                     const vertices: StaticVertex[] = [];
                                     for (let v = 0; v < tube.radii.length; v++) {
                                         vertices.push({
@@ -1150,7 +1151,16 @@ export class SceneBuilderBridge {
                                             curveRadius: tube.radii[v]!,
                                         });
                                     }
-                                    meshes.push({ vertices, indices: tube.faceVertexIndices, materialID });
+                                    // Time-sampled points: native's poly-tube curve cache (tube re-posed around the curve).
+                                    const motion = strand.pointsSamples && Boolean(settings.getAttribute<boolean | number>(strand.path, "usdImporter:enableMotion", true));
+                                    const polytubeCache = motion
+                                        ? {
+                                              times: strand.pointsSamples!.map((s) => s.time / parsed.timeCodesPerSecond),
+                                              curvePoints: strand.pointsSamples!.map((s) => convertToPolytube(strandCount, strand.curveVertexCounts, s.points, strand.widths, null, subdiv, keepStrands, keepVertices, widthScale, 4).curvePoints),
+                                              strandLast: tube.strandLast,
+                                          }
+                                        : undefined;
+                                    meshes.push({ vertices, indices: tube.faceVertexIndices, materialID, polytubeCache });
                                     continue;
                                 }
                                 const lss = (points: Float32Array) => convertToLinearSweptSphere(strandCount, strand.curveVertexCounts, points, strand.widths, null, 1, subdiv, keepStrands, keepVertices, widthScale, float4x4.identity());

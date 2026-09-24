@@ -132,6 +132,8 @@ export interface BasisCurvesDesc {
     widths: Float32Array;
     /** Time-sampled points (time codes >= 1, as native's processCurve keeps); `points` is the first. */
     pointsSamples?: { time: number; points: Float32Array }[];
+    /** The earliest sample, dropped or not (native builds a poly-tube's base mesh at EarliestTime). */
+    earliestPoints?: Float32Array;
 }
 
 /** Extracts BasisCurves prims from USDA text (tinyusdz's RenderScene API
@@ -160,6 +162,7 @@ export function extractBasisCurvesFromUsda(source: string): BasisCurvesDesc[] {
         let pts = nums("point3f\\[\\] points");
         // points.timeSamples = { time: [...], ... }; native drops samples with time code < 1.
         let pointsSamples: { time: number; points: Float32Array }[] | undefined;
+        let earliestPoints: Float32Array | undefined;
         const ts = /points\.timeSamples\s*=\s*\{/.exec(body);
         if (ts) {
             let k = ts.index + ts[0].length;
@@ -167,8 +170,9 @@ export function extractBasisCurvesFromUsda(source: string): BasisCurvesDesc[] {
             for (let d = 1; k < body.length && d > 0; k++) d += body[k] === "{" ? 1 : body[k] === "}" ? -1 : 0;
             pointsSamples = [...body.slice(from, k - 1).matchAll(/([-+]?[\d.]+(?:[eE][-+]?\d+)?)\s*:\s*\[([^\]]*)\]/g)]
                 .map((e) => ({ time: Number(e[1]), points: new Float32Array((e[2]!.match(/-?[\d.eE+]+/g) ?? []).map(Number)) }))
-                .sort((a, b) => a.time - b.time)
-                .filter((e) => e.time >= 1);
+                .sort((a, b) => a.time - b.time);
+            earliestPoints = pointsSamples[0]?.points;
+            pointsSamples = pointsSamples.filter((e) => e.time >= 1);
             if (pointsSamples.length > 0) pts = Array.from(pointsSamples[0]!.points);
             if (pointsSamples.length < 2) pointsSamples = undefined;
         }
@@ -182,6 +186,7 @@ export function extractBasisCurvesFromUsda(source: string): BasisCurvesDesc[] {
             points: new Float32Array(pts),
             widths: new Float32Array(widths ?? new Array<number>(vertexTotal).fill(1)),
             pointsSamples,
+            earliestPoints,
         });
     }
     return out;
@@ -228,6 +233,10 @@ export interface PolytubeMeshResult {
     radii: Float32Array;
     /** Triangle list. */
     faceVertexIndices: Uint32Array;
+    /** Each ring's center (xyz per curve vertex; its P tube vertices follow in order). */
+    curvePoints: Float32Array;
+    /** 1 for the last curve vertex of a strand (native's 0xffffffff strand index). */
+    strandLast: Uint8Array;
 }
 
 /** Native optimizeStrandGeometry: dedup, then resample through the splines. */
@@ -320,6 +329,8 @@ export function convertToPolytube(
     const texCrds: number[] = [];
     const radii: number[] = [];
     const faces: number[] = [];
+    const centers: number[] = [];
+    const last: number[] = [];
     const P = pointCountPerCrossSection;
     let pointOffset = 0;
     let meshVertexOffset = 0;
@@ -356,6 +367,8 @@ export function convertToPolytube(
 
             // updateMeshResultBuffers: one ring of P vertices around the point.
             const r = 0.5 * strand.widths[j]!;
+            centers.push(pts[j]!.x, pts[j]!.y, pts[j]!.z);
+            last.push(j === pts.length - 1 ? 1 : 0);
             for (let k = 0; k < P; k++) {
                 const phi = (k / P) * Math.PI * 2;
                 const nx = Math.cos(phi) * s.x + Math.sin(phi) * t.x;
@@ -389,5 +402,7 @@ export function convertToPolytube(
         texCrds: uvs ? new Float32Array(texCrds) : null,
         radii: new Float32Array(radii),
         faceVertexIndices: new Uint32Array(faces),
+        curvePoints: new Float32Array(centers),
+        strandLast: new Uint8Array(last),
     };
 }
