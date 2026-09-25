@@ -149,7 +149,11 @@ async function createScene(state: ViewerState, url: string, baseUrl: string, fla
 }
 
 async function loadScene(state: ViewerState, url: string, baseUrl: string): Promise<void> {
-    const scene = await createScene(state, url, baseUrl);
+    installScene(state, await createScene(state, url, baseUrl), url);
+}
+
+/** Makes `scene` the viewer's scene (Renderer::setScene), freeing the previous one. */
+function installScene(state: ViewerState, scene: Scene, url: string | null): void {
     scene.camera.setAspectRatio(canvas.width / canvas.height);
     const previous = state.scene;
     state.scene = scene;
@@ -766,6 +770,27 @@ function wireGraphEditor(state: ViewerState, rebuildUI: () => void, resetAccum: 
 /** Wires the plain-DOM control bar (created in index.html). */
 function wireControls(state: ViewerState, rebuildUI: () => void): void {
     const $ = (id: string) => document.getElementById(id);
+    // Renderer::onDroppedFile: a dropped script runs, a dropped scene loads. A dropped file has no
+    // directory: pyscenes resolve assets against the media root, binary formats must be self-contained.
+    window.addEventListener("dragover", (ev) => ev.preventDefault());
+    window.addEventListener("drop", (ev) => {
+        const file = ev.dataTransfer?.files[0];
+        if (!file) return;
+        ev.preventDefault();
+        const ext = file.name.slice(file.name.lastIndexOf(".") + 1).toLowerCase();
+        void (async () => {
+            if (ext === "py") await runScriptSource(state, await file.text(), location.pathname.replace(/\/[^/]*$/, ""));
+            else if (ext === "pyscene") installScene(state, await runSceneScript(state.device, await file.text(), kProjectMediaUrl, { path: file.name }), null);
+            else if (ext === "pbrt") installScene(state, await runPbrtScene(state.device, await file.text(), kProjectMediaUrl), null);
+            else if (["fbx", "gltf", "glb", "obj", "usd", "usda", "usdc", "usdz", "dae", "3ds", "ply", "blend"].includes(ext)) {
+                // The fragment carries the extension the importer dispatches on (fetching a blob URL ignores it).
+                const url = `${URL.createObjectURL(file)}#${file.name}`;
+                installScene(state, await runSceneScript(state.device, `sceneBuilder.importScene(${JSON.stringify(url)})`, kProjectMediaUrl), null);
+            } else return Logger.warning(`RenderGraphViewer::onDroppedFile() - Unknown file extension '${ext}'`);
+            refreshOutputs(state);
+            rebuildUI();
+        })().catch((err: unknown) => Logger.error(`Mogwai: failed to load dropped '${file.name}': ${String(err)}`));
+    });
     // File > Load Script / Load Scene and the recent lists (Enter loads the typed or picked path).
     const open = $("openPath") as HTMLInputElement | null;
     refreshRecentList();
