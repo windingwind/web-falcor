@@ -115,6 +115,12 @@ export function getMaterialParamLayout(m: SceneMaterialDesc): MaterialParamLayou
     return layoutOf(m).map(({ name, pythonName, size, offset }) => ({ name, pythonName, size, offset }));
 }
 
+/** Mirrors getMaterialParamLayout(MaterialType): empty for types without serializable params. */
+export function getMaterialParamLayoutForType(type: MaterialType): MaterialParamLayoutEntry[] {
+    const defs = type === MaterialType.Standard ? kStandard : type === MaterialType.PBRTDiffuse ? kPBRTDiffuse : type === MaterialType.PBRTConductor ? kPBRTConductor : [];
+    return defs.map(({ name, pythonName, size, offset }) => ({ name, pythonName, size, offset }));
+}
+
 /** Mirrors Material::serializeParams. */
 export function serializeMaterialParams(m: SceneMaterialDesc): Float32Array {
     const params = new Float32Array(kMaterialParamCount);

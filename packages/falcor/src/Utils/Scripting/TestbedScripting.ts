@@ -25,6 +25,7 @@ import { RenderGraph } from "../../RenderGraph/RenderGraph.js";
 import { createPass } from "../../RenderGraph/RenderPass.js";
 import { Properties } from "../Properties.js";
 import { Logger } from "../Logger.js";
+import { getMaterialParamLayoutForType, kMaterialParamCount, serializeMaterialParams, deserializeMaterialParams } from "../../Scene/Material/MaterialParamLayout.js";
 import { RuntimeError } from "../../Core/Error.js";
 import { AssetCategory, AssetResolver } from "../../Core/AssetResolver.js";
 import { getPyodide } from "./Scripting.js";
@@ -175,6 +176,30 @@ function makeJsModule(device: Device, testbedOptions: TestbedOptions, fsRead: (p
             if (!scene) throw new RuntimeError("Testbed has no scene");
             await material.resolveTextures(t.sceneBaseUrl, scene.textureManager, undefined, false, device);
             if (scene.replaceMaterial(index, material.toDesc()) && t.renderGraph) t.renderGraph.setScene(scene);
+        },
+        /** get_material_param_layout(type): python name -> {offset, size}. */
+        materialParamLayout: (type: number) => Object.fromEntries(getMaterialParamLayoutForType(type).map((e) => [e.pythonName, { offset: e.offset, size: e.size }])),
+        /** MaterialType names by value (to_string(MaterialType)), Unknown..RGL. */
+        materialTypeNames: ["Unknown", ...Object.keys(MaterialType).filter((k) => isNaN(Number(k)))],
+        /** Scene get_material_params: SerializedMaterialParams (kMaterialParamCount floats) per listed material ID. */
+        getMaterialParams: async (t: Testbed, ids: Buffer, params: Buffer) => {
+            const scene = t.scene!;
+            const list = new Uint32Array((await ids.getBlob()).buffer).slice(0, ids.elementCount || ids.size / 4);
+            const out = new Float32Array(list.length * kMaterialParamCount);
+            list.forEach((id, i) => out.set(serializeMaterialParams(scene.getMaterial(id)), i * kMaterialParamCount));
+            if (params.size < out.byteLength) throw new RuntimeError("Material parameter buffer is too small.");
+            params.setBlob(new Uint8Array(out.buffer));
+        },
+        /** Scene set_material_params: deserializes (clamped) and repacks each listed material. */
+        setMaterialParams: async (t: Testbed, ids: Buffer, params: Buffer) => {
+            const scene = t.scene!;
+            const list = new Uint32Array((await ids.getBlob()).buffer).slice(0, ids.elementCount || ids.size / 4);
+            const values = new Float32Array((await params.getBlob()).buffer);
+            list.forEach((id, i) => {
+                const m = scene.getMaterial(id);
+                deserializeMaterialParams(m, values.subarray(i * kMaterialParamCount, (i + 1) * kMaterialParamCount));
+                scene.updateMaterial(id);
+            });
         },
         /** CopyContext::copyResource: buffers or textures (all subresources). */
         copyResource: (dst: Buffer | Texture, src: Buffer | Texture) => {
@@ -517,11 +542,26 @@ for _n, _t in [("StandardMaterial", "Standard"), ("ClothMaterial", "Cloth"), ("H
                ("PBRTCoatedConductorMaterial", "PBRTCoatedConductor"), ("PBRTCoatedDiffuseMaterial", "PBRTCoatedDiffuse")]:
     globals()[_n] = _material_class(_n, _t)
 
+MaterialType = enum.IntEnum("MaterialType", {n: i for i, n in enumerate(_js.materialTypeNames.to_py())})
+
+def get_material_param_layout(type):
+    """Mirrors get_material_param_layout: python name -> {"offset", "size"} (empty without a layout)."""
+    return {k: dict(v) for k, v in _js.materialParamLayout(int(type)).to_py().items()}
+
+class IMaterial:
+    PARAM_COUNT = 20  # SerializedMaterialParams::kParamCount
+
+MATERIAL_PARAM_LAYOUTS = {name: get_material_param_layout(i) for i, name in enumerate(_js.materialTypeNames.to_py())}
+
 class _Scene:
     """The testbed's scene: native Scene methods, forwarding everything else to the JS Scene."""
     def __init__(self, testbed): object.__setattr__(self, "_t", testbed)
     def replace_material(self, index, replacement_material):
         run_sync(_js.replaceMaterial(self._t, int(index), replacement_material._o))
+    def get_material_params(self, material_ids_buffer, params_buffer):
+        run_sync(_js.getMaterialParams(self._t, material_ids_buffer._o, params_buffer._o))
+    def set_material_params(self, material_ids_buffer, params_buffer):
+        run_sync(_js.setMaterialParams(self._t, material_ids_buffer._o, params_buffer._o))
     def __getattr__(self, k): return getattr(object.__getattribute__(self, "_t").scene, k)
     def __setattr__(self, k, v): setattr(object.__getattribute__(self, "_t").scene, k, _unwrap(v))
 
@@ -612,6 +652,7 @@ for _n, _v in list(globals().items()):
     if _n[:1].isupper() and not _n.startswith("_"):
         setattr(falcor, _n, _v)
 falcor.createPass = createPass  # graph scripts (load_render_graph) call it unqualified
+falcor.get_material_param_layout = get_material_param_layout
 sys.modules["falcor"] = falcor
 
 def _vector(name, n, scalar):
@@ -828,6 +869,7 @@ export async function runTestbedScript(
     const root = "/testbed";
     const fsDir = `${root}${dirUrl}`;
     py.FS.mkdirTree(fsDir);
+    if (options.cwd) py.FS.mkdirTree(`${root}${options.cwd}`);
     const scriptPath = `${fsDir}/${scriptUrl.slice(scriptUrl.lastIndexOf("/") + 1)}`;
     py.FS.writeFile(scriptPath, source);
     const names = new Set(options.extraFiles ?? []);
