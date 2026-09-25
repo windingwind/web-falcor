@@ -4,7 +4,7 @@
  */
 
 import { FrameCaptureExtension, captureOutput } from "./FrameCapture.js";
-import { AssetCategory, AssetResolver, isAbsoluteUrl, kProjectMediaUrl, Clock, Device, Logger, Profiler, ProfilerUI, VideoRecorder, ProgramManager, RenderGraph, ResourceFormat, Bitmap, BitmapExportFlags, createPass, initScripting, initSlang, runConsoleCommand, runGraphScript, runSceneScript, nativeKeyCode, type MogwaiCallbacks, runPbrtScene, runMitsubaScene, presentToCanvas, OverlayDrawList, type Scene } from "@web-falcor/falcor";
+import { AssetCategory, AssetResolver, isAbsoluteUrl, kProjectMediaUrl, Clock, Device, Logger, LogLevel, SceneBuilderFlags, getGlobalSettings, Profiler, ProfilerUI, VideoRecorder, ProgramManager, RenderGraph, ResourceFormat, Bitmap, BitmapExportFlags, createPass, initScripting, initSlang, runConsoleCommand, runGraphScript, runSceneScript, nativeKeyCode, type MogwaiCallbacks, runPbrtScene, runMitsubaScene, presentToCanvas, OverlayDrawList, type Scene } from "@web-falcor/falcor";
 import "@web-falcor/render-passes";
 import { CameraController, kCameraControllerTypes, kUpDirectionNames } from "./CameraController.js";
 import { buildUIPanel } from "./UIPanel.js";
@@ -86,7 +86,8 @@ async function loadScene(state: ViewerState, url: string, baseUrl: string): Prom
         ? await runPbrtScene(state.device, source, baseUrl)
         : lower.endsWith(".xml") // Mitsuba scenes are the only .xml we load
           ? await runMitsubaScene(state.device, source, baseUrl)
-          : await runSceneScript(state.device, source, baseUrl, { cache: true, path: url }); // OPFS scene cache: fast reloads
+          : await runSceneScript(state.device, source, baseUrl, { cache: true, path: url, flags: rebuildSceneCache ? SceneBuilderFlags.Default | SceneBuilderFlags.RebuildCache : undefined }); // OPFS scene cache: fast reloads
+    rebuildSceneCache = false;
     if (scene.importPaths[0] !== url) scene.importPaths.unshift(url);
     scene.camera.setAspectRatio(canvas.width / canvas.height);
     const previous = state.scene;
@@ -213,7 +214,39 @@ async function loadInitialContent(state: ViewerState, device: Device): Promise<v
 
 const videoRecorder = new VideoRecorder();
 
+/**
+ * Mogwai's command-line options as URL parameters: `verbosity` (0-5), `width`/`height`, `attributes`
+ * (URL of a JSON attributes file), `rebuild-cache`, `headless` (canvas only), `fullscreen` (entered on
+ * the first click: browsers need a gesture) and `deferred` (content loads on the next animation frame).
+ */
+async function applyCommandLineParams(): Promise<{ deferred: boolean }> {
+    const params = new URLSearchParams(location.search);
+    const verbosity = params.get("verbosity") ?? params.get("v");
+    if (verbosity !== null) {
+        const level = Number(verbosity);
+        if (!Number.isInteger(level) || level < LogLevel.Disabled || level > LogLevel.Debug) throw new Error(`Mogwai: invalid verbosity level ${verbosity}`);
+        Logger.level = level;
+    }
+    const [width, height] = [Number(params.get("width")), Number(params.get("height"))];
+    if (width > 0) canvas.width = width;
+    if (height > 0) canvas.height = height;
+    const attributes = params.get("attributes") ?? params.get("a");
+    if (attributes) {
+        const res = await fetch(await resolveAssetUrl(attributes));
+        if (!res.ok) throw new Error(`Failed to load attributes file '${attributes}'.`);
+        getGlobalSettings().addFilteredAttributes(await res.json());
+    }
+    rebuildSceneCache = params.has("rebuild-cache");
+    if (params.has("headless") || params.has("silent")) document.body.classList.add("headless");
+    if (params.has("fullscreen")) window.addEventListener("pointerdown", () => void canvas.requestFullscreen().catch(() => {}), { once: true });
+    return { deferred: params.has("deferred") };
+}
+/** `?rebuild-cache`: the first scene load rebuilds its cache entry (SceneBuilder::Flags::RebuildCache). */
+let rebuildSceneCache = false;
+
 async function main() {
+    // Before the device exists, so verbosity also covers device creation (as the native flags do).
+    const { deferred } = await applyCommandLineParams();
     const device = await Device.create();
     const profiler = new Profiler(device);
     if (profiler.available) device.enableProfiler(profiler);
@@ -251,6 +284,7 @@ async function main() {
 
     // Initial content from URL params (?scene=/?graph=/?output=), or the default
     // cornell-box path tracer when none are given.
+    if (deferred) await new Promise((r) => requestAnimationFrame(r)); // Renderer::loadScriptDeferred
     try {
         await loadInitialContent(state, device);
     } catch (e) {
