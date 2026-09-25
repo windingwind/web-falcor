@@ -62,7 +62,10 @@
       #profiler td.profiler-bar div { height: 8px; background: #fff; }
       #profiler .profiler-graph { display: block; margin-top: 6px; }
       #profiler .profiler-tooltip { position: absolute; background: #111; padding: 2px 6px; border-radius: 3px; pointer-events: none; }
-          /* F9: Clock::renderUI. */
+          .debug-window { position: absolute; right: 10px; bottom: 10px; background: rgba(20, 20, 24, 0.92); color: #ddd; padding: 4px; font: 12px sans-serif; border-radius: 4px; z-index: 6; }
+      .debug-window canvas { display: block; margin-top: 4px; }
+      .debug-title { display: flex; justify-content: space-between; align-items: center; margin-bottom: 2px; }
+      /* F9: Clock::renderUI. */
       #time { position: absolute; left: 8px; bottom: 8px; background: rgba(20, 20, 24, 0.9); color: #ddd; padding: 6px 8px; font: 12px sans-serif; border-radius: 4px; z-index: 5; max-width: 320px; }
       /* ?headless (Mogwai --headless): only the rendered canvas. */
       body.headless > :not(#canvas) { display: none !important; }
@@ -84,6 +87,8 @@
       <label>graph <input id="graphFile" type="file" accept=".py" /></label>
       <label hidden>active graph <select id="activeGraph"></select> <button id="removeGraph" title="Renderer::removeActiveGraph">remove</button></label>
       <label>output <select id="output"></select></label>
+      <label title="List All Outputs: every pass output, even if the graph doesn't mark it"><input id="allOutputs" type="checkbox" /> all</label>
+      <button id="debugWindow" title="Show In Debug Window">debug</button>
       <label title="Window Size: the renderable area (swapchain) size">size <select id="winSize"></select></label>
       <button id="consoleToggle">Console</button>
       <button id="graphToggle">Graph</button>

@@ -558,6 +558,7 @@ async function main() {
             }
             const tex = state.graph.getOutput(state.output);
             if (tex) presentToCanvas(device, tex, context!.getCurrentTexture(), format);
+            presentDebugWindows(state);
             renderOverlay();
             void state.frameCapture?.endFrame();
             pixelZoom.render();
@@ -930,17 +931,123 @@ function refreshOutputs(state: ViewerState): void {
     }
     const sel = document.getElementById("output") as HTMLSelectElement | null;
     if (!sel || !state.graph) return;
-    sel.innerHTML = "";
-    for (const name of state.graph.getOutputNames()) {
-        const opt = document.createElement("option");
-        opt.value = name;
-        opt.textContent = name;
-        sel.appendChild(opt);
-    }
+    const graph = state.graph;
+    const data = graphDataOf(graph);
+    // Renderer::graphOutputsGui: debug windows force the full list.
+    const names = outputChoices(graph);
+    // renderOutputUI: an output that left the list (List All unchecked) is replaced by the first one.
+    if (!state.output || !names.includes(state.output)) setMainOutput(state, names[0] ?? null);
+    sel.replaceChildren(...names.map((name) => Object.assign(document.createElement("option"), { value: name, textContent: name })));
     if (state.output) sel.value = state.output;
-    sel.onchange = () => {
-        state.output = sel.value;
+    sel.onchange = () => setMainOutput(state, sel.value);
+    const all = document.getElementById("allOutputs") as HTMLInputElement | null;
+    if (all) {
+        all.checked = data.showAll || debugWindows.length > 0;
+        all.disabled = debugWindows.length > 0;
+        all.onchange = () => {
+            data.showAll = all.checked;
+            refreshOutputs(state);
+        };
+    }
+    const dbg = document.getElementById("debugWindow") as HTMLButtonElement | null;
+    if (dbg) dbg.onclick = () => addDebugWindow(state);
+}
+
+/** Renderer::GraphData: the graph's own outputs, and reference counts for outputs marked only for display. */
+interface GraphData {
+    originalOutputs: string[];
+    refs: Map<string, number>;
+    showAll: boolean;
+}
+const graphData = new WeakMap<RenderGraph, GraphData>();
+function graphDataOf(graph: RenderGraph): GraphData {
+    let data = graphData.get(graph);
+    if (!data) graphData.set(graph, (data = { originalOutputs: graph.getOutputNames(), refs: new Map(), showAll: false }));
+    return data;
+}
+function outputChoices(graph: RenderGraph): string[] {
+    const data = graphDataOf(graph);
+    return data.showAll || debugWindows.length > 0 ? graph.getAvailableOutputs() : data.originalOutputs;
+}
+/** Renderer::markOutput / unmarkOutput: original outputs stay; others are marked while something shows them. */
+function markViewerOutput(graph: RenderGraph, name: string): void {
+    const data = graphDataOf(graph);
+    if (data.originalOutputs.includes(name)) return;
+    const n = (data.refs.get(name) ?? 0) + 1;
+    data.refs.set(name, n);
+    if (n === 1) graph.markOutput(name);
+}
+function unmarkViewerOutput(graph: RenderGraph, name: string): void {
+    const data = graphDataOf(graph);
+    if (data.originalOutputs.includes(name) || !data.refs.has(name)) return;
+    const n = data.refs.get(name)! - 1;
+    if (n > 0) return void data.refs.set(name, n);
+    data.refs.delete(name);
+    graph.unmarkOutput(name);
+}
+function setMainOutput(state: ViewerState, name: string | null): void {
+    const graph = state.graph;
+    if (!graph) return;
+    if (state.output) unmarkViewerOutput(graph, state.output);
+    state.output = name;
+    if (name) markViewerOutput(graph, name);
+}
+
+/** Renderer's debug windows ("Show In Debug Window"): another output of the active graph, presented each frame. */
+interface DebugWindow {
+    graph: RenderGraph;
+    output: string;
+    el: HTMLDivElement;
+    ctx: GPUCanvasContext;
+}
+const debugWindows: DebugWindow[] = [];
+let debugWindowIndex = 0;
+function addDebugWindow(state: ViewerState): void {
+    const graph = state.graph;
+    if (!graph || !state.output) return;
+    const el = document.createElement("div");
+    el.className = "debug-window";
+    const title = document.createElement("div");
+    title.className = "debug-title";
+    title.textContent = `Debug Window ${debugWindowIndex++}`;
+    const close = Object.assign(document.createElement("button"), { textContent: "×", title: "Close" });
+    const sel = document.createElement("select");
+    const save = Object.assign(document.createElement("button"), { textContent: "Save To File" });
+    const canvasEl = document.createElement("canvas");
+    [canvasEl.width, canvasEl.height] = [Math.round(canvas.width * 0.4), Math.round(canvas.height * 0.55)];
+    title.append(close);
+    el.append(title, sel, save, canvasEl);
+    document.body.appendChild(el);
+    const ctx = canvasEl.getContext("webgpu")!;
+    ctx.configure({ device: state.device.gpuDevice, format: state.format });
+    const win: DebugWindow = { graph, output: state.output, el, ctx };
+    markViewerOutput(graph, win.output);
+    debugWindows.push(win);
+    const fill = () => {
+        sel.replaceChildren(...outputChoices(graph).map((n) => Object.assign(document.createElement("option"), { value: n, textContent: n })));
+        sel.value = win.output;
     };
+    fill();
+    sel.onchange = () => {
+        unmarkViewerOutput(graph, win.output);
+        win.output = sel.value;
+        markViewerOutput(graph, win.output);
+    };
+    save.onclick = () => void graph.getOutput(win.output)?.captureToFile(0, 0, `${win.output.replace(/\./g, "_")}.png`, Bitmap.getFormatFromFileExtension("png"));
+    close.onclick = () => {
+        unmarkViewerOutput(graph, win.output);
+        debugWindows.splice(debugWindows.indexOf(win), 1);
+        el.remove();
+        refreshOutputs(state);
+    };
+    refreshOutputs(state);
+}
+function presentDebugWindows(state: ViewerState): void {
+    for (const w of debugWindows) {
+        if (w.graph !== state.graph) continue;
+        const tex = w.graph.getOutput(w.output);
+        if (tex) presentToCanvas(state.device, tex, w.ctx.getCurrentTexture(), state.format);
+    }
 }
 
 main().catch((err) => {
