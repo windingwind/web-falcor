@@ -112,6 +112,39 @@ export function parseRGLTensorFile(buffer: ArrayBuffer): Map<string, RGLField> {
     return fields;
 }
 
+/** Mirrors RGLFile::saveFile: header, field descriptions, then 8-byte aligned data blocks. */
+export function writeRGLTensorFile(fields: readonly RGLField[]): Uint8Array {
+    const align = (a: number) => Math.ceil(a / 8) * 8;
+    const names = fields.map((f) => new TextEncoder().encode(f.name));
+    let headerSize = 18;
+    fields.forEach((f, i) => (headerSize += 13 + names[i]!.length + 8 * f.shape.length));
+    let total = align(headerSize);
+    const offsets = fields.map((f) => {
+        const o = total;
+        total = align(total + fieldSize(f.type) * f.data.length);
+        return o;
+    });
+    const bytes = new Uint8Array(total);
+    const view = new DataView(bytes.buffer);
+    bytes.set(new TextEncoder().encode("tensor_file"), 0);
+    bytes[12] = 1;
+    bytes[13] = 0;
+    view.setUint32(14, fields.length, true);
+    let o = 18;
+    fields.forEach((f, i) => {
+        view.setUint16(o, names[i]!.length, true);
+        bytes.set(names[i]!, o + 2);
+        o += 2 + names[i]!.length;
+        view.setUint16(o, f.shape.length, true);
+        bytes[o + 2] = f.type;
+        view.setBigUint64(o + 3, BigInt(offsets[i]!), true);
+        o += 11;
+        for (const d of f.shape) (view.setBigUint64(o, BigInt(d), true), (o += 8));
+        bytes.set(new Uint8Array(f.data.buffer, f.data.byteOffset, f.data.byteLength), offsets[i]!);
+    });
+    return bytes;
+}
+
 /**
  * Mirrors SamplableDistribution4D::build2DSlice: per 2D slice, a linearly
  * interpolated conditional CDF per row, a marginal CDF over rows, and the PDF

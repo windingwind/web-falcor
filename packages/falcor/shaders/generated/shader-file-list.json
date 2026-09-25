@@ -404,6 +404,7 @@
     "WebFalcor/Overrides/Rendering/Materials/MERLMixMaterialInstance.slang",
     "WebFalcor/Overrides/Rendering/Materials/PBRT/PBRTCoatedConductorMaterialInstance.slang",
     "WebFalcor/Overrides/Rendering/Materials/PBRT/PBRTConductorMaterial.slang",
+    "WebFalcor/Overrides/Rendering/Materials/RGLAcquisition.cs.slang",
     "WebFalcor/Overrides/Rendering/Materials/RGLCommon.slang",
     "WebFalcor/Overrides/Rendering/Materials/RGLMaterial.slang",
     "WebFalcor/Overrides/Rendering/Materials/StandardMaterial.slang",

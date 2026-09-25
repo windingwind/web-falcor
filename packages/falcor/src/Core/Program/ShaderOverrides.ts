@@ -123,6 +123,7 @@ export const kShaderOverrides: Readonly<Record<string, string>> = {
     "Rendering/Utils/PixelStats.slang": "WebFalcor/Overrides/Rendering/Utils/PixelStats.slang",
     // Warp-size-32 wave reduction -> portable shared-memory reduction; no `= {}` ShadingData init.
     "Rendering/Materials/BSDFIntegrator.cs.slang": "WebFalcor/Overrides/Rendering/Materials/BSDFIntegrator.cs.slang",
+    "Rendering/Materials/RGLAcquisition.cs.slang": "WebFalcor/Overrides/Rendering/Materials/RGLAcquisition.cs.slang",
     // RTXDI: no texel buffers in WGSL (structured swap), boiling filter
     // compiled out (WaveActiveCountBits unmapped), brace-init fixes.
     "Rendering/RTXDI/RTXDI.slang": "WebFalcor/Overrides/Rendering/RTXDI/RTXDI.slang",
