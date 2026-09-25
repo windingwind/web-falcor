@@ -46,6 +46,9 @@ export interface TriangleMeshDesc {
     indices: Uint32Array;
     /** TriangleMesh.createFromFile: geometry is loaded from this asset in resolve(). */
     _fromFile?: { path: string; smoothNormals: boolean };
+    /** TriangleMesh::setName / setFrontFaceCW (clockwise meshes get their winding flipped in resolve()). */
+    name?: string;
+    frontFaceCW?: boolean;
 }
 
 /** Mirrors TriangleMesh factories (TriangleMesh.cpp). */
@@ -65,7 +68,7 @@ export const TriangleMesh = {
             { position: new float3(-hx, 0, hy), normal: n, tangent: t0, texCrd: new float2(0, 1) },
             { position: new float3(hx, 0, hy), normal: n, tangent: t0, texCrd: new float2(1, 1) },
         ];
-        return { vertices, indices: new Uint32Array([2, 1, 0, 1, 2, 3]) };
+        return { vertices, indices: new Uint32Array([2, 1, 0, 1, 2, 3]), frontFaceCW: size.x * size.y < 0 };
     },
 
     createCube(size: float3 = new float3(1, 1, 1)): TriangleMeshDesc {
@@ -95,7 +98,7 @@ export const TriangleMesh = {
                 });
             }
         }
-        return { vertices, indices: new Uint32Array(indices) };
+        return { vertices, indices: new Uint32Array(indices), frontFaceCW: size.x * size.y * size.z < 0 };
     },
 
     createSphere(radius = 1, segmentsU = 32, segmentsV = 32): TriangleMeshDesc {
@@ -153,6 +156,9 @@ export const TriangleMesh = {
 
 /** Normalizes python-side vector objects (PyProxy with x/y/z/w attrs) into
  *  owned JS vectors — proxies may be destroyed after script execution. */
+/** A texture slot from python (MaterialTextureSlot strings, or an enum-like repr). */
+const slotName = (s: unknown) => String(s).replace(/^.*\./, "");
+
 export function toF3(v: { x: number; y: number; z: number } | null | undefined, fallback?: float3): float3 {
     if (!v) return fallback ?? new float3(0, 0, 0);
     return new float3(v.x, v.y, v.z);
@@ -212,6 +218,12 @@ export class CameraBridge {
     farPlane = 1000;
     shutterSpeed = 0.004;
     ISOSpeed = 100;
+    /** Film settings; unset keeps the Camera defaults (Mogwai resets the aspect ratio to the frame's). */
+    aspectRatio?: number;
+    frameHeight?: number;
+    frameWidth?: number;
+    /** Animatable::setIsAnimated. */
+    animated = true;
 
     // Python reads back what the pyscene set (native properties are read-write).
     get position(): float3 { return this._position; }
@@ -281,7 +293,7 @@ export class MaterialBridge {
 
     constructor(
         public readonly materialType: MaterialType,
-        public readonly name: string,
+        public name: string,
         shadingModel: ShadingModel = ShadingModel.MetalRough,
     ) {
         this._shadingModel = shadingModel;
@@ -301,7 +313,7 @@ export class MaterialBridge {
     }
 
     // Deferred texture loads (material.loadTexture(slot, path)); resolved in resolve().
-    private _textures: { slot: string; path: string }[] = [];
+    private _textures: { slot: string; path: string; useSrgb: boolean }[] = [];
     /** Measured BRDF file (MERL `.binary` / RGL `.bsdf`), resolved with the textures. */
     private _measured: { kind: "merl" | "rgl"; path: string } | null = null;
     private _lightProfileEnabled = false;
@@ -314,8 +326,23 @@ export class MaterialBridge {
     private _indexMap: import("./Material/MERLFile.js").MERLIndexMap | null = null;
     private _texHandles: { texBaseColor?: number; texSpecular?: number; texEmissive?: number; texNormalMap?: number; texDisplacement?: number; texTransmission?: number } = {};
 
-    loadTexture(slot: string, path: string): void {
-        this._textures.push({ slot: String(slot), path: String(path) });
+    /** Mirrors Material::loadTexture(slot, path, useSrgb): sRGB only if the slot is sRGB too. */
+    loadTexture(slot: string, path: string, useSrgb: boolean = true): void {
+        this._textures.push({ slot: slotName(slot), path: String(path), useSrgb: useSrgb !== false });
+    }
+    load_texture(slot: string, path: string, useSrgb: boolean = true): void {
+        this.loadTexture(slot, path, useSrgb);
+    }
+    /** Mirrors Material::clearTexture: drops the slot's pending loads. */
+    clearTexture(slot: string): void {
+        const name = slotName(slot);
+        this._textures = this._textures.filter((t) => t.slot !== name);
+        this._bitmaps = this._bitmaps.filter((t) => t.slot !== name);
+    }
+    /** Mirrors Material::isEmissive (BasicMaterial: emissive color or an emissive texture). */
+    get emissive(): boolean {
+        const e = this._emissiveColor;
+        return this.emissiveFactor > 0 && (e.x > 0 || e.y > 0 || e.z > 0 || this._textures.some((t) => t.slot === "Emissive"));
     }
 
     /** Binds an already-decoded image (procedural content: Mitsuba's checkerboard). */
@@ -343,7 +370,7 @@ export class MaterialBridge {
                 continue;
             }
             if (t.path.includes("<MIP>")) {
-                const srgb = slotSrgb && !assumeLinearSpaceTextures;
+                const srgb = slotSrgb && t.useSrgb && !assumeLinearSpaceTextures;
                 const decode = (bytes: Uint8Array, blob: Blob, u: string) => (u.toLowerCase().endsWith(".tga") ? decodeTgaToBitmap(bytes) : u.toLowerCase().endsWith(".dds") ? decodeDdsToBitmap(bytes, u, device) : createImageBitmap(blob, { colorSpaceConversion: "none" }));
                 const id = await tm.loadTexture(t.path, true, srgb, resolver, baseUrl, decode);
                 if (id !== undefined) this.assignTextureHandle(t.slot, packTextureHandle(TextureHandleMode.Texture, id));
@@ -352,7 +379,7 @@ export class MaterialBridge {
             try {
                 const res = await fetch(url);
                 if (!res.ok) continue;
-                const srgb = slotSrgb && !assumeLinearSpaceTextures;
+                const srgb = slotSrgb && t.useSrgb && !assumeLinearSpaceTextures;
                 const blob = await res.blob();
                 const bytes = new Uint8Array(await blob.arrayBuffer());
                 // Formats the browser cannot decode go through the CPU decoders
@@ -520,9 +547,12 @@ export class LightBridge {
     /** Area lights (Rect/Disc/Sphere): local->world placement (scale/rotate/translate). */
     private _scaling: float3 | number = 1;
     private _rotationEuler: { x: number; y: number; z: number } | null = null;
+    /** Light::setActive / Animatable::setIsAnimated. */
+    active = true;
+    animated = true;
     constructor(
         public readonly lightType: LightType,
-        public readonly name: string,
+        public name: string,
     ) {}
 
     set position(v: { x: number; y: number; z: number }) {
@@ -666,6 +696,13 @@ export function makeTransform(
     }
     if (translation) m = mulMat(matrixFromTranslation(translation), m);
     return m;
+}
+
+/** SceneBuilder::flipTriangleWinding: swaps the first two indices of every triangle. */
+function flipWinding(indices: Uint32Array): Uint32Array {
+    const out = indices.slice();
+    for (let i = 0; i + 2 < out.length; i += 3) [out[i], out[i + 1]] = [out[i + 1]!, out[i]!];
+    return out;
 }
 
 /**
@@ -879,6 +916,12 @@ export class GridVolumeBridge {
     frameRate = 30;
     startFrame = 0;
     playbackEnabled = true;
+    /** GridVolume::setGridFrame, applied once the grids are loaded. */
+    gridFrame = 0;
+    /** GridVolume::getGridFrameCount: the longest slot's sequence. */
+    get gridFrameCount(): number {
+        return Math.max(this.grids.length || this.proceduralGrids.length ? 1 : 0, ...this.gridSequences.map((s) => s.paths.length));
+    }
     proceduralGrids: { slot: string; parsed: ParsedFloatGrid }[] = [];
 
     constructor(name = "") {
@@ -1327,6 +1370,7 @@ export class SceneBuilderBridge {
         copy.frameRate = Number(v.frameRate);
         copy.startFrame = Number(v.startFrame);
         copy.playbackEnabled = v.playbackEnabled !== false;
+        copy.gridFrame = Number(v.gridFrame);
         copy.proceduralGrids = v.proceduralGrids.slice();
         this.gridVolumesList.push(copy);
     }
@@ -1622,11 +1666,13 @@ export class SceneBuilderBridge {
             }
             // Tangents are generated below (native MikkTSpace); UseOriginalTangentSpace keeps supplied ones.
             const vertices = geo.vertices.map((v) => ({ ...v }));
+            // SceneBuilder::unifyTriangleWinding: clockwise meshes are flipped to counter-clockwise.
+            const indices = geo.frontFaceCW ? flipWinding(geo.indices) : geo.indices;
             const hasTangents = vertices.some((v) => v.tangent.x !== 0 || v.tangent.y !== 0 || v.tangent.z !== 0);
             for (const { transform, nodeID } of transforms) {
                 const animatedNode = builderNodeIDs.get(nodeID);
                 texTransforms.set(meshes.length, mat.textureTransform.matrix);
-                meshes.push({ vertices, indices: geo.indices, materialID, transform, nodeID: animatedNode, tangentSpace: hasTangents ? "asset" : "generate" });
+                meshes.push({ vertices, indices, materialID, transform, nodeID: animatedNode, tangentSpace: hasTangents ? "asset" : "generate" });
             }
         });
 
@@ -1654,6 +1700,8 @@ export class SceneBuilderBridge {
                 penumbraAngle: l.penumbraAngle,
                 transMat: isArea ? l.getTransMat() : undefined,
                 nodeID: l.nodeID !== undefined ? builderNodeIDs.get(l.nodeID) : undefined,
+                active: l.active !== false,
+                animated: l.animated !== false,
             };
         });
         lights.push(...importedLights); // lights imported from FBX/assets
@@ -1778,6 +1826,11 @@ export class SceneBuilderBridge {
             cam.setShutterSpeed(c.shutterSpeed);
             cam.setISOSpeed(c.ISOSpeed);
             cam.setDepthRange(c.nearPlane, c.farPlane);
+            // Camera::setFrameWidth/Height: the last one set wins natively; width is kept when both are.
+            if (c.frameHeight !== undefined) cam.setFrameHeight(Number(c.frameHeight));
+            if (c.frameWidth !== undefined) cam.setFrameWidth(Number(c.frameWidth));
+            if (c.aspectRatio !== undefined) cam.setAspectRatio(Number(c.aspectRatio));
+            cam.animated = c.animated !== false;
             cameraList.push(cam);
         }
         const selected = this.camera ? this._cameras.indexOf(this.camera) : -1;
@@ -1823,6 +1876,7 @@ export class SceneBuilderBridge {
             for (const pg of v.proceduralGrids) {
                 vol.setGrid(pg.slot as GridSlot, new Grid(device, buildNanoVDBGrid(pg.parsed)));
             }
+            vol.gridFrame = v.gridFrame;
             scene.gridVolumes.push(vol);
         }
         scene.finalizeGridVolumes();

@@ -75,3 +75,82 @@ gpuTest("Scripting.materialTextureTransform", async ({ device }) => {
         expectEq(uv(2, v).join(), [u0! * 2, v0! * 2].join(), `swapped texcoord ${v}`);
     }
 });
+
+gpuTest("Scripting.pysceneObjectProperties", async ({ device }) => {
+    await initScripting("/node_modules/pyodide");
+    const scene = await runSceneScript(
+        device,
+        [
+            "c = Camera('Cam')",
+            "c.name = 'Renamed'",
+            "c.nearPlane = 0.5",
+            "c.farPlane = 50",
+            "c.frameHeight = 36",
+            "c.animated = False",
+            "sceneBuilder.addCamera(c)",
+            "l = PointLight('L')",
+            "l.active = False",
+            "l.animated = False",
+            "sceneBuilder.addLight(l)",
+            "mat = StandardMaterial('M')",
+            "mat.name = 'M2'",
+            "mat.emissiveColor = float3(1, 0, 0)",
+            "assert mat.emissive",
+            "mat.loadTexture(MaterialTextureSlot.BaseColor, 'missing.png')",
+            "mat.clearTexture(MaterialTextureSlot.BaseColor)",
+            "sceneBuilder.addMeshInstance(sceneBuilder.addNode('q', Transform()), sceneBuilder.addTriangleMesh(TriangleMesh.createQuad(), mat))",
+            "vol = GridVolume('V')",
+            "assert vol.gridFrameCount == 0",
+            "vol.gridFrame = 0",
+            "b = AABB(min_point=float3(-1, -2, -3), max_point=float3(1, 2, 3))",
+            "assert b.max_point.y == 2 and b.min_point.z == -3",
+        ].join("\n"),
+        "/Falcor/media",
+    );
+    const cam = scene.cameras.find((x) => x.name === "Renamed");
+    expectEq(cam !== undefined, true, "camera renamed");
+    expectEq([cam!.getNearPlane(), cam!.getFarPlane(), cam!.getFrameHeight(), cam!.animated].join(), "0.5,50,36,false", "camera properties");
+    const light = scene.getLight("L") as { active: boolean; animated: boolean };
+    expectEq([light.active, light.animated, scene.activeLights.length].join(), "false,false,0", "light active/animated");
+    expectEq(scene.getMaterial(0).name, "M2", "material renamed");
+    expectEq(scene.getMaterial(0).basic.texBaseColor, undefined, "cleared texture never loads");
+});
+
+gpuTest("Scripting.triangleMeshFrontFaceCW", async ({ device }) => {
+    await initScripting("/node_modules/pyodide");
+    const scene = await runSceneScript(
+        device,
+        [
+            "mat = StandardMaterial('M')",
+            "plain = TriangleMesh.createQuad()",
+            "mirrored = TriangleMesh.createQuad(float2(-1, 1))",
+            "assert mirrored.frontFaceCW and not plain.frontFaceCW",
+            "custom = TriangleMesh()",
+            "custom.name = 'Custom'",
+            "for p in [float3(0, 0, 0), float3(1, 0, 0), float3(0, 1, 0)]: custom.addVertex(p, float3(0, 0, 1), float2(0, 0))",
+            "custom.addTriangle(0, 1, 2)",
+            "custom.frontFaceCW = True",
+            "for i, mesh in enumerate([plain, mirrored, custom]):",
+            "    sceneBuilder.addMeshInstance(sceneBuilder.addNode(f'n{i}', Transform()), sceneBuilder.addTriangleMesh(mesh, mat))",
+        ].join("\n"),
+        "/Falcor/media",
+    );
+    const bufs = (scene as unknown as { buffers: Record<string, { getBlob(): Promise<Uint8Array> }> }).buffers;
+    const ib = await bufs["indices"]!.getBlob();
+    const vb = await bufs["vertices"]!.getBlob();
+    const idx = new Uint32Array(ib.buffer, ib.byteOffset, 15);
+    const pos = new DataView(vb.buffer, vb.byteOffset, vb.byteLength);
+    expectEq(vb.byteLength / 48, 11, "4 + 4 + 3 vertices");
+    // Sign of each triangle's geometric normal along the authored normal (+Y quads, +Z custom).
+    const facing = (first: number, base: number, count: number, axis: number) =>
+        Array.from({ length: count }, (_, t) => {
+            const p = [0, 1, 2].map((k) => [0, 1, 2].map((c) => pos.getFloat32((base + idx[first + 3 * t + k]!) * 48 + 4 * c, true)));
+            const [e1, e2] = [p[1]!.map((v, c) => v - p[0]![c]!), p[2]!.map((v, c) => v - p[0]![c]!)];
+            const n = [e1[1]! * e2[2]! - e1[2]! * e2[1]!, e1[2]! * e2[0]! - e1[0]! * e2[2]!, e1[0]! * e2[1]! - e1[1]! * e2[0]!];
+            return Math.sign(n[axis]!);
+        }).join();
+    // SceneBuilder::unifyTriangleWinding makes every mesh counter-clockwise around its front face.
+    expectEq(facing(0, 0, 2, 1), "1,1", "counter-clockwise quad");
+    expectEq(facing(6, 4, 2, 1), "1,1", "mirrored quad flipped back to counter-clockwise");
+    expectEq(facing(12, 8, 1, 2), "-1", "frontFaceCW mesh: its front is the clockwise side");
+});

@@ -18,6 +18,12 @@ export class AABB {
         else if (minPoint) this.maxPoint = v3(minPoint);
     }
 
+    /** Python's snake_case fields (def_readwrite min_point/max_point). */
+    get min_point(): float3 { return this.minPoint; }
+    set min_point(v: Vec) { this.minPoint = v3(v); }
+    get max_point(): float3 { return this.maxPoint; }
+    set max_point(v: Vec) { this.maxPoint = v3(v); }
+
     /** Aliases for the builder's custom-primitive records. */
     get min(): float3 { return this.minPoint; }
     get max(): float3 { return this.maxPoint; }

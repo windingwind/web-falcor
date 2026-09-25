@@ -97,7 +97,7 @@ function toJs(value: unknown): unknown {
 
 /**
  * Mirrors Mogwai's scripting surface: executes a graph script and returns the
- * graphs registered via m.addGraph() (plus any RenderGraph left in globals).
+ * graphs registered via m.addGraph(), the active one (first added, or m.setActiveGraph's) first.
  */
 /** `extras` adds Mogwai extension objects to `m` (e.g. the viewer's frameCapture). */
 export async function runGraphScript(device: Device, source: string, extras: Record<string, unknown> = {}): Promise<RenderGraph[]> {
@@ -134,6 +134,11 @@ export async function runGraphScript(device: Device, source: string, extras: Rec
     const mogwai = {
         addGraph: (graph: RenderGraph) => {
             graphs.push(graph);
+        },
+        /** Renderer::setActiveGraph: the active graph is returned first. */
+        setActiveGraph: (graph: RenderGraph) => {
+            if (graphs.includes(graph)) graphs.splice(graphs.indexOf(graph), 1);
+            graphs.unshift(graph);
         },
         // Mirrors the native Profiler script binding (m.profiler).
         profiler: device.profilerHook?.pythonBindings((v) => pyodide!.toPy(v)) ?? null,
@@ -298,7 +303,10 @@ class TriangleMesh:
         return _TriangleMesh.createDisk(radius, segments)
     @staticmethod
     def createFromFile(path, smoothNormals=False, flags=None):
-        return _TriangleMesh.createFromFile(path, smoothNormals)
+        # ImportFlags overload: GenSmoothNormals is the flag the web honors.
+        if isinstance(smoothNormals, int) and not isinstance(smoothNormals, bool):
+            flags, smoothNormals = smoothNormals, False
+        return _TriangleMesh.createFromFile(path, smoothNormals or bool((flags or 0) & TriangleMeshImportFlags.GenSmoothNormals))
 
 class CompositionOrder:
     Default = 1
@@ -320,8 +328,9 @@ def Transform(translation=None, rotationEuler=None, rotationEulerDeg=None, scali
     if position is not None and target is not None and up is not None: t.lookAt(position, target, up)
     return t
 
-def AABB(min=None, max=None):
-    return _makeAABB(min, max)
+def AABB(min=None, max=None, p=None, min_point=None, max_point=None):
+    lo = min if min is not None else (min_point if min_point is not None else p)
+    return _makeAABB(lo, max if max is not None else max_point)
 
 class EnvMap:
     @staticmethod
@@ -370,10 +379,11 @@ _matProps = {'baseColor', 'specularParams', 'transmissionColor', 'emissiveColor'
              'emissiveFactor', 'doubleSided', 'roughness', 'metallic',
              'indexOfRefraction', 'specularTransmission', 'diffuseTransmission', 'thinSurface',
              'nestedPriority', 'volumeAbsorption', 'volumeScattering', 'volumeAnisotropy', 'alphaMode', 'alphaThreshold', 'textureTransform',
-             'displacementScale', 'displacementOffset', 'lightProfileEnabled'}
-_lightProps = {'position', 'intensity', 'direction', 'angle',
+             'displacementScale', 'displacementOffset', 'lightProfileEnabled', 'name'}
+_lightProps = {'name', 'active', 'animated', 'position', 'intensity', 'direction', 'angle',
                'openingAngle', 'penumbraAngle', 'scaling', 'rotation'}
-_camProps = {'position', 'target', 'up', 'focalLength', 'focalDistance', 'apertureRadius', 'shutterSpeed', 'ISOSpeed'}
+_camProps = {'name', 'position', 'target', 'up', 'focalLength', 'focalDistance', 'apertureRadius', 'shutterSpeed', 'ISOSpeed',
+             'nearPlane', 'farPlane', 'aspectRatio', 'frameHeight', 'frameWidth', 'animated'}
 StandardMaterial = _guarded(StandardMaterial, _matProps, ('name', 'model'))
 Material = StandardMaterial  # PYTHONDEPRECATED alias (upstream SDF/legacy pyscenes)
 ClothMaterial = _guarded(ClothMaterial, _matProps)
@@ -470,7 +480,7 @@ class _GridSlot:
     Emission = 'emission'
 _gvProps = {'name', 'densityScale', 'emissionScale', 'albedo', 'anisotropy',
             'emissionMode', 'emissionTemperature', 'densityGrid', 'emissionGrid',
-            'frameRate', 'startFrame', 'playbackEnabled'}
+            'frameRate', 'startFrame', 'playbackEnabled', 'gridFrame'}
 _GridVolumeGuarded = _guarded(_GridVolume, _gvProps)
 class GridVolume:
     GridSlot = _GridSlot
@@ -569,6 +579,8 @@ async function runSceneScriptInternal(device: Device, source: string, baseUrl: s
                 const indexList: number[] = [];
                 return {
                     vertices,
+                    name: "",
+                    frontFaceCW: false,
                     get indices() {
                         return new Uint32Array(indexList);
                     },
@@ -759,6 +771,7 @@ export interface MogwaiRef {
 export type MogwaiCommand =
     | { op: "addGraph"; graph: RenderGraph }
     | { op: "removeGraph"; graph: RenderGraph }
+    | { op: "setActiveGraph"; graph: RenderGraph }
     | { op: "loadScene"; path: string; flags: number }
     | { op: "unloadScene" }
     | { op: "resizeFrameBuffer"; width: number; height: number }
@@ -838,7 +851,12 @@ export function recordMogwaiScript(device: Device, source: string, files: Record
             apply: (_t, _this, args: unknown[]) => void commands.push({ op: "call", target, method: path, args: args.map(deref) }),
         });
 
-    const recordedSettings = { addOptions: (dict: unknown) => globalSettings.addOptions(toJs(dict) as Record<string, never>) };
+    const recordedSettings = {
+        addOptions: (dict: unknown) => globalSettings.addOptions(toJs(dict) as Record<string, never>),
+        addFilteredAttributes: (dictOrList: unknown) => globalSettings.addFilteredAttributes(toJs(dictOrList) as Record<string, never>),
+        clearOptions: () => globalSettings.clearOptions(),
+        clearFilteredAttributes: () => globalSettings.clearFilteredAttributes(),
+    };
     pyodide.registerJsModule("_falcor_js", {
         RenderGraph: makeGraph,
         createPass: (type: string, props?: unknown) => createPass(device, type, new Properties((toJs(props) as Record<string, never>) ?? {})),
@@ -856,18 +874,34 @@ export function recordMogwaiScript(device: Device, source: string, files: Record
     );
     // Graphs in m (Renderer::mGraphs order), for getGraph / removeGraph(name) / activeGraph.
     const graphList: RenderGraph[] = [];
+    let activeRec: RenderGraph | undefined;
     const byName = (g: RenderGraph | string) => (typeof g === "string" ? graphList.find((x) => x.name === g) : (targets.get(g) ?? g));
     pyodide.globals.set("m", {
         addGraph: (g: RenderGraph) => {
             const graph = targets.get(g) ?? g;
             added.add(graph);
             graphList.push(graph);
+            // Renderer::addGraph keeps the active graph (the first one added, until setActiveGraph).
+            activeRec ??= graph;
             commands.push({ op: "addGraph", graph });
         },
+        /** Mirrors Renderer::setActiveGraph: adds the graph first if needed. */
+        setActiveGraph: (g: RenderGraph) => {
+            const graph = targets.get(g) ?? g;
+            if (!graphList.includes(graph)) {
+                added.add(graph);
+                graphList.push(graph);
+                commands.push({ op: "addGraph", graph });
+            }
+            activeRec = graph;
+            commands.push({ op: "setActiveGraph", graph });
+        },
+        /** Mirrors Mogwai's m.script(path): runs another script with the same m. */
+        script: (path: string) => void pyodide!.runPython(`exec(compile(open(${JSON.stringify(String(path))}).read(), ${JSON.stringify(String(path))}, "exec"), globals())`),
         /** Mirrors Renderer::getGraph (None when no graph has that name: JS undefined, not null). */
         getGraph: (name: string) => graphList.find((x) => x.name === String(name)),
         get activeGraph() {
-            return graphList.at(-1);
+            return activeRec;
         },
         unloadScene: () => void commands.push({ op: "unloadScene" }),
         loadScene: (path: string, flags?: number) => void commands.push({ op: "loadScene", path: String(path), flags: Number(flags ?? 0) }),
@@ -875,10 +909,17 @@ export function recordMogwaiScript(device: Device, source: string, files: Record
         removeGraph: (g: RenderGraph | string) => {
             const graph = byName(g);
             if (!graph) return;
-            graphList.splice(graphList.indexOf(graph), 1);
+            // Renderer::removeGraph: the active index steps down past the removed graph.
+            const i = graphList.indexOf(graph);
+            let active = activeRec ? graphList.indexOf(activeRec) : 0;
+            graphList.splice(i, 1);
+            if (active >= i && active > 0) active--;
+            activeRec = graphList[active];
             commands.push({ op: "removeGraph", graph });
         },
         resizeFrameBuffer: (width: number, height: number) => void commands.push({ op: "resizeFrameBuffer", width: Number(width), height: Number(height) }),
+        // Deprecated alias (MogwaiScripting.cpp).
+        resizeSwapChain: (width: number, height: number) => void commands.push({ op: "resizeFrameBuffer", width: Number(width), height: Number(height) }),
         renderFrame: () => void commands.push({ op: "renderFrame" }),
         clock: recorder("clock"),
         frameCapture: recorder("frameCapture"),

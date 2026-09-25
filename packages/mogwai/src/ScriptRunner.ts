@@ -36,6 +36,8 @@ function resolvePath(root: object, path: string): [Record<string, unknown>, stri
 export interface MogwaiRunResult {
     frameCapture: FrameCaptureExtension;
     graphs: RenderGraph[];
+    /** Renderer's active graph at the end of the script. */
+    activeGraph: RenderGraph | null;
     scene: Scene | null;
 }
 
@@ -72,14 +74,23 @@ export async function runMogwaiSource(device: Device, source: string, dirUrl: st
         switch (cmd.op) {
             case "addGraph":
                 graphs.push(cmd.graph);
-                active = cmd.graph;
+                // Renderer::addGraph keeps the active graph; the first one added becomes active.
+                active ??= cmd.graph;
                 cmd.graph.onResize(...size, kTargetFormat);
                 if (scene) cmd.graph.setScene(scene);
                 await cmd.graph.init();
                 break;
-            case "removeGraph":
-                graphs.splice(graphs.indexOf(cmd.graph), 1);
-                active = graphs[graphs.length - 1] ?? null;
+            case "removeGraph": {
+                // Renderer::removeGraph: the active index steps down past the removed graph.
+                const i = graphs.indexOf(cmd.graph);
+                let a: number = active ? graphs.indexOf(active) : 0;
+                graphs.splice(i, 1);
+                if (a >= i && a > 0) a--;
+                active = graphs[a] ?? null;
+                break;
+            }
+            case "setActiveGraph":
+                active = cmd.graph;
                 break;
             case "loadScene": {
                 // os.path.abspath() paths point into the virtual file system: map them back to URLs.
@@ -146,5 +157,5 @@ export async function runMogwaiSource(device: Device, source: string, dirUrl: st
                 break;
         }
     }
-    return { frameCapture: fc, graphs, scene };
+    return { frameCapture: fc, graphs, activeGraph: active, scene };
 }

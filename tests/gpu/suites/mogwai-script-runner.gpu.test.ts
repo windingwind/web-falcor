@@ -8,7 +8,7 @@
 
 import { initScripting } from "@web-falcor/falcor";
 import "@web-falcor/render-passes";
-import { runMogwaiScript } from "../../../packages/mogwai/src/ScriptRunner.js";
+import { runMogwaiScript, runMogwaiSource } from "../../../packages/mogwai/src/ScriptRunner.js";
 import { gpuTest, expectEq, SkipError } from "../harness/registry.js";
 
 const same = (a: Uint8Array, b: Uint8Array) => a.length === b.length && a.every((v, i) => v === b[i]);
@@ -60,3 +60,25 @@ for (const script of kAllScripts) {
         expectEq(frameCapture.captured.length > 0, true, `${script}.py captured ${frameCapture.captured.length} files`);
     });
 }
+
+gpuTest("MogwaiScriptRunner.activeGraphAndScript", async ({ device }) => {
+    await initScripting("/node_modules/pyodide");
+    const source = [
+        "from falcor import *",
+        "a, b, c = RenderGraph('A'), RenderGraph('B'), RenderGraph('C')",
+        "m.addGraph(a)",
+        "m.addGraph(b)",
+        "assert m.activeGraph.name == 'A'  # Renderer::addGraph keeps the active graph",
+        "m.setActiveGraph(c)  # adds it",
+        "assert m.activeGraph.name == 'C' and m.getGraph('C') is not None",
+        "m.removeGraph(a)  # active index steps down, still C",
+        "assert m.activeGraph.name == 'C'",
+        "m.settings.clearOptions()",
+        "open('helper.py', 'w').write('m.resizeSwapChain(64, 32)\\nhelper_ran = True\\n')",
+        "m.script('helper.py')",
+        "assert helper_ran",
+    ].join("\n");
+    const { graphs, activeGraph } = await runMogwaiSource(device, source, "/tests/gpu/assets");
+    expectEq(graphs.map((g) => g.name).join(), "B,C", "graphs after removeGraph");
+    expectEq(activeGraph?.name, "C", "active graph replayed");
+});

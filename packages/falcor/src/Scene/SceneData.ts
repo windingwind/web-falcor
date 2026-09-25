@@ -162,6 +162,9 @@ export enum LightType {
 
 export interface AnalyticLight {
     type: LightType;
+    /** Light::isActive / Animatable::isAnimated (default true). */
+    active?: boolean;
+    animated?: boolean;
     /** Light name (pyscene ctor arg); used by Scene.getLight(name). */
     name?: string;
     /** Position (point lights) in world space. */
@@ -215,6 +218,8 @@ export class SceneLight implements AnalyticLight {
         this._openingAngle = desc.openingAngle;
         this._penumbraAngle = desc.penumbraAngle;
         this._transMat = desc.transMat;
+        this._active = desc.active !== false;
+        this.animated = desc.animated !== false;
     }
 
     get posW(): float3 | undefined { return this._posW; }

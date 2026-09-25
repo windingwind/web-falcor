@@ -18,7 +18,7 @@ gpuTest("Mogwai.rendererGraphApi", async ({ device }) => {
         "b = RenderGraph('B')",
         "b.addPass(createPass('ToneMapper'), 'Tone')",
         "m.addGraph(b)",
-        "assert m.activeGraph.name == 'B'",
+        "assert m.activeGraph.name == 'A'  # Renderer::addGraph keeps the first graph active",
         "assert m.getGraph('A').name == 'A'",
         "assert m.getGraph('missing') is None",
         "m.loadScene('test_scenes/cornell_box.pyscene')",
