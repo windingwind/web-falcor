@@ -2230,8 +2230,9 @@ export class Scene {
     getRenderSettingsKey(): string {
         const r = this.renderSettings;
         const c = this.sdfGridConfig;
-        // useEnvLight: an env map set or cleared at runtime (UpdateFlags::EnvMapChanged) changes the passes' defines.
-        return `${+r.useEnvLight}${+r.useAnalyticLights}${+r.useEmissiveLights}${+r.useGridVolumes}|${r.diffuseAlbedoMultiplier}|${c.intersectionMethod}${c.gradientEvaluationMethod}${c.solverMaxIterations}${+c.optimizeVisibilityRays}|${+this.useEnvLight}`;
+        // useEnvLight: an env map set or cleared at runtime (UpdateFlags::EnvMapChanged) changes the passes' defines;
+        // the scene defines' own key covers UpdateFlags::RecompileNeeded (any scene define that changed).
+        return `${+r.useEnvLight}${+r.useAnalyticLights}${+r.useEmissiveLights}${+r.useGridVolumes}|${r.diffuseAlbedoMultiplier}|${c.intersectionMethod}${c.gradientEvaluationMethod}${c.solverMaxIterations}${+c.optimizeVisibilityRays}|${+this.useEnvLight}|${this.getSceneDefines().key()}`;
     }
 
     /** Mirrors Scene::SDFGridConfig (native defaults for every grid type); the UI edits it, the defines follow. */
@@ -2520,8 +2521,7 @@ export class Scene {
                 (this.curveDescs.length > 0 ? 1 << GeometryType.Curve : 0) |
                 (this.hasDisplaced ? 1 << GeometryType.DisplacedTriangleMesh : 0),
             SCENE_GRID_COUNT: this.gridCount,
-            // Mirrors Scene::getSceneSDFGridDefines (defaults for all types:
-            // VoxelSphereTracing, NumericDiscontinuous, 256 iterations).
+            // Mirrors Scene::getSceneSDFGridDefines (the method choices come from sdfGridConfig).
             SCENE_SDF_GRID_COUNT: this.sdfGrids.length,
             SCENE_SDF_GRID_MAX_LOD_COUNT: this.sdfGrids.length > 0 ? Math.max(...this.sdfGrids.map((g) => (g.grid instanceof SDFSBS || g.grid instanceof SDFSVS ? 32 - Math.clz32(g.grid.gridWidth) : g.grid instanceof SDFSVO ? g.grid.levelCount : g.grid.lodCount))) : 0,
             // 1 = NormalizedDenseGrid, 2 = SparseVoxelSet, 3 = SparseBrickSet (all grids in a scene share a type).
