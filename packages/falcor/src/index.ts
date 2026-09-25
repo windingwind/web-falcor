@@ -25,6 +25,7 @@ export * from "./Core/API/RenderContext.js";
 export * from "./Core/API/BlendState.js";
 export * from "./Core/API/DepthStencilState.js";
 export * from "./Core/API/RasterizerState.js";
+export * from "./Core/API/Raytracing.js";
 export * from "./Core/API/VAO.js";
 export * from "./Core/API/FBO.js";
 export * from "./Core/API/GraphicsStateObject.js";

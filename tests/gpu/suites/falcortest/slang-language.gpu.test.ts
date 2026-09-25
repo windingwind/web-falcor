@@ -2,10 +2,10 @@
  * Transplanted FalcorTest GPU tests for Slang language features, compiled to
  * WGSL: Slang/SlangMutatingTests, SlangExtension, SlangGenerics, NestedStructs, SlangTests (SlangEnum,
  * SlangDefaultInitializers without its double case, SlangHashedStrings; the rest of that file needs
- * 16/64-bit scalar types).
+ * 16/64-bit scalar types), Slang/TraceRayFlags (the RAY_FLAG_* constants against the host RayFlags).
  */
 
-import { type Device } from "@web-falcor/falcor";
+import { RayFlags, type Device } from "@web-falcor/falcor";
 import { gpuTest } from "../../harness/registry.js";
 import { GPUUnitTestContext } from "../../harness/unit-test-context.js";
 import { Expect } from "../../harness/expect.js";
@@ -125,3 +125,20 @@ gpuTest("FalcorTest.SlangHashedStrings", async ({ device }) => {
     for (let i = 0; i < 4; i++) e.check(result[i] === hashedStrings[i]?.hash, () => `hash ${i}: ${result[i]} != ${hashedStrings[i]?.hash}`);
     e.done("SlangHashedStrings");
 });
+
+// Slang/TraceRayFlags.cpp
+for (const [name, dxr11] of [["TraceRayFlagsDXR1_0", false], ["TraceRayFlagsDXR1_1", true]] as const) {
+    gpuTest(`FalcorTest.${name}`, async ({ device }) => {
+        const expected = [RayFlags.None, RayFlags.ForceOpaque, RayFlags.ForceNonOpaque, RayFlags.AcceptFirstHitAndEndSearch, RayFlags.SkipClosestHitShader,
+            RayFlags.CullBackFacingTriangles, RayFlags.CullFrontFacingTriangles, RayFlags.CullOpaque, RayFlags.CullNonOpaque];
+        if (dxr11) expected.push(RayFlags.SkipTriangles, RayFlags.SkipProceduralPrimitives);
+        const ctx = new GPUUnitTestContext(device);
+        ctx.createProgram("Tests/Slang/TraceRayFlags.cs.slang", "testRayFlags", dxr11 ? { DXR_1_1: 1 } : {});
+        ctx.allocateStructuredBuffer("result", expected.length);
+        ctx.runProgram(1, 1, 1);
+        const result = await ctx.readBuffer("result", Uint32Array);
+        const e = new Expect();
+        expected.forEach((v, i) => e.check(result[i] === v, () => `result[${i}] = ${result[i]}, expected ${v}`));
+        e.done(name);
+    });
+}
