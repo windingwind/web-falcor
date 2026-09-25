@@ -398,6 +398,30 @@ async function main() {
             ev.preventDefault();
             void reloadShaders(state.device).then(() => (state.frame = 0));
         }
+        // SampleApp/MogwaiSettings hotkeys: Space/Pause the clock, Ctrl+Space the renderer, F1 help,
+        // F2 all UI, F10 the FPS line, F12 screen capture, ` the console.
+        if ((ev.key === " " || ev.key === "Pause") && !ev.shiftKey && !ev.altKey) {
+            ev.preventDefault();
+            if (ev.ctrlKey) (document.getElementById("play") as HTMLButtonElement | null)?.click();
+            else if (state.clock.isPaused()) state.clock.play();
+            else state.clock.pause();
+        } else if (!modified && ev.key === "F1") {
+            ev.preventDefault();
+            const help = document.getElementById("help");
+            if (help) help.hidden = !help.hidden;
+        } else if (!modified && ev.key === "F2") {
+            ev.preventDefault();
+            document.body.classList.toggle("headless");
+        } else if (!modified && ev.key === "F10") {
+            ev.preventDefault();
+            status.hidden = !status.hidden;
+        } else if (!modified && ev.key === "F12") {
+            ev.preventDefault();
+            (document.getElementById("capture") as HTMLButtonElement | null)?.click();
+        } else if (!modified && ev.key === "`") {
+            ev.preventDefault();
+            (document.getElementById("consoleToggle") as HTMLButtonElement | null)?.click();
+        }
     });
     (window as unknown as { mogwaiProfiler: { profiler: Profiler; ui: ProfilerUI } }).mogwaiProfiler = { profiler, ui: profilerUI };
     const pixelZoom = wirePixelZoom();
