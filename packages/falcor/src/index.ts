@@ -59,6 +59,7 @@ export * from "./Utils/Algorithm/ParallelReduction.js";
 export * from "./Utils/Algorithm/PrefixSum.js";
 export * from "./Utils/Algorithm/UnionFind.js";
 export * from "./Utils/CryptoUtils.js";
+export * from "./Utils/Image/TextureAnalyzer.js";
 export * from "./RenderGraph/RenderPassReflection.js";
 export * from "./RenderGraph/RenderPass.js";
 export * from "./RenderGraph/UIWidgets.js";
