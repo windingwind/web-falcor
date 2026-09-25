@@ -62,7 +62,9 @@
       #profiler td.profiler-bar div { height: 8px; background: #fff; }
       #profiler .profiler-graph { display: block; margin-top: 6px; }
       #profiler .profiler-tooltip { position: absolute; background: #111; padding: 2px 6px; border-radius: 3px; pointer-events: none; }
-          /* ?headless (Mogwai --headless): only the rendered canvas. */
+          /* F9: Clock::renderUI. */
+      #time { position: absolute; left: 8px; bottom: 8px; background: rgba(20, 20, 24, 0.9); color: #ddd; padding: 6px 8px; font: 12px sans-serif; border-radius: 4px; z-index: 5; max-width: 320px; }
+      /* ?headless (Mogwai --headless): only the rendered canvas. */
       body.headless > :not(#canvas) { display: none !important; }
     </style>
   </head>
@@ -71,7 +73,7 @@
     <canvas id="overlay"></canvas>
     <canvas id="zoom" hidden></canvas>
     <div id="status">initializing…</div>
-    <div id="help">drag: look/orbit · right-drag: roll (6-DOF) · WASD: move · Q/E: down/up · wheel: dolly/zoom · Shift: fast · Ctrl: slow · P: profiler · F7: overlay UI · Z (hold): pixel zoom · Space: pause clock · Ctrl+Space: pause rendering · F1: this help · F2: UI · F3: add viewpoint · F6: reload shaders · F10: FPS · F12: capture · N: next graph · `: console · Ctrl+O / Ctrl+Shift+O: open · Scene panel: controller</div>
+    <div id="help">drag: look/orbit · right-drag: roll (6-DOF) · WASD: move · Q/E: down/up · wheel: dolly/zoom · Shift: fast · Ctrl: slow · P: profiler · F7: overlay UI · Z (hold): pixel zoom · Space: pause clock · Ctrl+Space: pause rendering · F1: this help · F2: UI · F3: add viewpoint · F6: reload shaders · F9: time · F10: FPS · F12: capture · N: next graph · `: console · Ctrl+O / Ctrl+Shift+O: open · Scene panel: controller</div>
     <div id="controls">
       <button id="play">Pause</button>
       <button id="capture">Capture</button>
@@ -92,6 +94,7 @@
     </div>
     <div id="passes"></div>
     <div id="profiler" hidden></div>
+    <div id="time" hidden></div>
     <script type="module" src="./src/main.ts"></script>
   </body>
 </html>

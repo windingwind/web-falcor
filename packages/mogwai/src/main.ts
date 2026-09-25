@@ -5,7 +5,7 @@
 
 import { FrameCaptureExtension, captureOutput } from "./FrameCapture.js";
 import { recordMogwaiSource, replayMogwaiCommands, type MogwaiHost } from "./ScriptRunner.js";
-import { AssetCategory, AssetResolver, isAbsoluteUrl, kProjectMediaUrl, Clock, Device, Logger, LogLevel, SceneBuilderFlags, getGlobalSettings, Profiler, ProfilerUI, VideoRecorder, ProgramManager, RenderGraph, ResourceFormat, Bitmap, BitmapExportFlags, createPass, initScripting, initSlang, runConsoleCommand, runSceneScript, nativeKeyCode, type MogwaiCallbacks, runPbrtScene, runMitsubaScene, presentToCanvas, OverlayDrawList, type Scene } from "@web-falcor/falcor";
+import { AssetCategory, AssetResolver, isAbsoluteUrl, kProjectMediaUrl, Clock, Device, Logger, LogLevel, SceneBuilderFlags, getGlobalSettings, Profiler, ProfilerUI, VideoRecorder, ProgramManager, RenderGraph, ResourceFormat, Bitmap, BitmapExportFlags, createPass, initScripting, initSlang, runConsoleCommand, runSceneScript, DomWidgets, nativeKeyCode, type MogwaiCallbacks, runPbrtScene, runMitsubaScene, presentToCanvas, OverlayDrawList, type Scene } from "@web-falcor/falcor";
 import "@web-falcor/render-passes";
 import { CameraController, kCameraControllerTypes, kUpDirectionNames } from "./CameraController.js";
 import { buildUIPanel } from "./UIPanel.js";
@@ -443,6 +443,18 @@ async function main() {
         state.graph?.renderOverlayUI(overlay);
     };
     const profilerUI = new ProfilerUI(profiler, profilerPanel);
+    // MogwaiSettings::renderTimeSettings (F9): the clock's UI, refreshed while shown (not mid-interaction).
+    const timePanel = document.getElementById("time") as HTMLDivElement;
+    const renderTimePanel = () => {
+        if (timePanel.hidden) return;
+        timePanel.replaceChildren();
+        const ui = new DomWidgets(timePanel, renderTimePanel);
+        ui.text("Time");
+        state.clock.renderUI(ui);
+    };
+    setInterval(() => {
+        if (!timePanel.hidden && !timePanel.matches(":hover") && !timePanel.contains(document.activeElement)) renderTimePanel();
+    }, 250);
     window.addEventListener("mogwai-graphchange", () => rebuildUI());
     window.addEventListener("keydown", (ev) => {
         if (ev.target instanceof HTMLInputElement || ev.target instanceof HTMLTextAreaElement) return;
@@ -480,6 +492,10 @@ async function main() {
         } else if (!modified && ev.key === "F2") {
             ev.preventDefault();
             document.body.classList.toggle("headless");
+        } else if (!modified && ev.key === "F9") {
+            ev.preventDefault();
+            timePanel.hidden = !timePanel.hidden;
+            renderTimePanel();
         } else if (!modified && ev.key === "F10") {
             ev.preventDefault();
             status.hidden = !status.hidden;

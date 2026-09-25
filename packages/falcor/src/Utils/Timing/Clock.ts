@@ -8,6 +8,10 @@
 
 // 14400 is a common multiple of the supported frame rates; 2^16 gives headroom (Clock.cpp).
 import { ScriptWriter } from "../Scripting/ScriptWriter.js";
+import type { UIWidgets } from "../../RenderGraph/UIWidgets.js";
+
+/** fpsDropdown's common rates (0 = simulation disabled). */
+const kCommonFps = [0, 24, 25, 30, 48, 50, 60, 75, 90, 120, 144, 200, 240, 360, 480];
 const kTicksPerSecond = 14400 * (1 << 16);
 
 function timeFromFrame(frame: number, ticksPerFrame: number): number {
@@ -195,6 +199,26 @@ export class Clock {
     /** Mirrors Clock::shouldExit. */
     shouldExit(): boolean {
         return (this.exitTime > 0 && this.now >= this.exitTime) || (this.exitFrame > 0 && this.frames >= this.exitFrame);
+    }
+
+    /** Mirrors Clock::renderUI: time and scale, rewind/stop/play-pause (frame steps while paused), frame-rate simulation. */
+    renderUI(w: UIWidgets): void {
+        const time = this.getTime();
+        w.slider("Time", time, 0, Math.max(60, Math.ceil(time * 2)), 0.001, (t) => this.setTime(t));
+        if (!this.isSimulatingFps()) w.slider("Scale", this.getTimeScale(), 0, 10, 0.01, (v) => this.setTimeScale(v));
+        const showStep = this.isPaused() && this.isSimulatingFps();
+        w.button("Rewind", () => this.setTime(0));
+        if (showStep) w.button("Prev Frame", () => this.step(-1));
+        w.button("Stop", () => this.stop());
+        w.button(this.isPaused() ? "Play" : "Pause", () => (this.isPaused() ? this.play() : this.pause()));
+        if (showStep) w.button("Next Frame", () => this.step());
+        w.text("Framerate Simulation (time advances by 1/FPS per frame)");
+        const fps = this.getFramerate();
+        const names = [...kCommonFps.map((f) => (f === 0 ? "Disabled" : String(f))), "Custom"];
+        const current = kCommonFps.includes(fps) ? (fps === 0 ? "Disabled" : String(fps)) : "Custom";
+        w.dropdown("FPS", names, current, (v) => this.setFramerate(v === "Disabled" ? 0 : v === "Custom" ? Math.max(1, fps) : Number(v)));
+        if (current === "Custom") w.slider("Custom FPS", fps, 1, 1000, 1, (v) => this.setFramerate(Math.round(v)));
+        if (this.isSimulatingFps()) w.slider("Frame ID", this.getFrame(), 0, Math.max(1000, this.getFrame() * 2), 1, (f) => this.setFrame(Math.round(f)));
     }
 
     /** Mirrors Clock::getScript: the settings as script lines on `variable`. */
