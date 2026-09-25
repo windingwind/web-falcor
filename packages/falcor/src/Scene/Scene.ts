@@ -50,6 +50,7 @@ import { formatByteSize } from "../Utils/StringUtils.js";
 import { Logger } from "../Utils/Logger.js";
 import { SceneMaterial } from "./Material/SceneMaterial.js";
 import { AABB } from "../Utils/Math/AABB.js";
+import { AssetCategory, resolveAssetUrl } from "../Core/AssetResolver.js";
 import { getFormatChannelCount } from "../Core/API/Formats.js";
 import type { NDSDFGrid } from "./SDFs/NDSDFGrid.js";
 import { SDFSBS, packSBSGrids, type PackedSBS } from "./SDFs/SDFSBS.js";
@@ -795,6 +796,9 @@ export class Scene {
     private instanceCount = 0;
     /** Native mesh ID per triangle instance (instances of one builder mesh share it). */
     private meshIDs = new Uint32Array(0);
+    /** Per web mesh (instance): material ID and counts, for getGeometryIDsForMaterial / get_mesh. */
+    private meshMaterialIDs: number[] = [];
+    private meshCounts: { vertexCount: number; indexCount: number }[] = [];
     /** Mesh vertices/triangles uploaded (Scene::getSceneStats meshVertexCount / meshTriangleCount). */
     private vertexTotal = 0;
     private triangleTotal = 0;
@@ -1006,6 +1010,8 @@ export class Scene {
             if (id === undefined) meshIDOf.set(m.vertices, (id = meshIDOf.size));
             return id;
         });
+        this.meshMaterialIDs = meshDescs.map((d) => d.materialID);
+        this.meshCounts = meshDescs.map((d) => ({ vertexCount: d.vertexCount, indexCount: d.indexCount }));
         this.vertexTotal = allVertices.length;
         this.triangleTotal = allIndices.length / 3;
         // HitInfo::init: the largest per-geometry primitive count sizes the primitive-index field.
@@ -1372,8 +1378,61 @@ export class Scene {
         return this.getSceneDefines().key() !== definesBefore;
     }
 
-    setEnvMap(envMap: EnvMap | null): void {
-        this.envMap = envMap;
+    /** Mirrors Scene::setEnvMap; python's setEnvMap(path) (Scene::loadEnvMap) loads asynchronously. */
+    setEnvMap(envMap: EnvMap | string | null): boolean | void {
+        if (typeof envMap !== "string") {
+            this.envMap = envMap;
+            return;
+        }
+        const path = envMap;
+        this.pendingEnvMap = (async () => {
+            const { EnvMap } = await import("./Lights/EnvMap.js");
+            this.envMap = await EnvMap.createFromUrl(this.device, await resolveAssetUrl(path, "", AssetCategory.Any));
+        })().catch((err) => Logger.warning(`Failed to load environment map from '${path}': ${err}`));
+        return true;
+    }
+    /** The envMap load a python setEnvMap(path) started (awaitable by callers). */
+    pendingEnvMap: Promise<void> | null = null;
+
+    /** Mirrors Scene::setCameraBounds; the camera controller clamps its position to the box. */
+    setCameraBounds(minPoint: { x: number; y: number; z: number }, maxPoint: { x: number; y: number; z: number }): void {
+        this.cameraBounds = new AABB(minPoint, maxPoint);
+    }
+    cameraBounds: AABB | null = null;
+
+    /** Python `scene.memory_usage` (Scene::getMemoryUsageInBytes: SceneStats::getTotalMemory). */
+    get memory_usage(): number {
+        const sum = (o: object): number => Object.entries(o).reduce((n, [k, v]) => n + (typeof v === "object" && v ? sum(v) : k.endsWith("MemoryInBytes") ? Number(v) : 0), 0);
+        return sum(this.getSceneStats());
+    }
+
+    /** Python `scene.get_material(index | name)`. */
+    get_material(ref: number | string): SceneMaterialDesc {
+        return this.getMaterial(ref);
+    }
+
+    /** Mirrors Scene::getGeometryIDs(material): global geometry IDs (meshes, curves, SDF grids) using it. */
+    getGeometryIDsForMaterial(material: SceneMaterialDesc | number): number[] {
+        const id = typeof material === "number" ? material : this.materialDescs.indexOf(material);
+        const ids: number[] = [];
+        const meshCount = this.meshIDs.length ? Math.max(...this.meshIDs) + 1 : 0;
+        const seen = new Set<number>();
+        this.meshMaterialIDs.forEach((m, i) => {
+            const meshID = this.meshIDs[i]!;
+            if (m === id && !seen.has(meshID)) (seen.add(meshID), ids.push(meshID));
+        });
+        ids.sort((a, b) => a - b);
+        this.curveDescs.forEach((c, i) => c.materialID === id && ids.push(meshCount + i));
+        this.sdfGrids.forEach((g, i) => g.materialID === id && ids.push(meshCount + this.curveDescs.length + i));
+        return ids;
+    }
+
+    /** Python `scene.get_mesh(mesh_id)` (MeshDesc vertex_count / triangle_count). */
+    get_mesh(meshID: number): { vertex_count: number; triangle_count: number } {
+        const i = this.meshIDs.indexOf(meshID);
+        if (i < 0) throw new RuntimeError(`Scene.get_mesh: no mesh ${meshID}`);
+        const d = this.meshCounts[i]!;
+        return { vertex_count: d.vertexCount, triangle_count: d.indexCount / 3 };
     }
 
     /** Mirrors Scene::getLightCount. */

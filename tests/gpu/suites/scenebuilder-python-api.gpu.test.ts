@@ -43,3 +43,35 @@ gpuTest("Scripting.sceneBuilderPythonApi", async ({ device }) => {
     expectEq([scene.getMaterial(1).header?.alphaMode, scene.getMaterial(1).header?.alphaThreshold].join(), "1,0.25", "alphaMode / alphaThreshold");
     expectEq(scene.getSceneDefines().get("SCENE_DIFFUSE_ALBEDO_MULTIPLIER"), "0.500000", "diffuseAlbedoMultiplier define");
 });
+
+gpuTest("Scripting.materialTextureTransform", async ({ device }) => {
+    await initScripting("/node_modules/pyodide");
+    const scene = await runSceneScript(
+        device,
+        [
+            "plain = StandardMaterial('Plain')",
+            "moved = StandardMaterial('Moved')",
+            "moved.textureTransform.scaling = float3(2, 4, 1)  # in place, as native returns a reference",
+            "moved.textureTransform.translation = float3(0.5, 0, 0)",
+            "assert moved.textureTransform.scaling.y == 4.0",
+            "swapped = StandardMaterial('Swapped')",
+            "t = Transform()",
+            "t.scaling = float3(0.5, 0.5, 1)",
+            "swapped.textureTransform = t",
+            "for i, mat in enumerate([plain, moved, swapped]):",
+            "    sceneBuilder.addMeshInstance(sceneBuilder.addNode(f'q{i}', Transform()), sceneBuilder.addTriangleMesh(TriangleMesh.createQuad(), mat))",
+        ].join("\n"),
+        "/Falcor/media",
+    );
+    const blob = await (scene as unknown as { buffers: Record<string, { getBlob(): Promise<Uint8Array> }> }).buffers["vertices"]!.getBlob();
+    const dv = new DataView(blob.buffer, blob.byteOffset, blob.byteLength);
+    const n = blob.byteLength / 48 / 3;
+    const uv = (mesh: number, v: number) => [dv.getFloat32((mesh * n + v) * 48 + 32, true), dv.getFloat32((mesh * n + v) * 48 + 36, true)];
+    expectEq(Number.isInteger(n) && n >= 4, true, `three equal quads (${n} vertices each)`);
+    for (let v = 0; v < n; v++) {
+        const [u0, v0] = uv(0, v);
+        // The inverse transform: uv' = ((u - 0.5) / 2, v / 4) and uv' = 2 uv.
+        expectEq(uv(1, v).join(), [Math.fround((u0! - 0.5) / 2), Math.fround(v0! / 4)].join(), `moved texcoord ${v}`);
+        expectEq(uv(2, v).join(), [u0! * 2, v0! * 2].join(), `swapped texcoord ${v}`);
+    }
+});

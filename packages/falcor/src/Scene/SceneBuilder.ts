@@ -28,7 +28,7 @@ import { LightType, type AnalyticLight, type StaticVertex } from "./SceneData.js
 import { MaterialType, ShadingModel, packTextureHandle, TextureHandleMode } from "./Material/MaterialData.js";
 import { getTextureSlotSrgb } from "./Material/TextureSlots.js";
 import { float2, float3, float4 } from "../Utils/Math/Vector.js";
-import { float4x4, matrixFromTranslation, matrixFromScaling, mulMat } from "../Utils/Math/Matrix.js";
+import { float4x4, inverse, matrixFromTranslation, matrixFromScaling, mulMat } from "../Utils/Math/Matrix.js";
 import { RuntimeError } from "../Core/Error.js";
 import { AssetCategory, AssetResolver, resolveAssetUrl } from "../Core/AssetResolver.js";
 import { Logger } from "../Utils/Logger.js";
@@ -274,6 +274,10 @@ export class MaterialBridge {
     alphaMode?: number;
     /** Material::setAlphaThreshold. */
     alphaThreshold = 0.5;
+    /** Material::textureTransform: a live Transform, baked into the mesh texcoords like native. */
+    private _textureTransform = new TransformBridge();
+    get textureTransform(): TransformBridge { return this._textureTransform; }
+    set textureTransform(t: TransformBridge) { this._textureTransform = unwrapGuard(t); }
 
     constructor(
         public readonly materialType: MaterialType,
@@ -662,6 +666,27 @@ export function makeTransform(
     }
     if (translation) m = mulMat(matrixFromTranslation(translation), m);
     return m;
+}
+
+/**
+ * SceneBuilder::addMesh's texcoord pretransform: uv' = inverse(textureTransform) applied as a 2D
+ * affine map (after tangent generation, as natively), once per shared vertex array.
+ */
+function applyTextureTransforms(meshes: SceneMeshDesc[], transforms: Map<number, float4x4>): void {
+    const done = new Map<StaticVertex[], StaticVertex[]>();
+    const identity = float4x4.identity();
+    meshes.forEach((m, i) => {
+        const xform = transforms.get(i);
+        if (!xform || xform.data.every((v, j) => v === identity.data[j])) return;
+        let out = done.get(m.vertices);
+        if (!out) {
+            const inv = inverse(xform);
+            const f = Math.fround;
+            out = m.vertices.map((v) => ({ ...v, texCrd: new float2(f(inv.get(0, 0) * v.texCrd.x + inv.get(0, 1) * v.texCrd.y + inv.get(0, 3)), f(inv.get(1, 0) * v.texCrd.x + inv.get(1, 1) * v.texCrd.y + inv.get(1, 3))) }));
+            done.set(m.vertices, out);
+        }
+        meshes[i] = { ...m, vertices: out };
+    });
 }
 
 export type { SDFGridType, SDFGridRecipe };
@@ -1584,6 +1609,7 @@ export class SceneBuilderBridge {
             materialIDs.set(mat, materials.length);
             materials.push(mat.toDesc());
         }
+        const texTransforms = new Map<number, float4x4>();
         this.meshGeometry.forEach((geo, meshID) => {
             const transforms = this.meshInstanced.get(meshID);
             if (!transforms) return; // mesh never instanced
@@ -1599,6 +1625,7 @@ export class SceneBuilderBridge {
             const hasTangents = vertices.some((v) => v.tangent.x !== 0 || v.tangent.y !== 0 || v.tangent.z !== 0);
             for (const { transform, nodeID } of transforms) {
                 const animatedNode = builderNodeIDs.get(nodeID);
+                texTransforms.set(meshes.length, mat.textureTransform.matrix);
                 meshes.push({ vertices, indices: geo.indices, materialID, transform, nodeID: animatedNode, tangentSpace: hasTangents ? "asset" : "generate" });
             }
         });
@@ -1667,6 +1694,7 @@ export class SceneBuilderBridge {
 
         // SceneBuilder::addMesh: MikkTSpace tangents and the vertex merge, once per shared vertex array.
         this.generateMeshTangents(meshes);
+        applyTextureTransforms(meshes, texTransforms);
 
         // Flags::DontUseDisplacement: drop displacement maps (meshes stay plain triangles).
         if (this.hasFlag(SceneBuilderFlags.DontUseDisplacement)) for (const m of materials) delete m.basic.texDisplacement;

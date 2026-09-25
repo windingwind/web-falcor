@@ -61,3 +61,30 @@ gpuTest("Scripting.liveScenePythonProperties", async ({ device }) => {
     scene.runUpdateCallback(2.5);
     expectEq(scene.camera.getPosition().x, 2.5, "updateCallback ran with the frame time");
 });
+
+gpuTest("Scripting.liveSceneQueries", async ({ device }) => {
+    await initScripting("/node_modules/pyodide");
+    const scene = await runSceneScript(
+        device,
+        [
+            "a = StandardMaterial('A')",
+            "b = StandardMaterial('B')",
+            "b.baseColor = float4(1, 0, 0, 1)",
+            "quad = sceneBuilder.addTriangleMesh(TriangleMesh.createQuad(), a)",
+            "cube = sceneBuilder.addTriangleMesh(TriangleMesh.createCube(), b)",
+            "for i in range(2): sceneBuilder.addMeshInstance(sceneBuilder.addNode(f'q{i}', Transform()), quad)",
+            "sceneBuilder.addMeshInstance(sceneBuilder.addNode('c', Transform()), cube)",
+        ].join("\n"),
+        "/Falcor/media",
+    );
+    const run = (src: string) => runConsoleCommand(device, src, { scene, graph: null, profiler: new Profiler(device) });
+    expectEq(run("list(m.scene.getGeometryIDsForMaterial(m.scene.get_material('B')))"), "[1]", "geometry IDs of B (instances share one mesh)");
+    expectEq(run("list(m.scene.getGeometryIDsForMaterial(m.scene.materials[0]))"), "[0]", "geometry IDs of A");
+    expectEq(run("(m.scene.get_mesh(1).vertex_count, m.scene.get_mesh(1).triangle_count)"), "(24, 12)", "get_mesh counts (cube)");
+    expectEq(Number(run("m.scene.memory_usage")) > 0, true, "memory_usage");
+    run("m.scene.setCameraBounds(float3(-1, -1, -1), float3(1, 1, 1))\nm.scene.cameraSpeed = 2.5");
+    expectEq([scene.cameraBounds!.maxPoint.y, scene.cameraSpeed].join(), "1,2.5", "camera bounds and speed");
+    expectEq(run("m.scene.setEnvMap('/tests/oracle/assets/gradient.hdr')"), "True", "setEnvMap(path)");
+    await scene.pendingEnvMap;
+    expectEq(scene.getEnvMap() !== null, true, "env map loaded");
+});

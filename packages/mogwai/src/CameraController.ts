@@ -8,6 +8,7 @@ import {
     SixDoFCameraController,
     UpDirection,
     float2,
+    float3,
     add3,
     mul3,
     normalize3,
@@ -23,12 +24,20 @@ export const kCameraControllerTypes = ["First Person", "Orbiter", "6-DOF"] as co
 export type CameraControllerType = (typeof kCameraControllerTypes)[number];
 export const kUpDirectionNames = ["X+", "X-", "Y+", "Y-", "Z+", "Z-"] as const;
 
+/** The Scene properties native's Scene forwards to its camera controller. */
+export interface SceneCameraSettings {
+    cameraSpeed: number;
+    cameraBounds: { minPoint: float3; maxPoint: float3 } | null;
+}
+
 export class CameraController {
     private camera: Camera | null = null;
     private controller: NativeController | null = null;
     private type: CameraControllerType = "First Person";
     private upDirection = UpDirection.YPos;
     private speed = 1; // native Scene::mCameraSpeed default
+    private appliedSpeed = 1;
+    private appliedBounds: SceneCameraSettings["cameraBounds"] = null;
     private dollyAccum = 0; // wheel dolly for the first-person controllers (web extra; native ignores the wheel there)
     /** False while the scene's camera controls are disabled (Scene::setCameraControlsEnabled). */
     inputEnabled: () => boolean = () => true;
@@ -142,8 +151,17 @@ export class CameraController {
     }
 
     /** Applies pending input to `camera`. `now` is the rAF timestamp (ms). */
-    update(camera: Camera, now: number): boolean {
-        if (camera !== this.camera || !this.controller) this.createController(camera);
+    update(camera: Camera, now: number, scene?: SceneCameraSettings): boolean {
+        if (camera !== this.camera || !this.controller) {
+            this.createController(camera);
+            this.appliedBounds = null;
+        }
+        if (scene) {
+            // Native Scene owns the controller: its cameraSpeed and cameraBounds drive it.
+            if (scene.cameraSpeed !== this.appliedSpeed) this.setSpeed((this.appliedSpeed = scene.cameraSpeed));
+            const b = scene.cameraBounds;
+            if (b && b !== this.appliedBounds) this.controller!.setCameraBounds((this.appliedBounds = b).minPoint, b.maxPoint);
+        }
         this.pollGamepad();
         let changed = this.controller!.update(now / 1000);
         if (this.dollyAccum !== 0) {

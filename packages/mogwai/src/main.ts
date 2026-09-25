@@ -257,7 +257,10 @@ async function main() {
                 getUp: () => camControl.getUpDirection() as number,
                 setUp: (i) => camControl.setUpDirection(i),
                 getSpeed: () => camControl.getSpeed(),
-                setSpeed: (v) => camControl.setSpeed(v),
+                setSpeed: (v) => {
+                    camControl.setSpeed(v);
+                    if (state.scene) state.scene.cameraSpeed = camControl.getSpeed();
+                },
             },
         });
 
@@ -314,7 +317,7 @@ async function main() {
         const cam = state.scene?.camera;
         // Scene::update runs every frame: the scene's python updateCallback first.
         state.scene?.runUpdateCallback(state.clock.getTime());
-        let dirty = cam ? camControl.update(cam, now) : false;
+        let dirty = cam ? camControl.update(cam, now, state.scene ?? undefined) : false;
         // Scene::onKeyEvent: moving the camera by hand stops its animation.
         if (dirty && cam) cam.animated = false;
         // Advance the global clock (mirrors m.clock; console pause/frame stepping applies here).

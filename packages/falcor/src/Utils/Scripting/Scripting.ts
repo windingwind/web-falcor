@@ -369,7 +369,7 @@ def _guarded(factory, known, kwnames=()):
 _matProps = {'baseColor', 'specularParams', 'transmissionColor', 'emissiveColor',
              'emissiveFactor', 'doubleSided', 'roughness', 'metallic',
              'indexOfRefraction', 'specularTransmission', 'diffuseTransmission', 'thinSurface',
-             'nestedPriority', 'volumeAbsorption', 'volumeScattering', 'volumeAnisotropy', 'alphaMode', 'alphaThreshold',
+             'nestedPriority', 'volumeAbsorption', 'volumeScattering', 'volumeAnisotropy', 'alphaMode', 'alphaThreshold', 'textureTransform',
              'displacementScale', 'displacementOffset', 'lightProfileEnabled'}
 _lightProps = {'position', 'intensity', 'direction', 'angle',
                'openingAngle', 'penumbraAngle', 'scaling', 'rotation'}
