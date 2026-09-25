@@ -22,3 +22,10 @@ tests/gpu/out/
 # Local scratch dir for throwaway tests / browser-verify tooling
 /scratch/
 __pycache__/
+
+# Native image-test captures (scripts/capture-native-image-tests.sh); a few small ones are tracked.
+tests/oracle/out-native/image-tests/*/*
+!tests/oracle/out-native/image-tests/renderpasses/Skinning
+!tests/oracle/out-native/image-tests/scene/CameraAnimation
+!tests/oracle/out-native/image-tests/scene/USDPreviewSurface
+!tests/oracle/out-native/image-tests/scene/Volumes

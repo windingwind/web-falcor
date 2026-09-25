@@ -11,7 +11,10 @@ import type { Texture } from "./Texture.js";
 import { FboAttachmentType, type Fbo } from "./FBO.js";
 import type { Vao } from "./VAO.js";
 import type { GraphicsStateObject } from "./GraphicsStateObject.js";
-import { FormatType, ResourceFormat, getFormatType, isDepthFormat } from "./Formats.js";
+import { FormatType, ResourceFormat, getFormatChannelCount, getFormatType, getNumChannelBits, isDepthFormat } from "./Formats.js";
+import { ResourceBindFlags } from "./Types.js";
+import { float32ToFloat16 } from "../../Utils/Math/Float16.js";
+import { Logger } from "../../Utils/Logger.js";
 import { TextureReductionMode } from "./Sampler.js";
 import { RuntimeError } from "../Error.js";
 
@@ -96,6 +99,24 @@ function blitKind(format: ResourceFormat): BlitKind {
     return t === FormatType.Uint ? "u32" : t === FormatType.Sint ? "i32" : "f32";
 }
 
+/** One texel of `color` in `format` (float32/float16/unorm8 channels), or null if unsupported. */
+function encodeClearTexel(format: ResourceFormat, color: [number, number, number, number]): Uint8Array | null {
+    const channels = getFormatChannelCount(format);
+    const bits = getNumChannelBits(format, 0);
+    const type = getFormatType(format);
+    const out = new Uint8Array((channels * bits) / 8);
+    const view = new DataView(out.buffer);
+    for (let c = 0; c < channels; c++) {
+        const v = color[c] ?? 0;
+        if (type === FormatType.Float && bits === 32) view.setFloat32(c * 4, v, true);
+        else if (type === FormatType.Float && bits === 16) view.setUint16(c * 2, float32ToFloat16(v), true);
+        else if (type === FormatType.Unorm && bits === 8) out[c] = Math.round(Math.min(Math.max(v, 0), 1) * 255);
+        else if (color.every((x) => x === 0)) out.fill(0);
+        else return null;
+    }
+    return out;
+}
+
 export class RenderContext extends ComputeContext {
     /** Attaches profiler timestamps to a render-pass descriptor when active. */
     private withTimestamps(desc: GPURenderPassDescriptor): GPURenderPassDescriptor {
@@ -153,7 +174,28 @@ export class RenderContext extends ComputeContext {
             this.clearDsv(texture.getDSV(), color[0], 0);
             return;
         }
-        for (let mip = 0; mip < texture.mipCount; mip++) this.clearRtv(texture.getRTV(mip), color);
+        // Native picks RTV or UAV clears by bind flags; a storage-only texture can't be a render
+        // attachment in WebGPU, so it is filled by a (recorded, hence ordered) buffer copy.
+        if (texture.bindFlags & ResourceBindFlags.RenderTarget) {
+            for (let mip = 0; mip < texture.mipCount; mip++) this.clearRtv(texture.getRTV(mip), color);
+            return;
+        }
+        const texel = encodeClearTexel(texture.format, color);
+        if (!texel) {
+            Logger.warning(`RenderContext::clearTexture() - Unsupported texture format ${ResourceFormat[texture.format]} for a non-render-target clear.`);
+            return;
+        }
+        const layers = texture.gpuTexture.depthOrArrayLayers;
+        for (let mip = 0; mip < texture.mipCount; mip++) {
+            const [w, h] = [Math.max(1, texture.width >> mip), Math.max(1, texture.height >> mip)];
+            const bytesPerRow = Math.ceil((w * texel.length) / 256) * 256;
+            const data = new Uint8Array(bytesPerRow * h * layers);
+            for (let z = 0; z < h * layers; z++) for (let x = 0; x < w; x++) data.set(texel, z * bytesPerRow + x * texel.length);
+            const staging = this.device.gpuDevice.createBuffer({ size: data.byteLength, usage: GPUBufferUsage.COPY_SRC, mappedAtCreation: true });
+            new Uint8Array(staging.getMappedRange()).set(data);
+            staging.unmap();
+            this.getEncoder().copyBufferToTexture({ buffer: staging, bytesPerRow, rowsPerImage: h }, { texture: texture.gpuTexture, mipLevel: mip }, [w, h, layers]);
+        }
     }
 
     /**

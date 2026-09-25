@@ -160,7 +160,7 @@ export class BSDFViewer extends RenderPass {
     override setScene(scene: typeof this.scene): void {
         super.setScene(scene);
         this.pass = null;
-        this.frameCount = 0;
+        // BSDFViewer::setScene keeps mParams.frameCount (the sample stream continues across scenes).
     }
 
     override execute(ctx: RenderContext, renderData: RenderData): void {

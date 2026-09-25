@@ -1377,6 +1377,7 @@ export class Scene {
         this.materialTypes = new Set(this.materialDescs.map((m) => (m.merl ? MaterialType.MERL : m.rgl ? MaterialType.RGL : m.merlMix ? MaterialType.MERLMix : (m.header?.materialType ?? MaterialType.Standard))));
         this.materialDescs.forEach((m, i) => this.buffers["materialData"]!.setBlob(this.packMaterial(m, i), i * 128));
         this.rebuildLightCollection();
+        this.bumpUpdates();
         return this.getSceneDefines().key() !== definesBefore;
     }
 
@@ -1384,6 +1385,7 @@ export class Scene {
     setEnvMap(envMap: EnvMap | string | null): boolean | void {
         if (typeof envMap !== "string") {
             this.envMap = envMap;
+            this.bumpUpdates();
             return;
         }
         const path = envMap;
@@ -1486,6 +1488,7 @@ export class Scene {
     /** Re-packs analytic lights after runtime property edits (mirrors Light change tracking in Scene::update). */
     updateLights(): void {
         this.lightsDirty = false;
+        this.bumpUpdates();
         const active = this.activeLights;
         this.lightCount = active.length;
         this.buffers["lights"]!.setBlob(packLights(active));
@@ -1546,6 +1549,7 @@ export class Scene {
         const index = typeof ref === "object" ? this.materialDescs.indexOf(ref) : typeof ref === "number" ? ref : this.materialDescs.findIndex((m) => m.name === ref);
         const m = this.materialDescs[index];
         if (!m) throw new RuntimeError(`Scene.updateMaterial: no material '${String(ref)}'`);
+        this.bumpUpdates();
         this.buffers["materialData"]!.setBlob(this.packMaterial(m, index), index * 128);
         // Emissive edits change the NEE flux distribution (mirrors native
         // MaterialsChanged handling). Presence toggles that flip scene defines
@@ -1781,6 +1785,9 @@ export class Scene {
      */
     animate(timeSec: number): boolean {
         if (!this.animData || !this.sourceMeshes || !this.animationEnabled) return false;
+        // AnimationController::animate: matrices change when the time does.
+        if (timeSec !== this.lastAnimateTime) this.bumpUpdates();
+        this.lastAnimateTime = timeSec;
         const meshes = this.sourceMeshes;
         // Mirrors AnimationController: loop raw time over the clip length.
         // Clips needn't start at t=0 (e.g. FBX): before the first key the
@@ -2074,6 +2081,18 @@ export class Scene {
     }
     setRenderSettings(v: Partial<Scene["renderSettings"]>): void {
         this.renderSettings = v;
+        this.bumpUpdates();
+    }
+
+    /**
+     * Counts scene changes other than camera ones (native IScene::UpdateFlags besides
+     * CameraPropertiesChanged): animation steps, light/material/env map/render-settings edits,
+     * grid playback and SDF edits. Passes compare it across frames, as they test getUpdates().
+     */
+    updateVersion = 0;
+    private lastAnimateTime = NaN;
+    private bumpUpdates(): void {
+        this.updateVersion++;
     }
 
     /** Snapshot key for change detection (native compares mRenderSettings != mPrevRenderSettings). */
@@ -2500,7 +2519,7 @@ export class Scene {
     updateSDFGrids(): boolean {
         let changed = false;
         for (const desc of this.sdfGrids) changed = (desc.grid.primitives?.rebuild() ?? false) || changed;
-        if (changed) this.invalidateSDFResources();
+        if (changed) (this.invalidateSDFResources(), this.bumpUpdates());
         return changed;
     }
 
@@ -2523,7 +2542,7 @@ export class Scene {
     updateGridVolumePlayback(timeSec: number): boolean {
         let changed = false;
         for (const volume of this.gridVolumes) changed = volume.updatePlayback(timeSec) || changed;
-        if (changed) this.finalizeGridVolumes();
+        if (changed) (this.finalizeGridVolumes(), this.bumpUpdates());
         return changed;
     }
 

@@ -116,6 +116,8 @@ export class VBufferRT extends RenderPass {
 
     override setScene(scene: typeof this.scene): void {
         super.setScene(scene);
+        // GBufferBase::setScene: a fresh jitter pattern (the stratified one carries RNG state).
+        this.updateSamplePattern();
         this.pass = null;
         this.frameCount = 0;
     }

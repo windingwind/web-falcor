@@ -36,10 +36,10 @@ gpuTest("ImageLoaderOpts.fixedSizeFormatAndMipSelection", async ({ device }) => 
     const ctx = device.renderContext;
     const bitmap = await createImageBitmap(await (await fetch(`/Falcor/media/${kImage}`)).blob());
 
-    // Default: graph dims, image format (8-bit, blitted/rescaled).
+    // Default: graph dims and the graph's default format (as native: Unknown resolves to it).
     const dflt = await loadGraph(device, {}, [64, 48]);
     expectEq([dflt.width, dflt.height], [64, 48], "Default output size follows the graph");
-    expectEq(dflt.format, ResourceFormat.RGBA8Unorm, "Unknown output format follows the image");
+    expectEq(dflt.format, ResourceFormat.RGBA32Float, "Unknown output format takes the graph default");
 
     // Fixed + explicit float format: the image's own size, mip 0.
     const mip0 = await loadGraph(device, { outputSize: "Fixed", outputFormat: "RGBA32Float", mips: true, mipLevel: 0 }, [64, 48]);

@@ -185,6 +185,12 @@ export class Camera {
     }
 
     /** Mirrors Camera::calculateCameraParameters + getData. */
+    /** State behind native Camera::Changes except Jitter and History (movement, frustum, exposure, focus). */
+    getChangeKey(): string {
+        const [p, t, u] = [this._position, this._target, this._up];
+        return [p.x, p.y, p.z, t.x, t.y, t.z, u.x, u.y, u.z, this._focalLength, this.getFrameHeight(), this._aspectRatio, this.nearZ, this.farZ, this._focalDistance, this._apertureRadius, this._shutterSpeed, this._ISOSpeed].join();
+    }
+
     getData(): CameraData {
         if (this.dirty || !this.data) {
             const viewMat = matrixFromLookAt(this._position, this._target, this._up);

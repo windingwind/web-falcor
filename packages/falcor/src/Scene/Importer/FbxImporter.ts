@@ -404,7 +404,8 @@ export class FbxImporter {
                     const imageData = new ImageData(new Uint8ClampedArray(rgba), width, height);
                     bitmap = await createImageBitmap(imageData);
                 } else {
-                    bitmap = await createImageBitmap(await res.blob(), { colorSpaceConversion: "none", premultiplyAlpha: "none" });
+                    // Same decode options as the pyscene path and the scene cache (a cached scene must render the same).
+                    bitmap = await createImageBitmap(await res.blob(), { colorSpaceConversion: "none" });
                 }
             } catch {
                 skippedFormats.add(ext);

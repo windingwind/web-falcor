@@ -700,6 +700,47 @@ export function makeTransform(
     return m;
 }
 
+/**
+ * SceneBuilder::createMeshGroups + sortMeshes: static non-instanced meshes first, then dynamic
+ * non-instanced ones grouped by node, then instanced meshes grouped by identical instance sets,
+ * then the displaced variants of each. The web list holds one entry per instance; instances of a
+ * mesh share its vertex array, and an instance set is identified by the instances' transforms.
+ */
+function sortMeshesLikeNative(meshes: SceneMeshDesc[], materials: SceneMaterialDesc[]): SceneMeshDesc[] {
+    type Mesh = { entries: SceneMeshDesc[]; first: number };
+    const byVertices = new Map<StaticVertex[], Mesh>();
+    meshes.forEach((m, i) => {
+        const mesh = byVertices.get(m.vertices) ?? { entries: [], first: i };
+        mesh.entries.push(m);
+        byVertices.set(m.vertices, mesh);
+    });
+    const groups: SceneMeshDesc[][][] = [[], [], [], [], [], []]; // per class: ordered mesh lists
+    const keyed = [new Map<string, SceneMeshDesc[][]>(), new Map<string, SceneMeshDesc[][]>(), new Map<string, SceneMeshDesc[][]>(), new Map<string, SceneMeshDesc[][]>()];
+    const add = (cls: number, key: string | null, mesh: SceneMeshDesc[]) => {
+        if (key === null) return void groups[cls]!.push(mesh);
+        const map = keyed[cls === 1 ? 0 : cls === 2 ? 1 : cls === 4 ? 2 : 3]!;
+        const list = map.get(key) ?? [];
+        if (list.length === 0) map.set(key, list);
+        list.push(mesh);
+    };
+    for (const { entries } of [...byVertices.values()].sort((a, b) => a.first - b.first)) {
+        const m = entries[0]!;
+        const dynamic = m.nodeID !== undefined || !!m.skin || !!m.morph || !!m.vertexCache;
+        const displaced = materials[m.materialID]?.basic.texDisplacement !== undefined;
+        const instances = entries.map((e) => (e.nodeID !== undefined ? `n${e.nodeID}` : (e.transform?.toArray().join(",") ?? "I"))).sort().join("|");
+        if (entries.length > 1) add(displaced ? 5 : 2, instances, entries);
+        else if (!dynamic) add(displaced ? 3 : 0, null, entries);
+        else add(displaced ? 4 : 1, displaced ? null : instances, entries);
+    }
+    // Keyed classes keep their groups in first-appearance order. An instanced group lists its
+    // instances in turn, each with every mesh of the group (createGlobalBuffers' instance order).
+    const interleave = (group: SceneMeshDesc[][]) => [Array.from({ length: group[0]!.length }, (_, i) => group.map((mesh) => mesh[i]!))].flat();
+    groups[1] = [...keyed[0]!.values()].flat();
+    groups[2] = [...keyed[1]!.values()].flatMap(interleave);
+    groups[5] = [...keyed[3]!.values()].flatMap(interleave);
+    return groups.flat(2);
+}
+
 /** SceneBuilder::flipTriangleWinding: swaps the first two indices of every triangle. */
 function flipWinding(indices: Uint32Array): Uint32Array {
     const out = indices.slice();
@@ -1398,7 +1439,7 @@ export class SceneBuilderBridge {
         this.importedCameras = [];
         await loadMikkTSpace();
         const textureManager = new TextureManager();
-        const meshes: SceneMeshDesc[] = [];
+        let meshes: SceneMeshDesc[] = [];
         const materials: SceneMaterialDesc[] = [];
         const nodes: SceneNode[] = []; // retained scene-graph nodes (for animation)
         const animations: AnimationChannel[] = [];
@@ -1780,6 +1821,8 @@ export class SceneBuilderBridge {
             for (const m of [...meshes, ...curves, ...sdfGrids]) m.materialID = idMap[m.materialID]!;
             for (const b of builtSdfGrids) b.materialID = idMap[b.materialID]!;
         }
+        // SceneBuilder::createMeshGroups + sortMeshes: mesh (and instance) IDs follow native's mesh groups.
+        meshes = sortMeshesLikeNative(meshes, materials);
         const scene = await Scene.create(device, meshes, materials, lights, textureManager, sdfGrids, nodes, animations, cameraNodeID, weightTracks, curves);
         for (const c of this.customPrimitives) scene.addCustomPrimitive(c.userID, c.aabb);
         scene.importPaths.push(...importPaths);

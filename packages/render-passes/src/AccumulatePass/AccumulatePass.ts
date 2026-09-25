@@ -52,6 +52,8 @@ export class AccumulatePass extends RenderPass {
     private fixedOutputSize: [number, number] = [512, 512];
     private precision = AccumulatePrecision.Single;
     private autoReset = true;
+    /** Scene update version + camera state of the previous frame (autoReset). */
+    private lastSceneKey: string | undefined;
     private frameCount = 0;
     private pass: ComputePass | null = null;
     private lastFrameSum: Buffer | null = null;
@@ -95,6 +97,7 @@ export class AccumulatePass extends RenderPass {
     override setScene(scene: Scene | null): void {
         super.setScene(scene);
         this.reset();
+        this.lastSceneKey = undefined;
     }
 
     override renderUI(ui: UIWidgets): void {
@@ -146,6 +149,14 @@ export class AccumulatePass extends RenderPass {
         const input = renderData.getTexture("input")!;
         const output = renderData.getTexture("output")!;
         const [w, h] = [output.width, output.height];
+
+        // AccumulatePass::execute autoReset: any scene change except camera jitter/history restarts accumulation.
+        const scene = this.scene;
+        if (this.autoReset && scene) {
+            const key = `${scene.updateVersion}|${scene.camera.getChangeKey()}`;
+            if (this.lastSceneKey !== undefined && key !== this.lastSceneKey) this.reset();
+            this.lastSceneKey = key;
+        }
 
         // Mirrors the native overflow handling once maxFrameCount frames were accumulated.
         const limited = this.maxFrameCount > 0 && this.precision !== AccumulatePrecision.SingleCompensated;

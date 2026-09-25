@@ -78,9 +78,9 @@ gpuTest("Scripting.liveSceneQueries", async ({ device }) => {
         "/Falcor/media",
     );
     const run = (src: string) => runConsoleCommand(device, src, { scene, graph: null, profiler: new Profiler(device) });
-    expectEq(run("list(m.scene.getGeometryIDsForMaterial(m.scene.get_material('B')))"), "[1]", "geometry IDs of B (instances share one mesh)");
-    expectEq(run("list(m.scene.getGeometryIDsForMaterial(m.scene.materials[0]))"), "[0]", "geometry IDs of A");
-    expectEq(run("(m.scene.get_mesh(1).vertex_count, m.scene.get_mesh(1).triangle_count)"), "(24, 12)", "get_mesh counts (cube)");
+    expectEq(run("list(m.scene.getGeometryIDsForMaterial(m.scene.get_material('B')))"), "[0]", "geometry IDs of B (native mesh groups: the non-instanced cube comes first)");
+    expectEq(run("list(m.scene.getGeometryIDsForMaterial(m.scene.materials[0]))"), "[1]", "geometry IDs of A (the instanced quad)");
+    expectEq(run("(m.scene.get_mesh(0).vertex_count, m.scene.get_mesh(0).triangle_count)"), "(24, 12)", "get_mesh counts (cube)");
     expectEq(Number(run("m.scene.memory_usage")) > 0, true, "memory_usage");
     run("m.scene.setCameraBounds(float3(-1, -1, -1), float3(1, 1, 1))\nm.scene.cameraSpeed = 2.5");
     expectEq([scene.cameraBounds!.maxPoint.y, scene.cameraSpeed].join(), "1,2.5", "camera bounds and speed");

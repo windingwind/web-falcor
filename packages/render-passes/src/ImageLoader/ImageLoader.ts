@@ -139,8 +139,9 @@ export class ImageLoader extends RenderPass {
         // Default = framebuffer dims (the image is blitted into the output); Fixed = the image's own size.
         const fixed: [number, number] = this.texture ? [this.texture.width, this.texture.height] : [0, 0];
         const [w, h] = calculateIOSize(this.outputSize, fixed, compileData.defaultTexDims);
-        // Unknown output format follows the image (web: the graph default is float, native's is the 8-bit swapchain).
-        const format = this.outputFormat !== ResourceFormat.Unknown ? this.outputFormat : (this.texture?.format ?? ResourceFormat.RGBA32Float);
+        // Unknown takes the graph's default format, as natively: Mogwai scripts (8-bit sRGB swapchain)
+        // clamp HDR images there; the web viewer's float default keeps them.
+        const format = this.outputFormat;
         r.addOutput("dst", "Destination texture")
             .texture2D(w, h)
             .format(format)

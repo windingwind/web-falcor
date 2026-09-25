@@ -30,7 +30,8 @@ const vite = await createServer({
 });
 await vite.listen();
 const port = vite.config.server.port === 0 ? vite.httpServer.address().port : vite.config.server.port;
-const url = `http://127.0.0.1:${port}/tests/gpu/harness/index.html${filter ? `?filter=${encodeURIComponent(filter)}` : ""}`;
+// EXTRA_QUERY (e.g. "dbg=scene/SceneCache") is appended for tests that read their own parameters.
+const url = `http://127.0.0.1:${port}/tests/gpu/harness/index.html?filter=${encodeURIComponent(filter ?? "")}${process.env.EXTRA_QUERY ? `&${process.env.EXTRA_QUERY}` : ""}`;
 
 const args = ["--enable-unsafe-webgpu", "--no-sandbox", "--disable-gpu-sandbox", "--ignore-gpu-blocklist"];
 if (useSwiftShader) {
