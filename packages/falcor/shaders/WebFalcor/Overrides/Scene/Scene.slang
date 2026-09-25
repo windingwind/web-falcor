@@ -62,6 +62,19 @@ import Rendering.Materials.TexLODHelpers;
 
 /** Scene data required for rendering.
 */
+/** WebFalcor: a grid's stats and the byte offset of its NanoVDB grid in gScene.gridData (48 B). */
+struct GridInfo
+{
+    int3 minIndex;
+    float minValue;
+    int3 maxIndex;
+    float maxValue;
+    uint baseAddress;
+    uint _pad0;
+    uint _pad1;
+    uint _pad2;
+};
+
 struct Scene
 {
     // Raytracing
@@ -163,8 +176,13 @@ struct Scene
     // Grid volumes
     uint gridVolumeCount;
     StructuredBuffer<GridVolume> gridVolumes;
-    // WebFalcor: single grid instance (see sdfGrid0 note).
-    Grid grid0;
+    // WebFalcor: every grid's NanoVDB data shares one buffer (no binding arrays); gridInfos holds
+    // each grid's stats and byte offset, and the brick textures are shared placeholders.
+    StructuredBuffer<uint> gridData;
+    StructuredBuffer<GridInfo> gridInfos;
+    Texture3D<float2> gridRangeTex;
+    Texture3D<uint4> gridIndirectionTex;
+    Texture3D<float> gridAtlasTex;
 
     // Geometry access
 
@@ -303,7 +321,16 @@ struct Scene
 
     void getGrid(const uint gridIndex, out Grid grid)
     {
-        grid = grid0;
+        const GridInfo info = gridInfos[gridIndex];
+        grid.minIndex = info.minIndex;
+        grid.minValue = info.minValue;
+        grid.maxIndex = info.maxIndex;
+        grid.maxValue = info.maxValue;
+        grid.baseAddress = info.baseAddress;
+        grid.buf = gridData;
+        grid.rangeTex = gridRangeTex;
+        grid.indirectionTex = gridIndirectionTex;
+        grid.atlasTex = gridAtlasTex;
     }
 
     uint getGridVolumeCount()

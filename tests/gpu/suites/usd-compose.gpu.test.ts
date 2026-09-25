@@ -23,7 +23,8 @@ gpuTest("UsdCompose.matchesNativeOracle", async ({ device }) => {
     // The sublayer's floor, the referenced quad, the selected variant and two instanced triangles.
     expectEq(scene.stats.instances, 5, "every composed mesh is imported");
     expectEq(scene.getMaterial(0)?.name, "Red", "the referenced material is bound");
-    expectEq(scene.getMaterial("default-mesh-1")?.basic.baseColor?.y, 0.6, "unbound meshes take their display color");
+    const floor = scene.materials.find((m) => m.name?.startsWith("default-mesh") && m.basic.baseColor?.y === 0.6);
+    expectEq(floor?.basic.baseColor?.x, 0.2, "unbound meshes take their display color (the floor's)");
 
     const graph = new RenderGraph(device, "UsdCompose");
     graph.addPass(createPass(device, "GBufferRT", { useTraceRayInline: true, samplePattern: "Center" }), "GBufferRT");

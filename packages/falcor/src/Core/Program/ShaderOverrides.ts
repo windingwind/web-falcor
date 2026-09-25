@@ -135,6 +135,7 @@ export const kShaderOverrides: Readonly<Record<string, string>> = {
     "RenderPasses/RTXDIPass/FinalShading.cs.slang": "WebFalcor/Overrides/RenderPasses/RTXDIPass/FinalShading.cs.slang",
     // Per-LOD Texture3D binding array -> one R8Snorm atlas stacked along Z.
     "Scene/SDFs/NormalizedDenseSDFGrid/NDSDFGrid.slang": "WebFalcor/Overrides/Scene/SDFs/NormalizedDenseSDFGrid/NDSDFGrid.slang",
+    "Scene/Volume/Grid.slang": "WebFalcor/Overrides/Scene/Volume/Grid.slang",
     // brickID != UINT32_MAX promotes to i64 (unsupported in WGSL) -> 0xffffffffu; packed multi-grid indirection.
     "Scene/SDFs/SparseBrickSet/SDFSBS.slang": "WebFalcor/Overrides/Scene/SDFs/SparseBrickSet/SDFSBS.slang",
     // Per-voxel AABBs moved into the shared SDF BVH buffer (16-storage-buffer cap).

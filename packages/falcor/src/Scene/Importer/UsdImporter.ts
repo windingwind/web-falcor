@@ -19,7 +19,7 @@ import { decomposeTRS, type AnimationChannel, type SceneNode, type SkinDesc } fr
 import { extractBasisCurvesFromUsda, type BasisCurvesDesc } from "../Curves/CurveTessellation.js";
 import { loadOpenSubdiv, tessellateUsdMesh, type TessellatedMesh } from "./Subdivision.js";
 import { refinedCorners, triangulateUsdMesh, type CornerMesh } from "./UsdTriangulate.js";
-import { extractUsdCamerasAndLights, extractUsdDisplayColors, extractUsdMaterialBindings, extractUsdMaterialTextures, extractUsdPointInstancers, extractUsdMeshes, extractUsdSkeletons, extractUsdXformAnimations, sampleAt, usdRenderSettings, usdTimeCodesPerSecond, usdaStageInfo, usdChannelIndex, usdStageRootTransform, usdTexCoordTransform, type UsdaCamera, type UsdaDomeLight, type UsdaSkeleton, type UsdaSubdivMesh, type UsdaTextureInput, type UsdaXformAnimation } from "./UsdaScene.js";
+import { extractUsdCamerasAndLights, extractUsdPreviewSurfaceValues, type UsdPreviewSurfaceValues, remapReferencedPaths, usdaReferencingPrims, extractUsdDisplayColors, extractUsdMaterialBindings, extractUsdMaterialTextures, extractUsdPointInstancers, extractUsdMeshes, extractUsdSkeletons, extractUsdXformAnimations, sampleAt, usdRenderSettings, usdTimeCodesPerSecond, usdaStageInfo, usdChannelIndex, usdStageRootTransform, usdTexCoordTransform, type UsdaCamera, type UsdaDomeLight, type UsdaSkeleton, type UsdaSubdivMesh, type UsdaTextureInput, type UsdaXformAnimation } from "./UsdaScene.js";
 import type { AnalyticLight } from "../SceneData.js";
 
 interface UsdNode {
@@ -221,11 +221,13 @@ const toArray = (v: unknown): string[] => {
 /**
  * Composes a USD layer as a stage does (sublayers, then inherits, variants, references and
  * payloads until none remain), fetching external layers relative to `baseUrl`. Returns the
- * composed layer's text (the caller builds the render scene), or null if the file has no
- * composition arcs.
+ * composed layer's text with referenced paths remapped (`remapped` if any were; the caller
+ * builds the render scene), or null if the file has no composition arcs.
  */
-async function composeUsdLayer(usd: TinyUsdzLayer, bytes: Uint8Array, baseUrl: string): Promise<string | null> {
+async function composeUsdLayer(usd: TinyUsdzLayer, bytes: Uint8Array, baseUrl: string, layerTextOf: (bytes: Uint8Array) => string | null): Promise<{ text: string; remapped: boolean } | null> {
     if (!usd.loadAsLayerFromBinary(bytes, "scene.usd")) return null;
+    const referencing = usdaReferencingPrims(usd.layerToString());
+    const assets = new Map<string, Uint8Array>();
     const sublayers = toArray(usd.extractSublayerAssetPaths());
     // tinyusdz's hasVariants() reports none, so variant sets are found in the text.
     const hasVariantSets = () => /\bvariantSet\s+"/.test(usd.layerToString());
@@ -239,7 +241,9 @@ async function composeUsdLayer(usd: TinyUsdzLayer, bytes: Uint8Array, baseUrl: s
                 const url = /^([a-z]+:|\/)/i.test(p) || !baseUrl ? p : `${baseUrl}/${p.replace(/^\.\//, "")}`;
                 const res = await fetch(url);
                 if (!res.ok) throw new RuntimeError(`UsdImporter: can't find layer '${p}' (tried '${url}', ${res.status})`);
-                usd.setAsset(p, new Uint8Array(await res.arrayBuffer()));
+                const data = new Uint8Array(await res.arrayBuffer());
+                assets.set(p, data);
+                usd.setAsset(p, data);
             }),
         );
     };
@@ -259,7 +263,42 @@ async function composeUsdLayer(usd: TinyUsdzLayer, bytes: Uint8Array, baseUrl: s
             if (!usd.composePayload()) throw new RuntimeError(`UsdImporter: failed to compose payloads (${usd.error()})`);
         }
     }
-    return usd.layerToString();
+    // Referenced layers' own paths (bindings, connections) move into the referencing prim's namespace.
+    const refs = referencing.map((r) => {
+        const assetText = assets.has(r.asset) ? layerTextOf(assets.get(r.asset)!) : null;
+        const defaultPrim = assetText?.match(/^#usda[^\n]*\n\s*\(([\s\S]*?)\n\)/)?.[1]?.match(/defaultPrim\s*=\s*"([^"]+)"/)?.[1];
+        return { path: r.path, source: r.target ?? (defaultPrim ? `/${defaultPrim}` : r.path) };
+    });
+    const text = usd.layerToString();
+    const remappedText = remapReferencedPaths(text, refs);
+    return { text: remappedText, remapped: remappedText !== text };
+}
+
+/** Drops `.connect` lines whose target prim doesn't exist (e.g. `</null>`): USD treats them as unconnected, tinyusdz rejects them. */
+function dropDanglingConnections(text: string): string {
+    const prims = new Set<string>();
+    const stack: string[] = [];
+    // Prim paths from def/over headers, tracking nesting by braces on header lines only.
+    for (const line of text.split("\n")) {
+        if (line.length > 500) continue;
+        const def = line.match(/^\s*(?:def|over|class)\s+(?:\w+\s+)?"([^"]+)"/);
+        if (def) stack.push(def[1]!);
+        if (def) prims.add("/" + stack.join("/"));
+        if (/^\s*\}\s*$/.test(line) && stack.length) stack.pop();
+    }
+    return text.replace(/^[^\n]*\.connect\s*=\s*<([^>.]+)(?:\.[^>]*)?>[^\n]*\n/gm, (l, prim: string) => (prims.has(prim) ? l : ""));
+}
+
+/** Drops the stage's customLayerData dictionary: tinyusdz can't re-parse its own printout of it (render settings are read from the full text). */
+function stripCustomLayerData(text: string): string {
+    const m = /^\s*customLayerData\s*=\s*\{/m.exec(text.slice(0, text.search(/^(def|over|class)\b/m) >>> 0));
+    if (!m) return text;
+    let depth = 0;
+    for (let i = m.index + m[0].length - 1; i < text.length; i++) {
+        if (text[i] === "{") depth++;
+        else if (text[i] === "}" && --depth === 0) return text.slice(0, m.index) + text.slice(i + 1);
+    }
+    return text;
 }
 
 /** A mesh's first display color (on the prim, else its parent), as native's default material uses; [0.7, 0.7, 0.7] if none. */
@@ -290,15 +329,17 @@ export class UsdImporter {
         const native = await loadTinyUsdz();
         let usd = new native.TinyUSDZLoaderNative();
         // Files with composition arcs are composed first.
-        const composedText = await composeUsdLayer(usd as unknown as TinyUsdzLayer, bytes, baseUrl);
+        const composed = await composeUsdLayer(usd as unknown as TinyUsdzLayer, bytes, baseUrl, (b) => usdLayerText(native, b));
+        const composedText = composed?.text ?? null;
         // Cameras, lights and stage metadata come from the layer's text (RenderScene has none of them).
         const layerText = composedText ?? usdLayerText(native, bytes);
         // tinyusdz's RenderScene conversion crashes on skel joint primvars; they are read from the
         // layer text instead, so its scene is built from the text without them.
         const skelPrimvars = /^\s*[\w\[\]]+\s+primvars:skel:\w+\s*=\s*(\[[^\]]*\]|\([^)]*\))(\s*\([^)]*\))?/gm;
-        if (layerText && skelPrimvars.test(layerText)) {
+        // Remapped reference paths only exist in the text, so its render scene is built from the text too.
+        if (layerText && (skelPrimvars.test(layerText) || composed?.remapped)) {
             usd = new native.TinyUSDZLoaderNative();
-            if (!usd.loadFromBinary(new TextEncoder().encode(layerText.replace(skelPrimvars, "")), "scene.usda")) throw new RuntimeError(`UsdImporter: failed to parse USD (${usd.error()})`);
+            if (!usd.loadFromBinary(new TextEncoder().encode(dropDanglingConnections(stripCustomLayerData(layerText.replace(skelPrimvars, "")))), "scene.usda")) throw new RuntimeError(`UsdImporter: failed to parse USD (${usd.error()})`);
         } else if (composedText !== null) {
             const layer = usd as unknown as TinyUsdzLayer;
             if (!layer.layerToRenderScene()) throw new RuntimeError(`UsdImporter: failed to build the composed scene (${layer.error()})`);
@@ -314,6 +355,7 @@ export class UsdImporter {
         // tinyusdz materials carry no name: find them through the meshes' bindings.
         const bindings = layerText ? extractUsdMaterialBindings(layerText) : new Map<string, string>();
         const displayColors = layerText ? extractUsdDisplayColors(layerText) : new Map<string, [number, number, number]>();
+        const surfaceValues = layerText ? extractUsdPreviewSurfaceValues(layerText) : new Map<string, UsdPreviewSurfaceValues>();
 
         const meshes: SceneMeshDesc[] = [];
         const materials: SceneMaterialDesc[] = [];
@@ -324,16 +366,19 @@ export class UsdImporter {
 
         const getOrAddMaterial = (materialId: number | undefined, materialPath: string | undefined, meshPath?: string): number => {
             const id = materialId ?? -1;
+            // The layer text's UsdPreviewSurface values override tinyusdz's (and stand in for an unresolved binding).
+            const textValues = materialPath ? surfaceValues.get(materialPath) : undefined;
+            const bound = id >= 0 || textValues !== undefined;
             // Unbound meshes share native's default material per display color.
-            const color = id < 0 ? usdDisplayColor(displayColors, meshPath) : undefined;
-            const key = color ? `default:${color.join(",")}` : id;
+            const color = !bound ? usdDisplayColor(displayColors, meshPath) : undefined;
+            const key = color ? `default:${color.join(",")}` : textValues ? `path:${materialPath}` : id;
             const existing = materialIndex.get(key);
             if (existing !== undefined) return existing;
             let desc: SceneMaterialDesc;
             let name = "";
             let texTransform: UsdaTextureInput["transform"];
-            if (id >= 0) {
-                const m = usd.getMaterial(id);
+            if (bound) {
+                const m: UsdMaterial = { ...(id >= 0 ? usd.getMaterial(id) : {}), ...textValues };
                 name = m.name || (materialPath?.slice(materialPath.lastIndexOf("/") + 1) ?? "");
                 const dc = m.diffuseColor ?? [0.18, 0.18, 0.18];
                 const em = m.emissiveColor ?? [0, 0, 0];
@@ -364,7 +409,7 @@ export class UsdImporter {
                     if (!texTransform) texTransform = input.transform;
                     else if (JSON.stringify(texTransform) !== JSON.stringify(input.transform)) Logger.warning(`Shader input '${input.texture}' specifies a texture transform that differs from that used on another texture, which is not supported. Applying the first encountered non-idenity transform to all textures.`);
                 }
-                const hasTexture = [m.diffuseColorTextureId, m.roughnessTextureId, m.metallicTextureId, m.normalTextureId, m.emissiveColorTextureId, m.opacityTextureId, m.displacementTextureId].some((t) => t !== undefined && t >= 0);
+                const hasTexture = [m.diffuseColorTextureId, m.roughnessTextureId, m.metallicTextureId, m.normalTextureId, m.emissiveColorTextureId, m.opacityTextureId, m.displacementTextureId].some((t) => t !== undefined && t >= 0) || [...inputs.values()].some((i) => i.file !== undefined);
                 if (hasTexture) textureJobs.push({ desc, material: m, inputs });
             } else {
                 // ImporterContext::getDefaultMaterial: the display color, roughness 0.3, double-sided.
@@ -677,6 +722,16 @@ async function resolveMaterialTextures(
     inputs = new Map<string, UsdaTextureInput>(),
 ): Promise<void> {
     const valid = (id: number | undefined): id is number => id !== undefined && id >= 0;
+    // A slot's texture: tinyusdz's, else the layer text's inputs:file (tinyusdz drops assets authored only as time samples).
+    const fileOf = (input: string) => inputs.get(input)?.file;
+    const has = (input: string, id: number | undefined) => valid(id) || fileOf(input) !== undefined;
+    const bitmapOf = async (input: string, id: number | undefined): Promise<ImageBitmap> => {
+        if (valid(id)) return resolveImageBitmap(usd, id, baseUrl);
+        const url = baseUrl ? `${baseUrl}/${fileOf(input)!}` : fileOf(input)!;
+        const res = await fetch(url);
+        if (!res.ok) throw new RuntimeError(`fetch '${url}' (${res.status})`);
+        return createImageBitmap(await res.blob(), { colorSpaceConversion: "none", premultiplyAlpha: "none" });
+    };
     // Authored color spaces override the slot's (ConvertedInput::loadSRGB).
     const srgbOf = (input: string, slotSrgb: boolean) => (inputs.get(input)?.srgb ?? slotSrgb) && !assumeLinear;
     // Single-channel inputs read the connected output (red without layer text); -2 marks several channels.
@@ -685,25 +740,25 @@ async function resolveMaterialTextures(
         const c = usdChannelIndex(output);
         return c >= 0 ? c : -2;
     };
-    const load = async (id: number, input: string, slotSrgb: boolean): Promise<number | undefined> => {
+    const load = async (id: number | undefined, input: string, slotSrgb: boolean): Promise<number | undefined> => {
         try {
-            return textureManager.addTexture({ bitmap: await resolveImageBitmap(usd, id, baseUrl), srgb: srgbOf(input, slotSrgb) });
+            return textureManager.addTexture({ bitmap: await bitmapOf(input, id), srgb: srgbOf(input, slotSrgb) });
         } catch (err) {
             Logger.warning(`UsdImporter: failed to load texture ${id} (${String(err)})`);
             return undefined;
         }
     };
     const threshold = m.opacityThreshold ?? 0;
-    const opacityTextured = valid(m.opacityTextureId);
+    const opacityTextured = has("opacity", m.opacityTextureId);
     const opacityChannel = channelOf("opacity");
     if (opacityTextured && opacityChannel < 0) {
         Logger.warning(threshold > 0 ? "Cannot set alpha channel; opacity texture provides more than one channel." : "Cannot create transmission texture; opacity texture provides more than one channel of data.");
     }
-    if (threshold > 0 && (valid(m.diffuseColorTextureId) || opacityTextured) && ((m.opacity ?? 1) < 1 || opacityTextured) && !(opacityTextured && opacityChannel < 0)) {
+    if (threshold > 0 && (has("diffusecolor", m.diffuseColorTextureId) || opacityTextured) && ((m.opacity ?? 1) < 1 || opacityTextured) && !(opacityTextured && opacityChannel < 0)) {
         // packBaseColorAlpha: cutout opacity rides in the base colour's alpha.
         try {
-            const baseImg = valid(m.diffuseColorTextureId) ? readPixels(await resolveImageBitmap(usd, m.diffuseColorTextureId, baseUrl)) : null;
-            const opacityImg = opacityTextured ? readPixels(await resolveImageBitmap(usd, m.opacityTextureId!, baseUrl)) : null;
+            const baseImg = has("diffusecolor", m.diffuseColorTextureId) ? readPixels(await bitmapOf("diffusecolor", m.diffuseColorTextureId)) : null;
+            const opacityImg = opacityTextured ? readPixels(await bitmapOf("opacity", m.opacityTextureId)) : null;
             const w = baseImg?.width ?? opacityImg!.width;
             const h = baseImg?.height ?? opacityImg!.height;
             const packed = new Uint8ClampedArray(w * h * 4);
@@ -724,7 +779,7 @@ async function resolveMaterialTextures(
         } catch (err) {
             Logger.warning(`UsdImporter: failed to pack base colour and opacity (${String(err)})`);
         }
-    } else if (valid(m.diffuseColorTextureId) && !(threshold > 0 && opacityTextured)) {
+    } else if (has("diffusecolor", m.diffuseColorTextureId) && !(threshold > 0 && opacityTextured)) {
         const id = await load(m.diffuseColorTextureId, "diffusecolor", true);
         if (id !== undefined) desc.basic.texBaseColor = packTextureHandle(TextureHandleMode.Texture, id);
     }
@@ -732,7 +787,7 @@ async function resolveMaterialTextures(
         // createSpecularTransmissionTexture: textured opacity becomes a grey
         // transmission map of 1 - opacity, with full specular transmission.
         try {
-            const opacityImg = readPixels(await resolveImageBitmap(usd, m.opacityTextureId!, baseUrl));
+            const opacityImg = readPixels(await bitmapOf("opacity", m.opacityTextureId));
             const out = new Uint8ClampedArray(opacityImg.width * opacityImg.height * 4);
             for (let i = 0; i < out.length; i += 4) {
                 const v = 255 - opacityImg.data[i + opacityChannel]!;
@@ -745,18 +800,18 @@ async function resolveMaterialTextures(
             Logger.warning(`UsdImporter: failed to build the transmission texture (${String(err)})`);
         }
     }
-    if (valid(m.displacementTextureId)) {
+    if (has("displacement", m.displacementTextureId)) {
         const id = await load(m.displacementTextureId, "displacement", false);
         if (id !== undefined) desc.basic.texDisplacement = packTextureHandle(TextureHandleMode.Texture, id);
     }
     const roughChannel = channelOf("roughness");
     const metalChannel = channelOf("metallic");
-    if (valid(m.roughnessTextureId) && roughChannel < 0) Logger.warning("Cannot create specular texture; roughness texture provides more than one channel.");
-    else if (valid(m.metallicTextureId) && metalChannel < 0) Logger.warning("Cannot create specular texture; metallic texture provides more than one channel.");
-    else if (valid(m.roughnessTextureId) || valid(m.metallicTextureId)) {
+    if (has("roughness", m.roughnessTextureId) && roughChannel < 0) Logger.warning("Cannot create specular texture; roughness texture provides more than one channel.");
+    else if (has("metallic", m.metallicTextureId) && metalChannel < 0) Logger.warning("Cannot create specular texture; metallic texture provides more than one channel.");
+    else if (has("roughness", m.roughnessTextureId) || has("metallic", m.metallicTextureId)) {
         try {
-            const rough = valid(m.roughnessTextureId) ? readPixels(await resolveImageBitmap(usd, m.roughnessTextureId, baseUrl)) : null;
-            const metal = valid(m.metallicTextureId) ? readPixels(await resolveImageBitmap(usd, m.metallicTextureId, baseUrl)) : null;
+            const rough = has("roughness", m.roughnessTextureId) ? readPixels(await bitmapOf("roughness", m.roughnessTextureId)) : null;
+            const metal = has("metallic", m.metallicTextureId) ? readPixels(await bitmapOf("metallic", m.metallicTextureId)) : null;
             const w = Math.max(rough?.width ?? 0, metal?.width ?? 0);
             const h = Math.max(rough?.height ?? 0, metal?.height ?? 0);
             const orm = new Uint8ClampedArray(w * h * 4);
@@ -776,11 +831,11 @@ async function resolveMaterialTextures(
             Logger.warning(`UsdImporter: failed to pack spec texture (${String(err)})`);
         }
     }
-    if (valid(m.normalTextureId)) {
+    if (has("normal", m.normalTextureId)) {
         const id = await load(m.normalTextureId, "normal", false);
         if (id !== undefined) desc.basic.texNormalMap = packTextureHandle(TextureHandleMode.Texture, id);
     }
-    if (valid(m.emissiveColorTextureId)) {
+    if (has("emissivecolor", m.emissiveColorTextureId)) {
         const id = await load(m.emissiveColorTextureId, "emissivecolor", true);
         if (id !== undefined) {
             desc.basic.texEmissive = packTextureHandle(TextureHandleMode.Texture, id);

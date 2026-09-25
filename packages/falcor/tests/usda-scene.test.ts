@@ -103,7 +103,7 @@ def Camera "Cam"
         expect(domeLight).toMatchObject({ file: "sky.hdr", intensity: 2, tint: [1, 1, 1] });
         const cam = cameras[0]!;
         close(cam.position, [0, 1, 10]);
-        close(cam.target, [0, 1, 5]); // focus distance along -Z
+        close(cam.target, [0, 1, 9]); // Scene::initializeCameras: position - column 2 of the node's matrix
         expect(cam.focalLength).toBe(24);
         expect(cam.apertureRadius).toBeCloseTo(0.001 * 0.5 * 24 / 2, 10);
         expect(cam.depthRange).toEqual([0.5, 200]);

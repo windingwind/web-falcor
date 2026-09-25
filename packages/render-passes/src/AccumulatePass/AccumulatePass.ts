@@ -23,6 +23,7 @@ import {
     type CompileData,
     type Device,
     type RenderContext,
+    type Scene,
     type UIWidgets,
 } from "@web-falcor/falcor";
 
@@ -88,6 +89,12 @@ export class AccumulatePass extends RenderPass {
 
     reset(): void {
         this.frameCount = 0;
+    }
+
+    /** Mirrors AccumulatePass::setScene: accumulation restarts with a new scene. */
+    override setScene(scene: Scene | null): void {
+        super.setScene(scene);
+        this.reset();
     }
 
     override renderUI(ui: UIWidgets): void {

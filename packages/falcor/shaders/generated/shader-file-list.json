@@ -433,6 +433,7 @@
     "WebFalcor/Overrides/Scene/SDFs/SparseVoxelSet/SDFSVS.slang",
     "WebFalcor/Overrides/Scene/Scene.slang",
     "WebFalcor/Overrides/Scene/SceneTypes.slang",
+    "WebFalcor/Overrides/Scene/Volume/Grid.slang",
     "WebFalcor/Overrides/Tests/Core/BufferTests.cs.slang",
     "WebFalcor/Overrides/Tests/Core/ParamBlockDefinition.slang",
     "WebFalcor/Overrides/Tests/Core/RootBufferParamBlockTests.cs.slang",

@@ -112,7 +112,7 @@ function buildFogVolume(sdf: (i: number, j: number, k: number) => number, lo: [n
     // sdfToFog on voxels and tiles.
     const w = f(1 / -outside);
     const fog = (v: number): [number, boolean] => (v > 0 ? [0, false] : [v > -outside ? f(v * w) : 1, true]);
-    // Emit leaves in the web layout (x fastest); active tiles become full leaves of their value.
+    // Emit leaves in NanoVDB/OpenVDB order (z fastest), as buildNanoVDBGrid copies them; active tiles become full leaves of their value.
     const leafOrigins: [number, number, number][] = [];
     const leafMasks: Uint8Array[] = [];
     const leafValues: Float32Array[] = [];
@@ -121,7 +121,7 @@ function buildFogVolume(sdf: (i: number, j: number, k: number) => number, lo: [n
         const mask = new Uint8Array(64);
         let any = false;
         for (let n = 0; n < 512; n++) {
-            const [v, on] = value(n & 7, (n >> 3) & 7, (n >> 6) & 7);
+            const [v, on] = value(n >> 6, (n >> 3) & 7, n & 7);
             if (!on) continue;
             values[n] = v;
             mask[n >> 3]! |= 1 << (n & 7);
@@ -197,7 +197,7 @@ export function parsedGridStats(g: ParsedFloatGrid): { voxelCount: number; minIn
         const mask = g.leafMasks[l]!, values = g.leafValues[l]!;
         for (let n = 0; n < 512; n++) {
             if (!(mask[n >> 3]! & (1 << (n & 7)))) continue;
-            const p = [lx + (n & 7), ly + ((n >> 3) & 7), lz + ((n >> 6) & 7)];
+            const p = [lx + (n >> 6), ly + ((n >> 3) & 7), lz + (n & 7)];
             voxelCount++;
             for (let c = 0; c < 3; c++) {
                 minIndex[c] = Math.min(minIndex[c]!, p[c]!);
@@ -216,7 +216,7 @@ export function parsedGridValue(g: ParsedFloatGrid, i: number, j: number, k: num
     const [lx, ly, lz] = [Math.floor(i / 8) * 8, Math.floor(j / 8) * 8, Math.floor(k / 8) * 8];
     const l = g.leafOrigins.findIndex((o) => o[0] === lx && o[1] === ly && o[2] === lz);
     if (l < 0) return g.background;
-    return g.leafValues[l]![(i - lx) | ((j - ly) << 3) | ((k - lz) << 6)]!;
+    return g.leafValues[l]![((i - lx) << 6) | ((j - ly) << 3) | (k - lz)]!;
 }
 
 function halfToFloat(h: number): number {
@@ -619,9 +619,8 @@ export function buildNanoVDBGrid(grid: ParsedFloatGrid, gridname = "density"): U
     view.setFloat32(offRoot + 40, rootStats.avg, true);
     view.setFloat32(offRoot + 44, rootStats.std, true);
     upperList.forEach((u, i) => {
-        const key = (BigInt((u.origin[2] >> 12) & 0x1fffff)) |
-            (BigInt((u.origin[1] >> 12) & 0x1fffff) << 21n) |
-            (BigInt((u.origin[0] >> 12) & 0x1fffff) << 42n);
+        // CoordToKey: uint32(ijk) >> 12, a logical shift (JS >> would sign-extend negative origins).
+        const key = BigInt(u.origin[2] >>> 12) | (BigInt(u.origin[1] >>> 12) << 21n) | (BigInt(u.origin[0] >>> 12) << 42n);
         const to = offRoot + ROOT_DATA_SIZE + i * ROOT_TILE_SIZE;
         view.setBigUint64(to, key, true);
         view.setBigInt64(to + 8, BigInt(upperOff.get(keyOf(u.origin))! - offRoot), true);

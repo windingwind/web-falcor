@@ -6,6 +6,7 @@ import Scene.Scene;
 cbuffer CB
 {
     uint gCount;
+    uint gGridIndex; // 0 unless set
 }
 
 StructuredBuffer<int4> gCoords;
@@ -17,7 +18,7 @@ void main(uint3 tid: SV_DispatchThreadID)
     if (tid.x >= gCount)
         return;
     Grid grid;
-    gScene.getGrid(0, grid);
+    gScene.getGrid(gGridIndex, grid);
     Grid::Accessor accessor = grid.createAccessor();
     gResults[tid.x] = grid.lookupIndex(gCoords[tid.x].xyz, accessor);
 }

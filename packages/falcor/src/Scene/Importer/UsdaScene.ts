@@ -117,8 +117,8 @@ function localTransform(body: string): float4x4 {
 }
 
 /** Top-level prim blocks of text[start, end) and the text between them (the enclosing prim's own properties). */
-function scanBlocks(text: string, start: number, end: number): { blocks: { type: string; name: string; inner: [number, number] }[]; own: string } {
-    const blocks: { type: string; name: string; inner: [number, number] }[] = [];
+function scanBlocks(text: string, start: number, end: number): { blocks: { type: string; name: string; inner: [number, number]; header: string }[]; own: string } {
+    const blocks: { type: string; name: string; inner: [number, number]; header: string }[] = [];
     let own = "";
     const re = /\b(def|over)\s+(\w+\s+)?"([^"]+)"\s*(\([^)]*\))?\s*\{/g;
     re.lastIndex = start;
@@ -138,12 +138,52 @@ function scanBlocks(text: string, start: number, end: number): { blocks: { type:
             else if (ch === "}") depth--;
             i++;
         }
-        blocks.push({ type: (m[2] ?? "").trim(), name: m[3]!, inner: [re.lastIndex, i - 1] });
+        blocks.push({ type: (m[2] ?? "").trim(), name: m[3]!, inner: [re.lastIndex, i - 1], header: m[4] ?? "" });
         cursor = i;
         re.lastIndex = i;
     }
     own += text.slice(cursor, end);
     return { blocks, own };
+}
+
+/** Each prim with a `references` arc in USDA text: its path, the referenced asset and target prim (if given). */
+export function usdaReferencingPrims(text: string): { path: string; asset: string; target?: string }[] {
+    const out: { path: string; asset: string; target?: string }[] = [];
+    const visit = (start: number, end: number, parent: string) => {
+        for (const b of scanBlocks(text, start, end).blocks) {
+            const path = `${parent}/${b.name}`;
+            const ref = b.header.match(/references\s*=\s*(?:prepend\s+|append\s+)?\[?\s*@([^@]+)@(?:\s*<([^>]+)>)?/);
+            if (ref) out.push({ path, asset: ref[1]!, target: ref[2] });
+            visit(b.inner[0], b.inner[1], path);
+        }
+    };
+    visit(0, text.length, "");
+    return out;
+}
+
+/**
+ * USD maps paths inside a referenced layer into the referencing prim's namespace; tinyusdz's
+ * composition keeps them as authored. Rewrites `<source...>` relationship and connection targets
+ * inside each referencing prim's composed block to its own path.
+ */
+export function remapReferencedPaths(composed: string, refs: { path: string; source: string }[]): string {
+    const ranges: { start: number; end: number; source: string; path: string }[] = [];
+    const find = (start: number, end: number, parent: string) => {
+        for (const b of scanBlocks(composed, start, end).blocks) {
+            const path = `${parent}/${b.name}`;
+            const ref = refs.find((r) => r.path === path);
+            if (ref && ref.source !== path) ranges.push({ start: b.inner[0], end: b.inner[1], source: ref.source, path });
+            else find(b.inner[0], b.inner[1], path);
+        }
+    };
+    find(0, composed.length, "");
+    ranges.sort((a, b) => b.start - a.start);
+    for (const r of ranges) {
+        const escaped = r.source.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+        const inner = composed.slice(r.start, r.end).replace(new RegExp(`<${escaped}(?=[/.>])`, "g"), `<${r.path}`);
+        composed = composed.slice(0, r.start) + inner + composed.slice(r.end);
+    }
+    return composed;
 }
 
 /** Parses the prim tree (`def`/`over` blocks, brace matched) of USDA text; `root` is the stage root transform. */
@@ -222,14 +262,16 @@ export function extractUsdCamerasAndLights(text: string): { cameras: UsdaCamera[
         switch (p.type) {
             case "Camera": {
                 const focusDistance = Math.max(1, attrNumber(b, ["focusDistance"], 0));
-                const view = p.usdWorld;
+                // Scene::initializeCameras poses every camera from its node's global matrix (stage root
+                // included): position = col 3, target = position - col 2 (unnormalized), up = col 1.
+                const view = p.world;
                 const focalLength = attrNumber(b, ["focalLength"], 50);
                 const fStop = attrNumber(b, ["fStop"], 0) * (attr(b, ["depthOfField"]) === "false" ? 0 : 1);
                 const clip = attrVector(b, ["clippingRange"], [1, 1000000]);
                 const cam: UsdaCamera = {
                     name: p.name,
                     position: transformPoint(view, new float3(0, 0, 0)),
-                    target: transformPoint(view, new float3(0, 0, -focusDistance)),
+                    target: transformPoint(view, new float3(0, 0, -1)),
                     up: transformVector(view, new float3(0, 1, 0)),
                     focalLength,
                     focalDistance: info.metersPerUnit * focusDistance,
@@ -300,6 +342,8 @@ export interface UsdaTextureInput {
     output: string;
     /** sourceColorSpace or the file's colorSpace: true sRGB, false raw, undefined per slot. */
     srgb?: boolean;
+    /** inputs:file: its default value, else its first time sample (assets authored only as time samples). */
+    file?: string;
     /** inputs:scale (native honours it only for emissiveColor, as the emissive factor). */
     scale?: [number, number, number, number];
     /** A UsdTransform2d on st: scale, rotation in degrees, translation. */
@@ -359,6 +403,8 @@ export function extractUsdMaterialTextures(text: string): Map<string, Map<string
                 if (space === "sRGB") input.srgb = true;
                 else if (space === "raw") input.srgb = false;
             }
+            const file = tex.body.match(/inputs:file\s*=\s*@([^@]*)@/)?.[1] ?? tex.body.match(/inputs:file\.timeSamples\s*=\s*\{\s*[-+\d.eE]+\s*:\s*@([^@]*)@/)?.[1];
+            if (file) input.file = file;
             const scale = attr(tex.body, ["inputs:scale"]);
             if (scale !== undefined) input.scale = num(scale).slice(0, 4) as [number, number, number, number];
             const st = target(tex.body, "inputs:st");
@@ -371,6 +417,58 @@ export function extractUsdMaterialTextures(text: string): Map<string, Map<string
             inputs.set(name.toLowerCase(), input);
         }
         result.set(material.path, inputs);
+    }
+    return result;
+}
+
+/** A UsdPreviewSurface's uniform inputs, read from the layer text. */
+export interface UsdPreviewSurfaceValues {
+    diffuseColor?: number[];
+    emissiveColor?: number[];
+    roughness?: number;
+    metallic?: number;
+    ior?: number;
+    opacity?: number;
+    opacityThreshold?: number;
+    useSpecularWorkflow?: boolean;
+}
+
+/**
+ * Every Material's UsdPreviewSurface uniform inputs, keyed by the Material's path: the authored
+ * default, else the first time sample (tinyusdz reads neither from composed overs reliably). In
+ * composed text a default comes from the stronger layer when a weaker one has time samples.
+ */
+export function extractUsdPreviewSurfaceValues(text: string): Map<string, UsdPreviewSurfaceValues> {
+    const byPath = new Map<string, UsdaPrim>();
+    const index = (p: UsdaPrim) => {
+        byPath.set(p.path, p);
+        p.children.forEach(index);
+    };
+    parseUsdaPrims(text, float4x4.identity()).forEach(index);
+    const value = (body: string, name: string): number[] | undefined => {
+        const v = attr(body, [name]);
+        if (v !== undefined) return v === "true" ? [1] : v === "false" ? [0] : num(v);
+        return attrTimeSamples(body, name)?.[0]?.value;
+    };
+    const result = new Map<string, UsdPreviewSurfaceValues>();
+    for (const material of byPath.values()) {
+        if (material.type !== "Material") continue;
+        const surface = attr(material.body, ["outputs:surface.connect"])?.match(/<([^>.]+)/)?.[1];
+        const shader = surface ? byPath.get(surface) : undefined;
+        if (!shader || attr(shader.body, ["info:id"])?.match(/"([^"]*)"/)?.[1] !== "UsdPreviewSurface") continue;
+        const b = shader.body;
+        const values: UsdPreviewSurfaceValues = {};
+        const color = (n: string) => value(b, `inputs:${n}`)?.slice(0, 3);
+        const scalar = (n: string) => value(b, `inputs:${n}`)?.[0];
+        if (color("diffuseColor")) values.diffuseColor = color("diffuseColor");
+        if (color("emissiveColor")) values.emissiveColor = color("emissiveColor");
+        for (const n of ["roughness", "metallic", "ior", "opacity", "opacityThreshold"] as const) {
+            const v = scalar(n);
+            if (v !== undefined) values[n] = v;
+        }
+        const spec = scalar("useSpecularWorkflow");
+        if (spec !== undefined) values.useSpecularWorkflow = spec !== 0;
+        result.set(material.path, values);
     }
     return result;
 }

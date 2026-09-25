@@ -1,8 +1,11 @@
 # Native oracle for procedural grids (Grid.createSphere/createBox fog volumes): prints their stats.
 import json
 out = {}
-for name, g in [('sphere', Grid.createSphere(1.0, 0.1)), ('sphereBlend1', Grid.createSphere(0.7, 0.05, 1.0)), ('box', Grid.createBox(1.0, 0.6, 0.4, 0.05))]:
+for name, g in [('sphere', Grid.createSphere(1.0, 0.1)), ('sphereBlend1', Grid.createSphere(0.7, 0.05, 1.0)), ('box', Grid.createBox(1.0, 0.6, 0.4, 0.05)),
+                ('sphere100', Grid.createSphere(1.0, 0.01)), ('box100', Grid.createBox(1.0, 1.0, 1.0, 0.01))]:
     probes = [[0, 0, 0], [8, 0, 0], [9, 0, 0], [10, 0, 0], [11, 0, 0], [12, 0, 0], [3, 4, 5], [-7, 2, 1]]
+    if name.endswith('100'):
+        probes = [[x, 0, 0] for x in range(46, 56)] + [[x, 0, 0] for x in range(96, 106)] + [[-x, 0, 0] for x in range(96, 106)] + [[57, 57, 57], [58, 58, 58], [70, 30, 60], [-50, 49, -48]]
     out[name] = {'voxelCount': g.voxelCount, 'minIndex': [g.minIndex.x, g.minIndex.y, g.minIndex.z], 'maxIndex': [g.maxIndex.x, g.maxIndex.y, g.maxIndex.z],
                  'minValue': g.minValue, 'maxValue': g.maxValue, 'probes': [[p, g.getValue(int3(*p))] for p in probes]}
 print('GRIDSTATS ' + json.dumps(out))

@@ -776,7 +776,7 @@ export class Scene {
     private gridCount = 0;
     private grid0Stats: { minIndex: [number, number, number]; minValue: number; maxIndex: [number, number, number]; maxValue: number } | null = null;
 
-    /** Stats of the grid currently bound as gScene.grid0 (diagnostics/tests). */
+    /** Stats of grid 0 (diagnostics/tests). */
     get gridStats(): { minIndex: [number, number, number]; minValue: number; maxIndex: [number, number, number]; maxValue: number } | null {
         return this.grid0Stats;
     }
@@ -976,7 +976,8 @@ export class Scene {
         meshes.forEach((mesh, meshID) => {
             const vbOffset = allVertices.length;
             const ibOffset = allIndices.length;
-            allVertices.push(...mesh.vertices);
+            // A loop, not push(...): spreading a large mesh overflows the call stack.
+            for (const v of mesh.vertices) allVertices.push(v);
             for (const i of mesh.indices) allIndices.push(i);
             meshDescs.push({
                 vbOffset,
@@ -2412,7 +2413,8 @@ export class Scene {
     /**
      * Uploads grid-volume GPU data after resolve() populates gridVolumes
      * (web divergence: volumes load asynchronously after construction).
-     * One grid supported (gScene.grid0 — WGSL has no binding arrays).
+     * WGSL has no binding arrays: all grids share one NanoVDB buffer (gScene.gridData, each at a
+     * 32-byte aligned offset) described by gScene.gridInfos.
      */
     finalizeGridVolumes(): void {
         if (this.gridVolumes.length === 0) return;
@@ -2458,12 +2460,33 @@ export class Scene {
         volBuf.setBlob(new Uint8Array(data));
         this.buffers["gridVolumesData"] = volBuf;
 
-        if (grids.length > 1) throw new RuntimeError("Scene: only one grid supported (gScene.grid0; WGSL has no binding arrays)");
-        if (grids.length === 1) {
+        if (grids.length > 0) {
+            const offsets: number[] = [];
+            let size = 0;
+            for (const g of grids) {
+                offsets.push(size);
+                size = Math.ceil((size + g.gridBuffer.byteLength) / 32) * 32;
+            }
+            const gridData = new Uint8Array(size);
+            // GridInfo: 48 B (minIndex, minValue, maxIndex, maxValue, baseAddress, pad).
+            const info = new ArrayBuffer(grids.length * 48);
+            const infoF = new Float32Array(info);
+            const infoI = new Int32Array(info);
+            grids.forEach((g, i) => {
+                gridData.set(new Uint8Array(g.gridBuffer.buffer, g.gridBuffer.byteOffset, g.gridBuffer.byteLength), offsets[i]!);
+                infoI.set(g.minIndex, i * 12);
+                infoF[i * 12 + 3] = g.minValue;
+                infoI.set(g.maxIndex, i * 12 + 4);
+                infoF[i * 12 + 7] = g.maxValue;
+                infoI[i * 12 + 8] = offsets[i]!;
+            });
+            const dataBuf = new Buffer(this.device, { size, structSize: 4, bindFlags: storage, memoryType: MemoryType.DeviceLocal, name: "Scene::gridData" });
+            dataBuf.setBlob(gridData);
+            this.buffers["gridData"] = dataBuf;
+            const infoBuf = new Buffer(this.device, { size: info.byteLength, structSize: 48, bindFlags: storage, memoryType: MemoryType.DeviceLocal, name: "Scene::gridInfos" });
+            infoBuf.setBlob(new Uint8Array(info));
+            this.buffers["gridInfos"] = infoBuf;
             const g = grids[0]!;
-            const buf = new Buffer(this.device, { size: g.gridBuffer.byteLength, structSize: 4, bindFlags: storage, memoryType: MemoryType.DeviceLocal, name: "Scene::grid0" });
-            buf.setBlob(g.gridBuffer);
-            this.buffers["grid0"] = buf;
             this.grid0Stats = { minIndex: g.minIndex, minValue: g.minValue, maxIndex: g.maxIndex, maxValue: g.maxValue };
         }
         this.gridCount = grids.length;
@@ -2628,19 +2651,15 @@ export class Scene {
         lightCollection["meshData"] = this.buffers["emissiveMeshData"]!;
         lightCollection["perMeshInstanceOffset"] = this.buffers["emissivePerMeshInstanceOffset"]!;
 
-        // Grid volume single instance (NanoVDB buffer when loaded; dummies keep
-        // SCENE_GRID_COUNT=0 variants bindable). Bricked-grid textures stay
-        // dummies: the upstream consumers use the NanoVDB lookup path.
-        scene["grid0"]["buf"] = this.buffers["grid0"] ?? this.buffers["materialBuffer0"]!;
-        scene["grid0"]["rangeTex"] = this.gridRangeTex;
-        scene["grid0"]["indirectionTex"] = this.gridIndirectionTex;
-        scene["grid0"]["atlasTex"] = this.gridAtlasTex;
-        if (this.grid0Stats) {
-            scene["grid0"]["minIndex"] = this.grid0Stats.minIndex;
-            scene["grid0"]["minValue"] = this.grid0Stats.minValue;
-            scene["grid0"]["maxIndex"] = this.grid0Stats.maxIndex;
-            scene["grid0"]["maxValue"] = this.grid0Stats.maxValue;
-        }
+        // Grids: the shared NanoVDB buffer and per-grid infos (dummies keep SCENE_GRID_COUNT=0
+        // variants bindable). Bricked-grid textures stay dummies: the upstream consumers use the
+        // NanoVDB lookup path.
+        scene["gridData"] = this.buffers["gridData"] ?? this.buffers["materialBuffer0"]!;
+        this.buffers["gridInfos"] ??= new Buffer(this.device, { size: 48, structSize: 48, bindFlags: ResourceBindFlags.ShaderResource | ResourceBindFlags.UnorderedAccess, memoryType: MemoryType.DeviceLocal, name: "Scene::gridInfos(empty)" });
+        scene["gridInfos"] = this.buffers["gridInfos"];
+        scene["gridRangeTex"] = this.gridRangeTex;
+        scene["gridIndirectionTex"] = this.gridIndirectionTex;
+        scene["gridAtlasTex"] = this.gridAtlasTex;
 
         // Light profile (disabled; dummy bindings).
         if (this.lightProfile) {
