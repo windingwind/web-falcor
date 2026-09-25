@@ -34,6 +34,17 @@ function blockBytes(format: ResourceFormat): number {
  * Parses a .dds buffer. `srgb` selects the sRGB BC variant for color textures
  * (BC1/BC3/BC7); BC4/BC5 (single/two-channel data maps) are always linear.
  */
+/** D3DFMT values used as FourCC for uncompressed 16/32-bit surfaces (DirectXTex's legacy map). */
+const kLegacyFourCC: Record<number, ResourceFormat> = {
+    36: ResourceFormat.RGBA16Unorm, // D3DFMT_A16B16G16R16
+    111: ResourceFormat.R16Float,
+    112: ResourceFormat.RG16Float,
+    113: ResourceFormat.RGBA16Float,
+    114: ResourceFormat.R32Float,
+    115: ResourceFormat.RG32Float,
+    116: ResourceFormat.RGBA32Float, // D3DFMT_A32B32G32R32F
+};
+
 export function parseDDS(buffer: ArrayBuffer, srgb: boolean): DDSImage {
     const dv = new DataView(buffer);
     if (buffer.byteLength < 128 || dv.getUint32(0, true) !== DDS_MAGIC) throw new Error("DDSLoader: not a DDS file");
@@ -73,8 +84,11 @@ export function parseDDS(buffer: ArrayBuffer, srgb: boolean): DDSImage {
         format = ResourceFormat.BC4Snorm;
     } else if (pfFourCC === fourCC("BC5S")) {
         format = ResourceFormat.BC5Snorm;
+    } else if (kLegacyFourCC[pfFourCC] !== undefined) {
+        // Legacy D3DFMT codes stored in the FourCC field (DirectXTex reads them for float surfaces).
+        format = kLegacyFourCC[pfFourCC]!;
     } else {
-        throw new Error(`DDSLoader: unsupported FourCC 0x${pfFourCC.toString(16)} (only BC/DXT compressed DDS)`);
+        throw new Error(`DDSLoader: unsupported FourCC 0x${pfFourCC.toString(16)}`);
     }
 
     const compressed = isCompressedFormat(format);

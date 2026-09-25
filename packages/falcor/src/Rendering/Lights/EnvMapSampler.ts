@@ -24,6 +24,11 @@ export class EnvMapSampler {
     private readonly importanceMap: Texture;
     private readonly importanceSampler: Sampler;
 
+    /** Mirrors EnvMapSampler::getImportanceMap. */
+    getImportanceMap(): Texture {
+        return this.importanceMap;
+    }
+
     constructor(
         private readonly device: Device,
         ctx: RenderContext,

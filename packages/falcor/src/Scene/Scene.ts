@@ -1620,9 +1620,16 @@ export class Scene {
             this.buffers["materialBuffer0"]!.setBlob(new Uint8Array(lut.buffer), byteOffset);
         };
 
-        if (targets.length > 0) {
+        // MERLFile::prepareAlbedoLUT: BRDFs with a cached table skip the integration.
+        const cached = (merl: { albedoLUT?: Float32Array } | undefined, byteOffset: number) => {
+            if (!merl?.albedoLUT) return false;
+            this.buffers["materialBuffer0"]!.setBlob(new Uint8Array(merl.albedoLUT.buffer, merl.albedoLUT.byteOffset, merl.albedoLUT.byteLength), byteOffset);
+            return true;
+        };
+        const remaining = targets.filter(([id, o]) => !cached(this.materialDescs[id]?.merl, o));
+        if (remaining.length > 0) {
             const integrator = new BSDFIntegrator(this.device, this);
-            for (const [materialID, byteOffset] of targets) await writeLUT(integrator, materialID, byteOffset);
+            for (const [materialID, byteOffset] of remaining) await writeLUT(integrator, materialID, byteOffset);
         }
 
         // MERLMix stacks one table per BRDF. Each row is that BRDF's own albedo,
@@ -1636,7 +1643,7 @@ export class Scene {
                 mix.brdfs.map((merl) => ({ name: merl.name, basic: {}, merl, header: { materialType: MaterialType.MERL } })),
             );
             const integrator = new BSDFIntegrator(this.device, temp);
-            for (let k = 0; k < mix.brdfs.length; k++) await writeLUT(integrator, k, offsets.lut + k * size * 16);
+            for (let k = 0; k < mix.brdfs.length; k++) if (!cached(mix.brdfs[k], offsets.lut + k * size * 16)) await writeLUT(integrator, k, offsets.lut + k * size * 16);
         }
     }
 

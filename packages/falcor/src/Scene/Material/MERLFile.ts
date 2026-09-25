@@ -10,6 +10,8 @@
 
 import { Logger } from "../../Utils/Logger.js";
 import { RuntimeError } from "../../Core/Error.js";
+import { ResourceFormat } from "../../Core/API/Formats.js";
+import { ImageIO } from "../../Utils/Image/ImageIO.js";
 import type { DiffuseSpecularData } from "./MaterialData.js";
 
 /** Angular sampling resolution of the measured data (MERLFile.cpp). */
@@ -43,6 +45,8 @@ export interface MERLBRDF {
     data: Float32Array;
     /** Best-fit analytic approximation used for sampling (from the `.json` sidecar). */
     extraData: DiffuseSpecularData;
+    /** Precomputed albedo LUT (kMERLAlbedoLUTSize float4) from the `.dds` beside the file, if present. */
+    albedoLUT?: Float32Array;
 }
 
 /** Per-texel BRDF selector (MERLMixMaterial's index map: 8-bit unorm red channel). */
@@ -137,5 +141,19 @@ export async function loadMERLBinary(url: string): Promise<MERLBRDF> {
     } catch {
         Logger.warning(`MERLFile: Failed to load associated JSON data for BRDF '${name}'.`);
     }
-    return parseMERLBinary(await res.arrayBuffer(), name, extraData);
+    const brdf = parseMERLBinary(await res.arrayBuffer(), name, extraData);
+    // MERLFile::prepareAlbedoLUT: a cached RGBA32Float 256x1 table beside the BRDF is used as is.
+    try {
+        const lut = await fetch(url.replace(/\.[^.]*$/, ".dds"));
+        if (lut.ok) {
+            const bitmap = ImageIO.loadBitmapFromDDS(new Uint8Array(await lut.arrayBuffer()));
+            if (bitmap.format === ResourceFormat.RGBA32Float && bitmap.width === kMERLAlbedoLUTSize && bitmap.height === 1) {
+                brdf.albedoLUT = new Float32Array(bitmap.data.buffer.slice(bitmap.data.byteOffset, bitmap.data.byteOffset + kMERLAlbedoLUTSize * 16));
+                Logger.info(`Loaded albedo LUT from '${url.replace(/\.[^.]*$/, ".dds")}'.`);
+            }
+        }
+    } catch {
+        /* no cached table: computed with the scene */
+    }
+    return brdf;
 }
