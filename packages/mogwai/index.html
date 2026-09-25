@@ -77,6 +77,8 @@
       <button id="capture">Capture</button>
       <button id="saveConfig" title="Save the graph, scene, camera and clock as a Mogwai script">Save Config</button>
       <button id="record">Record</button>
+      <label title="Load Script / Load Scene (Ctrl+O / Ctrl+Shift+O): a media path or URL; .py loads as a script, anything else as a scene. Recent entries are suggested.">open <input id="openPath" list="recentList" placeholder="scene or script path" size="28" /></label>
+      <datalist id="recentList"></datalist>
       <label>graph <input id="graphFile" type="file" accept=".py" /></label>
       <label>output <select id="output"></select></label>
       <button id="consoleToggle">Console</button>

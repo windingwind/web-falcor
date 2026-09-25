@@ -194,9 +194,11 @@ async function loadInitialContent(state: ViewerState, device: Device): Promise<v
     if (sceneParam) {
         const url = await resolveAssetUrl(sceneParam);
         await loadScene(state, url, url.slice(0, url.lastIndexOf("/")));
+        addRecent("scenes", sceneParam);
     }
     if (graphParam) {
         await loadGraph(state, await resolveAssetUrl(graphParam));
+        addRecent("scripts", graphParam);
     } else if (!sceneParam) {
         // No URL content: default cornell box + the GPU-oracle-verified graph.
         await loadScene(state, "/Falcor/media/test_scenes/cornell_box.pyscene", "/Falcor/media/test_scenes");
@@ -237,12 +239,45 @@ async function applyCommandLineParams(): Promise<{ deferred: boolean }> {
         getGlobalSettings().addFilteredAttributes(await res.json());
     }
     rebuildSceneCache = params.has("rebuild-cache");
-    if (params.has("headless") || params.has("silent")) document.body.classList.add("headless");
+    if (params.has("headless") || params.has("silent")) {
+        document.body.classList.add("headless");
+        recordRecent = false;
+    }
     if (params.has("fullscreen")) window.addEventListener("pointerdown", () => void canvas.requestFullscreen().catch(() => {}), { once: true });
     return { deferred: params.has("deferred") };
 }
 /** `?rebuild-cache`: the first scene load rebuilds its cache entry (SceneBuilder::Flags::RebuildCache). */
 let rebuildSceneCache = false;
+
+// Mogwai AppData's recent scripts/scenes (25 each, most recent first), kept in localStorage.
+// Silent/headless runs don't record, as natively (image tests use them).
+type RecentKind = "scripts" | "scenes";
+let recordRecent = true;
+function getRecent(kind: RecentKind): string[] {
+    try {
+        const list = JSON.parse(localStorage.getItem(`mogwai.recent.${kind}`) ?? "[]") as unknown;
+        return Array.isArray(list) ? list.filter((p): p is string => typeof p === "string") : [];
+    } catch {
+        return [];
+    }
+}
+function addRecent(kind: RecentKind, path: string): void {
+    if (!recordRecent) return;
+    localStorage.setItem(`mogwai.recent.${kind}`, JSON.stringify([path, ...getRecent(kind).filter((p) => p !== path)].slice(0, 25)));
+    refreshRecentList();
+}
+function refreshRecentList(): void {
+    const list = document.getElementById("recentList");
+    if (!list) return;
+    list.replaceChildren(
+        ...[...getRecent("scenes").map((p) => [p, "recent scene"]), ...getRecent("scripts").map((p) => [p, "recent script"])].map(([value, label]) => {
+            const o = document.createElement("option");
+            o.value = value!;
+            o.label = label!;
+            return o;
+        }),
+    );
+}
 
 async function main() {
     // Before the device exists, so verbosity also covers device creation (as the native flags do).
@@ -639,6 +674,31 @@ function wireGraphEditor(state: ViewerState, rebuildUI: () => void, resetAccum: 
 /** Wires the plain-DOM control bar (created in index.html). */
 function wireControls(state: ViewerState, rebuildUI: () => void): void {
     const $ = (id: string) => document.getElementById(id);
+    // File > Load Script / Load Scene and the recent lists (Enter loads the typed or picked path).
+    const open = $("openPath") as HTMLInputElement | null;
+    refreshRecentList();
+    open?.addEventListener("keydown", (ev) => {
+        if (ev.key !== "Enter" || !open.value.trim()) return;
+        const path = open.value.trim();
+        const isScript = /\.py$/i.test(path.split(/[?#]/)[0]!);
+        status.textContent = `loading ${path}…`;
+        void (async () => {
+            const url = await resolveAssetUrl(path);
+            if (isScript) await loadGraph(state, url);
+            else await loadScene(state, url, url.slice(0, url.lastIndexOf("/")));
+            addRecent(isScript ? "scripts" : "scenes", path);
+            refreshOutputs(state);
+            rebuildUI();
+            open.value = "";
+        })().catch((err: unknown) => Logger.error(`Mogwai: failed to load '${path}': ${String(err)}`));
+    });
+    window.addEventListener("keydown", (ev) => {
+        if (ev.ctrlKey && ev.key.toLowerCase() === "o" && open) {
+            ev.preventDefault(); // the browser's own file dialog
+            open.placeholder = ev.shiftKey ? "scene path" : "script path (.py)";
+            open.focus();
+        }
+    });
     ($("record") as HTMLButtonElement | null)?.addEventListener("click", (e) => {
         const btn = e.currentTarget as HTMLButtonElement;
         if (!videoRecorder.recording) {
