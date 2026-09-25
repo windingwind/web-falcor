@@ -103,6 +103,18 @@ function buildCurveBvh(curves: SceneCurveDesc[]): { data: Float32Array; nodeWord
     return { data, nodeWords: curveBvh.nodes.length };
 }
 
+/** Displaced-triangle AABB BVH (nodes, then encoded prim entries) and its node word count. */
+function buildDisplacedBvh(aabbs: { min: [number, number, number]; max: [number, number, number] }[], entries: number[]): { data: Float32Array; nodeWords: number } {
+    if (aabbs.length === 0) return { data: new Float32Array(0), nodeWords: 0 };
+    const dbvh = buildAabbBvh(aabbs);
+    const encoded = new Uint32Array(dbvh.primIndices.length);
+    for (let i = 0; i < dbvh.primIndices.length; i++) encoded[i] = entries[dbvh.primIndices[i]!]!;
+    const data = new Float32Array(dbvh.nodes.length + Math.ceil(encoded.length / 4) * 4);
+    data.set(dbvh.nodes, 0);
+    new Uint32Array(data.buffer, dbvh.nodes.length * 4).set(encoded);
+    return { data, nodeWords: dbvh.nodes.length / 4 };
+}
+
 /** Curve vertex/index/metadata buffers. */
 function packCurves(curves: SceneCurveDesc[]): { cv: Float32Array; ci: Uint32Array; cd: Uint32Array } {
             // StaticCurveVertexData WGSL layout: position@0, radius@12, texCrd@16, stride 32.
@@ -1119,18 +1131,7 @@ export class Scene {
         }
 
         // Displaced-triangle AABB BVH rides in the same merged buffer.
-        let displacedBvhData = new Float32Array(0);
-        let displacedNodeWords = 0;
-        if (displacedAabbs.length > 0) {
-            const dbvh = buildAabbBvh(displacedAabbs);
-            const encoded = new Uint32Array(dbvh.primIndices.length);
-            for (let i = 0; i < dbvh.primIndices.length; i++) encoded[i] = displacedEntries[dbvh.primIndices[i]!]!;
-            const primWords = Math.ceil(encoded.length / 4) * 4;
-            displacedBvhData = new Float32Array(dbvh.nodes.length + primWords);
-            displacedBvhData.set(dbvh.nodes, 0);
-            new Uint32Array(displacedBvhData.buffer, dbvh.nodes.length * 4).set(encoded);
-            displacedNodeWords = dbvh.nodes.length / 4;
-        }
+        const { data: displacedBvhData, nodeWords: displacedNodeWords } = buildDisplacedBvh(displacedAabbs, displacedEntries);
 
         // One merged buffer (16-storage-buffer budget): nodes then triangles.
         const bvhMerged = new Float32Array(bvh.nodes.length + bvh.tris.length + curveBvhData.length + displacedBvhData.length);
@@ -1495,6 +1496,78 @@ export class Scene {
         if (i < 0) throw new RuntimeError(`Scene.get_mesh: no mesh ${meshID}`);
         const d = this.meshCounts[i]!;
         return { vertex_count: d.vertexCount, triangle_count: d.indexCount / 3 };
+    }
+
+    /** Web meshes (instances) of a native mesh ID, with their vertex-buffer offsets. */
+    private meshInstancesOf(meshID: number): { mesh: SceneMeshDesc; vbOffset: number }[] {
+        const meshes = this.sourceMeshes ?? this.lcMeshes;
+        const out = [...this.meshIDs.keys()].filter((i) => this.meshIDs[i] === meshID).map((i) => ({ mesh: meshes[i]!, vbOffset: this.drawList[i]!.baseVertex }));
+        if (out.length === 0) throw new RuntimeError(`Mesh ID ${meshID} is invalid.`);
+        return out;
+    }
+
+    /** Mirrors Scene::getMeshVerticesAndIndices: fills positions/texcrds (float3) and triangleIndices (uint3). */
+    getMeshVerticesAndIndices(meshID: number, buffers: Record<string, Buffer>): void {
+        const { mesh } = this.meshInstancesOf(meshID)[0]!;
+        for (const name of ["triangleIndices", "positions", "texcrds"]) if (!buffers[name]) throw new RuntimeError(`Mesh data buffer '${name}' is missing.`);
+        const n = mesh.vertices.length;
+        const pos = new Float32Array(n * 3);
+        const uv = new Float32Array(n * 3);
+        mesh.vertices.forEach((v, i) => {
+            pos.set([v.position.x, v.position.y, v.position.z], i * 3);
+            uv.set([v.texCrd.x, v.texCrd.y, 0], i * 3);
+        });
+        buffers["positions"]!.setBlob(pos);
+        buffers["texcrds"]!.setBlob(uv);
+        buffers["triangleIndices"]!.setBlob(Uint32Array.from(mesh.indices));
+    }
+
+    /** Mirrors Scene::setMeshVertices: replaces the mesh's vertices (tangent w = 1) and rebuilds its BVH. */
+    async setMeshVertices(meshID: number, buffers: Record<string, Buffer>): Promise<void> {
+        const instances = this.meshInstancesOf(meshID);
+        const names = ["positions", "normals", "tangents", "texcrds"] as const;
+        for (const name of names) if (!buffers[name]) throw new RuntimeError(`Mesh data buffer '${name}' is missing.`);
+        const [pos, nrm, tan, uv] = await Promise.all(names.map(async (name) => new Float32Array((await buffers[name]!.getBlob()).slice().buffer)));
+        const vertices = instances[0]!.mesh.vertices;
+        for (let i = 0; i < vertices.length; i++) {
+            const f = (a: Float32Array, k: number) => a[i * 3 + k]!;
+            vertices[i] = { ...vertices[i]!, position: new float3(f(pos!, 0), f(pos!, 1), f(pos!, 2)), normal: new float3(f(nrm!, 0), f(nrm!, 1), f(nrm!, 2)), tangent: new float4(f(tan!, 0), f(tan!, 1), f(tan!, 2), 1), texCrd: new float2(f(uv!, 0), f(uv!, 1)) };
+        }
+        const packed = packStaticVertices(vertices);
+        for (const { vbOffset } of instances) this.buffers["vertices"]!.setBlob(packed, vbOffset * 48);
+        // Animated scenes rebuild the BVH from the source vertices on their next step.
+        if (!this.animData) this.rebuildStaticBvh();
+        if (instances.some(({ mesh }) => this.emissiveMaterialIDs.has(mesh.materialID))) this.rebuildLightCollection();
+        this.bumpUpdates();
+    }
+
+    /** Rebuilds the merged software-RT BVH of a static scene after a geometry edit (updateForInverseRendering). */
+    private rebuildStaticBvh(): void {
+        const { bvhTris, displacedAabbs, displacedEntries } = Scene.collectBvhGeometry(this.lcMeshes, this.materialDescs);
+        const bvh = buildBvh(bvhTris);
+        if (bvhTris.length > 0) this.worldBounds = { min: [bvh.nodes[0]!, bvh.nodes[1]!, bvh.nodes[2]!], max: [bvh.nodes[4]!, bvh.nodes[5]!, bvh.nodes[6]!] };
+        const curve = this.curveBvhBytes ?? new Float32Array(0);
+        const displaced = buildDisplacedBvh(displacedAabbs, displacedEntries);
+        const merged = new Float32Array(bvh.nodes.length + bvh.tris.length + curve.length + displaced.data.length);
+        merged.set(bvh.nodes, 0);
+        merged.set(bvh.tris, bvh.nodes.length);
+        this.bvhTrisOffset = bvh.nodes.length / 4;
+        if (curve.length > 0) {
+            const nodeWords = this.curvePrimOffset - this.curveBvhOffset;
+            merged.set(curve, bvh.nodes.length + bvh.tris.length);
+            this.curveBvhOffset = (bvh.nodes.length + bvh.tris.length) / 4;
+            this.curvePrimOffset = this.curveBvhOffset + nodeWords;
+        }
+        if (displaced.data.length > 0) {
+            const base = bvh.nodes.length + bvh.tris.length + curve.length;
+            merged.set(displaced.data, base);
+            this.displacedBvhOffset = base / 4;
+            this.displacedPrimOffset = this.displacedBvhOffset + displaced.nodeWords;
+        }
+        // Replaced, not resized in place: in-flight submits keep the old buffer.
+        const buf = new Buffer(this.device, { size: Math.max(merged.byteLength, 16), structSize: 16, bindFlags: ResourceBindFlags.ShaderResource | ResourceBindFlags.UnorderedAccess, memoryType: MemoryType.DeviceLocal, name: "Scene::bvhNodes" });
+        buf.setBlob(merged);
+        this.buffers["bvhNodes"] = buf;
     }
 
     /** Mirrors Scene::getLightCount. */

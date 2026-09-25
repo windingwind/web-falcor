@@ -28,7 +28,7 @@ import { LightType, type AnalyticLight, type StaticVertex } from "./SceneData.js
 import { MaterialType, ShadingModel, packTextureHandle, TextureHandleMode } from "./Material/MaterialData.js";
 import { getTextureSlotSrgb } from "./Material/TextureSlots.js";
 import { float2, float3, float4 } from "../Utils/Math/Vector.js";
-import { float4x4, inverse, matrixFromTranslation, matrixFromScaling, mulMat } from "../Utils/Math/Matrix.js";
+import { float4x4, inverse, transpose, matrixFromTranslation, matrixFromScaling, mulMat } from "../Utils/Math/Matrix.js";
 import { RuntimeError } from "../Core/Error.js";
 import { AssetCategory, AssetResolver, resolveAssetUrl } from "../Core/AssetResolver.js";
 import { Logger } from "../Utils/Logger.js";
@@ -603,6 +603,42 @@ export enum CompositionOrder {
     TranslateScaleRotate = 6,
 }
 
+// Native Transform math is f32: these replay its operation order with f32 rounding.
+function quatFromEulerAnglesF32(e: VecLike): quatf {
+    const f = Math.fround;
+    const [cx, cy, cz] = [e.x, e.y, e.z].map((a) => f(Math.cos(f(f(a) * 0.5))));
+    const [sx, sy, sz] = [e.x, e.y, e.z].map((a) => f(Math.sin(f(f(a) * 0.5))));
+    const t = (a: number, b: number, c: number) => f(f(a * b) * c);
+    return new quatf(f(t(sx!, cy!, cz!) - t(cx!, sy!, sz!)), f(t(cx!, sy!, cz!) + t(sx!, cy!, sz!)), f(t(cx!, cy!, sz!) - t(sx!, sy!, cz!)), f(t(cx!, cy!, cz!) + t(sx!, sy!, sz!)));
+}
+
+function matrixFromQuatF32(q: quatf): float4x4 {
+    const f = Math.fround;
+    const [x, y, z, w] = [q.x, q.y, q.z, q.w].map(f) as [number, number, number, number];
+    const [xx, yy, zz, xz, xy, yz, wx, wy, wz] = [x * x, y * y, z * z, x * z, x * y, y * z, w * x, w * y, w * z].map(f) as number[];
+    const m = float4x4.identity();
+    const rows = [
+        [f(1 - f(2 * f(yy! + zz!))), f(2 * f(xy! - wz!)), f(2 * f(xz! + wy!))],
+        [f(2 * f(xy! + wz!)), f(1 - f(2 * f(xx! + zz!))), f(2 * f(yz! - wx!))],
+        [f(2 * f(xz! - wy!)), f(2 * f(yz! + wx!)), f(1 - f(2 * f(xx! + yy!)))],
+    ];
+    rows.forEach((row, r) => row.forEach((v, c) => m.set(r, c, v)));
+    return m;
+}
+
+/** mul(float4x4, float4x4): each entry a left-to-right f32 dot of a row and a column. */
+export function mulMatF32(a: float4x4, b: float4x4): float4x4 {
+    const f = Math.fround;
+    const out = new float4x4();
+    for (let r = 0; r < 4; r++)
+        for (let c = 0; c < 4; c++) {
+            let sum = f(f(a.get(r, 0)) * f(b.get(0, c)));
+            for (let k = 1; k < 4; k++) sum = f(sum + f(f(a.get(r, k)) * f(b.get(k, c))));
+            out.set(r, c, sum);
+        }
+    return out;
+}
+
 /** Mirrors Falcor's Transform (python `Transform`): translation, quaternion rotation, scaling. */
 export class TransformBridge {
     private _translation = new float3(0, 0, 0);
@@ -617,14 +653,16 @@ export class TransformBridge {
     get rotation(): quatf { return this._rotation; }
     set rotation(q: quatf) { this._rotation = new quatf(q.x, q.y, q.z, q.w); }
     get rotationEuler(): float3 { return eulerAngles(this._rotation); }
-    set rotationEuler(v: VecLike) { this._rotation = quatFromEulerAngles(toF3(v)); }
+    set rotationEuler(v: VecLike) { this._rotation = quatFromEulerAnglesF32(toF3(v)); }
     get rotationEulerDeg(): float3 {
         const e = this.rotationEuler;
         return new float3((e.x * 180) / Math.PI, (e.y * 180) / Math.PI, (e.z * 180) / Math.PI);
     }
     set rotationEulerDeg(v: VecLike) {
+        // math::radians(float): x * float(pi / 180).
         const d = toF3(v);
-        this.rotationEuler = new float3((d.x * Math.PI) / 180, (d.y * Math.PI) / 180, (d.z * Math.PI) / 180);
+        const k = Math.fround(Math.PI / 180);
+        this.rotationEuler = new float3(Math.fround(Math.fround(d.x) * k), Math.fround(Math.fround(d.y) * k), Math.fround(Math.fround(d.z) * k));
     }
     /** Mirrors Transform::lookAt (right-handed: forward maps onto -Z). */
     lookAt(position: VecLike, target: VecLike, up: VecLike): void {
@@ -636,8 +674,9 @@ export class TransformBridge {
     }
     /** Mirrors Transform::getMatrix for each composition order. */
     get matrix(): float4x4 {
-        const [T, R, S] = [matrixFromTranslation(this._translation), matrixFromQuat(this._rotation), matrixFromScaling(this._scaling)];
-        const m = (a: float4x4, b: float4x4, c: float4x4) => mulMat(mulMat(a, b), c);
+        const f3 = (v: float3) => new float3(Math.fround(v.x), Math.fround(v.y), Math.fround(v.z));
+        const [T, R, S] = [matrixFromTranslation(f3(this._translation)), matrixFromQuatF32(this._rotation), matrixFromScaling(f3(this._scaling))];
+        const m = (a: float4x4, b: float4x4, c: float4x4) => mulMatF32(mulMatF32(a, b), c);
         switch (Number(this.order)) {
             case CompositionOrder.ScaleTranslateRotate: return m(R, T, S);
             case CompositionOrder.RotateScaleTranslate: return m(T, S, R);
@@ -739,6 +778,55 @@ function sortMeshesLikeNative(meshes: SceneMeshDesc[], materials: SceneMaterialD
     groups[2] = [...keyed[1]!.values()].flatMap(interleave);
     groups[5] = [...keyed[3]!.values()].flatMap(interleave);
     return groups.flat(2);
+}
+
+/**
+ * SceneBuilder::pretransformStaticMeshes: static, non-instanced meshes move to world space (in native's
+ * f32 arithmetic) with an identity transform; a handedness-flipping transform flips their winding.
+ */
+function pretransformStaticMeshes(meshes: SceneMeshDesc[], nodes: SceneNode[], animations: AnimationChannel[]): void {
+    const animatedNodes = new Set(animations.map((c) => c.nodeID));
+    const isNodeAnimated = (n: number | undefined) => {
+        for (; n !== undefined && n >= 0; n = nodes[n]?.parent) if (animatedNodes.has(n)) return true;
+        return false;
+    };
+    const uses = new Map<StaticVertex[], number>();
+    for (const m of meshes) uses.set(m.vertices, (uses.get(m.vertices) ?? 0) + 1);
+    const f = Math.fround;
+    const identity = float4x4.identity();
+    for (const m of meshes) {
+        if (uses.get(m.vertices)! > 1 || m.skin || m.morph || m.vertexCache || m.polytubeCache || isNodeAnimated(m.nodeID)) continue;
+        const t = m.transform;
+        m.transform = undefined;
+        m.nodeID = undefined;
+        if (!t || t.data.every((v, i) => v === identity.data[i])) continue;
+        const a = Array.from(t.data, f);
+        const it = Array.from(transpose(inverse(t)).data, f);
+        // mul(M, v) row by row: dot() accumulates left to right in f32.
+        const mul3 = (M: number[], x: number, y: number, z: number, w: number) =>
+            [0, 1, 2].map((r) => f(f(f(f(M[r * 4]! * x) + f(M[r * 4 + 1]! * y)) + f(M[r * 4 + 2]! * z)) + f(M[r * 4 + 3]! * w)));
+        const length = ([x, y, z]: number[]) => f(Math.sqrt(f(f(f(x! * x!) + f(y! * y!)) + f(z! * z!))));
+        // A zero vector stays zero (native's rsqrt(0) would make it NaN).
+        const normalize = (v: number[]) => {
+            const len = length(v);
+            const inv = len > 0 ? f(1 / len) : 0;
+            return new float3(f(v[0]! * inv), f(v[1]! * inv), f(v[2]! * inv));
+        };
+        const [c0, c1, c2] = [0, 1, 2].map((c) => [a[c]!, a[4 + c]!, a[8 + c]!]);
+        const det = c0![0]! * (c1![1]! * c2![2]! - c2![1]! * c1![2]!) - c1![0]! * (c0![1]! * c2![2]! - c2![1]! * c0![2]!) + c2![0]! * (c0![1]! * c1![2]! - c1![1]! * c0![2]!);
+        if (det < 0) m.indices = flipWinding(m.indices);
+        m.vertices = m.vertices.map((v) => {
+            const [px, py, pz] = mul3(a, v.position.x, v.position.y, v.position.z, 1);
+            const out: StaticVertex = {
+                ...v,
+                position: new float3(px!, py!, pz!),
+                normal: normalize(mul3(it, v.normal.x, v.normal.y, v.normal.z, 0)),
+                tangent: ((d) => new float4(d.x, d.y, d.z, v.tangent.w))(normalize(mul3(a, v.tangent.x, v.tangent.y, v.tangent.z, 0))),
+            };
+            if (v.curveRadius !== undefined) out.curveRadius = length(mul3(a, v.curveRadius, 0, 0, 0));
+            return out;
+        });
+    }
 }
 
 /** SceneBuilder::flipTriangleWinding: swaps the first two indices of every triangle. */
@@ -1822,6 +1910,7 @@ export class SceneBuilderBridge {
             for (const b of builtSdfGrids) b.materialID = idMap[b.materialID]!;
         }
         // SceneBuilder::createMeshGroups + sortMeshes: mesh (and instance) IDs follow native's mesh groups.
+        pretransformStaticMeshes(meshes, nodes, animations);
         meshes = sortMeshesLikeNative(meshes, materials);
         const scene = await Scene.create(device, meshes, materials, lights, textureManager, sdfGrids, nodes, animations, cameraNodeID, weightTracks, curves);
         for (const c of this.customPrimitives) scene.addCustomPrimitive(c.userID, c.aabb);

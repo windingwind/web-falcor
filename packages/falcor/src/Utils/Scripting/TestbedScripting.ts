@@ -201,6 +201,9 @@ function makeJsModule(device: Device, testbedOptions: TestbedOptions, fsRead: (p
                 scene.updateMaterial(id);
             });
         },
+        /** Scene get_mesh_vertices_and_indices / set_mesh_vertices over a {name: Buffer} dict. */
+        getMeshVerticesAndIndices: (t: Testbed, meshID: number, buffers: Record<string, Buffer>) => t.scene!.getMeshVerticesAndIndices(meshID, buffers),
+        setMeshVertices: (t: Testbed, meshID: number, buffers: Record<string, Buffer>) => t.scene!.setMeshVertices(meshID, buffers),
         /** CopyContext::copyResource: buffers or textures (all subresources). */
         copyResource: (dst: Buffer | Texture, src: Buffer | Texture) => {
             if (dst instanceof TextureClass && src instanceof TextureClass) device.renderContext.copyTexture(dst, src);
@@ -562,6 +565,12 @@ class _Scene:
         run_sync(_js.getMaterialParams(self._t, material_ids_buffer._o, params_buffer._o))
     def set_material_params(self, material_ids_buffer, params_buffer):
         run_sync(_js.setMaterialParams(self._t, material_ids_buffer._o, params_buffer._o))
+    @property
+    def stats(self): return object.__getattribute__(self, "_t").scene.stats.to_py()
+    def get_mesh_vertices_and_indices(self, mesh_id, buffers):
+        _js.getMeshVerticesAndIndices(self._t, int(mesh_id), to_js({k: v._o for k, v in buffers.items()}, dict_converter=__import__("js").Object.fromEntries))
+    def set_mesh_vertices(self, mesh_id, buffers):
+        run_sync(_js.setMeshVertices(self._t, int(mesh_id), to_js({k: v._o for k, v in buffers.items()}, dict_converter=__import__("js").Object.fromEntries)))
     def __getattr__(self, k): return getattr(object.__getattribute__(self, "_t").scene, k)
     def __setattr__(self, k, v): setattr(object.__getattribute__(self, "_t").scene, k, _unwrap(v))
 

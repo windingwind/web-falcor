@@ -226,6 +226,8 @@ export class Testbed {
         while (!this.shouldClose) await this.frame();
     }
 
+    /** Files written by captureOutput, by path (native writes them to disk). */
+    readonly captures = new Map<string, Uint8Array>();
     /** Mirrors Testbed::captureOutput: the graph output as a file (downloaded in a page). */
     async captureOutput(path: string, outputIndex = 0): Promise<Uint8Array | null> {
         const names = this.renderGraph?.getOutputNames() ?? [];
@@ -233,6 +235,8 @@ export class Testbed {
         if (!tex) return null;
         const { Bitmap } = await import("../Image/Bitmap.js");
         const ext = path.slice(path.lastIndexOf(".") + 1);
-        return tex.captureToFile(0, 0, path, Bitmap.getFormatFromFileExtension(ext), undefined, typeof document !== "undefined");
+        const bytes = await tex.captureToFile(0, 0, path, Bitmap.getFormatFromFileExtension(ext), undefined, typeof document !== "undefined");
+        if (bytes) this.captures.set(path, bytes);
+        return bytes;
     }
 }
