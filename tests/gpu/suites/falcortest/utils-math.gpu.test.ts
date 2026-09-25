@@ -36,6 +36,30 @@ gpuTest("FalcorTest.JenkinsHash_CompareToCPU", async ({ device }) => {
     e.done("JenkinsHash");
 });
 
+gpuTest("FalcorTest.JenkinsHash_PerfectHashGPU", async ({ device }) => {
+    // Native binds one 2^27-dword bitfield; here it is split by the hash's top bits to fit binding limits.
+    const lim = device.gpuDevice.limits;
+    const maxBytes = Math.min(lim.maxStorageBufferBindingSize, lim.maxBufferSize, 128 << 20);
+    let chunkBits = 0;
+    while ((1 << (29 - chunkBits)) > maxBytes) chunkBits++;
+    const ctx = new GPUUnitTestContext(device);
+    const result = device.createStructuredBuffer(4, 1 << (27 - chunkBits));
+    ctx.createProgram("Tests/Utils/HashUtilsTests.cs.slang", "testJenkinsHash_PerfectHash");
+    const e = new Expect();
+    for (let chunk = 0; chunk < 1 << chunkBits; chunk++) {
+        ctx.getRenderContext().clearBuffer(result);
+        ctx.vars()["result"] = result;
+        ctx.vars()["CB"]["chunk"] = chunk;
+        ctx.vars()["CB"]["chunkBits"] = chunkBits;
+        ctx.runProgram(1 << 16, 1 << 16, 1);
+        const r = await getElements(result, Uint32Array);
+        let bad = -1;
+        for (let i = 0; i < r.length; i++) if (r[i] !== 0xffffffff) { bad = i; break; }
+        e.check(bad < 0, () => `chunk ${chunk}: result[${bad}] = ${r[bad]!.toString(16)}`);
+    }
+    e.done("JenkinsHash_PerfectHashGPU");
+});
+
 // Utils/BitTricksTests.cpp
 
 function referenceBitInterleave(x: number, y: number, m: number): number {

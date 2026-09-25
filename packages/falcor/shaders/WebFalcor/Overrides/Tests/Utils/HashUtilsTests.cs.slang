@@ -34,6 +34,13 @@ import Utils.Math.HashUtils;
 
 RWStructuredBuffer<Atomic<uint>> result; // WebFalcor: was RWBuffer<uint>
 
+// WebFalcor: the 512 MB bitfield exceeds binding limits; each run records the hashes whose top chunkBits equal chunk.
+cbuffer CB
+{
+    uint chunk;
+    uint chunkBits;
+}
+
 [numthreads(16, 16, 1)]
 void testJenkinsHash_PerfectHash(uint3 threadId: SV_DispatchThreadID)
 {
@@ -42,7 +49,8 @@ void testJenkinsHash_PerfectHash(uint3 threadId: SV_DispatchThreadID)
     uint i = (threadId.y << 16) | threadId.x; // i in [0, 2^32)
     uint h = jenkinsHash(i);
 
-    uint k = h >> 5;
+    if (chunkBits > 0 && (h >> (32 - chunkBits)) != chunk) return;
+    uint k = (h >> 5) & ((1u << (27 - chunkBits)) - 1);
     uint b = h & 0x1f;
     result[k].or(1u << b); // WebFalcor: was InterlockedOr
 }
