@@ -82,7 +82,7 @@
       <label title="Load Script / Load Scene (Ctrl+O / Ctrl+Shift+O): a media path or URL; .py loads as a script, anything else as a scene. Recent entries are suggested.">open <input id="openPath" list="recentList" placeholder="scene or script path" size="28" /></label>
       <datalist id="recentList"></datalist>
       <label>graph <input id="graphFile" type="file" accept=".py" /></label>
-      <label hidden>active graph <select id="activeGraph"></select></label>
+      <label hidden>active graph <select id="activeGraph"></select> <button id="removeGraph" title="Renderer::removeActiveGraph">remove</button></label>
       <label>output <select id="output"></select></label>
       <label title="Window Size: the renderable area (swapchain) size">size <select id="winSize"></select></label>
       <button id="consoleToggle">Console</button>

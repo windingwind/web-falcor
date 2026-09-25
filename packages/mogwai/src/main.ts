@@ -917,6 +917,16 @@ function refreshOutputs(state: ViewerState): void {
             refreshOutputs(state);
             window.dispatchEvent(new Event("mogwai-graphchange"));
         };
+        // Renderer::removeGraph: the active index steps down past the removed graph.
+        (document.getElementById("removeGraph") as HTMLButtonElement).onclick = (ev) => {
+            ev.preventDefault();
+            const i = state.graphs.indexOf(state.graph!);
+            if (i < 0) return;
+            state.graphs.splice(i, 1);
+            selectGraph(state, state.graphs[i > 0 ? i - 1 : 0] ?? null);
+            refreshOutputs(state);
+            window.dispatchEvent(new Event("mogwai-graphchange"));
+        };
     }
     const sel = document.getElementById("output") as HTMLSelectElement | null;
     if (!sel || !state.graph) return;
