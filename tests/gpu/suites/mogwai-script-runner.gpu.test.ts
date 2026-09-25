@@ -96,14 +96,19 @@ gpuTest("MogwaiScriptRunner.rendererCallbacks", async ({ device }) => {
         "    scene.camera.nearPlane = 0.25",
         "m.sceneUpdateCallback = cb",
         "m.clock.pause()",
-        "m.renderFrame()",
+        "m.timingCapture.captureFrameTime('times.txt')",
+        "for i in range(4): m.renderFrame()",
+        "m.timingCapture.captureFrameTime('')",
         "m.renderFrame()",
     ].join("\n");
-    const { scene } = await runMogwaiSource(device, source, "/Falcor/media/test_scenes");
+    const { scene, timingCapture } = await runMogwaiSource(device, source, "/Falcor/media/test_scenes");
+    // TimingCapture: one time per frame from the second frame on, none after the capture stops.
+    const times = timingCapture.files.get("times.txt") ?? [];
+    expectEq(times.length === 4 && times.every((t) => t >= 0 && t < 10), true, `frame times in seconds (${times.join(", ")})`);
     expectEq(scene?.camera.getNearPlane(), 0.25, "callback ran with the scene");
     // Python state lives on in the interpreter: the callback ran once per frame after it was set.
     const { runConsoleCommand } = await import("@web-falcor/falcor");
-    expectEq(runConsoleCommand(device, "len(times)", { scene: null, graph: null }), "2", "two frames after the callback was set");
+    expectEq(runConsoleCommand(device, "len(times)", { scene: null, graph: null }), "5", "one call per frame after the callback was set");
 
     // The console's m keeps callbacks in the viewer's holder.
     const callbacks = { sceneUpdateCallback: null, keyCallback: null } as import("@web-falcor/falcor").MogwaiCallbacks;

@@ -93,6 +93,9 @@ export class SceneMaterial implements SceneMaterialDesc {
     get displacementOffset(): number { return this.basic.displacementOffset ?? 0; }
     set displacementOffset(v: number) { this.setBasic({ displacementOffset: Number(v) }); }
 
+    /** Material::setRoughnessMollification: a no-op in native's materials too. */
+    setRoughnessMollification(_value: number): void {}
+
     /** Mirrors Material::clearTexture(slot) (BaseColor, Specular, Emissive, Normal, Transmission, Displacement). */
     clearTexture(slot: string | { name?: string; value?: string }): void {
         const key = typeof slot === "string" ? slot : (slot.name ?? slot.value ?? String(slot));

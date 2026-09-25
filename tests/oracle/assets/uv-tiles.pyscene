@@ -1,0 +1,16 @@
+# UV tile oracle: triangles inside single unit UV squares, plus ones spanning squares.
+mat = StandardMaterial('M')
+m = TriangleMesh()
+def tri(uvs):
+    base = len(m.vertices)
+    for i, uv in enumerate(uvs):
+        m.addVertex(float3(float(i), float(base), 0), float3(0, 0, 1), float2(uv[0], uv[1]))
+    m.addTriangle(base, base + 1, base + 2)
+tri([(0.1, 0.1), (0.4, 0.2), (0.2, 0.6)])     # tile (0, 0)
+tri([(2.25, 1.5), (2.75, 1.25), (2.5, 1.75)])  # tile (2, 1)
+tri([(-0.5, 0.5), (-0.25, 0.75), (-0.75, 0.25)])  # tile (-1, 0)
+tri([(0.5, 3.5), (0.75, 3.25), (0.25, 3.75)])  # tile (0, 3), outside the spanning tile
+tri([(-1.0, -1.0), (2.9, 0.5), (0.5, 1.9)])    # spans squares: contains tiles (0,0), (-1,0)
+sceneBuilder.addMeshInstance(sceneBuilder.addNode('m', Transform()), sceneBuilder.addTriangleMesh(m, mat))
+quad = TriangleMesh.createQuad()  # uv corners 0/1: both triangles span squares
+sceneBuilder.addMeshInstance(sceneBuilder.addNode('q', Transform()), sceneBuilder.addTriangleMesh(quad, mat))

@@ -17,6 +17,7 @@ import {
     type Device,
     type MogwaiCommand,
     type MogwaiCallbacks,
+    type MogwaiTarget,
     type MogwaiRef,
     type RenderGraph,
     type Scene,
@@ -34,8 +35,33 @@ function resolvePath(root: object, path: string): [Record<string, unknown>, stri
     return [obj, parts[parts.length - 1]!];
 }
 
+/**
+ * Mirrors the TimingCapture extension headlessly: captureFrameTime(path) starts a frame-time
+ * log (an empty path stops it); each frame records the previous frame's time in seconds.
+ */
+export class HeadlessTimingCapture {
+    /** Captured logs by path, one frame time (s, Clock::getRealTimeDelta) per entry, as native writes one per line. */
+    readonly files = new Map<string, number[]>();
+    private current: number[] | null = null;
+    private last = -1;
+    private frames = 0;
+
+    captureFrameTime(path: string): void {
+        this.current = null;
+        if (path) this.files.set(String(path), (this.current = []));
+    }
+
+    /** TimingCapture::beginFrame: the first valid time is available on the second frame. */
+    beginFrame(now = performance.now()): void {
+        this.frames++;
+        if (this.current && this.frames > 1) this.current.push((now - this.last) / 1000);
+        this.last = now;
+    }
+}
+
 export interface MogwaiRunResult {
     frameCapture: FrameCaptureExtension;
+    timingCapture: HeadlessTimingCapture;
     graphs: RenderGraph[];
     /** Renderer's active graph at the end of the script. */
     activeGraph: RenderGraph | null;
@@ -63,7 +89,8 @@ export async function runMogwaiSource(device: Device, source: string, dirUrl: st
     const fc = new FrameCaptureExtension(device, () => active, (name) => graphs.find((g) => g.name === name) ?? null, () => clock.getFrame());
     fc.download = opts.download ?? false;
 
-    const targetOf = (t: "clock" | "frameCapture" | "scene"): object | null => (t === "clock" ? clock : t === "frameCapture" ? fc : scene);
+    const tc = new HeadlessTimingCapture();
+    const targetOf = (t: MogwaiTarget): object | null => (t === "clock" ? clock : t === "frameCapture" ? fc : t === "timingCapture" ? tc : scene);
     const resolveRef = (v: unknown): unknown => {
         const ref = v as MogwaiRef | null;
         if (!ref || typeof ref !== "object" || !("mogwaiRef" in ref)) return v;
@@ -155,6 +182,7 @@ export async function runMogwaiSource(device: Device, source: string, dirUrl: st
                 // Mogwai::renderFrame: clock, extensions' beginFrame, scene update, graph, endFrame.
                 clock.tick();
                 fc.beginFrame();
+                tc.beginFrame();
                 // Renderer::onFrameRender: the renderer's callback runs before Scene::update.
                 if (active) sceneUpdateCallback?.(scene, clock.getTime());
                 scene?.runUpdateCallback(clock.getTime());
@@ -164,5 +192,5 @@ export async function runMogwaiSource(device: Device, source: string, dirUrl: st
                 break;
         }
     }
-    return { frameCapture: fc, graphs, activeGraph: active, scene };
+    return { frameCapture: fc, timingCapture: tc, graphs, activeGraph: active, scene };
 }

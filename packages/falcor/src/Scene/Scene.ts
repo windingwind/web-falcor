@@ -50,6 +50,7 @@ import { formatByteSize } from "../Utils/StringUtils.js";
 import { Logger } from "../Utils/Logger.js";
 import { SceneMaterial } from "./Material/SceneMaterial.js";
 import { AABB } from "../Utils/Math/AABB.js";
+import { Rectangle } from "../Utils/Math/Rectangle.js";
 import { AssetCategory, resolveAssetUrl } from "../Core/AssetResolver.js";
 import { getFormatChannelCount } from "../Core/API/Formats.js";
 import type { NDSDFGrid } from "./SDFs/NDSDFGrid.js";
@@ -1426,6 +1427,40 @@ export class Scene {
         this.sdfGrids.forEach((g, i) => g.materialID === id && ids.push(meshCount + this.curveDescs.length + i));
         return ids;
     }
+
+    /**
+     * Mirrors Scene::getGeometryUVTiles (createMeshUVTiles): per unit UV square, the bounds of the
+     * triangles inside it, plus one tile for triangles spanning squares (which absorbs contained tiles).
+     */
+    getGeometryUVTiles(geometryID: number): Rectangle[] {
+        const cached = this.uvTiles.get(geometryID);
+        if (cached) return cached;
+        const i = this.meshIDs.indexOf(geometryID);
+        if (i < 0) return [];
+        const { vertices, indices } = this.lcMeshes[i]!;
+        const large = new Rectangle();
+        const tiles = new Map<string, { key: [number, number]; tile: Rectangle }>();
+        for (let t = 0; t + 2 < indices.length; t += 3) {
+            const uv = [0, 1, 2].map((k) => vertices[indices[t + k]!]!.texCrd);
+            const cells = uv.map((c) => [Math.floor(c.x), Math.floor(c.y)] as [number, number]);
+            const same = cells.every((c) => c[0] === cells[0]![0] && c[1] === cells[0]![1]);
+            let tile = large;
+            if (same) {
+                const id = cells[0]!.join();
+                const entry = tiles.get(id) ?? { key: cells[0]!, tile: new Rectangle() };
+                tiles.set(id, entry);
+                tile = entry.tile;
+            }
+            for (const c of uv) tile.include(c);
+        }
+        // std::map<int2> order: by x, then y.
+        const sorted = [...tiles.values()].sort((a, b) => a.key[0] - b.key[0] || a.key[1] - b.key[1]);
+        const result = sorted.filter((e) => !large.contains(e.tile)).map((e) => e.tile);
+        if (large.valid) result.push(large);
+        this.uvTiles.set(geometryID, result);
+        return result;
+    }
+    private uvTiles = new Map<number, Rectangle[]>();
 
     /** Python `scene.get_mesh(mesh_id)` (MeshDesc vertex_count / triangle_count). */
     get_mesh(meshID: number): { vertex_count: number; triangle_count: number } {

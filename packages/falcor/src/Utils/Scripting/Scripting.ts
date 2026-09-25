@@ -786,9 +786,12 @@ function writePythonFiles(files: Record<string, string>): void {
 
 /** A value the script read from Mogwai state while recording (resolved at replay). */
 export interface MogwaiRef {
-    mogwaiRef: "clock" | "frameCapture" | "scene";
+    mogwaiRef: "clock" | "frameCapture" | "scene" | "timingCapture";
     path: string;
 }
+
+/** The m.* objects whose calls are recorded and replayed. */
+export type MogwaiTarget = "clock" | "frameCapture" | "scene" | "timingCapture";
 
 /** One recorded Mogwai script call (see recordMogwaiScript). */
 export type MogwaiCommand =
@@ -800,8 +803,8 @@ export type MogwaiCommand =
     | { op: "unloadScene" }
     | { op: "resizeFrameBuffer"; width: number; height: number }
     | { op: "renderFrame" }
-    | { op: "set"; target: "clock" | "frameCapture" | "scene"; key: string; value: unknown }
-    | { op: "call"; target: "clock" | "frameCapture" | "scene" | RenderGraph | RenderPass; method: string; args: unknown[] }
+    | { op: "set"; target: MogwaiTarget; key: string; value: unknown }
+    | { op: "call"; target: MogwaiTarget | RenderGraph | RenderPass; method: string; args: unknown[] }
     | { op: "setPass"; target: RenderPass; key: string; value: unknown };
 
 /**
@@ -862,7 +865,7 @@ export function recordMogwaiScript(device: Device, source: string, files: Record
         const ref = (v as { [kRef]?: MogwaiRef } | null | undefined)?.[kRef];
         return ref ?? conv(v);
     };
-    const recorder = (target: "clock" | "frameCapture" | "scene", path = ""): Record<string, unknown> =>
+    const recorder = (target: MogwaiTarget, path = ""): Record<string, unknown> =>
         new Proxy((() => {}) as unknown as Record<string, unknown>, {
             get: (_t, key) => {
                 if (key === kRef) return { mogwaiRef: target, path } satisfies MogwaiRef;
@@ -947,6 +950,7 @@ export function recordMogwaiScript(device: Device, source: string, files: Record
         renderFrame: () => void commands.push({ op: "renderFrame" }),
         clock: recorder("clock"),
         frameCapture: recorder("frameCapture"),
+        timingCapture: recorder("timingCapture"),
         scene: recorder("scene"),
         ui: false,
         // Profiler reads/events take effect at record time (the profiler isn't replayed).

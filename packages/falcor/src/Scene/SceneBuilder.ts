@@ -333,6 +333,8 @@ export class MaterialBridge {
     load_texture(slot: string, path: string, useSrgb: boolean = true): void {
         this.loadTexture(slot, path, useSrgb);
     }
+    /** Material::setRoughnessMollification: a no-op in native's materials too. */
+    setRoughnessMollification(_value: number): void {}
     /** Mirrors Material::clearTexture: drops the slot's pending loads. */
     clearTexture(slot: string): void {
         const name = slotName(slot);

@@ -88,3 +88,13 @@ gpuTest("Scripting.liveSceneQueries", async ({ device }) => {
     await scene.pendingEnvMap;
     expectEq(scene.getEnvMap() !== null, true, "env map loaded");
 });
+
+gpuTest("Scene.geometryUVTilesMatchNative", async ({ device }) => {
+    await initScripting("/node_modules/pyodide");
+    const base = "/tests/oracle/assets";
+    const scene = await runSceneScript(device, await (await fetch(`${base}/uv-tiles.pyscene`)).text(), base);
+    const native = (await (await fetch("/tests/oracle/out-native/uv-tiles.json")).json()) as number[][][];
+    const web = [0, 1].map((id) => scene.getGeometryUVTiles(id).map((t) => [t.minPoint.x, t.minPoint.y, t.maxPoint.x, t.maxPoint.y]));
+    expectEq(JSON.stringify(web), JSON.stringify(native), "UV tiles per mesh, in native order");
+    expectEq(runConsoleCommand(device, "len(m.scene.getGeometryUVTiles(0))", { scene, graph: null }), "2", "python binding");
+});
