@@ -176,6 +176,15 @@ function makeJsModule(device: Device, testbedOptions: TestbedOptions, fsRead: (p
             await material.resolveTextures(t.sceneBaseUrl, scene.textureManager, undefined, false, device);
             if (scene.replaceMaterial(index, material.toDesc()) && t.renderGraph) t.renderGraph.setScene(scene);
         },
+        /** CopyContext::copyResource: buffers or textures (all subresources). */
+        copyResource: (dst: Buffer | Texture, src: Buffer | Texture) => {
+            if (dst instanceof TextureClass && src instanceof TextureClass) device.renderContext.copyTexture(dst, src);
+            else device.renderContext.copyBuffer(dst as Buffer, src as Buffer);
+        },
+        /** CopyContext::copySubresource: subresource index = mip + arraySlice * mipCount. */
+        copySubresource: (dst: Texture, dstIdx: number, src: Texture, srcIdx: number) =>
+            device.renderContext.copySubresource(dst, dstIdx % dst.mipCount, Math.floor(dstIdx / dst.mipCount), src, srcIdx % src.mipCount, Math.floor(srcIdx / src.mipCount)),
+        copyBufferRegion: (dst: Buffer, dstOffset: number, src: Buffer, srcOffset: number, size: number) => device.renderContext.copyBufferRegion(dst, dstOffset, src, srcOffset, size),
         submit: async (wait: boolean) => {
             device.renderContext.submit();
             if (wait) await device.gpuDevice.queue.onSubmittedWorkDone();
@@ -382,6 +391,15 @@ class Device:
 class RenderContext:
     def submit(self, wait=False):
         run_sync(_js.submit(bool(wait)))
+    # CopyContext bindings (copy_resource, copy_subresource, copy_buffer_region, uav_barrier).
+    def copy_resource(self, dst, src):
+        _js.copyResource(dst._o, src._o)
+    def copy_subresource(self, dst, dst_subresource_idx, src, src_subresource_idx):
+        _js.copySubresource(dst._o, int(dst_subresource_idx), src._o, int(src_subresource_idx))
+    def copy_buffer_region(self, dst, dst_offset, src, src_offset, num_bytes):
+        _js.copyBufferRegion(dst._o, int(dst_offset), src._o, int(src_offset), int(num_bytes))
+    def uav_barrier(self, resource):
+        pass  # WebGPU orders storage writes between passes itself
 
 _render_context = RenderContext()
 
@@ -609,7 +627,8 @@ def _vector(name, n, scalar):
 
 for _n in (2, 3, 4):
     for _prefix, _scalar in (("float", float), ("int", int), ("uint", int), ("bool", bool)):
-        setattr(falcor, f"{_prefix}{_n}", _vector(f"{_prefix}{_n}", _n, _scalar))
+        globals()[f"{_prefix}{_n}"] = _vector(f"{_prefix}{_n}", _n, _scalar)
+        setattr(falcor, f"{_prefix}{_n}", globals()[f"{_prefix}{_n}"])
 
 # falcor.ui (Utils/UI/PythonUI): widgets over the testbed's DOM screen; edits queue in JS
 # and are applied (with their callbacks) inside testbed.frame(), as ImGui does natively.
@@ -788,6 +807,8 @@ _threading.Timer = _FrameTimer
 export interface TestbedScriptResult {
     testbeds: Testbed[];
     stdout: string[];
+    /** Lines written to sys.stderr (e.g. unittest's report). */
+    stderr: string[];
 }
 
 /**
@@ -798,7 +819,8 @@ export interface TestbedScriptResult {
 export async function runTestbedScript(
     device: Device,
     scriptUrl: string,
-    options: TestbedOptions & { extraFiles?: string[]; files?: Record<string, Uint8Array>; argv?: string[] } = {},
+    /** `cwd`: the working directory's URL (default: the script's), as `python -m unittest` from a test root. */
+    options: TestbedOptions & { extraFiles?: string[]; files?: Record<string, Uint8Array>; argv?: string[]; cwd?: string } = {},
 ): Promise<TestbedScriptResult> {
     const py = getPyodide() as Pyodide;
     const source = await (await fetch(scriptUrl)).text();
@@ -838,8 +860,10 @@ export async function runTestbedScript(
     ].join("\n");
     await py.runPythonAsync(`${prelude}\n${kFalcorPython}`);
     (py as unknown as { globals: { set(k: string, v: unknown): void } }).globals.set("_falcor_stdout", (line: string) => stdout.push(line));
+    const stderr: string[] = [];
+    (py as unknown as { globals: { set(k: string, v: unknown): void } }).globals.set("_falcor_stderr", (line: string) => stderr.push(line));
     await py.runPythonAsync(
-        `import sys, runpy, os\nclass _Tee:\n    def __init__(self, out): self.out, self.buf = out, ""\n    def write(self, s):\n        self.buf += s\n        *lines, self.buf = self.buf.split("\\n")\n        for l in lines: _falcor_stdout(l)\n        return self.out.write(s)\n    def flush(self): self.out.flush()\n_stdout0 = sys.stdout\nsys.stdout = _Tee(_stdout0)\nsys.path.insert(0, ${JSON.stringify(fsDir)})\nsys.argv = ${JSON.stringify([scriptPath, ...(options.argv ?? [])])}\nos.chdir(${JSON.stringify(fsDir)})\ntry:\n    runpy.run_path(${JSON.stringify(scriptPath)}, run_name="__main__")\nexcept SystemExit:\n    pass\nfinally:\n    sys.stdout = _stdout0\n    sys.path.remove(${JSON.stringify(fsDir)})\n    sys.modules.pop("falcor", None)\n    sys.modules.pop("falcor.ui", None)\n`,
+        `import sys, runpy, os\nclass _Tee:\n    def __init__(self, out, sink): self.out, self.buf, self.sink = out, "", sink\n    def write(self, s):\n        self.buf += s\n        *lines, self.buf = self.buf.split("\\n")\n        for l in lines: self.sink(l)\n        return self.out.write(s)\n    def flush(self): self.out.flush()\n_stdout0 = sys.stdout\nsys.stdout = _Tee(_stdout0, _falcor_stdout)\n_stderr0 = sys.stderr\nsys.stderr = _Tee(_stderr0, _falcor_stderr)\nfor _k in [k for k, v in list(sys.modules.items()) if str(getattr(v, "__file__", "") or "").startswith(("/mogwai", "/testbed"))]: del sys.modules[_k]\nsys.path.insert(0, ${JSON.stringify(fsDir)})\nsys.argv = ${JSON.stringify([scriptPath, ...(options.argv ?? [])])}\nos.chdir(${JSON.stringify(options.cwd ? `${root}${options.cwd}` : fsDir)})\ntry:\n    runpy.run_path(${JSON.stringify(scriptPath)}, run_name="__main__")\nexcept SystemExit:\n    pass\nfinally:\n    sys.stdout = _stdout0\n    sys.stderr = _stderr0\n    sys.path.remove(${JSON.stringify(fsDir)})\n    sys.modules.pop("falcor", None)\n    sys.modules.pop("falcor.ui", None)\n`,
     );
-    return { testbeds, stdout };
+    return { testbeds, stdout, stderr };
 }
