@@ -1,7 +1,7 @@
 // Scene panel mirroring Scene::renderUI (camera, lights, materials, env map,
 // animation) on the DOM. Edits go through the runtime-edit API
 // (camera setters, Scene.updateLights / updateMaterial) and restart accumulation.
-import { LightType, Logger, MaterialType, float3, float4, type Scene } from "@web-falcor/falcor";
+import { LightType, Logger, MaterialType, SDFGridGradientEvaluationMethod, SDFGridIntersectionMethod, float3, float4, type Scene } from "@web-falcor/falcor";
 
 export interface ScenePanelHooks {
     /** Called after any edit (viewer restarts accumulation). */
@@ -208,6 +208,22 @@ export function buildScenePanel(container: HTMLElement, scene: Scene | null, hoo
                 ].join("\n"),
             );
         });
+    }
+
+    // Mirrors Scene::renderUI "SDF Grid Settings": the choices native offers for the scene's grid type.
+    if (scene.sdfGrids.length > 0) {
+        const g = ui.group("SDF Grid Settings");
+        const c = scene.sdfGridConfig;
+        const impl = scene.getSDFGridImplementation();
+        const dense = impl === "NormalizedDenseGrid";
+        const methods: [SDFGridIntersectionMethod, string][] = dense ? [[SDFGridIntersectionMethod.GridSphereTracing, "Grid Sphere Tracing"], [SDFGridIntersectionMethod.VoxelSphereTracing, "Voxel Sphere Tracing"]] : [[SDFGridIntersectionMethod.VoxelSphereTracing, "Voxel Sphere Tracing"]];
+        const gradients: [SDFGridGradientEvaluationMethod, string][] = dense ? [[SDFGridGradientEvaluationMethod.NumericDiscontinuous, "Numeric Discontinuous"], [SDFGridGradientEvaluationMethod.NumericContinuous, "Numeric Continuous"]] : [[SDFGridGradientEvaluationMethod.NumericDiscontinuous, "Numeric Discontinuous"]];
+        const pick = <T,>(list: [T, string][], v: T) => list.find(([k]) => k === v)?.[1] ?? list[0]![1];
+        g.dropdown("Intersection Method", methods.map(([, n]) => n), pick(methods, c.intersectionMethod), (v) => (c.intersectionMethod = methods.find(([, n]) => n === v)![0]));
+        g.dropdown("Gradient Evaluation Method", gradients.map(([, n]) => n), pick(gradients, c.gradientEvaluationMethod), (v) => (c.gradientEvaluationMethod = gradients.find(([, n]) => n === v)![0]));
+        g.num("Solver Max Iteration Count", c.solverMaxIterations, 1, (v) => (c.solverMaxIterations = Math.round(v)), 0, 512);
+        g.text(`Data structure: ${impl}`);
+        g.checkbox("Optimize Visibility Rays", c.optimizeVisibilityRays, (v) => (c.optimizeVisibilityRays = v));
     }
 
     // Env map (mirrors EnvMap::renderUI; no file dialog on the web).

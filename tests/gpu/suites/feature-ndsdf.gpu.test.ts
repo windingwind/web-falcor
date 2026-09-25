@@ -84,3 +84,32 @@ m.addGraph(g)
     expectEq(bodyMismatch <= 100, true, `NDSDF body-vs-algorithm mismatches ${bodyMismatch}`);
     expectEq(bgMismatch <= 50, true, `NDSDF background-vs-native mismatches ${bgMismatch}`);
 });
+
+// Scene::SDFGridConfig: native's defaults as defines; the UI's choices recompile the passes (the settings key changes).
+gpuTest("FeatureNDSDFGrid.sdfGridConfigDrivesTheDefines", async ({ device }) => {
+    await initScripting("/node_modules/pyodide");
+    const [graph] = await runGraphScript(device, "from falcor import *\ng = RenderGraph('SceneDebugger')\ng.addPass(createPass('SceneDebugger', {'mode': 'GeometryID'}), 'SceneDebugger')\ng.markOutput('SceneDebugger.output')\nm.addGraph(g)\n");
+    const scene = await runSceneScript(device, await (await fetch("/Falcor/tests/image_tests/scene/scenes/NDSDFGrid.pyscene")).text(), "/Falcor/tests/image_tests/scene/scenes");
+    scene.camera.setAspectRatio(width / height);
+    graph!.onResize(width, height);
+    graph!.setScene(scene);
+    const pick = () => ["SCENE_SDF_VOXEL_INTERSECTION_METHOD", "SCENE_SDF_GRADIENT_EVALUATION_METHOD", "SCENE_SDF_SOLVER_MAX_ITERATION_COUNT", "SCENE_SDF_OPTIMIZE_VISIBILITY_RAYS"].map((k) => scene.getSceneDefines().get(k)).join();
+    expectEq(pick(), "2,1,256,1", "native defaults (VoxelSphereTracing, NumericDiscontinuous, 256, optimized visibility rays)");
+    expectEq(scene.getSDFGridImplementation(), "NormalizedDenseGrid", "implementation");
+    const ctx = device.renderContext;
+    const body = async () => {
+        for (let f = 0; f < 4; f++) graph!.execute(ctx);
+        const px = new Float32Array((await ctx.readTextureSubresource(graph!.getOutput("SceneDebugger.output")!)).buffer);
+        let n = 0;
+        for (let i = 0; i < width * height; i++) if (Math.abs(px[i * 4]! - 0.153) < 0.05) n++;
+        return n;
+    };
+    const voxel = await body();
+    const key = scene.getRenderSettingsKey();
+    Object.assign(scene.sdfGridConfig, { intersectionMethod: 1, gradientEvaluationMethod: 2, solverMaxIterations: 128 });
+    expectEq(pick(), "1,2,128,1", "defines follow the config");
+    expectEq(scene.getRenderSettingsKey() !== key, true, "settings key changed (passes recompile)");
+    const grid = await body();
+    console.error(`# SDF body pixels: voxel sphere tracing ${voxel}, grid sphere tracing ${grid}`);
+    expectEq(voxel > 1000 && Math.abs(grid - voxel) < voxel * 0.02, true, `both methods hit the SDF (${voxel} vs ${grid})`);
+});

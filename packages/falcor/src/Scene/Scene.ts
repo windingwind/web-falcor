@@ -59,6 +59,20 @@ import { encodeBC4Texture } from "./SDFs/BC4Encode.js";
 import { SDFSVS } from "./SDFs/SDFSVS.js";
 import { SDFSVO } from "./SDFs/SDFSVO.js";
 
+/** Mirrors Scene::SDFGridIntersectionMethod. */
+export enum SDFGridIntersectionMethod {
+    None = 0,
+    GridSphereTracing = 1,
+    VoxelSphereTracing = 2,
+}
+
+/** Mirrors Scene::SDFGridGradientEvaluationMethod. */
+export enum SDFGridGradientEvaluationMethod {
+    None = 0,
+    NumericDiscontinuous = 1,
+    NumericContinuous = 2,
+}
+
 /** One SDF grid instance (mirrors Scene::mSDFGrids + mSDFGridDesc + instance). */
 export interface SceneSDFGridDesc {
     grid: NDSDFGrid | SDFSBS | SDFSVS | SDFSVO;
@@ -2209,10 +2223,37 @@ export class Scene {
         this.updateVersion++;
     }
 
-    /** Snapshot key for change detection (native compares mRenderSettings != mPrevRenderSettings). */
+    /**
+     * Snapshot key for change detection (native compares mRenderSettings != mPrevRenderSettings); the SDF grid
+     * config is in it too, since it changes the scene defines as well (UpdateFlags::SDFGridConfigChanged).
+     */
     getRenderSettingsKey(): string {
         const r = this.renderSettings;
-        return `${+r.useEnvLight}${+r.useAnalyticLights}${+r.useEmissiveLights}${+r.useGridVolumes}|${r.diffuseAlbedoMultiplier}`;
+        const c = this.sdfGridConfig;
+        return `${+r.useEnvLight}${+r.useAnalyticLights}${+r.useEmissiveLights}${+r.useGridVolumes}|${r.diffuseAlbedoMultiplier}|${c.intersectionMethod}${c.gradientEvaluationMethod}${c.solverMaxIterations}${+c.optimizeVisibilityRays}`;
+    }
+
+    /** Mirrors Scene::SDFGridConfig (native defaults for every grid type); the UI edits it, the defines follow. */
+    readonly sdfGridConfig = {
+        intersectionMethod: SDFGridIntersectionMethod.VoxelSphereTracing,
+        gradientEvaluationMethod: SDFGridGradientEvaluationMethod.NumericDiscontinuous,
+        solverMaxIterations: 256,
+        optimizeVisibilityRays: true,
+    };
+
+    /** Mirrors SDFGridConfig::implementation (all grids in a scene share one type). */
+    getSDFGridImplementation(): "None" | "NormalizedDenseGrid" | "SparseVoxelSet" | "SparseBrickSet" | "SparseVoxelOctree" {
+        const grid = this.sdfGrids[0]?.grid;
+        if (!grid) return "None";
+        return grid instanceof SDFSBS ? "SparseBrickSet" : grid instanceof SDFSVS ? "SparseVoxelSet" : grid instanceof SDFSVO ? "SparseVoxelOctree" : "NormalizedDenseGrid";
+    }
+
+    /** Mirrors Scene::getSDFGridIntersectionMethod etc. */
+    getSDFGridIntersectionMethod(): SDFGridIntersectionMethod {
+        return this.sdfGridConfig.intersectionMethod;
+    }
+    getSDFGridGradientEvaluationMethod(): SDFGridGradientEvaluationMethod {
+        return this.sdfGridConfig.gradientEvaluationMethod;
     }
 
     /** Mirrors Scene::useAnalyticLights(). */
@@ -2494,10 +2535,10 @@ export class Scene {
             SCENE_SDF_NO_GRADIENT_EVALUATION_METHOD: 0,
             SCENE_SDF_GRADIENT_NUMERIC_DISCONTINUOUS: 1,
             SCENE_SDF_GRADIENT_NUMERIC_CONTINUOUS: 2,
-            SCENE_SDF_VOXEL_INTERSECTION_METHOD: 2,
-            SCENE_SDF_GRADIENT_EVALUATION_METHOD: 1,
-            SCENE_SDF_SOLVER_MAX_ITERATION_COUNT: 256,
-            SCENE_SDF_OPTIMIZE_VISIBILITY_RAYS: 1,
+            SCENE_SDF_VOXEL_INTERSECTION_METHOD: this.sdfGridConfig.intersectionMethod,
+            SCENE_SDF_GRADIENT_EVALUATION_METHOD: this.sdfGridConfig.gradientEvaluationMethod,
+            SCENE_SDF_SOLVER_MAX_ITERATION_COUNT: this.sdfGridConfig.solverMaxIterations,
+            SCENE_SDF_OPTIMIZE_VISIBILITY_RAYS: this.sdfGridConfig.optimizeVisibilityRays ? 1 : 0,
             SCENE_HAS_INDEXED_VERTICES: 1,
             SCENE_HAS_16BIT_INDICES: 0,
             SCENE_HAS_32BIT_INDICES: 1,

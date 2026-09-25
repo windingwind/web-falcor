@@ -19,7 +19,8 @@ const filter = filterIdx >= 0 ? process.argv[filterIdx + 1] : undefined;
 
 const vite = await createServer({
     root: repoRoot,
-    server: { port: 0, host: "127.0.0.1" },
+    // No HMR or file watching: an edit during a run must not reload or patch the test page.
+    server: { port: 0, host: "127.0.0.1", hmr: false, watch: null },
     resolve: {
         alias: {
             "@web-falcor/falcor": resolve(repoRoot, "packages/falcor/src/index.ts"),
