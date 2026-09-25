@@ -51,6 +51,14 @@ gpuTest("FalcorTest.ShaderStringImport", async ({ device }) => {
     await expectResult(ctx, "ShaderStringImport", (i) => i * 993);
 });
 
+// Disabled natively ("Duplicate import not working"); with the web's Slang the duplicate import resolves.
+gpuTest("FalcorTest.ShaderStringImportDuplicate", async ({ device }) => {
+    const ctx = new GPUUnitTestContext(device);
+    ctx.createProgramFromModules([{ sources: [{ file: "Tests/Slang/ShaderStringImport.cs.slang" }, { string: kShaderModuleC }] }], "main", { IMPORT_FROM_MAIN: "1" });
+    ctx.allocateStructuredBuffer("result", kSize);
+    await expectResult(ctx, "ShaderStringImportDuplicate", (i) => i * 993);
+});
+
 gpuTest("FalcorTest.ShaderStringImported", async ({ device }) => {
     const ctx = new GPUUnitTestContext(device);
     ctx.createProgramFromModules([
