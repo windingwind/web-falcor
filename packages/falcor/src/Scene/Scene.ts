@@ -2230,7 +2230,8 @@ export class Scene {
     getRenderSettingsKey(): string {
         const r = this.renderSettings;
         const c = this.sdfGridConfig;
-        return `${+r.useEnvLight}${+r.useAnalyticLights}${+r.useEmissiveLights}${+r.useGridVolumes}|${r.diffuseAlbedoMultiplier}|${c.intersectionMethod}${c.gradientEvaluationMethod}${c.solverMaxIterations}${+c.optimizeVisibilityRays}`;
+        // useEnvLight: an env map set or cleared at runtime (UpdateFlags::EnvMapChanged) changes the passes' defines.
+        return `${+r.useEnvLight}${+r.useAnalyticLights}${+r.useEmissiveLights}${+r.useGridVolumes}|${r.diffuseAlbedoMultiplier}|${c.intersectionMethod}${c.gradientEvaluationMethod}${c.solverMaxIterations}${+c.optimizeVisibilityRays}|${+this.useEnvLight}`;
     }
 
     /** Mirrors Scene::SDFGridConfig (native defaults for every grid type); the UI edits it, the defines follow. */

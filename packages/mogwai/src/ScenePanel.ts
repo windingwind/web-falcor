@@ -1,7 +1,7 @@
 // Scene panel mirroring Scene::renderUI (camera, lights, materials, env map,
 // animation) on the DOM. Edits go through the runtime-edit API
 // (camera setters, Scene.updateLights / updateMaterial) and restart accumulation.
-import { LightType, Logger, MaterialType, SDFGridGradientEvaluationMethod, SDFGridIntersectionMethod, float3, float4, type Scene } from "@web-falcor/falcor";
+import { EnvMap, LightType, Logger, MaterialType, SDFGridGradientEvaluationMethod, SDFGridIntersectionMethod, float3, float4, type Scene } from "@web-falcor/falcor";
 
 export interface ScenePanelHooks {
     /** Called after any edit (viewer restarts accumulation). */
@@ -226,10 +226,29 @@ export function buildScenePanel(container: HTMLElement, scene: Scene | null, hoo
         g.checkbox("Optimize Visibility Rays", c.optimizeVisibilityRays, (v) => (c.optimizeVisibilityRays = v));
     }
 
-    // Env map (mirrors EnvMap::renderUI; no file dialog on the web).
+    // Env map: Scene::renderUI's Load/Clear, then EnvMap::renderUI. Load reads a local image file.
     const env = scene.getEnvMap();
-    if (env) {
+    {
         const g = ui.group("EnvMap");
+        g.button("Load", () => {
+            const input = Object.assign(document.createElement("input"), { type: "file", accept: ".hdr,.exr,.png,.jpg,.jpeg,.pfm,.dds" });
+            input.onchange = async () => {
+                const file = input.files?.[0];
+                if (!file) return;
+                try {
+                    scene.setEnvMap(EnvMap.createFromBytes(scene.device, new Uint8Array(await file.arrayBuffer()), file.name.toLowerCase().endsWith(".exr")));
+                } catch (e) {
+                    Logger.warning(`Failed to load environment map from '${file.name}': ${String(e)}`);
+                }
+                hooks.rebuild?.();
+            };
+            input.click();
+        });
+        if (env) g.button("Clear", () => {
+            scene.setEnvMap(null);
+            hooks.rebuild?.();
+        });
+        if (env) {
         g.vec("Rotation XYZ", [...env.rotationDeg], 0.5, (i, v) => {
             const r: [number, number, number] = [...env.rotationDeg];
             r[i] = v;
@@ -238,6 +257,7 @@ export function buildScenePanel(container: HTMLElement, scene: Scene | null, hoo
         g.num("Intensity", env.intensity, 0.01, (v) => (env.intensity = v), 0, 1000000);
         g.vec("Color tint", [...env.tint], 0.01, (i, v) => (env.tint[i] = v), 0, 1);
         g.text(`Resolution: ${env.texture.width}x${env.texture.height}, mips: ${env.texture.mipCount}`);
+        }
     }
 
     // Mirrors Scene::renderUI "Render Settings" (master light-usage switches; the graph recompiles passes).
