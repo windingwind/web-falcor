@@ -186,8 +186,31 @@ function shaderTypeToVisibility(type: ShaderType): GPUShaderStageFlags {
 }
 
 /** Mirrors Falcor::ProgramManager (device-owned program factory + cache + global defines). */
+/** Mirrors ProgramManager::CompilationStats (times in seconds): versions are Slang compiles, kernels the WGSL modules. */
+export interface CompilationStats {
+    programVersionCount: number;
+    programKernelsCount: number;
+    programVersionMaxTime: number;
+    programKernelsMaxTime: number;
+    programVersionTotalTime: number;
+    programKernelsTotalTime: number;
+}
+
+const kNoCompilationStats: CompilationStats = { programVersionCount: 0, programKernelsCount: 0, programVersionMaxTime: 0, programKernelsMaxTime: 0, programVersionTotalTime: 0, programKernelsTotalTime: 0 };
+
 export class ProgramManager {
     readonly globalDefines = new DefineList();
+    private stats: CompilationStats = { ...kNoCompilationStats };
+
+    /** Mirrors ProgramManager::getCompilationStats. */
+    getCompilationStats(): CompilationStats {
+        return { ...this.stats };
+    }
+
+    /** Mirrors ProgramManager::resetCompilationStats. */
+    resetCompilationStats(): void {
+        this.stats = { ...kNoCompilationStats };
+    }
     private compiler: SlangCompiler;
     /** Compilers over other slang-wasm builds, by URL (ProgramDesc.slangRuntime). */
     private altCompilers = new Map<string, { runtime: SlangRuntime; compiler: SlangCompiler }>();
@@ -297,7 +320,9 @@ export class ProgramManager {
         const alt = desc.slangRuntime ? this.altCompilers.get(desc.slangRuntime) : undefined;
         if (desc.slangRuntime && !alt) throw new RuntimeError(`Slang runtime ${desc.slangRuntime} not loaded (ProgramManager.loadSlangRuntime)`);
         const compiler = alt?.compiler ?? this.compiler;
+        const t0 = performance.now();
         const result = compiler.compile(programModules(desc), desc.entryPoints, allDefines, desc.typeConformances ?? []);
+        const t1 = performance.now();
         const kernels = desc.entryPoints.map((ep, i) => {
             const wgsl = fixupWgsl(result.entryPointCode[i]!);
             return {
@@ -308,6 +333,14 @@ export class ProgramManager {
                 bindings: parseWgslBindings(wgsl, shaderTypeToVisibility(ep.type)),
             };
         });
+        const [versionTime, kernelsTime] = [(t1 - t0) / 1000, (performance.now() - t1) / 1000];
+        const st = this.stats;
+        st.programVersionCount++;
+        st.programKernelsCount += kernels.length;
+        st.programVersionTotalTime += versionTime;
+        st.programKernelsTotalTime += kernelsTime;
+        st.programVersionMaxTime = Math.max(st.programVersionMaxTime, versionTime);
+        st.programKernelsMaxTime = Math.max(st.programKernelsMaxTime, kernelsTime);
         return new ProgramVersion(new ProgramReflection(result.reflection), kernels);
     }
 }

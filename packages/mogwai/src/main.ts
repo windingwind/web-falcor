@@ -431,7 +431,7 @@ async function main() {
                     if (state.scene) state.scene.cameraSpeed = camControl.getSpeed();
                 },
             },
-        });
+        }, state.device.programManager);
 
     wireControls(state, rebuildUI);
     wireConsole(state, resetAccum, rebuildUI, profiler);
