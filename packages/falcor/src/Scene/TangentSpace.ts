@@ -8,7 +8,7 @@
  */
 
 import { float3, float4 } from "../Utils/Math/Vector.js";
-import type { StaticVertex } from "./SceneData.js";
+import { PackedVertex, copyVertex, createPackedVertices, kPackedVertexFloats, type StaticVertex } from "./SceneData.js";
 import { Logger } from "../Utils/Logger.js";
 
 /**
@@ -95,6 +95,7 @@ export interface VertexExtras {
 export function generateTangentsAndMerge(vertices: StaticVertex[], indices: Uint32Array, extras: VertexExtras = {}): { vertices: StaticVertex[]; indices: Uint32Array; source: Uint32Array } | null {
     const tangents = generateCornerTangents(vertices, indices);
     if (!tangents) return null;
+    if (vertices[0] instanceof PackedVertex) return mergePacked(vertices, indices, tangents, extras);
     const eps = 1e-6;
     const near = (a: number, b: number) => !(Math.abs(a - b) > eps);
     const same = (a: StaticVertex, b: StaticVertex, ia: number, ib: number) => {
@@ -115,7 +116,7 @@ export function generateTangentsAndMerge(vertices: StaticVertex[], indices: Uint
     const corners = indices.length - (indices.length % 3);
     for (let i = 0; i < corners; i++) {
         const orig = indices[i]!;
-        const v = { ...vertices[orig]!, tangent: new float4(tangents[i * 4]!, tangents[i * 4 + 1]!, tangents[i * 4 + 2]!, tangents[i * 4 + 3]!) };
+        const v = copyVertex(vertices[orig]!, { tangent: new float4(tangents[i * 4]!, tangents[i * 4 + 1]!, tangents[i * 4 + 2]!, tangents[i * 4 + 3]!) });
         let index = heads[orig]!;
         while (index >= 0 && !same(v, out[index]!, orig, source[index]!)) index = next[index]!;
         if (index < 0) {
@@ -128,6 +129,55 @@ export function generateTangentsAndMerge(vertices: StaticVertex[], indices: Uint
         newIndices[i] = index;
     }
     return { vertices: out, indices: newIndices, source: Uint32Array.from(source) };
+}
+
+/** generateTangentsAndMerge over packed vertices: the same merge on f32 arrays, without per-corner objects. */
+function mergePacked(vertices: StaticVertex[], indices: Uint32Array, tangents: Float32Array, extras: VertexExtras) {
+    const F = kPackedVertexFloats;
+    const src = new Float32Array(vertices.length * F);
+    vertices.forEach((v, i) => {
+        const [p, n, t] = [v.position, v.normal, v.texCrd];
+        src.set([p.x, p.y, p.z, n.x, n.y, n.z, 0, 0, 0, 0, t.x, t.y], i * F);
+    });
+    const eps = 1e-6;
+    const near = (a: number, b: number) => !(Math.abs(a - b) > eps);
+    let out = new Float32Array(Math.max(1, vertices.length) * F);
+    let count = 0;
+    const cand = new Float32Array(F);
+    const same = (o: number, ia: number, ib: number) => {
+        for (let k = 0; k < 3; k++) if (cand[k] !== out[o + k]) return false;
+        if (cand[9] !== out[o + 9]) return false;
+        if (extras.boneIDs) for (let k = 0; k < 4; k++) if (extras.boneIDs[ia * 4 + k] !== extras.boneIDs[ib * 4 + k]) return false;
+        for (const k of [3, 4, 5, 6, 7, 8, 10, 11]) if (!near(cand[k]!, out[o + k]!)) return false;
+        if (extras.boneWeights) for (let k = 0; k < 4; k++) if (!near(extras.boneWeights[ia * 4 + k]!, extras.boneWeights[ib * 4 + k]!)) return false;
+        return true;
+    };
+    const source: number[] = [];
+    const next: number[] = [];
+    const heads = new Int32Array(vertices.length).fill(-1);
+    const newIndices = new Uint32Array(indices.length);
+    const corners = indices.length - (indices.length % 3);
+    for (let i = 0; i < corners; i++) {
+        const orig = indices[i]!;
+        cand.set(src.subarray(orig * F, orig * F + F));
+        cand.set(tangents.subarray(i * 4, i * 4 + 4), 6);
+        let index = heads[orig]!;
+        while (index >= 0 && !same(index * F, orig, source[index]!)) index = next[index]!;
+        if (index < 0) {
+            index = count++;
+            if (count * F > out.length) {
+                const grown = new Float32Array(out.length * 2);
+                grown.set(out);
+                out = grown;
+            }
+            out.set(cand, index * F);
+            source.push(orig);
+            next.push(heads[orig]!);
+            heads[orig] = index;
+        }
+        newIndices[i] = index;
+    }
+    return { vertices: createPackedVertices(count, out.slice(0, count * F)), indices: newIndices, source: Uint32Array.from(source) };
 }
 
 /**

@@ -16,6 +16,43 @@ export interface StaticVertex {
     curveRadius?: number;
 }
 
+/** Floats per packed vertex: position 3, normal 3, tangent 4, texCrd 2 (f32, as native stores them). */
+export const kPackedVertexFloats = 12;
+
+/**
+ * A StaticVertex stored in a shared Float32Array (about 70 bytes per vertex instead of ~280 for plain
+ * objects). Getters return fresh vectors and setters write through; spread (`{...v}`) doesn't copy
+ * the attributes, use copyVertex.
+ */
+export class PackedVertex implements StaticVertex {
+    constructor(
+        private readonly data: Float32Array,
+        private readonly offset: number,
+    ) {}
+    get position(): float3 { const d = this.data, o = this.offset; return new float3(d[o]!, d[o + 1]!, d[o + 2]!); }
+    set position(v: float3) { const d = this.data, o = this.offset; d[o] = v.x; d[o + 1] = v.y; d[o + 2] = v.z; }
+    get normal(): float3 { const d = this.data, o = this.offset + 3; return new float3(d[o]!, d[o + 1]!, d[o + 2]!); }
+    set normal(v: float3) { const d = this.data, o = this.offset + 3; d[o] = v.x; d[o + 1] = v.y; d[o + 2] = v.z; }
+    get tangent(): float4 { const d = this.data, o = this.offset + 6; return new float4(d[o]!, d[o + 1]!, d[o + 2]!, d[o + 3]!); }
+    set tangent(v: float4) { const d = this.data, o = this.offset + 6; d[o] = v.x; d[o + 1] = v.y; d[o + 2] = v.z; d[o + 3] = v.w; }
+    get texCrd(): float2 { const d = this.data, o = this.offset + 10; return new float2(d[o]!, d[o + 1]!); }
+    set texCrd(v: float2) { const d = this.data, o = this.offset + 10; d[o] = v.x; d[o + 1] = v.y; }
+}
+
+/** `count` packed vertices over one Float32Array (zeroed, or `data` of count * kPackedVertexFloats floats). */
+export function createPackedVertices(count: number, data = new Float32Array(count * kPackedVertexFloats)): StaticVertex[] {
+    const out = new Array<StaticVertex>(count);
+    for (let i = 0; i < count; i++) out[i] = new PackedVertex(data, i * kPackedVertexFloats);
+    return out;
+}
+
+/** `{...v, ...overrides}` for plain and packed vertices alike (the result is a plain vertex). */
+export function copyVertex(v: StaticVertex, overrides: Partial<StaticVertex> = {}): StaticVertex {
+    const out: StaticVertex = { position: v.position, normal: v.normal, tangent: v.tangent, texCrd: v.texCrd, ...overrides };
+    if (v.curveRadius !== undefined && !("curveRadius" in overrides)) out.curveRadius = v.curveRadius;
+    return out;
+}
+
 /** Octahedral snorm2x16 encode (Utils/Math/PackedFormats.slang encodeNormal2x16). */
 export function encodeNormal2x16(n: float3): number {
     // Inputs round to f32 first (native holds f32 vertices; keeps the packed

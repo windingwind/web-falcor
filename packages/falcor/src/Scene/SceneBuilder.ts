@@ -24,7 +24,7 @@ import { optimizeMaterialTextures, removeDuplicateMaterials } from "./Material/M
 import { TextureManager } from "./Material/TextureManager.js";
 import { EnvMap } from "./Lights/EnvMap.js";
 import { generateTangents, generateTangentsAndMerge, loadMikkTSpace } from "./TangentSpace.js";
-import { LightType, type AnalyticLight, type StaticVertex } from "./SceneData.js";
+import { LightType, PackedVertex, copyVertex, type AnalyticLight, type StaticVertex } from "./SceneData.js";
 import { MaterialType, ShadingModel, packTextureHandle, TextureHandleMode } from "./Material/MaterialData.js";
 import { getTextureSlotSrgb } from "./Material/TextureSlots.js";
 import { float2, float3, float4 } from "../Utils/Math/Vector.js";
@@ -820,15 +820,18 @@ function pretransformStaticMeshes(meshes: SceneMeshDesc[], nodes: SceneNode[], a
         if (det < 0) m.indices = flipWinding(m.indices);
         // In place (the array is this mesh's alone): a second copy would double the peak for large scenes.
         m.vertices.forEach((v, i) => {
-            const [px, py, pz] = mul3(a, v.position.x, v.position.y, v.position.z, 1);
-            const out: StaticVertex = {
-                ...v,
-                position: new float3(px!, py!, pz!),
-                normal: normalize(mul3(it, v.normal.x, v.normal.y, v.normal.z, 0)),
-                tangent: ((d) => new float4(d.x, d.y, d.z, v.tangent.w))(normalize(mul3(a, v.tangent.x, v.tangent.y, v.tangent.z, 0))),
-            };
-            if (v.curveRadius !== undefined) out.curveRadius = length(mul3(a, v.curveRadius, 0, 0, 0));
-            m.vertices[i] = out;
+            const [p, n, t] = [v.position, v.normal, v.tangent];
+            const [px, py, pz] = mul3(a, p.x, p.y, p.z, 1);
+            const position = new float3(px!, py!, pz!);
+            const normal = normalize(mul3(it, n.x, n.y, n.z, 0));
+            const tangent = ((d) => new float4(d.x, d.y, d.z, t.w))(normalize(mul3(a, t.x, t.y, t.z, 0)));
+            // Packed vertices belong to this array's store; plain ones may be shared, so they're replaced.
+            if (v instanceof PackedVertex) Object.assign(v, { position, normal, tangent });
+            else {
+                const out = copyVertex(v, { position, normal, tangent });
+                if (v.curveRadius !== undefined) out.curveRadius = length(mul3(a, v.curveRadius, 0, 0, 0));
+                m.vertices[i] = out;
+            }
         });
     }
 }
@@ -854,7 +857,10 @@ function applyTextureTransforms(meshes: SceneMeshDesc[], transforms: Map<number,
         if (!out) {
             const inv = inverse(xform);
             const f = Math.fround;
-            out = m.vertices.map((v) => ({ ...v, texCrd: new float2(f(inv.get(0, 0) * v.texCrd.x + inv.get(0, 1) * v.texCrd.y + inv.get(0, 3)), f(inv.get(1, 0) * v.texCrd.x + inv.get(1, 1) * v.texCrd.y + inv.get(1, 3))) }));
+            out = m.vertices.map((v) => {
+                const uv = v.texCrd;
+                return copyVertex(v, { texCrd: new float2(f(inv.get(0, 0) * uv.x + inv.get(0, 1) * uv.y + inv.get(0, 3)), f(inv.get(1, 0) * uv.x + inv.get(1, 1) * uv.y + inv.get(1, 3))) });
+            });
             done.set(m.vertices, out);
         }
         meshes[i] = { ...m, vertices: out };
@@ -1218,7 +1224,7 @@ export class SceneBuilderBridge {
             if (!mode || mode === "keep" || (mode === "asset" && keepAsset)) return;
             if (mode === "noTexCrds") {
                 Logger.warning("Can't generate tangent space. The mesh doesn't have positions/normals/texCrd/indices.");
-                meshes[i] = { ...m, vertices: m.vertices.map((v) => ({ ...v, tangent: new float4(0, 0, 0, 0) })) };
+                meshes[i] = { ...m, vertices: m.vertices.map((v) => copyVertex(v, { tangent: new float4(0, 0, 0, 0) })) };
                 return;
             }
             const list = done.get(m.vertices) ?? [];
@@ -1800,7 +1806,7 @@ export class SceneBuilderBridge {
                 materialIDs.set(mat, materialID);
             }
             // Tangents are generated below (native MikkTSpace); UseOriginalTangentSpace keeps supplied ones.
-            const vertices = geo.vertices.map((v) => ({ ...v }));
+            const vertices = geo.vertices.map((v) => copyVertex(v));
             // SceneBuilder::unifyTriangleWinding: clockwise meshes are flipped to counter-clockwise.
             const indices = geo.frontFaceCW ? flipWinding(geo.indices) : geo.indices;
             const hasTangents = vertices.some((v) => v.tangent.x !== 0 || v.tangent.y !== 0 || v.tangent.z !== 0);

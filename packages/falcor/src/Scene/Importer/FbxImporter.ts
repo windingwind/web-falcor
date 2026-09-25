@@ -22,7 +22,7 @@ import { WorkerPool } from "../../Utils/Threading/WorkerPool.js";
 import { ddsCompressedPayload } from "./DDSLoader.js";
 import type { SceneMaterialDesc, SceneMeshDesc } from "../Scene.js";
 import { decomposeTRS, type SceneNode, type AnimationChannel, type SkinDesc } from "../Animation/SceneAnimation.js";
-import { LightType, type AnalyticLight, type StaticVertex } from "../SceneData.js";
+import { LightType, copyVertex, createPackedVertices, kPackedVertexFloats, type AnalyticLight, type StaticVertex } from "../SceneData.js";
 import type { TextureManager } from "../Material/TextureManager.js";
 import { Camera } from "../Camera/Camera.js";
 import type { GltfCameraPose } from "./GltfImporter.js";
@@ -500,18 +500,22 @@ export class FbxImporter {
                 const count = mesh.vertices.length / 3;
                 const uvs = mesh.texturecoords?.[0];
                 const uvStride = mesh.numuvcomponents?.[0] ?? 2;
-                const vertices: StaticVertex[] = [];
+                // Packed f32 vertices (assimp's data is f32): large scenes stay within the JS heap.
+                const data = new Float32Array(count * kPackedVertexFloats);
                 for (let i = 0; i < count; i++) {
-                    vertices.push({
-                        position: new float3(mesh.vertices[i * 3]!, mesh.vertices[i * 3 + 1]!, mesh.vertices[i * 3 + 2]!),
-                        normal: mesh.normals
-                            ? new float3(mesh.normals[i * 3]!, mesh.normals[i * 3 + 1]!, mesh.normals[i * 3 + 2]!)
-                            : new float3(0, 0, 1),
-                        tangent: new float4(0, 0, 0, 0),
-                        // aiProcess_FlipUVs already flipped V.
-                        texCrd: uvs ? new float2(uvs[i * uvStride]!, uvs[i * uvStride + 1]!) : new float2(0, 0),
-                    });
+                    const o = i * kPackedVertexFloats;
+                    data[o] = mesh.vertices[i * 3]!;
+                    data[o + 1] = mesh.vertices[i * 3 + 1]!;
+                    data[o + 2] = mesh.vertices[i * 3 + 2]!;
+                    if (mesh.normals) data.set(mesh.normals.subarray(i * 3, i * 3 + 3), o + 3);
+                    else data[o + 5] = 1;
+                    // aiProcess_FlipUVs already flipped V.
+                    if (uvs) {
+                        data[o + 10] = uvs[i * uvStride]!;
+                        data[o + 11] = uvs[i * uvStride + 1]!;
+                    }
                 }
+                const vertices = createPackedVertices(count, data);
                 const idx = new Uint32Array(mesh.triangles);
                 cached = { vertices, indices: idx, hasTexCrds: !!uvs };
                 meshVertices.set(mi, cached);
@@ -745,7 +749,7 @@ export class FbxImporter {
             for (let f = 0; f < idx.length; f += 3) {
                 const [a, b, c] = [vertices[idx[f]!]!, vertices[idx[f + 1]!]!, vertices[idx[f + 2]!]!];
                 const n = normalize3(cross(sub3(b.position, a.position), sub3(c.position, a.position)));
-                for (const v of [a, b, c]) flat.push({ ...v, normal: n });
+                for (const v of [a, b, c]) flat.push(copyVertex(v, { normal: n }));
             }
             vertices.length = 0;
             vertices.push(...flat);

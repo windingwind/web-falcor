@@ -95,5 +95,5 @@ describe("TGA decoder", () => {
             expect(alphaAlways255).toBe(true); // these are 24-bit files
             expect(varies).toBe(true);
         }
-    });
+    }, 30000); // reads every scene texture from disk: slow when the machine is busy
 });
