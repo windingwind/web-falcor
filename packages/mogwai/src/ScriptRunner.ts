@@ -16,6 +16,7 @@ import {
     runSceneScript,
     type Device,
     type MogwaiCommand,
+    type MogwaiCallbacks,
     type MogwaiRef,
     type RenderGraph,
     type Scene,
@@ -56,6 +57,7 @@ export async function runMogwaiSource(device: Device, source: string, dirUrl: st
     const clock = new Clock();
     const graphs: RenderGraph[] = [];
     let active: RenderGraph | null = null;
+    let sceneUpdateCallback: MogwaiCallbacks["sceneUpdateCallback"] = null;
     let scene: Scene | null = null;
     let size: [number, number] = [1920, 1080]; // Mogwai's default frame buffer
     const fc = new FrameCaptureExtension(device, () => active, (name) => graphs.find((g) => g.name === name) ?? null, () => clock.getFrame());
@@ -91,6 +93,9 @@ export async function runMogwaiSource(device: Device, source: string, dirUrl: st
             }
             case "setActiveGraph":
                 active = cmd.graph;
+                break;
+            case "setSceneUpdateCallback":
+                sceneUpdateCallback = cmd.callback;
                 break;
             case "loadScene": {
                 // os.path.abspath() paths point into the virtual file system: map them back to URLs.
@@ -150,6 +155,8 @@ export async function runMogwaiSource(device: Device, source: string, dirUrl: st
                 // Mogwai::renderFrame: clock, extensions' beginFrame, scene update, graph, endFrame.
                 clock.tick();
                 fc.beginFrame();
+                // Renderer::onFrameRender: the renderer's callback runs before Scene::update.
+                if (active) sceneUpdateCallback?.(scene, clock.getTime());
                 scene?.runUpdateCallback(clock.getTime());
                 if (scene?.isAnimated()) scene.animate(clock.getTime());
                 active?.execute(device.renderContext);

@@ -82,3 +82,32 @@ gpuTest("MogwaiScriptRunner.activeGraphAndScript", async ({ device }) => {
     expectEq(graphs.map((g) => g.name).join(), "B,C", "graphs after removeGraph");
     expectEq(activeGraph?.name, "C", "active graph replayed");
 });
+
+gpuTest("MogwaiScriptRunner.rendererCallbacks", async ({ device }) => {
+    await initScripting("/node_modules/pyodide");
+    const source = [
+        "from falcor import *",
+        "m.addGraph(RenderGraph('A'))",
+        "m.loadScene('test_scenes/cornell_box.pyscene')",
+        "m.renderFrame()  # before the callback is set",
+        "times = []",
+        "def cb(scene, t):",
+        "    times.append(t)",
+        "    scene.camera.nearPlane = 0.25",
+        "m.sceneUpdateCallback = cb",
+        "m.clock.pause()",
+        "m.renderFrame()",
+        "m.renderFrame()",
+    ].join("\n");
+    const { scene } = await runMogwaiSource(device, source, "/Falcor/media/test_scenes");
+    expectEq(scene?.camera.getNearPlane(), 0.25, "callback ran with the scene");
+    // Python state lives on in the interpreter: the callback ran once per frame after it was set.
+    const { runConsoleCommand } = await import("@web-falcor/falcor");
+    expectEq(runConsoleCommand(device, "len(times)", { scene: null, graph: null }), "2", "two frames after the callback was set");
+
+    // The console's m keeps callbacks in the viewer's holder.
+    const callbacks = { sceneUpdateCallback: null, keyCallback: null } as import("@web-falcor/falcor").MogwaiCallbacks;
+    runConsoleCommand(device, "m.keyCallback = lambda pressed, key: pressed and key == 65", { scene: null, graph: null, callbacks });
+    expectEq([callbacks.keyCallback?.(true, 65), callbacks.keyCallback?.(true, 66)].join(), "true,false", "keyCallback stored and callable");
+    expectEq(runConsoleCommand(device, "m.keyCallback is not None", { scene: null, graph: null, callbacks }), "True", "read back in a later command");
+});

@@ -250,6 +250,14 @@ class Buffer:
     def element_count(self): return int(_js.bufferInfo(self._o).elementCount)
     @property
     def struct_size(self): return int(_js.bufferInfo(self._o).structSize or 0)
+    @property
+    def memory_type(self): return MemoryType(int(self._o.memoryType))
+    @property
+    def format(self): return ResourceFormat(int(self._o.format))
+    @property
+    def is_typed(self): return int(self._o.format) != int(ResourceFormat.Unknown)
+    @property
+    def is_structured(self): return self.struct_size != 0
     def from_numpy(self, data):
         np = _np()
         data = np.ascontiguousarray(data)
@@ -274,6 +282,12 @@ class Texture:
     def depth(self): return int(self._o.depth)
     @property
     def mip_count(self): return int(self._o.mipCount)
+    @property
+    def format(self): return ResourceFormat(int(self._o.format))
+    @property
+    def array_size(self): return int(self._o.arraySize)
+    @property
+    def sample_count(self): return int(self._o.sampleCount)
     def from_numpy(self, data, mip_level=0, array_slice=0):
         np = _np()
         data = np.ascontiguousarray(data)

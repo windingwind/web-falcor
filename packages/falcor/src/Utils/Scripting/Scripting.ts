@@ -95,12 +95,27 @@ function toJs(value: unknown): unknown {
     return value;
 }
 
+/** Renderer's python callbacks (m.sceneUpdateCallback / m.keyCallback), kept across scripts and console commands. */
+export interface MogwaiCallbacks {
+    /** Called as (scene, time) each frame before the scene update. */
+    sceneUpdateCallback: ((scene: Scene | null, time: number) => void) | null;
+    /** Called as (pressed, key) with native Input::Key values; returning True consumes the key. */
+    keyCallback: ((pressed: boolean, key: number) => boolean) | null;
+}
+
+/** Adds m.sceneUpdateCallback / m.keyCallback accessors backed by `holder`. */
+function defineCallbackProperties(m: object, holder: MogwaiCallbacks): void {
+    for (const key of ["sceneUpdateCallback", "keyCallback"] as const) {
+        Object.defineProperty(m, key, { get: () => holder[key] ?? undefined, set: (f) => void (holder[key] = f ?? null), enumerable: true });
+    }
+}
+
 /**
  * Mirrors Mogwai's scripting surface: executes a graph script and returns the
  * graphs registered via m.addGraph(), the active one (first added, or m.setActiveGraph's) first.
  */
 /** `extras` adds Mogwai extension objects to `m` (e.g. the viewer's frameCapture). */
-export async function runGraphScript(device: Device, source: string, extras: Record<string, unknown> = {}): Promise<RenderGraph[]> {
+export async function runGraphScript(device: Device, source: string, extras: Record<string, unknown> = {}, callbacks?: MogwaiCallbacks): Promise<RenderGraph[]> {
     if (!pyodide) throw new RuntimeError("Call initScripting() first");
     const graphs: RenderGraph[] = [];
 
@@ -146,6 +161,7 @@ export async function runGraphScript(device: Device, source: string, extras: Rec
         getSettings: () => settings,
         ...extras,
     };
+    if (callbacks) defineCallbackProperties(mogwai, callbacks);
     pyodide.globals.set("m", mogwai);
     pyodide.runPython(kMogwaiShim);
 
@@ -168,7 +184,7 @@ export async function runGraphScript(device: Device, source: string, extras: Rec
 export function runConsoleCommand(
     device: Device,
     source: string,
-    context: { scene: Scene | null; graph: RenderGraph | null; clock?: unknown; timingCapture?: unknown; frameCapture?: unknown; profiler?: import("../../Core/API/Profiler.js").Profiler | null },
+    context: { scene: Scene | null; graph: RenderGraph | null; clock?: unknown; timingCapture?: unknown; frameCapture?: unknown; profiler?: import("../../Core/API/Profiler.js").Profiler | null; callbacks?: MogwaiCallbacks },
 ): string {
     if (!pyodide) throw new RuntimeError("Call initScripting() first");
     const lines: string[] = [];
@@ -186,7 +202,7 @@ export function runConsoleCommand(
             applyMediaSearchPaths();
         },
     };
-    pyodide.globals.set("m", {
+    const m = {
         scene: context.scene,
         activeGraph: context.graph,
         clock: context.clock,
@@ -195,7 +211,9 @@ export function runConsoleCommand(
         profiler: (context.profiler ?? device.profilerHook)?.pythonBindings((v) => pyodide!.toPy(v)) ?? null,
         settings,
         getSettings: () => settings,
-    });
+    };
+    if (context.callbacks) defineCallbackProperties(m, context.callbacks);
+    pyodide.globals.set("m", m);
     const py = pyodide as unknown as { setStdout(opts: { batched: (s: string) => void }): void; runPython(src: string): unknown };
     py.setStdout({ batched: (s) => lines.push(s) });
     try {
@@ -244,43 +262,48 @@ from webfalcor_scene import (sceneBuilder, SceneBuilderFlags, _TriangleMesh,
     PBRTCoatedConductorMaterial, PBRTCoatedDiffuseMaterial, _MERLMaterial, _MERLMixMaterial, _RGLMaterial,
     Camera, _makeTransform, _makeAABB, _makeEnvMap, _GridVolume, _Grid, _SDFGridCreate, _Transform, _Animation)
 
-# Python-side vector types with arithmetic (upstream pyscenes do e.g. size / 2);
-# the JS bridge reads .x/.y/.z/.w off any object.
-class float2:
-    def __init__(self, x=0.0, y=None):
-        self.x = float(x); self.y = float(x if y is None else y)
-class float3:
-    def __init__(self, x=0.0, y=None, z=None):
-        if y is None: y = z = x
-        self.x = float(x); self.y = float(y); self.z = float(z)
-    def _map(self, other, op):
-        if isinstance(other, float3):
-            return float3(op(self.x, other.x), op(self.y, other.y), op(self.z, other.z))
-        return float3(op(self.x, other), op(self.y, other), op(self.z, other))
-    def __add__(self, o): return self._map(o, lambda a, b: a + b)
-    def __sub__(self, o): return self._map(o, lambda a, b: a - b)
-    def __mul__(self, o): return self._map(o, lambda a, b: a * b)
-    def __rmul__(self, o): return self._map(o, lambda a, b: a * b)
-    def __truediv__(self, o): return self._map(o, lambda a, b: a / b)
-    def __neg__(self): return float3(-self.x, -self.y, -self.z)
-class float4:
-    def __init__(self, x=0.0, y=None, z=None, w=None):
-        if y is None: y = z = w = x
-        self.x = float(x); self.y = float(y); self.z = float(z); self.w = float(w)
-
-# Integer and bool vectors (native int2..4, uint2..4, bool2..4).
-def _vec_class(name, n, cast):
+# Python-side vector types (ScriptBindings defineVecType): x/y/z/w, construction from a scalar,
+# components, a list or another vector, native repr/str, and component-wise operators with
+# vectors or scalars (not for bools). The JS bridge reads .x/.y/.z/.w off any object.
+def _vec_class(name, n, cast, ops):
     comps = 'xyzw'[:n]
-    def __init__(self, *args):
-        vals = list(args) if len(args) == n else [args[0] if args else 0] * n
-        for c, v in zip(comps, vals): setattr(self, c, cast(v))
-    def __repr__(self): return f"{name}({', '.join(str(getattr(self, c)) for c in comps)})"
+    def __init__(self, *args, **kw):
+        if kw: args = args + tuple(kw[c] for c in comps[len(args):])
+        if len(args) == 1 and isinstance(args[0], (list, tuple)): args = tuple(args[0])
+        elif len(args) == 1 and all(hasattr(args[0], c) for c in comps): args = tuple(getattr(args[0], c) for c in comps)
+        if len(args) == 0: args = (0,) * n
+        elif len(args) == 1: args = args * n
+        if len(args) != n: raise TypeError(f'{name}: expected 0, 1 or {n} components')
+        for c, v in zip(comps, args): object.__setattr__(self, c, cast(v))
+    def _fmt(v): return ('1' if v else '0') if cast is bool else (f'{v:.6f}' if cast is float else str(v))
+    def __repr__(self): return f"{name}({', '.join(_fmt(getattr(self, c)) for c in comps)})"
+    def __str__(self): return f"[{', '.join(_fmt(getattr(self, c)) for c in comps)}]"
     def __eq__(self, o): return all(getattr(self, c) == getattr(o, c, None) for c in comps)
-    return type(name, (), {'__init__': __init__, '__repr__': __repr__, '__eq__': __eq__})
+    def __iter__(self): return iter([getattr(self, c) for c in comps])
+    def __len__(self): return n
+    def __getitem__(self, i): return getattr(self, comps[i])
+    def __setitem__(self, i, v): setattr(self, comps[i], cast(v))
+    body = {'__init__': __init__, '__repr__': __repr__, '__str__': __str__, '__eq__': __eq__, '__hash__': None,
+            '__iter__': __iter__, '__len__': __len__, '__getitem__': __getitem__, '__setitem__': __setitem__, '__slots__': tuple(comps)}
+    if ops:
+        def _map(op, swap=False):
+            def f(self, o):
+                other = [getattr(o, c) for c in comps] if all(hasattr(o, c) for c in comps) else [o] * n
+                a, b = (other, list(self)) if swap else (list(self), other)
+                return cls(*[op(x, y) for x, y in zip(a, b)])
+            return f
+        div = (lambda a, b: a / b) if cast is float else (lambda a, b: int(a / b))
+        for key, op in (('add', lambda a, b: a + b), ('sub', lambda a, b: a - b), ('mul', lambda a, b: a * b), ('truediv', div)):
+            body[f'__{key}__'] = _map(op)
+            body[f'__r{key}__'] = _map(op, True)
+        body['__neg__'] = lambda self: cls(*[-v for v in self])
+    cls = type(name, (), body)
+    return cls
 for _n in (2, 3, 4):
-    globals()[f'int{_n}'] = _vec_class(f'int{_n}', _n, int)
-    globals()[f'uint{_n}'] = _vec_class(f'uint{_n}', _n, int)
-    globals()[f'bool{_n}'] = _vec_class(f'bool{_n}', _n, bool)
+    globals()[f'float{_n}'] = _vec_class(f'float{_n}', _n, float, True)
+    globals()[f'int{_n}'] = _vec_class(f'int{_n}', _n, int, True)
+    globals()[f'uint{_n}'] = _vec_class(f'uint{_n}', _n, int, True)
+    globals()[f'bool{_n}'] = _vec_class(f'bool{_n}', _n, bool, False)
 
 class GridVolume_EmissionMode:
     Direct = 0
@@ -772,6 +795,7 @@ export type MogwaiCommand =
     | { op: "addGraph"; graph: RenderGraph }
     | { op: "removeGraph"; graph: RenderGraph }
     | { op: "setActiveGraph"; graph: RenderGraph }
+    | { op: "setSceneUpdateCallback"; callback: MogwaiCallbacks["sceneUpdateCallback"] }
     | { op: "loadScene"; path: string; flags: number }
     | { op: "unloadScene" }
     | { op: "resizeFrameBuffer"; width: number; height: number }
@@ -876,7 +900,7 @@ export function recordMogwaiScript(device: Device, source: string, files: Record
     const graphList: RenderGraph[] = [];
     let activeRec: RenderGraph | undefined;
     const byName = (g: RenderGraph | string) => (typeof g === "string" ? graphList.find((x) => x.name === g) : (targets.get(g) ?? g));
-    pyodide.globals.set("m", {
+    const recordedM = {
         addGraph: (g: RenderGraph) => {
             const graph = targets.get(g) ?? g;
             added.add(graph);
@@ -929,7 +953,14 @@ export function recordMogwaiScript(device: Device, source: string, files: Record
         profiler: device.profilerHook?.pythonBindings((v) => pyodide!.toPy(v)) ?? null,
         settings: recordedSettings,
         getSettings: () => recordedSettings,
+    };
+    // m.sceneUpdateCallback applies from its point in the script; keyCallback has no keys to see headlessly.
+    let sceneUpdate: MogwaiCallbacks["sceneUpdateCallback"] = null;
+    Object.defineProperty(recordedM, "sceneUpdateCallback", {
+        get: () => sceneUpdate ?? undefined,
+        set: (f) => void commands.push({ op: "setSceneUpdateCallback", callback: (sceneUpdate = f ?? null) }),
     });
+    pyodide.globals.set("m", recordedM);
 
     writePythonFiles(files);
     (pyodide as unknown as { FS: { mkdirTree(p: string): void } }).FS.mkdirTree(cwd);

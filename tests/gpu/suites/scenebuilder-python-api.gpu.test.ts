@@ -154,3 +154,24 @@ gpuTest("Scripting.triangleMeshFrontFaceCW", async ({ device }) => {
     expectEq(facing(6, 4, 2, 1), "1,1", "mirrored quad flipped back to counter-clockwise");
     expectEq(facing(12, 8, 1, 2), "-1", "frontFaceCW mesh: its front is the clockwise side");
 });
+
+gpuTest("Scripting.pysceneVectorTypes", async ({ device }) => {
+    await initScripting("/node_modules/pyodide");
+    await runSceneScript(
+        device,
+        [
+            "a = float3(1, 2, 3)",
+            "assert repr(a + float3([1, 1, 1])) == 'float3(2.000000, 3.000000, 4.000000)'  # native repr",
+            "assert str(float2(0.5)) == '[0.500000, 0.500000]'",
+            "b = float4(x=1, y=2, z=3, w=4)",
+            "b -= float4(1)",
+            "b *= 2",
+            "assert (b.x, b.w) == (0.0, 6.0)",
+            "assert (float2(4, 6) / 2).y == 3.0 and (-int2(1, 2)).y == -2",
+            "assert repr(uint3(7) / 2) == 'uint3(3, 3, 3)' and repr(bool2(1, 0)) == 'bool2(1, 0)'",
+            "assert list(a) == [1.0, 2.0, 3.0] and a[2] == 3.0",
+            "sceneBuilder.addMeshInstance(sceneBuilder.addNode('q', Transform(translation=a * 0.5)), sceneBuilder.addTriangleMesh(TriangleMesh.createQuad(float2(2) - 1), StandardMaterial('M')))",
+        ].join("\n"),
+        "/Falcor/media",
+    );
+});

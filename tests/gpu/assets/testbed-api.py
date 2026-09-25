@@ -37,3 +37,11 @@ sampler = device.create_sampler(mag_filter=falcor.TextureFilteringMode.Point, ad
 assert sampler is not None
 device.end_frame()
 device.wait()
+
+# Buffer and Texture properties.
+sb = device.create_structured_buffer(struct_size=16, element_count=4)
+assert sb.is_structured and not sb.is_typed and sb.memory_type == falcor.MemoryType.DeviceLocal
+tb = device.create_typed_buffer(falcor.ResourceFormat.R32Float, 8)
+assert tb.is_typed and tb.format == falcor.ResourceFormat.R32Float
+tex = device.create_texture(8, 4, format=falcor.ResourceFormat.RGBA8Unorm, array_size=2, mip_levels=1)
+assert tex.format == falcor.ResourceFormat.RGBA8Unorm and tex.array_size == 2 and tex.sample_count == 1

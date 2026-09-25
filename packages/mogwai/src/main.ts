@@ -4,7 +4,7 @@
  */
 
 import { FrameCaptureExtension, captureOutput } from "./FrameCapture.js";
-import { AssetCategory, AssetResolver, isAbsoluteUrl, kProjectMediaUrl, Clock, Device, Logger, Profiler, ProfilerUI, VideoRecorder, ProgramManager, RenderGraph, ResourceFormat, Bitmap, BitmapExportFlags, createPass, initScripting, initSlang, runConsoleCommand, runGraphScript, runSceneScript, runPbrtScene, runMitsubaScene, presentToCanvas, OverlayDrawList, type Scene } from "@web-falcor/falcor";
+import { AssetCategory, AssetResolver, isAbsoluteUrl, kProjectMediaUrl, Clock, Device, Logger, Profiler, ProfilerUI, VideoRecorder, ProgramManager, RenderGraph, ResourceFormat, Bitmap, BitmapExportFlags, createPass, initScripting, initSlang, runConsoleCommand, runGraphScript, runSceneScript, nativeKeyCode, type MogwaiCallbacks, runPbrtScene, runMitsubaScene, presentToCanvas, OverlayDrawList, type Scene } from "@web-falcor/falcor";
 import "@web-falcor/render-passes";
 import { CameraController, kCameraControllerTypes, kUpDirectionNames } from "./CameraController.js";
 import { buildUIPanel } from "./UIPanel.js";
@@ -34,6 +34,8 @@ interface ViewerState {
     graphError: string | null;
     /** The loaded scene's path (Save Config's m.loadScene argument). */
     scenePath: string | null;
+    /** m.sceneUpdateCallback / m.keyCallback, set from graph scripts or the console. */
+    callbacks: MogwaiCallbacks;
 }
 
 /** Mirrors the Mogwai TimingCapture extension. Web divergence (docs §9):
@@ -68,7 +70,7 @@ class TimingCapture {
 
 async function loadGraph(state: ViewerState, url: string): Promise<void> {
     const source = await (await fetch(url)).text();
-    const [graph] = await runGraphScript(state.device, source, { frameCapture: state.frameCapture });
+    const [graph] = await runGraphScript(state.device, source, { frameCapture: state.frameCapture }, state.callbacks);
     await graph!.init(); // async pass initialization (ImageLoader etc.; docs §9)
     graph!.onResize(canvas.width, canvas.height);
     if (state.scene) graph!.setScene(state.scene);
@@ -221,7 +223,28 @@ async function main() {
     await initProgramSystem(device);
     await initScripting("/node_modules/pyodide");
 
-    const state: ViewerState = { device, context, format, graph: null, scene: null, output: null, frame: 0, playing: true, clock: new Clock(), timingCapture: new TimingCapture(), frameCapture: null, animateScene: true, graphError: null, scenePath: null };
+    const state: ViewerState = { device, context, format, graph: null, scene: null, output: null, frame: 0, playing: true, clock: new Clock(), timingCapture: new TimingCapture(), frameCapture: null, animateScene: true, graphError: null, scenePath: null, callbacks: { sceneUpdateCallback: null, keyCallback: null } };
+    /** A failing python callback is logged and dropped (it would otherwise fail every frame). */
+    const runRendererCallback = (key: keyof MogwaiCallbacks, fn: () => unknown): unknown => {
+        try {
+            return fn();
+        } catch (e) {
+            Logger.error(`m.${key} failed and was removed: ${String(e).split("\n").slice(-2).join(" ")}`);
+            state.callbacks[key] = null;
+            return false;
+        }
+    };
+    // Renderer::onKeyEvent: m.keyCallback(pressed, key) sees presses/releases first; True consumes them.
+    const onScriptKey = (ev: KeyboardEvent) => {
+        const cb = state.callbacks.keyCallback;
+        if (!cb || ev.repeat || ev.target instanceof HTMLInputElement || ev.target instanceof HTMLTextAreaElement) return;
+        if (runRendererCallback("keyCallback", () => cb(ev.type === "keydown", nativeKeyCode(ev.code)))) {
+            ev.preventDefault();
+            ev.stopImmediatePropagation();
+        }
+    };
+    window.addEventListener("keydown", onScriptKey, true);
+    window.addEventListener("keyup", onScriptKey, true);
     state.frameCapture = new FrameCaptureExtension(device, () => state.graph, (name) => (state.graph?.name === name ? state.graph : null), () => state.clock.getFrame());
 
     // Initial content from URL params (?scene=/?graph=/?output=), or the default
@@ -315,7 +338,8 @@ async function main() {
     let lastNow = -1;
     function frame(now: number) {
         const cam = state.scene?.camera;
-        // Scene::update runs every frame: the scene's python updateCallback first.
+        // Renderer::onFrameRender: m.sceneUpdateCallback, then Scene::update (the scene's python updateCallback first).
+        if (state.graph) runRendererCallback("sceneUpdateCallback", () => state.callbacks.sceneUpdateCallback?.(state.scene, state.clock.getTime()));
         state.scene?.runUpdateCallback(state.clock.getTime());
         let dirty = cam ? camControl.update(cam, now, state.scene ?? undefined) : false;
         // Scene::onKeyEvent: moving the camera by hand stops its animation.
@@ -400,7 +424,7 @@ function wireConsole(state: ViewerState, resetAccum: () => void, rebuildUI: () =
             input.value = "";
             append(`>>> ${src}`, "in");
             try {
-                const out = runConsoleCommand(state.device, src, { scene: state.scene, graph: state.graph, clock: state.clock, timingCapture: state.timingCapture, frameCapture: state.frameCapture, profiler });
+                const out = runConsoleCommand(state.device, src, { scene: state.scene, graph: state.graph, clock: state.clock, timingCapture: state.timingCapture, frameCapture: state.frameCapture, profiler, callbacks: state.callbacks });
                 if (out) append(out);
             } catch (e) {
                 append(String(e), "err");
@@ -617,7 +641,7 @@ function wireControls(state: ViewerState, rebuildUI: () => void): void {
     ($("graphFile") as HTMLInputElement | null)?.addEventListener("change", async (ev) => {
         const file = (ev.target as HTMLInputElement).files?.[0];
         if (file) {
-            const [graph] = await runGraphScript(state.device, await file.text(), { frameCapture: state.frameCapture });
+            const [graph] = await runGraphScript(state.device, await file.text(), { frameCapture: state.frameCapture }, state.callbacks);
             await graph!.init();
             graph!.onResize(canvas.width, canvas.height);
             if (state.scene) graph!.setScene(state.scene);
