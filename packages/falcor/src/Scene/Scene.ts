@@ -1398,6 +1398,30 @@ export class Scene {
     /** The envMap load a python setEnvMap(path) started (awaitable by callers). */
     pendingEnvMap: Promise<void> | null = null;
 
+    /**
+     * Releases the scene's GPU memory now (native frees a scene when Mogwai loads the next one;
+     * garbage collection alone lets several large scenes pile up and exhaust the device).
+     * The scene must not be bound again afterwards.
+     */
+    destroy(): void {
+        const resources = new Set<{ destroy(): void }>([
+            ...Object.values(this.buffers),
+            ...this.textureBuckets,
+            this.texInfoTexture,
+            this.dummyTexture,
+            this.texture3D,
+            this.gridRangeTex,
+            this.gridIndirectionTex,
+            this.gridAtlasTex,
+        ]);
+        for (const r of [this.sdfAtlasTexture, this.displacementTexture, this.sbsResources?.aabbs, this.sbsResources?.indirection, this.sbsResources?.bricks, this.svsResources?.voxels, this.svoResources?.svo, this.sdfBvhBuffers?.buf, this.envMap?.texture]) if (r) resources.add(r);
+        for (const r of resources) r?.destroy();
+        // Decoded source images live outside the JS heap: GC alone frees them too late.
+        for (let i = 0; i < this.lcTextureManager.count; i++) this.lcTextureManager.getSource(i)?.bitmap?.close?.();
+        this.buffers = {};
+        this.textureBuckets = [];
+    }
+
     /** Mirrors Scene::setCameraBounds; the camera controller clamps its position to the box. */
     setCameraBounds(minPoint: { x: number; y: number; z: number }, maxPoint: { x: number; y: number; z: number }): void {
         this.cameraBounds = new AABB(minPoint, maxPoint);
@@ -1626,7 +1650,7 @@ export class Scene {
             this.buffers["materialBuffer0"]!.setBlob(new Uint8Array(merl.albedoLUT.buffer, merl.albedoLUT.byteOffset, merl.albedoLUT.byteLength), byteOffset);
             return true;
         };
-        const remaining = targets.filter(([id, o]) => !cached(this.materialDescs[id]?.merl, o));
+        const remaining = targets.filter(([id, o]) => !cached(this.materialDescs[id]?.merl ?? this.materialDescs[id]?.rgl, o));
         if (remaining.length > 0) {
             const integrator = new BSDFIntegrator(this.device, this);
             for (const [materialID, byteOffset] of remaining) await writeLUT(integrator, materialID, byteOffset);

@@ -134,6 +134,8 @@ interface AssimpModule {
 }
 
 let assimpModule: Promise<AssimpModule> | null = null;
+/** Heap size beyond which the assimp module is recycled after an import. */
+const kAssimpHeapRecycleBytes = 1 << 30;
 
 /** Assimp 5.2.5 (native's version) compiled to wasm (packages/falcor/wasm, scripts/build-assimp-wasm.mjs). */
 function getAssimp(): Promise<AssimpModule> {
@@ -178,6 +180,9 @@ async function assimpImport(files: { name: string; bytes: Uint8Array }[], flags:
     // Copy the mesh blob out of the wasm heap before freeing it.
     const blob = new Uint32Array(ai.HEAPU8.buffer.slice(ai._ai_mesh_blob(), ai._ai_mesh_blob() + ai._ai_mesh_blob_size() * 4));
     ai._ai_free_result();
+    // Wasm memory never shrinks: after a large import drop the module so the heap is reclaimed
+    // (a fresh instance serves the next import); otherwise several big scenes exhaust the tab.
+    if (ai.HEAPU8.buffer.byteLength > kAssimpHeapRecycleBytes) assimpModule = null;
     const scene = JSON.parse(json) as AiScene;
     attachMeshArrays(scene, blob);
     return scene;

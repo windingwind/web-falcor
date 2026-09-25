@@ -49,6 +49,8 @@ export interface RGLMeasurement {
     vndfConditional: Float32Array;
     lumiMarginal: Float32Array;
     lumiConditional: Float32Array;
+    /** Precomputed albedo LUT (kRGLAlbedoLUTSize float4) from the `.dds` beside the file, if present. */
+    albedoLUT?: Float32Array;
 }
 
 /** Maximum table resolution native accepts (RGLMaterialData::kMaxResolution). */
@@ -269,5 +271,20 @@ export async function loadRGLFile(url: string): Promise<RGLMeasurement> {
     const res = await fetch(url);
     if (!res.ok) throw new RuntimeError(`RGLMaterial: failed to fetch '${url}' (${res.status})`);
     const name = url.split("/").pop()!.replace(/\.[^.]*$/, "");
-    return parseRGLFile(await res.arrayBuffer(), name);
+    const measurement = parseRGLFile(await res.arrayBuffer(), name);
+    // RGLMaterial::prepareAlbedoLUT: a cached RGBA32Float 256x1 table beside the file is used as is.
+    try {
+        const lut = await fetch(url.replace(/\.[^.]*$/, ".dds"));
+        if (lut.ok) {
+            const { ImageIO } = await import("../../Utils/Image/ImageIO.js");
+            const { ResourceFormat } = await import("../../Core/API/Formats.js");
+            const bitmap = ImageIO.loadBitmapFromDDS(new Uint8Array(await lut.arrayBuffer()));
+            if (bitmap.format === ResourceFormat.RGBA32Float && bitmap.width === kRGLAlbedoLUTSize && bitmap.height === 1) {
+                measurement.albedoLUT = new Float32Array(bitmap.data.buffer.slice(bitmap.data.byteOffset, bitmap.data.byteOffset + kRGLAlbedoLUTSize * 16));
+            }
+        }
+    } catch {
+        /* no cached table: computed with the scene */
+    }
+    return measurement;
 }

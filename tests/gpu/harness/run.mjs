@@ -53,6 +53,7 @@ page.on("console", (msg) => {
     if (msg.type() === "error" || process.env.FORWARD_ALL) console.error("[browser]", msg.text());
 });
 page.on("pageerror", (err) => console.error("[pageerror]", err.message));
+page.on("crash", () => console.error("[crash] the page crashed (out of memory?)"));
 
 await page.goto(url);
 // Wall clock for the whole suite (grew past 10 min with ~170 tests; the per-test page keeps streaming results).

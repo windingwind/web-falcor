@@ -130,6 +130,7 @@ export async function runMogwaiSource(device: Device, source: string, dirUrl: st
                 const url = path.startsWith("/") ? path : await AssetResolver.getDefaultResolver().resolvePath(path, AssetCategory.Scene);
                 const baseUrl = url.slice(0, url.lastIndexOf("/"));
                 const lower = url.toLowerCase().split(/[?#]/)[0]!;
+                const previous = scene;
                 const options = { flags: cmd.flags };
                 // Mogwai::loadScene: pyscenes run, pbrt parses, everything else goes through the importers.
                 scene = lower.endsWith(".pyscene")
@@ -140,12 +141,14 @@ export async function runMogwaiSource(device: Device, source: string, dirUrl: st
                 if (scene.importPaths[0] !== url) scene.importPaths.unshift(url);
                 scene.camera.setAspectRatio(size[0] / size[1]);
                 for (const g of graphs) g.setScene(scene);
+                previous?.destroy(); // Mogwai frees the replaced scene
                 break;
             }
             case "unloadScene":
                 // Mirrors Renderer::unloadScene.
-                scene = null;
                 for (const g of graphs) g.setScene(null);
+                scene?.destroy();
+                scene = null;
                 break;
             case "resizeFrameBuffer":
                 size = [cmd.width, cmd.height];

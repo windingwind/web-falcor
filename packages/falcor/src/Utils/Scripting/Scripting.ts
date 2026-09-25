@@ -692,10 +692,13 @@ for _k, _v in list(globals().items()):
     if not _k.startswith("_") and _k != "sys": setattr(_scene_falcor, _k, _v)
 sys.modules["falcor"] = _scene_falcor
 `;
+    // Each scene script runs in fresh globals, as natively: a script rebinding a name (e.g.
+    // `type = random.random()`) must not leak into the next scene's prelude.
+    pyodide.globals.set("__scene_source", kScenePrelude + "\n" + exposeSceneApi + "\n" + source);
     try {
-        pyodide.runPython(kScenePrelude + "\n" + exposeSceneApi + "\n" + source);
+        pyodide.runPython(`__scene_globals = {"__name__": "__main__", "__file__": __file__}\nexec(compile(__scene_source, __file__, "exec"), __scene_globals)`);
     } finally {
-        pyodide.runPython(`import sys\nif globals().get("_prev_falcor") is not None: sys.modules["falcor"] = _prev_falcor\nelse: sys.modules.pop("falcor", None)`);
+        pyodide.runPython(`import sys\n_pf = __scene_globals.get("_prev_falcor")\nif _pf is not None: sys.modules["falcor"] = _pf\nelse: sys.modules.pop("falcor", None)\ndel __scene_globals, __scene_source`);
     }
 
     const scene = await builder.resolve(device, baseUrl);

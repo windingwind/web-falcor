@@ -89,10 +89,12 @@ async function loadScene(state: ViewerState, url: string, baseUrl: string): Prom
           : await runSceneScript(state.device, source, baseUrl, { cache: true, path: url }); // OPFS scene cache: fast reloads
     if (scene.importPaths[0] !== url) scene.importPaths.unshift(url);
     scene.camera.setAspectRatio(canvas.width / canvas.height);
+    const previous = state.scene;
     state.scene = scene;
     state.scenePath = url;
     if (state.graph) state.graph.setScene(scene);
     state.frame = 0;
+    previous?.destroy(); // Mogwai frees the replaced scene
 }
 
 /** The verified cornell path-tracer graph (matches the GPU oracle setup). */
