@@ -34,3 +34,25 @@ gpuTest("Scripting.graphPythonBindings", async ({ device }) => {
     expectEq(g!.getOutputNames().join(), "Tone.dst", "mark_output");
     expectEq(getGlobalSettings().getOption("graphPythonBindingsTest", 0), 7, "m.getSettings().addOptions");
 });
+
+// Pre-string/dict render scripts, as tools/fix_render_script.py would rewrite them.
+gpuTest("Scripting.legacyRenderScriptNames", async ({ device }) => {
+    await initScripting("/node_modules/pyodide");
+    const [g] = await runGraphScript(
+        device,
+        [
+            "from falcor import *",
+            "g = RenderGraph('Legacy')",
+            "g.create_pass('Tone', 'ToneMapper', {'operator': ToneMapOp.Reinhard})",
+            "g.create_pass('GBuf', 'GBufferRaster', {'cull': CullMode.CullFront, 'samplePattern': SamplePattern.Halton})",
+            "g.create_pass('PT', 'PathTracer', {'RTXDIOptions': RTXDIOptions(mode='SpatiotemporalResampling', presampledTileCount=64)})",
+            "assert ToneMapOp.Aces == 'Aces' and PathTracerParams(samplesPerPixel=2) == {'samplesPerPixel': 2}",
+            "g.mark_output('Tone.dst')",
+            "m.addGraph(g)",
+        ].join("\n"),
+    );
+    expectEq(g!.getPass("Tone")?.getProperties().toJSON()["operator"], "Reinhard", "ToneMapOp enum value");
+    expectEq(g!.getPass("GBuf")?.getProperties().toJSON()["cull"], "Front", "CullMode.CullFront");
+    expectEq(g!.getPass("GBuf")?.getProperties().toJSON()["samplePattern"], "Halton", "SamplePattern enum value");
+    expectEq(JSON.stringify((g!.getPass("PT")?.getProperties().toJSON()["RTXDIOptions"] as Record<string, unknown>)?.["presampledTileCount"]), "64", "RTXDIOptions struct");
+});

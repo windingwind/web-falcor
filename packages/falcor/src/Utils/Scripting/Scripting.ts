@@ -249,6 +249,28 @@ class _Mogwai:
         return _MogwaiProfiler(v) if k == 'profiler' and v is not None else v
     def __setattr__(self, k, v): setattr(object.__getattribute__(self, '_o'), k, v)
 if not isinstance(m, _Mogwai): m = _Mogwai(m)
+# Old render scripts (before Falcor's options became strings and dicts) run unmodified: their enum
+# values and options structs give what tools/fix_render_script.py would rewrite them to.
+class _LegacyEnum(type):
+    def __getattr__(cls, k):
+        if k.startswith('__'): raise AttributeError(k)
+        return k
+for _n in ('CompositeMode ToneMapOp ExposureMode SceneDebuggerMode TexLODMode RayConeMode RayFootprintFilterMode ColorFormat '
+           'MISHeuristic SchedulingMode EmissiveLightSamplerType OptixDenoiserModel NRDMethod SamplePattern FLIPToneMapperType '
+           'OutputId DLSSProfile DLSSMotionVectorScale ColorMap BSDFViewerMode AccumulatePrecision AccumulateOverflowMode '
+           'TransformNormalPassOp AdaptiveSamplerMode AdaptiveSamplerAnimMode AdaptiveSamplerClampMode DenoiserModel '
+           'ExportPassFormat ExportPassOp ExportPassFreq IOSize SamplerFilter AddressMode ComparisonFunc SplitHeuristic '
+           'SolidAngleBoundMethod RTXDIMode RTXDIBiasCorrection TransmittanceEstimator DistanceSampler ResourceFormat').split():
+    if _n not in globals(): globals()[_n] = _LegacyEnum(_n, (), {})
+if 'CullMode' not in globals():
+    class CullMode:
+        CullNone = 'None'
+        CullFront = 'Front'
+        CullBack = 'Back'
+def _legacy_struct(**kwargs): return dict(kwargs)
+for _n in ('SplitSampleGeneratorOptions EmissiveUniformSamplerOptions LightBVHBuilderOptions LightBVHSamplerOptions RTXDIOptions '
+           'GridVolumeSamplerOptions ScreenSpaceReSTIROptions PathTracerParams').split():
+    if _n not in globals(): globals()[_n] = _legacy_struct
 `;
 
 /** Native-style vector types (ScriptBindings defineVecType), shared by the pyscene prelude and the Testbed module. */
