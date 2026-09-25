@@ -124,6 +124,14 @@ function liveConsoleContext(state: ViewerState): Parameters<typeof runConsoleCom
     };
 }
 
+/** Resizes the frame buffer (m.resizeFrameBuffer / the Window Size setting): canvas, graphs and camera aspect. */
+function resizeFrameBuffer(state: ViewerState, width: number, height: number): void {
+    [canvas.width, canvas.height] = [width, height];
+    for (const g of state.graphs) g.onResize(width, height);
+    state.scene?.camera.setAspectRatio(width / height);
+    state.frame = 0;
+}
+
 /** MogwaiSettings::selectNextGraph / the graph dropdown: switches the active graph. */
 function selectGraph(state: ViewerState, graph: RenderGraph | null): void {
     state.graph = graph;
@@ -451,6 +459,8 @@ async function main() {
         const ui = new DomWidgets(timePanel, renderTimePanel);
         ui.text("Time");
         state.clock.renderUI(ui);
+        const [exitTime, exitFrame] = [state.clock.getExitTime(), state.clock.getExitFrame()];
+        if (exitTime || exitFrame) ui.text(`Exiting in ${exitTime ? `${(exitTime - state.clock.getTime()).toFixed(2)} seconds` : ""}${exitFrame ? `${exitFrame - state.clock.getFrame()} frames` : ""}`);
     };
     setInterval(() => {
         if (!timePanel.hidden && !timePanel.matches(":hover") && !timePanel.contains(document.activeElement)) renderTimePanel();
@@ -786,6 +796,23 @@ function wireGraphEditor(state: ViewerState, rebuildUI: () => void, resetAccum: 
 /** Wires the plain-DOM control bar (created in index.html). */
 function wireControls(state: ViewerState, rebuildUI: () => void): void {
     const $ = (id: string) => document.getElementById(id);
+    // MogwaiSettings::winSizeUI: the renderable area (swapchain) size, common resolutions or custom.
+    const sizeSel = $("winSize") as HTMLSelectElement | null;
+    if (sizeSel) {
+        const kResolutions = ["1280x720", "1920x1080", "1920x1200", "2560x1440", "3840x2160"];
+        const sync = () => {
+            const cur = `${canvas.width}x${canvas.height}`;
+            sizeSel.replaceChildren(...[...kResolutions, ...(kResolutions.includes(cur) ? [] : [cur]), "Custom…"].map((r) => Object.assign(document.createElement("option"), { value: r, textContent: r })));
+            sizeSel.value = cur;
+        };
+        sync();
+        sizeSel.onchange = () => {
+            const v = sizeSel.value === "Custom…" ? prompt("Window size (WIDTHxHEIGHT)", `${canvas.width}x${canvas.height}`) : sizeSel.value;
+            const m = v?.match(/^\s*(\d+)\s*[xX*]\s*(\d+)\s*$/);
+            if (m && +m[1]! > 0 && +m[2]! > 0) resizeFrameBuffer(state, +m[1]!, +m[2]!);
+            sync();
+        };
+    }
     // Renderer::onDroppedFile: a dropped script runs, a dropped scene loads. A dropped file has no
     // directory: pyscenes resolve assets against the media root, binary formats must be self-contained.
     window.addEventListener("dragover", (ev) => ev.preventDefault());
