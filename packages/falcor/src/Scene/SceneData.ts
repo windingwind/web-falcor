@@ -37,6 +37,10 @@ export class PackedVertex implements StaticVertex {
     set tangent(v: float4) { const d = this.data, o = this.offset + 6; d[o] = v.x; d[o + 1] = v.y; d[o + 2] = v.z; d[o + 3] = v.w; }
     get texCrd(): float2 { const d = this.data, o = this.offset + 10; return new float2(d[o]!, d[o + 1]!); }
     set texCrd(v: float2) { const d = this.data, o = this.offset + 10; d[o] = v.x; d[o + 1] = v.y; }
+    /** Serializes like a plain vertex (not the shared store). */
+    toJSON(): StaticVertex {
+        return copyVertex(this);
+    }
 }
 
 /** `count` packed vertices over one Float32Array (zeroed, or `data` of count * kPackedVertexFloats floats). */

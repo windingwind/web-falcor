@@ -18,7 +18,7 @@ import { quatf } from "../Utils/Math/Quaternion.js";
 import { Scene, type SceneMeshDesc, type SceneMaterialDesc, type SceneCurveDesc, type SceneMetadata } from "./Scene.js";
 import { TextureManager, type TextureSource } from "./Material/TextureManager.js";
 import { EnvMap } from "./Lights/EnvMap.js";
-import type { AnalyticLight, StaticVertex } from "./SceneData.js";
+import { createPackedVertices, kPackedVertexFloats, type AnalyticLight, type StaticVertex } from "./SceneData.js";
 import type { AnimationChannel, MorphDesc, SceneNode, SkinDesc, WeightTrack } from "./Animation/SceneAnimation.js";
 import { buildSDFGridFromRecipe, type SDFGridRecipe } from "./SDFs/SDFGridRecipe.js";
 
@@ -320,8 +320,16 @@ export function deserializeScene(bytes: Uint8Array): CacheableScene {
 
     const meshes: SceneMeshDesc[] = header.meshes.map((meta) => {
         const verts = takeF32(meta.vertexCount * kFloatsPerVertex);
-        const vertices: StaticVertex[] = [];
-        for (let v = 0; v < meta.vertexCount; v++) {
+        let hasCurveRadius = false;
+        for (let v = 0; v < meta.vertexCount && !hasCurveRadius; v++) hasCurveRadius = verts[v * kFloatsPerVertex + 12] !== 0;
+        // Packed vertices keep large cached scenes within the JS heap; curve-tessellated meshes (radii) stay plain.
+        let vertices: StaticVertex[] = [];
+        if (!hasCurveRadius) {
+            const data = new Float32Array(meta.vertexCount * kPackedVertexFloats);
+            for (let v = 0; v < meta.vertexCount; v++) data.set(verts.subarray(v * kFloatsPerVertex, v * kFloatsPerVertex + kPackedVertexFloats), v * kPackedVertexFloats);
+            vertices = createPackedVertices(meta.vertexCount, data);
+        }
+        for (let v = 0; hasCurveRadius && v < meta.vertexCount; v++) {
             const fi = v * kFloatsPerVertex;
             vertices.push({
                 position: new float3(verts[fi]!, verts[fi + 1]!, verts[fi + 2]!),

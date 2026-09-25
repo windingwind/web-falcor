@@ -72,7 +72,8 @@ describe("SceneCache v5 serialization", () => {
         const back = deserializeScene(bytes);
 
         // Plain JSON view of everything but typed arrays / math types.
-        const json = (v: unknown) => JSON.stringify(v, (_k, x) => (x instanceof Float32Array || x instanceof Uint32Array || x instanceof Uint8Array ? Array.from(x) : x));
+        // A zero curve radius and none are the same vertex (meshes without radii load as packed vertices).
+        const json = (v: unknown) => JSON.stringify(v, (k, x) => (k === "curveRadius" && x === 0 ? undefined : x instanceof Float32Array || x instanceof Uint32Array || x instanceof Uint8Array ? Array.from(x) : x));
         expect(json(back.cameras)).toBe(json(scene.cameras));
         expect([back.selectedCamera, back.animatedCamera]).toEqual([1, 0]);
         expect(back.cameraNodeID).toBe(2);
