@@ -4,7 +4,8 @@
  */
 
 import { FrameCaptureExtension, captureOutput } from "./FrameCapture.js";
-import { AssetCategory, AssetResolver, isAbsoluteUrl, kProjectMediaUrl, Clock, Device, Logger, LogLevel, SceneBuilderFlags, getGlobalSettings, Profiler, ProfilerUI, VideoRecorder, ProgramManager, RenderGraph, ResourceFormat, Bitmap, BitmapExportFlags, createPass, initScripting, initSlang, runConsoleCommand, runGraphScript, runSceneScript, nativeKeyCode, type MogwaiCallbacks, runPbrtScene, runMitsubaScene, presentToCanvas, OverlayDrawList, type Scene } from "@web-falcor/falcor";
+import { recordMogwaiSource, replayMogwaiCommands, type MogwaiHost } from "./ScriptRunner.js";
+import { AssetCategory, AssetResolver, isAbsoluteUrl, kProjectMediaUrl, Clock, Device, Logger, LogLevel, SceneBuilderFlags, getGlobalSettings, Profiler, ProfilerUI, VideoRecorder, ProgramManager, RenderGraph, ResourceFormat, Bitmap, BitmapExportFlags, createPass, initScripting, initSlang, runConsoleCommand, runSceneScript, nativeKeyCode, type MogwaiCallbacks, runPbrtScene, runMitsubaScene, presentToCanvas, OverlayDrawList, type Scene } from "@web-falcor/falcor";
 import "@web-falcor/render-passes";
 import { CameraController, kCameraControllerTypes, kUpDirectionNames } from "./CameraController.js";
 import { buildUIPanel } from "./UIPanel.js";
@@ -19,6 +20,8 @@ interface ViewerState {
     context: GPUCanvasContext;
     format: GPUTextureFormat;
     graph: RenderGraph | null;
+    /** Every graph the script added (Renderer::mGraphs); `graph` is the active one. */
+    graphs: RenderGraph[];
     scene: Scene | null;
     output: string | null;
     frame: number;
@@ -69,31 +72,89 @@ class TimingCapture {
 }
 
 async function loadGraph(state: ViewerState, url: string): Promise<void> {
-    const source = await (await fetch(url)).text();
-    const [graph] = await runGraphScript(state.device, source, { frameCapture: state.frameCapture }, state.callbacks);
-    await graph!.init(); // async pass initialization (ImageLoader etc.; docs §9)
-    graph!.onResize(canvas.width, canvas.height);
-    if (state.scene) graph!.setScene(state.scene);
-    state.graph = graph!;
-    state.output = graph!.getOutputNames()[0] ?? null;
+    await runScriptSource(state, await (await fetch(url)).text(), url.slice(0, url.lastIndexOf("/")));
+}
+
+/** The viewer's built-in graph (native starts without one): a script's graphs replace it. */
+let builtInGraph: RenderGraph | null = null;
+
+/**
+ * Renderer::loadScript: the script runs with the full `m` (addGraph, loadScene, m.scene edits,
+ * resizeFrameBuffer, renderFrame, captures, callbacks), recorded and replayed onto the viewer's state.
+ */
+async function runScriptSource(state: ViewerState, source: string, dirUrl: string): Promise<void> {
+    const commands = await recordMogwaiSource(state.device, source, dirUrl);
+    if (builtInGraph && state.graphs.includes(builtInGraph)) {
+        state.graphs.splice(state.graphs.indexOf(builtInGraph), 1);
+        if (state.graph === builtInGraph) state.graph = null;
+        builtInGraph = null;
+    }
+    const host: MogwaiHost = {
+        graphs: state.graphs,
+        get active() { return state.graph; },
+        set active(g) { state.graph = g; },
+        get scene() { return state.scene; },
+        set scene(scene) {
+            state.scene = scene;
+            state.scenePath = scene?.importPaths[0] ?? null;
+        },
+        get size(): [number, number] { return [canvas.width, canvas.height]; },
+        set size([w, h]) { [canvas.width, canvas.height] = [w, h]; },
+        clock: state.clock,
+        frameCapture: state.frameCapture!,
+        timingCapture: { beginFrame: () => {}, captureFrameTime: (path) => void state.timingCapture.captureFrameTime(path) },
+        callbacks: state.callbacks,
+        loadScene: (url, baseUrl, flags) => createScene(state, url, baseUrl, flags),
+    };
+    await replayMogwaiCommands(state.device, commands, host);
+    selectGraph(state, state.graph ?? state.graphs[0] ?? null);
+    // The script's callbacks run later and look `m` up then: rebind it to the live viewer (the console's m).
+    runConsoleCommand(state.device, "", liveConsoleContext(state));
+}
+
+/** The console's `m` over the viewer's live state. */
+function liveConsoleContext(state: ViewerState): Parameters<typeof runConsoleCommand>[2] {
+    return {
+        get scene() { return state.scene; },
+        get graph() { return state.graph; },
+        clock: state.clock,
+        timingCapture: state.timingCapture,
+        frameCapture: state.frameCapture,
+        callbacks: state.callbacks,
+    };
+}
+
+/** MogwaiSettings::selectNextGraph / the graph dropdown: switches the active graph. */
+function selectGraph(state: ViewerState, graph: RenderGraph | null): void {
+    state.graph = graph;
+    graph?.onResize(canvas.width, canvas.height);
+    state.output = graph?.getOutputNames()[0] ?? null;
     state.frame = 0;
 }
 
-async function loadScene(state: ViewerState, url: string, baseUrl: string): Promise<void> {
-    const source = await (await fetch(url)).text();
-    const lower = url.toLowerCase();
-    const scene = lower.endsWith(".pbrt")
-        ? await runPbrtScene(state.device, source, baseUrl)
-        : lower.endsWith(".xml") // Mitsuba scenes are the only .xml we load
-          ? await runMitsubaScene(state.device, source, baseUrl)
-          : await runSceneScript(state.device, source, baseUrl, { cache: true, path: url, flags: rebuildSceneCache ? SceneBuilderFlags.Default | SceneBuilderFlags.RebuildCache : undefined }); // OPFS scene cache: fast reloads
+/** Builds the scene at `url` (Mogwai::loadScene) without installing it. */
+async function createScene(state: ViewerState, url: string, baseUrl: string, flags?: number): Promise<Scene> {
+    const lower = url.toLowerCase().split(/[?#]/)[0]!;
+    if (rebuildSceneCache) flags = (flags ?? SceneBuilderFlags.Default) | SceneBuilderFlags.RebuildCache;
     rebuildSceneCache = false;
+    const scene = lower.endsWith(".pbrt")
+        ? await runPbrtScene(state.device, await (await fetch(url)).text(), baseUrl, { flags })
+        : lower.endsWith(".xml") // Mitsuba scenes are the only .xml we load
+          ? await runMitsubaScene(state.device, await (await fetch(url)).text(), baseUrl)
+          : lower.endsWith(".pyscene")
+            ? await runSceneScript(state.device, await (await fetch(url)).text(), baseUrl, { cache: true, path: url, flags }) // OPFS scene cache: fast reloads
+            : await runSceneScript(state.device, `sceneBuilder.importScene(${JSON.stringify(url.slice(baseUrl.length + 1))})`, baseUrl, { cache: true, path: url, flags });
     if (scene.importPaths[0] !== url) scene.importPaths.unshift(url);
+    return scene;
+}
+
+async function loadScene(state: ViewerState, url: string, baseUrl: string): Promise<void> {
+    const scene = await createScene(state, url, baseUrl);
     scene.camera.setAspectRatio(canvas.width / canvas.height);
     const previous = state.scene;
     state.scene = scene;
     state.scenePath = url;
-    if (state.graph) state.graph.setScene(scene);
+    for (const g of state.graphs) g.setScene(scene);
     state.frame = 0;
     previous?.destroy(); // Mogwai frees the replaced scene
 }
@@ -202,11 +263,13 @@ async function loadInitialContent(state: ViewerState, device: Device): Promise<v
     } else if (!sceneParam) {
         // No URL content: default cornell box + the GPU-oracle-verified graph.
         await loadScene(state, "/Falcor/media/test_scenes/cornell_box.pyscene", "/Falcor/media/test_scenes");
-        state.graph = buildDefaultGraph(device, canvas.width, canvas.height, state.scene!);
+        state.graph = builtInGraph = buildDefaultGraph(device, canvas.width, canvas.height, state.scene!);
+        state.graphs = [state.graph];
         state.output = state.graph.getOutputNames()[0] ?? null;
     } else {
         // Scene but no graph: run the default path tracer over the chosen scene.
-        state.graph = buildDefaultGraph(device, canvas.width, canvas.height, state.scene!);
+        state.graph = builtInGraph = buildDefaultGraph(device, canvas.width, canvas.height, state.scene!);
+        state.graphs = [state.graph];
         state.output = state.graph.getOutputNames()[0] ?? null;
     }
     if (outputParam && state.graph?.getOutputNames().includes(outputParam)) {
@@ -293,7 +356,7 @@ async function main() {
     await initProgramSystem(device);
     await initScripting("/node_modules/pyodide");
 
-    const state: ViewerState = { device, context, format, graph: null, scene: null, output: null, frame: 0, playing: true, clock: new Clock(), timingCapture: new TimingCapture(), frameCapture: null, animateScene: true, graphError: null, scenePath: null, callbacks: { sceneUpdateCallback: null, keyCallback: null } };
+    const state: ViewerState = { device, context, format, graph: null, graphs: [], scene: null, output: null, frame: 0, playing: true, clock: new Clock(), timingCapture: new TimingCapture(), frameCapture: null, animateScene: true, graphError: null, scenePath: null, callbacks: { sceneUpdateCallback: null, keyCallback: null } };
     /** A failing python callback is logged and dropped (it would otherwise fail every frame). */
     const runRendererCallback = (key: keyof MogwaiCallbacks, fn: () => unknown): unknown => {
         try {
@@ -376,6 +439,7 @@ async function main() {
         state.graph?.renderOverlayUI(overlay);
     };
     const profilerUI = new ProfilerUI(profiler, profilerPanel);
+    window.addEventListener("mogwai-graphchange", () => rebuildUI());
     window.addEventListener("keydown", (ev) => {
         if (ev.target instanceof HTMLInputElement || ev.target instanceof HTMLTextAreaElement) return;
         if (ev.key === "p" || ev.key === "P") profilerPanel.hidden = !profilerPanel.hidden;
@@ -418,6 +482,10 @@ async function main() {
         } else if (!modified && ev.key === "F12") {
             ev.preventDefault();
             (document.getElementById("capture") as HTMLButtonElement | null)?.click();
+        } else if (!modified && (ev.key === "n" || ev.key === "N") && state.graphs.length > 1) {
+            selectGraph(state, state.graphs[(state.graphs.indexOf(state.graph!) + 1) % state.graphs.length]!);
+            refreshOutputs(state);
+            rebuildUI();
         } else if (!modified && ev.key === "`") {
             ev.preventDefault();
             (document.getElementById("consoleToggle") as HTMLButtonElement | null)?.click();
@@ -747,7 +815,7 @@ function wireControls(state: ViewerState, rebuildUI: () => void): void {
     });
     // Mirrors Mogwai's File > Save Config: the viewer state as a replayable Mogwai script.
     ($("saveConfig") as HTMLButtonElement | null)?.addEventListener("click", () => {
-        const script = saveConfig({ graphs: state.graph ? [state.graph] : [], scene: state.scene, scenePath: state.scenePath, width: canvas.width, height: canvas.height, showUI: true, clock: state.clock, frameCapture: state.frameCapture });
+        const script = saveConfig({ graphs: state.graphs, scene: state.scene, scenePath: state.scenePath, width: canvas.width, height: canvas.height, showUI: true, clock: state.clock, frameCapture: state.frameCapture });
         const a = document.createElement("a");
         a.href = URL.createObjectURL(new Blob([script], { type: "text/x-python" }));
         a.download = "MogwaiConfig.py";
@@ -761,13 +829,7 @@ function wireControls(state: ViewerState, rebuildUI: () => void): void {
     ($("graphFile") as HTMLInputElement | null)?.addEventListener("change", async (ev) => {
         const file = (ev.target as HTMLInputElement).files?.[0];
         if (file) {
-            const [graph] = await runGraphScript(state.device, await file.text(), { frameCapture: state.frameCapture }, state.callbacks);
-            await graph!.init();
-            graph!.onResize(canvas.width, canvas.height);
-            if (state.scene) graph!.setScene(state.scene);
-            state.graph = graph!;
-            state.output = graph!.getOutputNames()[0] ?? null;
-            state.frame = 0;
+            await runScriptSource(state, await file.text(), location.pathname.replace(/\/[^/]*$/, ""));
             refreshOutputs(state);
             rebuildUI();
         }
@@ -776,6 +838,18 @@ function wireControls(state: ViewerState, rebuildUI: () => void): void {
 }
 
 function refreshOutputs(state: ViewerState): void {
+    // The active-graph dropdown (shown for scripts with several graphs; N cycles them).
+    const graphSel = document.getElementById("activeGraph") as HTMLSelectElement | null;
+    if (graphSel) {
+        graphSel.replaceChildren(...state.graphs.map((g, i) => Object.assign(document.createElement("option"), { value: String(i), textContent: g.name })));
+        graphSel.value = String(Math.max(0, state.graphs.indexOf(state.graph!)));
+        graphSel.parentElement!.hidden = state.graphs.length < 2;
+        graphSel.onchange = () => {
+            selectGraph(state, state.graphs[Number(graphSel.value)] ?? null);
+            refreshOutputs(state);
+            window.dispatchEvent(new Event("mogwai-graphchange"));
+        };
+    }
     const sel = document.getElementById("output") as HTMLSelectElement | null;
     if (!sel || !state.graph) return;
     sel.innerHTML = "";

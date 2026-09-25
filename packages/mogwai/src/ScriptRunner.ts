@@ -75,22 +75,68 @@ export async function runMogwaiScript(device: Device, scriptUrl: string, opts: {
 
 /** Records and replays a Mogwai script's `source`, with local imports resolved against `dirUrl`. */
 export async function runMogwaiSource(device: Device, source: string, dirUrl: string, opts: { download?: boolean } = {}): Promise<MogwaiRunResult> {
-    const root = "/mogwai";
-    const files = await fetchLocalPythonModules(dirUrl, source, root);
-    const cwd = `${root}${dirUrl}`;
-    const commands: MogwaiCommand[] = recordMogwaiScript(device, source, files, cwd);
-
+    const commands = await recordMogwaiSource(device, source, dirUrl);
     const clock = new Clock();
-    const graphs: RenderGraph[] = [];
-    let active: RenderGraph | null = null;
-    let sceneUpdateCallback: MogwaiCallbacks["sceneUpdateCallback"] = null;
-    let scene: Scene | null = null;
-    let size: [number, number] = [1920, 1080]; // Mogwai's default frame buffer
-    const fc = new FrameCaptureExtension(device, () => active, (name) => graphs.find((g) => g.name === name) ?? null, () => clock.getFrame());
-    fc.download = opts.download ?? false;
+    const host: MogwaiHost = {
+        graphs: [],
+        active: null,
+        scene: null,
+        size: [1920, 1080], // Mogwai's default frame buffer
+        targetFormat: kTargetFormat,
+        clock,
+        frameCapture: null!,
+        timingCapture: new HeadlessTimingCapture(),
+        callbacks: { sceneUpdateCallback: null, keyCallback: null },
+    };
+    host.frameCapture = new FrameCaptureExtension(device, () => host.active, (name) => host.graphs.find((g) => g.name === name) ?? null, () => clock.getFrame());
+    host.frameCapture.download = opts.download ?? false;
+    await replayMogwaiCommands(device, commands, host);
+    return { frameCapture: host.frameCapture, timingCapture: host.timingCapture as HeadlessTimingCapture, graphs: host.graphs, activeGraph: host.active, scene: host.scene };
+}
 
-    const tc = new HeadlessTimingCapture();
-    const targetOf = (t: MogwaiTarget): object | null => (t === "clock" ? clock : t === "frameCapture" ? fc : t === "timingCapture" ? tc : scene);
+/** The script's local modules are fetched and it is recorded (see recordMogwaiScript). */
+export async function recordMogwaiSource(device: Device, source: string, dirUrl: string): Promise<MogwaiCommand[]> {
+    const files = await fetchLocalPythonModules(dirUrl, source, kScriptRoot);
+    return recordMogwaiScript(device, source, files, `${kScriptRoot}${dirUrl}`);
+}
+
+/** Pyodide directory recorded scripts run in (os.path.abspath() paths start with it). */
+const kScriptRoot = "/mogwai";
+
+/** The Renderer state a recorded script acts on: the headless runner's own, or the viewer's. */
+export interface MogwaiHost {
+    graphs: RenderGraph[];
+    active: RenderGraph | null;
+    scene: Scene | null;
+    /** Frame buffer size (m.resizeFrameBuffer). */
+    size: [number, number];
+    /** Format given to graphs without an output format (the swapchain's); undefined = the graph default. */
+    targetFormat?: ResourceFormat;
+    clock: Clock;
+    frameCapture: FrameCaptureExtension;
+    timingCapture: { beginFrame(): void; captureFrameTime(path: string): void };
+    callbacks: MogwaiCallbacks;
+    /** Mogwai::loadScene for a resolved URL; the default runs pyscenes, parses pbrt and imports the rest. */
+    loadScene?(url: string, baseUrl: string, flags: number): Promise<Scene>;
+    /** Called after m.resizeFrameBuffer. */
+    onResize?(width: number, height: number): void;
+}
+
+/** Mogwai::loadScene: pyscenes run, pbrt parses, everything else goes through the importers. */
+async function loadSceneDefault(device: Device, url: string, baseUrl: string, flags: number): Promise<Scene> {
+    const lower = url.toLowerCase().split(/[?#]/)[0]!;
+    const options = { flags };
+    return lower.endsWith(".pyscene")
+        ? runSceneScript(device, await (await fetch(url)).text(), baseUrl, { ...options, path: url })
+        : lower.endsWith(".pbrt")
+          ? runPbrtScene(device, await (await fetch(url)).text(), baseUrl, options)
+          : runSceneScript(device, `sceneBuilder.importScene(${JSON.stringify(url.slice(baseUrl.length + 1))})`, baseUrl, options);
+}
+
+/** Replays recorded commands in order: scene loads, graph edits, frames and captures (Mogwai's renderFrame sequence). */
+export async function replayMogwaiCommands(device: Device, commands: MogwaiCommand[], host: MogwaiHost): Promise<void> {
+    const { clock } = host;
+    const targetOf = (t: MogwaiTarget): object | null => (t === "clock" ? clock : t === "frameCapture" ? host.frameCapture : t === "timingCapture" ? host.timingCapture : host.scene);
     const resolveRef = (v: unknown): unknown => {
         const ref = v as MogwaiRef | null;
         if (!ref || typeof ref !== "object" || !("mogwaiRef" in ref)) return v;
@@ -98,48 +144,52 @@ export async function runMogwaiSource(device: Device, source: string, dirUrl: st
         const getter = obj[`get${key[0]!.toUpperCase()}${key.slice(1)}`];
         return typeof getter === "function" ? getter.call(obj) : obj[key];
     };
+    const { graphs } = host;
 
     for (const cmd of commands) {
         switch (cmd.op) {
-            case "addGraph":
-                graphs.push(cmd.graph);
-                // Renderer::addGraph keeps the active graph; the first one added becomes active.
-                active ??= cmd.graph;
-                cmd.graph.onResize(...size, kTargetFormat);
-                if (scene) cmd.graph.setScene(scene);
+            case "addGraph": {
+                // Renderer::addGraph: a graph of the same name is replaced in place; the active graph
+                // stays (the first one added becomes active).
+                const same = graphs.findIndex((g) => g.name === cmd.graph.name);
+                if (same >= 0) {
+                    if (host.active === graphs[same]) host.active = cmd.graph;
+                    graphs[same] = cmd.graph;
+                } else graphs.push(cmd.graph);
+                host.active ??= cmd.graph;
+                cmd.graph.onResize(...host.size, host.targetFormat);
+                if (host.scene) cmd.graph.setScene(host.scene);
                 await cmd.graph.init();
                 break;
+            }
             case "removeGraph": {
                 // Renderer::removeGraph: the active index steps down past the removed graph.
                 const i = graphs.indexOf(cmd.graph);
-                let a: number = active ? graphs.indexOf(active) : 0;
+                let a: number = host.active ? graphs.indexOf(host.active) : 0;
                 graphs.splice(i, 1);
                 if (a >= i && a > 0) a--;
-                active = graphs[a] ?? null;
+                host.active = graphs[a] ?? null;
                 break;
             }
             case "setActiveGraph":
-                active = cmd.graph;
+                host.active = cmd.graph;
                 break;
             case "setSceneUpdateCallback":
-                sceneUpdateCallback = cmd.callback;
+                host.callbacks.sceneUpdateCallback = cmd.callback;
+                break;
+            case "setKeyCallback":
+                host.callbacks.keyCallback = cmd.callback;
                 break;
             case "loadScene": {
                 // os.path.abspath() paths point into the virtual file system: map them back to URLs.
-                const path = cmd.path.startsWith(root) ? cmd.path.slice(root.length) : cmd.path;
+                const path = cmd.path.startsWith(kScriptRoot) ? cmd.path.slice(kScriptRoot.length) : cmd.path;
                 const url = path.startsWith("/") ? path : await AssetResolver.getDefaultResolver().resolvePath(path, AssetCategory.Scene);
                 const baseUrl = url.slice(0, url.lastIndexOf("/"));
-                const lower = url.toLowerCase().split(/[?#]/)[0]!;
-                const previous = scene;
-                const options = { flags: cmd.flags };
-                // Mogwai::loadScene: pyscenes run, pbrt parses, everything else goes through the importers.
-                scene = lower.endsWith(".pyscene")
-                    ? await runSceneScript(device, await (await fetch(url)).text(), baseUrl, { ...options, path: url })
-                    : lower.endsWith(".pbrt")
-                      ? await runPbrtScene(device, await (await fetch(url)).text(), baseUrl, options)
-                      : await runSceneScript(device, `sceneBuilder.importScene(${JSON.stringify(url.slice(baseUrl.length + 1))})`, baseUrl, options);
+                const previous = host.scene;
+                const scene = await (host.loadScene ? host.loadScene(url, baseUrl, cmd.flags) : loadSceneDefault(device, url, baseUrl, cmd.flags));
                 if (scene.importPaths[0] !== url) scene.importPaths.unshift(url);
-                scene.camera.setAspectRatio(size[0] / size[1]);
+                scene.camera.setAspectRatio(host.size[0] / host.size[1]);
+                host.scene = scene;
                 for (const g of graphs) g.setScene(scene);
                 previous?.destroy(); // Mogwai frees the replaced scene
                 break;
@@ -147,13 +197,14 @@ export async function runMogwaiSource(device: Device, source: string, dirUrl: st
             case "unloadScene":
                 // Mirrors Renderer::unloadScene.
                 for (const g of graphs) g.setScene(null);
-                scene?.destroy();
-                scene = null;
+                host.scene?.destroy();
+                host.scene = null;
                 break;
             case "resizeFrameBuffer":
-                size = [cmd.width, cmd.height];
-                scene?.camera.setAspectRatio(size[0] / size[1]);
-                for (const g of graphs) g.onResize(...size, kTargetFormat);
+                host.size = [cmd.width, cmd.height];
+                host.scene?.camera.setAspectRatio(cmd.width / cmd.height);
+                for (const g of graphs) g.onResize(cmd.width, cmd.height, host.targetFormat);
+                host.onResize?.(cmd.width, cmd.height);
                 break;
             case "set": {
                 const target = targetOf(cmd.target);
@@ -184,16 +235,15 @@ export async function runMogwaiSource(device: Device, source: string, dirUrl: st
             case "renderFrame":
                 // Mogwai::renderFrame: clock, extensions' beginFrame, scene update, graph, endFrame.
                 clock.tick();
-                fc.beginFrame();
-                tc.beginFrame();
+                host.frameCapture.beginFrame();
+                host.timingCapture.beginFrame();
                 // Renderer::onFrameRender: the renderer's callback runs before Scene::update.
-                if (active) sceneUpdateCallback?.(scene, clock.getTime());
-                scene?.runUpdateCallback(clock.getTime());
-                if (scene?.isAnimated()) scene.animate(clock.getTime());
-                active?.execute(device.renderContext);
-                await fc.endFrame();
+                if (host.active) host.callbacks.sceneUpdateCallback?.(host.scene, clock.getTime());
+                host.scene?.runUpdateCallback(clock.getTime());
+                if (host.scene?.isAnimated()) host.scene.animate(clock.getTime());
+                host.active?.execute(device.renderContext);
+                await host.frameCapture.endFrame();
                 break;
         }
     }
-    return { frameCapture: fc, timingCapture: tc, graphs, activeGraph: active, scene };
 }

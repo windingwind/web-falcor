@@ -71,7 +71,7 @@
     <canvas id="overlay"></canvas>
     <canvas id="zoom" hidden></canvas>
     <div id="status">initializing…</div>
-    <div id="help">drag: look/orbit · right-drag: roll (6-DOF) · WASD: move · Q/E: down/up · wheel: dolly/zoom · Shift: fast · Ctrl: slow · P: profiler · F7: overlay UI · Z (hold): pixel zoom · Space: pause clock · Ctrl+Space: pause rendering · F1: this help · F2: UI · F3: add viewpoint · F6: reload shaders · F10: FPS · F12: capture · `: console · Ctrl+O / Ctrl+Shift+O: open · Scene panel: controller</div>
+    <div id="help">drag: look/orbit · right-drag: roll (6-DOF) · WASD: move · Q/E: down/up · wheel: dolly/zoom · Shift: fast · Ctrl: slow · P: profiler · F7: overlay UI · Z (hold): pixel zoom · Space: pause clock · Ctrl+Space: pause rendering · F1: this help · F2: UI · F3: add viewpoint · F6: reload shaders · F10: FPS · F12: capture · N: next graph · `: console · Ctrl+O / Ctrl+Shift+O: open · Scene panel: controller</div>
     <div id="controls">
       <button id="play">Pause</button>
       <button id="capture">Capture</button>
@@ -80,6 +80,7 @@
       <label title="Load Script / Load Scene (Ctrl+O / Ctrl+Shift+O): a media path or URL; .py loads as a script, anything else as a scene. Recent entries are suggested.">open <input id="openPath" list="recentList" placeholder="scene or script path" size="28" /></label>
       <datalist id="recentList"></datalist>
       <label>graph <input id="graphFile" type="file" accept=".py" /></label>
+      <label hidden>active graph <select id="activeGraph"></select></label>
       <label>output <select id="output"></select></label>
       <button id="consoleToggle">Console</button>
       <button id="graphToggle">Graph</button>

@@ -203,12 +203,13 @@ export function runConsoleCommand(
             applyMediaSearchPaths();
         },
     };
+    // Read through the context: a caller passing getters gets an `m` that stays live (script callbacks).
     const m = {
-        scene: context.scene,
-        activeGraph: context.graph,
-        clock: context.clock,
-        timingCapture: context.timingCapture,
-        frameCapture: context.frameCapture,
+        get scene() { return context.scene; },
+        get activeGraph() { return context.graph; },
+        get clock() { return context.clock; },
+        get timingCapture() { return context.timingCapture; },
+        get frameCapture() { return context.frameCapture; },
         profiler: (context.profiler ?? device.profilerHook)?.pythonBindings((v) => pyodide!.toPy(v)) ?? null,
         settings,
         getSettings: () => settings,
@@ -848,6 +849,7 @@ export type MogwaiCommand =
     | { op: "removeGraph"; graph: RenderGraph }
     | { op: "setActiveGraph"; graph: RenderGraph }
     | { op: "setSceneUpdateCallback"; callback: MogwaiCallbacks["sceneUpdateCallback"] }
+    | { op: "setKeyCallback"; callback: MogwaiCallbacks["keyCallback"] }
     | { op: "loadScene"; path: string; flags: number }
     | { op: "unloadScene" }
     | { op: "resizeFrameBuffer"; width: number; height: number }
@@ -1007,11 +1009,16 @@ export function recordMogwaiScript(device: Device, source: string, files: Record
         settings: recordedSettings,
         getSettings: () => recordedSettings,
     };
-    // m.sceneUpdateCallback applies from its point in the script; keyCallback has no keys to see headlessly.
+    // m.sceneUpdateCallback applies from its point in the script; m.keyCallback is for interactive hosts (the viewer).
     let sceneUpdate: MogwaiCallbacks["sceneUpdateCallback"] = null;
     Object.defineProperty(recordedM, "sceneUpdateCallback", {
         get: () => sceneUpdate ?? undefined,
         set: (f) => void commands.push({ op: "setSceneUpdateCallback", callback: (sceneUpdate = f ?? null) }),
+    });
+    let keyCallback: MogwaiCallbacks["keyCallback"] = null;
+    Object.defineProperty(recordedM, "keyCallback", {
+        get: () => keyCallback ?? undefined,
+        set: (f) => void commands.push({ op: "setKeyCallback", callback: (keyCallback = f ?? null) }),
     });
     pyodide.globals.set("m", recordedM);
 
