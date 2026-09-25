@@ -250,18 +250,8 @@ class _Mogwai:
 if not isinstance(m, _Mogwai): m = _Mogwai(m)
 `;
 
-/** Python prelude adapting pythonic pyscene API (kwargs, class-style ctors)
- *  to the JS SceneBuilder bridge. */
-const kScenePrelude = `
-import sys
-sys.modules.pop('webfalcor_scene', None)  # registerJsModule per call; defeat import caching
-from webfalcor_scene import (sceneBuilder, SceneBuilderFlags, _TriangleMesh,
-    PointLight, DirectionalLight, DistantLight, RectLight, DiscLight, SphereLight,
-    StandardMaterial, ClothMaterial, HairMaterial,
-    PBRTDiffuseMaterial, PBRTConductorMaterial, PBRTDiffuseTransmissionMaterial, PBRTDielectricMaterial,
-    PBRTCoatedConductorMaterial, PBRTCoatedDiffuseMaterial, _MERLMaterial, _MERLMixMaterial, _RGLMaterial,
-    Camera, _makeTransform, _makeAABB, _makeEnvMap, _GridVolume, _Grid, _SDFGridCreate, _Transform, _Animation)
-
+/** Native-style vector types (ScriptBindings defineVecType), shared by the pyscene prelude and the Testbed module. */
+export const kPythonVectorTypes = `
 # Python-side vector types (ScriptBindings defineVecType): x/y/z/w, construction from a scalar,
 # components, a list or another vector, native repr/str, and component-wise operators with
 # vectors or scalars (not for bools). The JS bridge reads .x/.y/.z/.w off any object.
@@ -304,7 +294,21 @@ for _n in (2, 3, 4):
     globals()[f'int{_n}'] = _vec_class(f'int{_n}', _n, int, True)
     globals()[f'uint{_n}'] = _vec_class(f'uint{_n}', _n, int, True)
     globals()[f'bool{_n}'] = _vec_class(f'bool{_n}', _n, bool, False)
+`;
 
+/** Python prelude adapting pythonic pyscene API (kwargs, class-style ctors)
+ *  to the JS SceneBuilder bridge. */
+const kScenePrelude = `
+import sys
+sys.modules.pop('webfalcor_scene', None)  # registerJsModule per call; defeat import caching
+from webfalcor_scene import (sceneBuilder, SceneBuilderFlags, _TriangleMesh,
+    PointLight, DirectionalLight, DistantLight, RectLight, DiscLight, SphereLight,
+    StandardMaterial, ClothMaterial, HairMaterial,
+    PBRTDiffuseMaterial, PBRTConductorMaterial, PBRTDiffuseTransmissionMaterial, PBRTDielectricMaterial,
+    PBRTCoatedConductorMaterial, PBRTCoatedDiffuseMaterial, _MERLMaterial, _MERLMixMaterial, _RGLMaterial,
+    Camera, _makeTransform, _makeAABB, _makeEnvMap, _GridVolume, _Grid, _SDFGridCreate, _Transform, _Animation)
+
+${kPythonVectorTypes}
 class GridVolume_EmissionMode:
     Direct = 0
     Blackbody = 1

@@ -45,3 +45,9 @@ tb = device.create_typed_buffer(falcor.ResourceFormat.R32Float, 8)
 assert tb.is_typed and tb.format == falcor.ResourceFormat.R32Float
 tex = device.create_texture(8, 4, format=falcor.ResourceFormat.RGBA8Unorm, array_size=2, mip_levels=1)
 assert tex.format == falcor.ResourceFormat.RGBA8Unorm and tex.array_size == 2 and tex.sample_count == 1
+
+# Vector types with native's component-wise operators, repr and str.
+v = falcor.float3(1, 2, 3) * 2 + falcor.float3(1)
+assert v == falcor.float3(3, 5, 7) and v.y == 5.0 and list(v) == [3.0, 5.0, 7.0]
+assert repr(falcor.uint2(4, 6) / 2) == "uint2(2, 3)" and str(falcor.float2(0.5)) == "[0.500000, 0.500000]"
+assert repr(-falcor.int3(1, -2, 3)) == "int3(-1, 2, -3)"

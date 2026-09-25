@@ -31,7 +31,7 @@ import { Logger } from "../Logger.js";
 import { getMaterialParamLayoutForType, kMaterialParamCount, serializeMaterialParams, deserializeMaterialParams } from "../../Scene/Material/MaterialParamLayout.js";
 import { RuntimeError } from "../../Core/Error.js";
 import { AssetCategory, AssetResolver } from "../../Core/AssetResolver.js";
-import { getPyodide } from "./Scripting.js";
+import { getPyodide, kPythonVectorTypes } from "./Scripting.js";
 import { Testbed, type TestbedOptions } from "./Testbed.js";
 import { MaterialBridge } from "../../Scene/SceneBuilder.js";
 import { MaterialType } from "../../Scene/Material/MaterialData.js";
@@ -313,7 +313,7 @@ def _unwrap(v):
         return v._o
     if hasattr(v, "tolist") and not isinstance(v, (bool, int, float)):
         return to_js(v.tolist())
-    if isinstance(v, (tuple, list)):
+    if isinstance(v, (tuple, list)) or (hasattr(v, "__iter__") and hasattr(v, "x")):
         return to_js(list(v))
     return v
 
@@ -806,20 +806,9 @@ falcor.createPass = createPass  # graph scripts (load_render_graph) call it unqu
 falcor.get_material_param_layout = get_material_param_layout
 sys.modules["falcor"] = falcor
 
-def _vector(name, n, scalar):
-    fields = "xyzw"[:n]
-    def new(cls, *args):
-        if len(args) == 1 and hasattr(args[0], "__iter__"): args = tuple(args[0])
-        if len(args) == 1: args = args * n
-        if len(args) != n: raise TypeError(f"{name} takes 1 or {n} values")
-        return tuple.__new__(cls, (scalar(a) for a in args))
-    attrs = {"__new__": new, "__repr__": lambda s: f"{name}({', '.join(repr(v) for v in s)})"}
-    for i, f in enumerate(fields): attrs[f] = property(lambda s, i=i: s[i])
-    return type(name, (tuple,), attrs)
-
+${kPythonVectorTypes}
 for _n in (2, 3, 4):
-    for _prefix, _scalar in (("float", float), ("int", int), ("uint", int), ("bool", bool)):
-        globals()[f"{_prefix}{_n}"] = _vector(f"{_prefix}{_n}", _n, _scalar)
+    for _prefix in ("float", "int", "uint", "bool"):
         setattr(falcor, f"{_prefix}{_n}", globals()[f"{_prefix}{_n}"])
 
 # falcor.ui (Utils/UI/PythonUI): widgets over the testbed's DOM screen; edits queue in JS
