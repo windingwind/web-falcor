@@ -39,6 +39,8 @@ if (useSwiftShader) {
 } else {
     args.push("--enable-features=Vulkan");
 }
+// CHROME_ARGS (space-separated, e.g. "--js-flags=--expose-gc") for debugging runs.
+if (process.env.CHROME_ARGS) args.push(...process.env.CHROME_ARGS.split(" ").filter(Boolean));
 
 const browser = await chromium.launch({
     channel: "chromium",
@@ -53,7 +55,53 @@ page.on("console", (msg) => {
     if (msg.type() === "error" || process.env.FORWARD_ALL) console.error("[browser]", msg.text());
 });
 page.on("pageerror", (err) => console.error("[pageerror]", err.message));
-page.on("crash", () => console.error("[crash] the page crashed (out of memory?)"));
+// A crashed page never finishes: report and exit instead of waiting out the suite timeout.
+page.on("crash", async () => {
+    console.error("[crash] the page crashed (out of memory?)");
+    await browser.close().catch(() => {});
+    await vite.close().catch(() => {});
+    process.exit(2);
+});
+
+// A test logging "#HEAPSNAPSHOT <file>" gets a heap snapshot written there (then logs "[heap] snapshot written").
+{
+    const cdp = await page.context().newCDPSession(page);
+    page.on("console", async (msg) => {
+        const m = msg.text().match(/^#HEAPSNAPSHOT (.*)/);
+        if (!m) return;
+        const { createWriteStream } = await import("node:fs");
+        const out = createWriteStream(m[1]);
+        const onChunk = ({ chunk }) => out.write(chunk);
+        cdp.on("HeapProfiler.addHeapSnapshotChunk", onChunk);
+        await cdp.send("HeapProfiler.takeHeapSnapshot", { reportProgress: false });
+        cdp.off("HeapProfiler.addHeapSnapshotChunk", onChunk);
+        out.end(() => console.error(`[heap] snapshot written to ${m[1]}`));
+    });
+}
+// HEAP_SAMPLING=1: sampled live allocations; a test logging "#HEAPPROFILE <label>" gets the top allocation sites printed.
+if (process.env.HEAP_SAMPLING) {
+    const cdp = await page.context().newCDPSession(page);
+    await cdp.send("HeapProfiler.enable");
+    await cdp.send("HeapProfiler.startSampling", { samplingInterval: 64 * 1024 });
+    page.on("console", async (msg) => {
+        const m = msg.text().match(/^#HEAPPROFILE (.*)/);
+        if (!m) return;
+        const { profile } = await cdp.send("HeapProfiler.getSamplingProfile");
+        const sites = new Map();
+        const walk = (node, stack) => {
+            const f = node.callFrame;
+            const here = [...stack, `${f.functionName || "(anon)"} ${f.url.split("/").pop()}:${f.lineNumber + 1}`];
+            if (node.selfSize) {
+                const key = here.slice(-4).reverse().join(" < ");
+                sites.set(key, (sites.get(key) ?? 0) + node.selfSize);
+            }
+            for (const c of node.children) walk(c, here);
+        };
+        walk(profile.head, []);
+        const top = [...sites].sort((a, b) => b[1] - a[1]).slice(0, 15);
+        console.error(`[heap] ${m[1]}: ${top.map(([k, v]) => `\n  ${(v / 1e6).toFixed(0)}MB ${k}`).join("")}`);
+    });
+}
 
 await page.goto(url);
 // Wall clock for the whole suite (grew past 10 min with ~170 tests; the per-test page keeps streaming results).

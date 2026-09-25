@@ -912,8 +912,11 @@ export class Scene {
         const bvhTris: BvhTriangle[] = [];
         const displacedAabbs: { min: [number, number, number]; max: [number, number, number] }[] = [];
         const displacedEntries: number[] = [];
+        const identity = float4x4.identity();
         meshes.forEach((mesh, meshID) => {
-            const m = mesh.transform ?? float4x4.identity();
+            const m = mesh.transform ?? identity;
+            // Pretransformed (identity) meshes use their positions as is: no per-triangle copies.
+            const world = m === identity || m.data.every((v, i) => v === identity.data[i]) ? (p: float3) => p : (p: float3) => transformPoint(m, p);
             const mat = materials[mesh.materialID];
             const displaced = mat?.basic.texDisplacement !== undefined;
             // Conservative displacement range along the normal: mapValue([0,1]).
@@ -921,9 +924,9 @@ export class Scene {
             const biasD = mat?.basic.displacementOffset ?? 0;
             const margin = Math.max(Math.abs(biasD), Math.abs(scaleD + biasD)) + 1e-3;
             for (let p = 0; p < mesh.indices.length / 3; p++) {
-                const v0 = transformPoint(m, mesh.vertices[mesh.indices[p * 3]!]!.position);
-                const v1 = transformPoint(m, mesh.vertices[mesh.indices[p * 3 + 1]!]!.position);
-                const v2 = transformPoint(m, mesh.vertices[mesh.indices[p * 3 + 2]!]!.position);
+                const v0 = world(mesh.vertices[mesh.indices[p * 3]!]!.position);
+                const v1 = world(mesh.vertices[mesh.indices[p * 3 + 1]!]!.position);
+                const v2 = world(mesh.vertices[mesh.indices[p * 3 + 2]!]!.position);
                 if (displaced) {
                     displacedAabbs.push({
                         min: [Math.min(v0.x, v1.x, v2.x) - margin, Math.min(v0.y, v1.y, v2.y) - margin, Math.min(v0.z, v1.z, v2.z) - margin],
@@ -1405,6 +1408,8 @@ export class Scene {
      * The scene must not be bound again afterwards.
      */
     destroy(): void {
+        // Recorded but unsubmitted work (e.g. mip generation) may still use these resources.
+        this.device.renderContext.submit();
         const resources = new Set<{ destroy(): void }>([
             ...Object.values(this.buffers),
             ...this.textureBuckets,
@@ -1421,6 +1426,11 @@ export class Scene {
         for (let i = 0; i < this.lcTextureManager.count; i++) this.lcTextureManager.getSource(i)?.bitmap?.close?.();
         this.buffers = {};
         this.textureBuckets = [];
+        // Host copies too: a destroyed scene still referenced (e.g. by a pass) must not pin them.
+        this.lcMeshes = [];
+        this.sourceMeshes = null;
+        this.animatedBvh = null;
+        this.lcTextureManager = new TextureManager();
     }
 
     /** Mirrors Scene::setCameraBounds; the camera controller clamps its position to the box. */

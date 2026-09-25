@@ -135,7 +135,7 @@ interface AssimpModule {
 
 let assimpModule: Promise<AssimpModule> | null = null;
 /** Heap size beyond which the assimp module is recycled after an import. */
-const kAssimpHeapRecycleBytes = 1 << 30;
+const kAssimpHeapRecycleBytes = 256 << 20;
 
 /** Assimp 5.2.5 (native's version) compiled to wasm (packages/falcor/wasm, scripts/build-assimp-wasm.mjs). */
 function getAssimp(): Promise<AssimpModule> {

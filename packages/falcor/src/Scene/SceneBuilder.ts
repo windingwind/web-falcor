@@ -394,7 +394,10 @@ export class MaterialBridge {
                           ? await decodeDdsToBitmap(bytes, url, device)
                           : await createImageBitmap(blob, { colorSpaceConversion: "none" });
                 // DDS: the GPU gets the full-resolution BC chain in its own format.
-                const compressed = ext === ".dds" ? (await import("./Importer/DDSLoader.js")).ddsCompressedPayload(bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer, srgb) : undefined;
+                // The levels view the file's own buffer (a copy would hold every DDS twice).
+                const whole = bytes.byteOffset === 0 && bytes.byteLength === bytes.buffer.byteLength;
+                const ddsBuffer = (whole ? bytes.buffer : bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength)) as ArrayBuffer;
+                const compressed = ext === ".dds" ? (await import("./Importer/DDSLoader.js")).ddsCompressedPayload(ddsBuffer, srgb) : undefined;
                 this.assignTextureHandle(t.slot, packTextureHandle(TextureHandleMode.Texture, tm.addTexture({ bitmap, srgb, bytes, compressed, dds: ext === ".dds" })));
             } catch (e) {
                 Logger.warning(`MaterialTextureLoader: failed to load texture '${t.path}' for material '${this.name}': ${(e as Error).message}`);
@@ -815,7 +818,8 @@ function pretransformStaticMeshes(meshes: SceneMeshDesc[], nodes: SceneNode[], a
         const [c0, c1, c2] = [0, 1, 2].map((c) => [a[c]!, a[4 + c]!, a[8 + c]!]);
         const det = c0![0]! * (c1![1]! * c2![2]! - c2![1]! * c1![2]!) - c1![0]! * (c0![1]! * c2![2]! - c2![1]! * c0![2]!) + c2![0]! * (c0![1]! * c1![2]! - c1![1]! * c0![2]!);
         if (det < 0) m.indices = flipWinding(m.indices);
-        m.vertices = m.vertices.map((v) => {
+        // In place (the array is this mesh's alone): a second copy would double the peak for large scenes.
+        m.vertices.forEach((v, i) => {
             const [px, py, pz] = mul3(a, v.position.x, v.position.y, v.position.z, 1);
             const out: StaticVertex = {
                 ...v,
@@ -824,7 +828,7 @@ function pretransformStaticMeshes(meshes: SceneMeshDesc[], nodes: SceneNode[], a
                 tangent: ((d) => new float4(d.x, d.y, d.z, v.tangent.w))(normalize(mul3(a, v.tangent.x, v.tangent.y, v.tangent.z, 0))),
             };
             if (v.curveRadius !== undefined) out.curveRadius = length(mul3(a, v.curveRadius, 0, 0, 0));
-            return out;
+            m.vertices[i] = out;
         });
     }
 }

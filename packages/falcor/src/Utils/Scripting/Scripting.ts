@@ -44,6 +44,7 @@ import { float2, float3, float4 } from "../Math/Vector.js";
 
 interface PyodideApi {
     registerJsModule(name: string, module: object): void;
+    unregisterJsModule(name: string): void;
     runPython(code: string, options?: { globals?: unknown }): unknown;
     globals: { set(name: string, value: unknown): void; get(name: string): unknown };
     toPy(obj: unknown): unknown;
@@ -575,6 +576,8 @@ export async function runSceneScript(device: Device, source: string, baseUrl: st
 
 async function runSceneScriptInternal(device: Device, source: string, baseUrl: string, options?: SceneScriptOptions): Promise<Scene> {
     if (!pyodide) throw new RuntimeError("Call initScripting() first");
+    // Earlier scenes may be destroyed by now; Python cycles still pointing at their data go first.
+    pyodide.runPython("import gc\ngc.collect()");
     const flags = (options?.flags ?? SceneBuilderFlags.Default) as number;
     const useCache = options?.cache || (flags & SceneBuilderFlags.UseCache) !== 0 || (flags & SceneBuilderFlags.RebuildCache) !== 0;
     const rebuildCache = (flags & SceneBuilderFlags.RebuildCache) !== 0;
@@ -592,7 +595,7 @@ async function runSceneScriptInternal(device: Device, source: string, baseUrl: s
 
     type VecLike = { x: number; y: number; z: number };
     const sceneModule = {
-        sceneBuilder: builder,
+        sceneBuilder: builder as SceneBuilderBridge | null,
         // Pyodide calls JS classes without `new`; vectors live python-side (prelude).
         _TriangleMesh: {
             createQuad: (size?: { x: number; y: number } | null) => TriangleMesh.createQuad(size ? new float2(size.x, size.y) : undefined),
@@ -705,6 +708,20 @@ sys.modules["falcor"] = _scene_falcor
         pyodide.runPython(`import sys\n_pf = __scene_globals.get("_prev_falcor")\nif _pf is not None: sys.modules["falcor"] = _pf\nelse: sys.modules.pop("falcor", None)\ndel __scene_globals, __scene_source`);
     }
 
+    // The bridge module holds the builder (all meshes and textures): release it once the scene exists.
+    // gc.collect(): reference cycles in the script's objects otherwise keep JS proxies (meshes) alive.
+    pyodide.runPython(`import sys, gc\nsys.modules.pop("webfalcor_scene", None)\ngc.collect()`);
+    pyodide.unregisterJsModule("webfalcor_scene");
+    // Pyodide keeps the module object alive past unregisterJsModule: detach the builder from it.
+    sceneModule.sceneBuilder = null;
+    return resolveSceneScript(device, builder, baseUrl, cacheKey);
+}
+
+/**
+ * Builds the scene and stores it in the scene cache. Kept out of runSceneScriptInternal: V8 closures share
+ * their function's context, and the bridge closures there (retained by Pyodide) must not capture the scene.
+ */
+async function resolveSceneScript(device: Device, builder: SceneBuilderBridge, baseUrl: string, cacheKey: string | null | undefined): Promise<Scene> {
     const scene = await builder.resolve(device, baseUrl);
     const env = scene.getEnvMap();
     // Programmatic env maps without retained source bytes can't be restored.
@@ -733,6 +750,9 @@ sys.modules["falcor"] = _scene_falcor
             })),
         });
     }
+    builder.lastSceneArgs = null;
+    // Python cycles from the script (JS proxies into the builder) are otherwise collected much later.
+    pyodide!.runPython("import gc\ngc.collect()");
     return scene;
 }
 
