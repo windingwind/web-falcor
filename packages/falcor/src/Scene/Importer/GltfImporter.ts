@@ -14,7 +14,7 @@ import { float4x4, mulMat, matrixFromTranslation, matrixFromScaling, transformPo
 import { matrixFromQuat, quatf } from "../../Utils/Math/Quaternion.js";
 import { RuntimeError } from "../../Core/Error.js";
 import { Logger } from "../../Utils/Logger.js";
-import { LightType, type AnalyticLight, type StaticVertex } from "../SceneData.js";
+import { LightType, createPackedVertices, kPackedVertexFloats, type AnalyticLight, type StaticVertex } from "../SceneData.js";
 import { decomposeTRS, type SceneNode, type AnimationChannel, type AnimationPath, type SkinDesc, type MorphDesc, type WeightTrack } from "../Animation/SceneAnimation.js";
 import { TextureManager } from "../Material/TextureManager.js";
 import { TextureHandleMode, packTextureHandle } from "../Material/MaterialData.js";
@@ -417,17 +417,20 @@ export class GltfImporter {
                         }
                     }
 
-                    const vertices: StaticVertex[] = [];
+                    // Packed f32 vertices (glTF's data is f32): large scenes stay within the JS heap.
+                    const data = new Float32Array(count * kPackedVertexFloats);
                     for (let i = 0; i < count; i++) {
-                        vertices.push({
-                            position: new float3(pos[i * 3]!, pos[i * 3 + 1]!, pos[i * 3 + 2]!),
-                            normal: normals ? new float3(normals[i * 3]!, normals[i * 3 + 1]!, normals[i * 3 + 2]!) : new float3(0, 0, 1),
-                            tangent: tangents
-                                ? new float4(tangents[i * 4]!, tangents[i * 4 + 1]!, tangents[i * 4 + 2]!, tangents[i * 4 + 3]!)
-                                : new float4(1, 0, 0, 1),
-                            texCrd: uvs ? new float2(uvs[i * 2]!, uvs[i * 2 + 1]!) : new float2(0, 0),
-                        });
+                        const o = i * kPackedVertexFloats;
+                        data[o] = pos[i * 3]!;
+                        data[o + 1] = pos[i * 3 + 1]!;
+                        data[o + 2] = pos[i * 3 + 2]!;
+                        if (normals) [data[o + 3], data[o + 4], data[o + 5]] = [normals[i * 3]!, normals[i * 3 + 1]!, normals[i * 3 + 2]!];
+                        else data[o + 5] = 1;
+                        if (tangents) [data[o + 6], data[o + 7], data[o + 8], data[o + 9]] = [tangents[i * 4]!, tangents[i * 4 + 1]!, tangents[i * 4 + 2]!, tangents[i * 4 + 3]!];
+                        else [data[o + 6], data[o + 9]] = [1, 1];
+                        if (uvs) [data[o + 10], data[o + 11]] = [uvs[i * 2]!, uvs[i * 2 + 1]!];
                     }
+                    const vertices: StaticVertex[] = createPackedVertices(count, data);
                     const indices =
                         draco ? draco.indices
                         : prim.indices !== undefined ? new Uint32Array(readAccessor(prim.indices))
