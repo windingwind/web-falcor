@@ -78,3 +78,13 @@ gpuTest("PythonTests.meshVerticesMatchNative", async ({ device }) => {
     expectEq(vsNative < 0.05, true, `before-edit block relative L1 ${vsNative}`);
     expectEq(moved > 0.05, true, `edit moved the box (${moved})`);
 });
+
+gpuTest("PythonTests.programApiMatchesNative", async ({ device }) => {
+    await initScripting("/node_modules/pyodide");
+    const { stdout } = await runTestbedScript(device, "/tests/oracle/program-api.py", { cwd: "/Falcor/media" });
+    const line = stdout.find((l) => l.startsWith("PROGRAMAPI "));
+    expectEq(line !== undefined, true, "script printed its result");
+    const web = JSON.parse(line!.slice("PROGRAMAPI ".length)) as Record<string, unknown>;
+    const native = (await (await fetch("/tests/oracle/out-native/program-api.json")).json()) as Record<string, unknown>;
+    for (const key of Object.keys(native)) expectEq(JSON.stringify(web[key]), JSON.stringify(native[key]), key);
+});

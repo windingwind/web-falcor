@@ -21,6 +21,9 @@ import { TextureAddressingMode, TextureFilteringMode, TextureReductionMode } fro
 import { FormatType, ResourceFormat, getFormatChannelCount, getFormatType, getNumChannelBits } from "../../Core/API/Formats.js";
 import { ComputePass } from "../../Core/Pass/ComputePass.js";
 import { StandaloneParameterBlock } from "../../Core/Program/ParameterBlock.js";
+import { DefineList } from "../../Core/Program/DefineList.js";
+import { ShaderType } from "../../Core/Program/SlangCompiler.js";
+import type { Program, ShaderModuleDesc } from "../../Core/Program/Program.js";
 import { RenderGraph } from "../../RenderGraph/RenderGraph.js";
 import { createPass } from "../../RenderGraph/RenderPass.js";
 import { Properties } from "../Properties.js";
@@ -59,6 +62,33 @@ function dtypeOf(format: ResourceFormat): string | null {
 
 /** JS primitives the Python `falcor` module wraps. */
 function makeJsModule(device: Device, testbedOptions: TestbedOptions, fsRead: (path: string) => string, created: Testbed[]) {
+    // Script shaders live in Pyodide's FS and become string sources; other paths are Falcor shader files.
+    const readScriptFile = (file: string): string | null => {
+        try {
+            return fsRead(file);
+        } catch (e) {
+            if (!(e instanceof Error) || !/No such file|ENOENT|errno 44/i.test(String((e as { message?: string }).message) + String(e))) throw e;
+            return null;
+        }
+    };
+    const scriptProgramDesc = (desc: unknown) => {
+        const d = toJs(desc) as { modules: { name: string; sources: ({ file: string } | { string: string; path: string })[] }[]; csEntry: string | null; typeConformances: [string, string, number][] };
+        const modules: ShaderModuleDesc[] = d.modules.map((m) => ({
+            name: m.name || undefined,
+            sources: m.sources.map((src) => {
+                if (!("file" in src)) return src.path ? { string: src.string, path: src.path } : { string: src.string };
+                const code = readScriptFile(src.file);
+                return code === null ? { file: src.file } : { string: code, path: src.file };
+            }),
+        }));
+        // An unnamed single-file script module is named after its file, so sibling imports resolve.
+        for (const m of modules) {
+            const first = m.sources[0];
+            if (!m.name && m.sources.length === 1 && first && "string" in first && first.path) m.name = first.path.slice(first.path.lastIndexOf("/") + 1).replace(/\.slang$/, "");
+        }
+        const typeConformances = d.typeConformances.map(([typeName, interfaceName, id]) => ({ typeName, interfaceName, id }));
+        return { modules, csEntry: d.csEntry ?? undefined, typeConformances };
+    };
     return {
         createTestbed: (width: number, height: number, createWindow: boolean, title: string, showFPS: boolean) => {
             const t = new Testbed(device, { ...testbedOptions, width, height, createWindow, title, showFPS });
@@ -100,18 +130,22 @@ function makeJsModule(device: Device, testbedOptions: TestbedOptions, fsRead: (p
         }),
         textureFromBytes: (t: Texture, bytes: Uint8Array, mip: number, slice: number) => t.setSubresourceBlob(mip, slice, bytes),
         textureToBytes: (t: Texture, mip: number, slice: number) => device.renderContext.readTextureSubresource(t, mip, slice),
-        createComputePass: (file: string | null, csEntry: string, defines: unknown) => {
-            const desc = { csEntry, defines: (toJs(defines) as Record<string, string | number>) ?? {} };
-            if (!file) throw new RuntimeError("ComputePass: 'file' is required");
-            // Script shaders live in Pyodide's FS; registry paths (Falcor shaders) otherwise.
-            try {
-                const code = fsRead(file);
-                return ComputePass.create(device, { ...desc, modules: [{ name: file.slice(file.lastIndexOf("/") + 1).replace(/\.slang$/, ""), sources: [{ string: code, path: file }] }] });
-            } catch (e) {
-                if (!(e instanceof Error) || !/No such file|ENOENT|errno 44/i.test(String((e as { message?: string }).message) + String(e))) throw e;
-                return ComputePass.create(device, { ...desc, path: file });
-            }
+        /** ComputePass(device, desc) / create_program: a ProgramDesc as {modules, csEntry, typeConformances}. */
+        createComputePass: (desc: unknown, defines: unknown) => ComputePass.create(device, { ...scriptProgramDesc(desc), defines: (toJs(defines) as Record<string, string>) ?? {} }),
+        createProgram: (desc: unknown, defines: unknown) => {
+            const d = scriptProgramDesc(desc);
+            const entryPoints = d.csEntry ? [{ name: d.csEntry, type: ShaderType.Compute }] : [];
+            return device.programManager.createProgram({ modules: d.modules, typeConformances: d.typeConformances, entryPoints }, new DefineList().addAll((toJs(defines) as Record<string, string>) ?? {}));
         },
+        passProgram: (pass: ComputePass) => pass.program,
+        loadPackage: (name: string) => (getPyodide() as Pyodide).loadPackage(name),
+        programDefines: (p: Program) => Object.fromEntries(p.defines),
+        programSetDefines: (p: Program, d: unknown) => p.setDefines((toJs(d) as Record<string, string>) ?? {}),
+        programAddDefine: (p: Program, name: string, value: string) => p.addDefine(name, value),
+        programRemoveDefine: (p: Program, name: string) => p.removeDefine(name),
+        programTypeConformances: (p: Program) => p.getTypeConformances().map((c) => [c.typeName, c.interfaceName, c.id]),
+        programAddTypeConformance: (p: Program, typeName: string, interfaceName: string, id: number) => p.addTypeConformance(typeName, interfaceName, id),
+        programSetTypeConformances: (p: Program, list: unknown) => p.setTypeConformances((toJs(list) as [string, string, number][]).map(([typeName, interfaceName, id]) => ({ typeName, interfaceName, id }))),
         setVar: (pass: ComputePass, path: unknown, value: unknown) => {
             const keys = toJs(path) as (string | number)[];
             let v = pass.getRootVar();
@@ -266,7 +300,12 @@ class Logger(metaclass=_LoggerMeta):
     Level = _LoggerLevel
 
 def _np():
-    import numpy
+    # Native to_numpy/from_numpy work without the script importing numpy: load it on first use.
+    try:
+        import numpy
+    except ImportError:
+        run_sync(_js.loadPackage("numpy"))
+        import numpy
     return numpy
 
 def _unwrap(v):
@@ -393,6 +432,9 @@ class Device:
         return [AdapterInfo(name, vendor)]
     def wait(self): run_sync(_js.waitForGpu())
     def end_frame(self): run_sync(_js.submit(False))
+    def create_program(self, desc=None, defines={}, **kwargs):
+        d = _program_desc(desc, kwargs)
+        return Program(_js.createProgram(d._to_js(), to_js(_define_list(defines), dict_converter=__import__("js").Object.fromEntries)))
     def create_sampler(self, mag_filter=TextureFilteringMode.Linear, min_filter=TextureFilteringMode.Linear, mip_filter=TextureFilteringMode.Linear,
                        max_anisotropy=1, min_lod=-1000.0, max_lod=1000.0, lod_bias=0.0, comparison_func=ComparisonFunc.Disabled,
                        reduction_mode=TextureReductionMode.Standard, address_mode_u=TextureAddressingMode.Wrap, address_mode_v=TextureAddressingMode.Wrap,
@@ -451,9 +493,109 @@ class _Vars:
     def __setattr__(self, k, v): _js.setVar(self._p, to_js(self._path + [k]), _unwrap(v))
     def __setitem__(self, k, v): _js.setVar(self._p, to_js(self._path + [k]), _unwrap(v))
 
+class ShaderModel(enum.IntEnum):
+    Unknown = 0
+    SM6_0 = 60
+    SM6_1 = 61
+    SM6_2 = 62
+    SM6_3 = 63
+    SM6_4 = 64
+    SM6_5 = 65
+    SM6_6 = 66
+    SM6_7 = 67
+
+class SlangCompilerFlags(enum.IntFlag):
+    None_ = 0
+    TreatWarningsAsErrors = 0x1
+    DumpIntermediates = 0x2
+    FloatingPointModeFast = 0x4
+    FloatingPointModePrecise = 0x8
+    GenerateDebugInfo = 0x10
+    MatrixLayoutColumnMajor = 0x20
+
+def _define_list(d):
+    # defineListFromPython: str values as is, bools as 1/0, ints in decimal.
+    out = {}
+    for k, v in dict(d or {}).items():
+        if not isinstance(k, str): raise RuntimeError("Define key must be a string.")
+        if isinstance(v, str): out[k] = v
+        elif isinstance(v, bool): out[k] = "1" if v else "0"
+        elif isinstance(v, int): out[k] = str(v)
+        else: raise RuntimeError(f"Define value for key '{k}' must be a string, bool, or int.")
+    return out
+
+class ProgramDesc:
+    """Mirrors ProgramDesc. One WGSL target: shader_model, compiler_flags and compiler_arguments are kept but not used."""
+    class ShaderModule:
+        def __init__(self, name=""):
+            self.name = name
+            self._sources = []
+        def add_file(self, path):
+            self._sources.append({"file": str(path)})
+            return self
+        def add_string(self, string, path=""):
+            self._sources.append({"string": str(string), "path": str(path)})
+            return self
+    def __init__(self):
+        self.shader_model = ShaderModel.SM6_6
+        self.compiler_flags = SlangCompilerFlags.None_
+        self.compiler_arguments = []
+        self.type_conformances = {}
+        self._modules = []
+        self._cs_entry = None
+    def add_shader_module(self, name=""):
+        m = ProgramDesc.ShaderModule(name)
+        self._modules.append(m)
+        return m
+    def cs_entry(self, name):
+        self._cs_entry = str(name)
+        return self
+    def _to_js(self):
+        return to_js({"modules": [{"name": m.name, "sources": m._sources} for m in self._modules], "csEntry": self._cs_entry,
+                      "typeConformances": [[t, i, int(v)] for (t, i), v in dict(self.type_conformances).items()]},
+                     dict_converter=__import__("js").Object.fromEntries)
+
+def _program_desc(desc, kwargs):
+    # programDescFromPython: a desc or keyword arguments, not both.
+    if desc is not None:
+        if kwargs: raise RuntimeError("Either provide a 'desc' or kwargs, but not both.")
+        return desc
+    d = ProgramDesc()
+    for key, value in kwargs.items():
+        if key == "file": d.add_shader_module().add_file(value)
+        elif key == "string": d.add_shader_module().add_string(value)
+        elif key == "cs_entry": d.cs_entry(value)
+        elif key == "type_conformances": d.type_conformances = dict(value)
+        elif key == "shader_model": d.shader_model = ShaderModel(value)
+        elif key == "compiler_flags": d.compiler_flags = SlangCompilerFlags(value)
+        elif key == "compiler_arguments": d.compiler_arguments = list(value)
+        else: raise RuntimeError(f"Unknown keyword argument '{key}'.")
+    return d
+
+class Program:
+    def __init__(self, o): self._o = o
+    @property
+    def defines(self): return dict(_js.programDefines(self._o).to_py())
+    @defines.setter
+    def defines(self, d): _js.programSetDefines(self._o, to_js(_define_list(d), dict_converter=__import__("js").Object.fromEntries))
+    def add_define(self, name, value=""): _js.programAddDefine(self._o, str(name), str(value))
+    def remove_define(self, name): _js.programRemoveDefine(self._o, str(name))
+    @property
+    def type_conformances(self): return {(t, i): int(v) for t, i, v in _js.programTypeConformances(self._o).to_py()}
+    @type_conformances.setter
+    def type_conformances(self, d): _js.programSetTypeConformances(self._o, to_js([[t, i, int(v)] for (t, i), v in dict(d).items()]))
+    def add_type_conformance(self, type_name, interface_type, id):
+        _js.programAddTypeConformance(self._o, str(type_name), str(interface_type), int(id))
+    def remove_type_conformance(self, type_name, interface_type):
+        c = self.type_conformances; c.pop((type_name, interface_type), None); self.type_conformances = c
+
 class ComputePass:
-    def __init__(self, device, desc=None, defines=None, *, file=None, cs_entry="main", **kwargs):
-        self._o = _js.createComputePass(str(file) if file is not None else None, cs_entry, to_js(dict(defines or {})))
+    def __init__(self, device, desc=None, defines={}, **kwargs):
+        d = _program_desc(desc, kwargs)
+        if d._cs_entry is None: d.cs_entry("main")
+        self._o = _js.createComputePass(d._to_js(), to_js(_define_list(defines), dict_converter=__import__("js").Object.fromEntries))
+    @property
+    def program(self): return Program(_js.passProgram(self._o))
     @property
     def globals(self): return _Vars(self._o, [])
     @property

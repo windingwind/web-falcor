@@ -119,6 +119,37 @@ export class Program {
         this.defines.remove(name);
         return this;
     }
+
+    /** Mirrors Program::setDefines: replaces the define set. */
+    setDefines(defines: DefineList | Record<string, string | number | boolean>): this {
+        this.defines.clear();
+        this.defines.addAll(defines);
+        return this;
+    }
+
+    /** Mirrors Program::getTypeConformances. */
+    getTypeConformances(): TypeConformance[] {
+        return [...(this.desc.typeConformances ?? [])];
+    }
+
+    /** Mirrors Program::setTypeConformances; conformances are part of the compile, so versions are dropped. */
+    setTypeConformances(conformances: TypeConformance[]): this {
+        this.desc.typeConformances = [...conformances];
+        this.versions.clear();
+        return this;
+    }
+
+    /** Mirrors Program::addTypeConformance: an already listed type/interface pair keeps its ID. */
+    addTypeConformance(typeName: string, interfaceName: string, id: number): this {
+        const list = this.getTypeConformances();
+        if (list.some((c) => c.typeName === typeName && c.interfaceName === interfaceName)) return this;
+        return this.setTypeConformances([...list, { typeName, interfaceName, id }]);
+    }
+
+    /** Mirrors Program::removeTypeConformance. */
+    removeTypeConformance(typeName: string, interfaceName: string): this {
+        return this.setTypeConformances(this.getTypeConformances().filter((c) => c.typeName !== typeName || c.interfaceName !== interfaceName));
+    }
 }
 
 /**
