@@ -10,7 +10,7 @@
  */
 
 import { describe, expect, it } from "vitest";
-import { buildBvh, buildBvhParallel, buildBvhSubtree, bvhStackDepth, kBvhTraversalStackSize, refitBvh, refreshStitchedBvh, stitchBvhs, type BvhBuildResult, type BvhTriangle } from "../src/Scene/SoftwareRT/Bvh.js";
+import { buildBvh, buildBvhParallel, buildBvhSubtree, bvhStackDepth, kBvhTraversalStackSize, refitBvh, refitBvhIndexed, refreshStitchedBvh, stitchBvhs, type BvhBuildResult, type BvhTriangle } from "../src/Scene/SoftwareRT/Bvh.js";
 import { float3, sub3 } from "../src/Utils/Math/Vector.js";
 
 /** Median-split BVH written the obvious way: one entry list per node. */
@@ -291,5 +291,23 @@ describe("stitchBvhs", () => {
         b = refit;
         refreshStitchedBvh(st, a, b);
         check([...stat, ...moved]);
+    });
+});
+
+describe("refitBvhIndexed", () => {
+    it("matches refitBvh byte for byte", () => {
+        const tris = makeTriangles(2000, 5);
+        const verts = new Float64Array(tris.length * 9);
+        const triVerts = Uint32Array.from({ length: tris.length * 3 }, (_v, i) => i);
+        const moved = tris.map((t, i) => {
+            const m = (v: float3) => new float3(v.x + Math.sin(i) * 0.1, v.y * 1.01, v.z - 0.2);
+            const r = { ...t, v0: m(t.v0), v1: m(t.v1), v2: m(t.v2) };
+            [r.v0, r.v1, r.v2].forEach((v, j) => verts.set([v.x, v.y, v.z], (i * 3 + j) * 3));
+            return r;
+        });
+        const a = refitBvh(buildBvh(tris), moved);
+        const b = refitBvhIndexed(buildBvh(tris), verts, triVerts)!;
+        expect(bytes(b.nodes)).toEqual(bytes(a.nodes));
+        expect(bytes(b.tris)).toEqual(bytes(a.tris));
     });
 });

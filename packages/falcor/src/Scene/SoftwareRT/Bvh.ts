@@ -120,6 +120,51 @@ export function refitBvh(prev: BvhBuildResult, triangles: BvhTriangle[]): BvhBui
     return prev;
 }
 
+/**
+ * refitBvh over flat positions: input triangle k's vertices are verts[triVerts[3k + j] * 3 ..] (float64, as the
+ * float3 path computes them), so animated frames allocate no triangle objects. Returns null when the refit tree
+ * degrades (the caller rebuilds); instance/primitive/flag words are left as built.
+ */
+export function refitBvhIndexed(prev: BvhBuildResult, verts: Float64Array, triVerts: Uint32Array): BvhBuildResult | null {
+    const { nodes, nodeCount, order, tris } = prev;
+    if (triVerts.length !== order.length * 3) return null;
+    const nodesU32 = new Uint32Array(nodes.buffer, nodes.byteOffset, nodes.length);
+    for (let i = 0; i < order.length; i++) {
+        const k = order[i]! * 3;
+        const [a, b, c] = [triVerts[k]! * 3, triVerts[k + 1]! * 3, triVerts[k + 2]! * 3];
+        const o = i * 12;
+        tris[o] = verts[a]!; tris[o + 1] = verts[a + 1]!; tris[o + 2] = verts[a + 2]!;
+        tris[o + 4] = verts[b]! - verts[a]!; tris[o + 5] = verts[b + 1]! - verts[a + 1]!; tris[o + 6] = verts[b + 2]! - verts[a + 2]!;
+        tris[o + 8] = verts[c]! - verts[a]!; tris[o + 9] = verts[c + 1]! - verts[a + 1]!; tris[o + 10] = verts[c + 2]! - verts[a + 2]!;
+    }
+    for (let i = nodeCount - 1; i >= 0; i--) {
+        const o = i * 8;
+        const count = nodesU32[o + 7]!;
+        let x0 = Infinity, y0 = Infinity, z0 = Infinity, x1 = -Infinity, y1 = -Infinity, z1 = -Infinity;
+        if (count > 0) {
+            const first = nodesU32[o + 3]!;
+            for (let s = first; s < first + count; s++) {
+                const k = order[s]! * 3;
+                for (let j = 0; j < 3; j++) {
+                    const v = triVerts[k + j]! * 3;
+                    const [x, y, z] = [verts[v]!, verts[v + 1]!, verts[v + 2]!];
+                    if (x < x0) x0 = x; if (y < y0) y0 = y; if (z < z0) z0 = z;
+                    if (x > x1) x1 = x; if (y > y1) y1 = y; if (z > z1) z1 = z;
+                }
+            }
+        } else {
+            for (const ch of [i + 1, nodesU32[o + 3]!]) {
+                const co = ch * 8;
+                x0 = Math.min(x0, nodes[co]!); y0 = Math.min(y0, nodes[co + 1]!); z0 = Math.min(z0, nodes[co + 2]!);
+                x1 = Math.max(x1, nodes[co + 4]!); y1 = Math.max(y1, nodes[co + 5]!); z1 = Math.max(z1, nodes[co + 6]!);
+            }
+        }
+        nodes[o] = x0; nodes[o + 1] = y0; nodes[o + 2] = z0;
+        nodes[o + 4] = x1; nodes[o + 5] = y1; nodes[o + 6] = z1;
+    }
+    return totalArea(nodes, nodeCount) > 2 * prev.buildArea ? null : prev;
+}
+
 interface BuildEntry {
     triIndex: number;
     centroid: float3;

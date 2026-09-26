@@ -19,7 +19,7 @@ import { Camera } from "./Camera/Camera.js";
 import { FirstPersonCameraController, OrbiterCameraController, SixDoFCameraController, UpDirection, toControllerKeyEvent, toControllerMouseEvent, type CameraController } from "./Camera/CameraController.js";
 import { KeyboardEventType, ModifierFlags, type GamepadEvent, type GamepadState, type KeyboardEvent, type MouseEvent } from "../Utils/UI/InputTypes.js";
 import { float4x4, transpose, inverse } from "../Utils/Math/Matrix.js";
-import { buildBvh, buildBvhParallel, buildAabbBvh, refitBvh, refreshStitchedBvh, stitchBvhs, bvhStackDepth, kBvhTraversalStackSize, type BvhBuildResult, type BvhTriangle } from "./SoftwareRT/Bvh.js";
+import { buildBvh, buildBvhParallel, buildAabbBvh, refitBvh, refitBvhIndexed, refreshStitchedBvh, stitchBvhs, bvhStackDepth, kBvhTraversalStackSize, type BvhBuildResult, type BvhTriangle } from "./SoftwareRT/Bvh.js";
 import { WorkerPool } from "../Utils/Threading/WorkerPool.js";
 import { packLights, LightType, SceneLight, type AnalyticLight } from "./SceneData.js";
 import { TextureManager, kMaxTextureBuckets } from "./Material/TextureManager.js";
@@ -1495,6 +1495,7 @@ export class Scene {
         this.sourceMeshes = null;
         this.animatedBvh = this.uploadedBvh = this.staticBvh = this.dynamicBvh = null;
         this.staticWorldMats = this.staticLcInputs = null;
+        this.dynamicVerts = this.dynamicTriVerts = null;
         this.lcTextureManager = new TextureManager();
     }
 
@@ -1622,6 +1623,8 @@ export class Scene {
         // Geometry changed: animate() must re-pose and rebuild its BVH halves from scratch.
         this.animatedBvh = this.uploadedBvh = this.staticBvh = this.dynamicBvh = null;
         this.staticWorldMats = this.staticLcInputs = null;
+        this.dynamicVerts = this.dynamicTriVerts = null;
+        this.dynamicVertBase.clear();
         this.invalidateAnimation();
         const { bvhTris, displacedAabbs, displacedEntries } = Scene.collectBvhGeometry(this.lcMeshes, this.materialDescs);
         const bvh = buildBvh(bvhTris);
@@ -2062,7 +2065,11 @@ export class Scene {
                 this.rollPrevVertices(meshID, vbOffset, skinned);
                 this.buffers["vertices"]!.setBlob(packStaticVertices(skinned), vbOffset * 48);
                 worldMats.push(float4x4.identity());
-                worldPos.push(skinned.map((v) => v.position));
+                if (this.dynamicVerts) {
+                    const b = this.dynamicVertBase.get(meshID)! * 3;
+                    skinned.forEach((v, i) => this.dynamicVerts!.set([v.position.x, v.position.y, v.position.z], b + i * 3));
+                    worldPos.push([]);
+                } else worldPos.push(skinned.map((v) => v.position));
                 lcInputs.push({ ...mesh, vertices: skinned, transform: undefined });
                 if (isEmissive) emissiveChanged = true; // deformed every frame
             } else {
@@ -2074,7 +2081,18 @@ export class Scene {
                     if (isEmissive) emissiveChanged = true;
                 }
                 worldMats.push(m);
-                worldPos.push(base.map((v) => transformPoint(m, v.position)));
+                if (this.dynamicVerts) {
+                    // transformPoint inlined into the flat refit input (same float64 arithmetic).
+                    const [out, d] = [this.dynamicVerts, m.data];
+                    let o = this.dynamicVertBase.get(meshID)! * 3;
+                    for (const v of base) {
+                        const { x, y, z } = v.position;
+                        out[o++] = d[0]! * x + d[1]! * y + d[2]! * z + d[3]!;
+                        out[o++] = d[4]! * x + d[5]! * y + d[6]! * z + d[7]!;
+                        out[o++] = d[8]! * x + d[9]! * y + d[10]! * z + d[11]!;
+                    }
+                    worldPos.push([]);
+                } else worldPos.push(base.map((v) => transformPoint(m, v.position)));
                 lcInputs.push({ ...mesh, vertices: base, transform: m });
                 if (isEmissive) {
                     // Mirrors LightCollection::update's isMatrixChanged check per mesh light.
@@ -2131,8 +2149,31 @@ export class Scene {
         };
         this.staticBvh ??= buildBvh(trianglesOf(false));
         const prevDynamic = this.dynamicBvh;
-        const dynamicTris = trianglesOf(true);
-        const dynamic = prevDynamic ? refitBvh(prevDynamic, dynamicTris) : buildBvh(dynamicTris);
+        let dynamic = prevDynamic && this.dynamicVerts ? refitBvhIndexed(prevDynamic, this.dynamicVerts, this.dynamicTriVerts!) : null;
+        if (!dynamic) {
+            // First frame, or the refit degraded: (re)build from triangle objects (positions from the flat array).
+            if (this.dynamicVerts) {
+                meshes.forEach((mesh, meshID) => {
+                    if (!dynamicMeshes[meshID]) return;
+                    const b = this.dynamicVertBase.get(meshID)! * 3;
+                    worldPos[meshID] = Array.from({ length: mesh.vertices.length }, (_v, i) => new float3(this.dynamicVerts![b + i * 3]!, this.dynamicVerts![b + i * 3 + 1]!, this.dynamicVerts![b + i * 3 + 2]!));
+                });
+            }
+            dynamic = buildBvh(trianglesOf(true));
+            if (!this.dynamicTriVerts) {
+                // Topology is fixed: record each dynamic triangle's vertices in the flat position array.
+                let base = 0;
+                const triVerts: number[] = [];
+                meshes.forEach((mesh, meshID) => {
+                    if (!dynamicMeshes[meshID]) return;
+                    this.dynamicVertBase.set(meshID, base);
+                    for (let i = 0; i < mesh.indices.length; i++) triVerts.push(base + mesh.indices[i]!);
+                    base += mesh.vertices.length;
+                });
+                this.dynamicTriVerts = Uint32Array.from(triVerts);
+                this.dynamicVerts = new Float64Array(base * 3);
+            }
+        }
         this.dynamicBvh = dynamic;
         const staticOnlyEmpty = this.staticBvh.order.length === 0;
         let changed: { nodes: [number, number]; tris: [number, number] } | null = null;
@@ -2368,6 +2409,10 @@ export class Scene {
     /** Animated scenes' BVH halves: static geometry (built once) and dynamic geometry (refit per frame). */
     private staticBvh: import("./SoftwareRT/Bvh.js").BvhBuildResult | null = null;
     private dynamicBvh: import("./SoftwareRT/Bvh.js").BvhBuildResult | null = null;
+    /** Flat refit input: dynamic meshes' world positions and each dynamic triangle's vertices in it. */
+    private dynamicVerts: Float64Array | null = null;
+    private dynamicTriVerts: Uint32Array | null = null;
+    private dynamicVertBase = new Map<number, number>();
 
     /** Per mesh: whether it deforms or rides an animated node (else animate() leaves it as built). */
     private computeDynamicMeshes(): boolean[] {
