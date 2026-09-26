@@ -1933,6 +1933,7 @@ export class Scene {
 
     /** Mirrors Scene::setIsAnimated (python `scene.animated`): pauses or resumes the animations. */
     setIsAnimated(animated: boolean): void {
+        if (animated !== this.animationEnabled) this.invalidateAnimation();
         this.animationEnabled = animated;
     }
     get animated(): boolean {
@@ -1992,6 +1993,12 @@ export class Scene {
         // Clips needn't start at t=0 (e.g. FBX): before the first key the
         // samplers clamp to it (native Constant pre-behavior).
         const sampleTime = this.animData.duration > 0 ? (this.loopAnimations ? timeSec % this.animData.duration : timeSec) : 0;
+        // AnimationController::animate updates only when the (looped) time moves, plus once more so the previous
+        // frame's matrices catch up; a paused clock no longer re-poses and refits the scene every frame.
+        const key = `${sampleTime}|${timeSec}`;
+        if (key === this.lastAnimateKey && key === this.prevAnimateKey) return false;
+        this.prevAnimateKey = this.lastAnimateKey;
+        this.lastAnimateKey = key;
         const globals = evaluateGlobals(this.animData, sampleTime);
         // AnimationController: vertex caches take the looped time, or the raw time without node animations,
         // and cycle before their first sample when they are shorter than the node animations.
@@ -2308,6 +2315,13 @@ export class Scene {
      */
     updateVersion = 0;
     private lastAnimateTime = NaN;
+    private lastAnimateKey = "";
+    private prevAnimateKey = "";
+
+    /** Forces the next animate() to re-pose the scene (animation data or enabled state changed). */
+    invalidateAnimation(): void {
+        this.lastAnimateKey = this.prevAnimateKey = "";
+    }
     private bumpUpdates(): void {
         this.updateVersion++;
     }
