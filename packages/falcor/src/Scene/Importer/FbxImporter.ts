@@ -545,7 +545,8 @@ export class FbxImporter {
                 nameToNodeID.set(node.name, nodeID);
                 nameToWorld.set(node.name, world);
             }
-            for (const mi of node.meshes ?? []) {
+            // SceneBuilder::addMeshInstance keeps a set of instancing nodes: a repeated mesh is one instance.
+            for (const mi of new Set(node.meshes ?? [])) {
                 const { vertices, indices, hasTexCrds } = getMesh(mi);
                 meshDescs.push({ vertices, indices, materialID: json.meshes[mi]!.materialindex, transform: world, nodeID, tangentSpace: hasTexCrds ? "generate" : "noTexCrds" });
                 skinnedDescs.push({ desc: meshDescs[meshDescs.length - 1]!, mi });
@@ -696,21 +697,18 @@ export class FbxImporter {
         if (skippedFormats.size > 0) {
             console.warn(`FbxImporter: skipped textures with undecodable formats [${[...skippedFormats].join(", ")}] (no decoder for them); materials fall back to base color.`);
         }
-        // Natively a material enters the scene only when a mesh adds it, in
-        // first-use order; assimp's unused ones (OBJ's DefaultMaterial) never do.
+        // Natively a material enters the scene only when createMeshes adds a mesh using it, in aiScene
+        // mesh order (instanced or not); assimp's unused ones (OBJ's DefaultMaterial) never do.
         const remap = new Map<number, number>();
         const usedMaterials: SceneMaterialDesc[] = [];
         const usedNames: string[] = [];
-        for (const mesh of meshDescs) {
-            let id = remap.get(mesh.materialID);
-            if (id === undefined) {
-                id = usedMaterials.length;
-                remap.set(mesh.materialID, id);
-                usedMaterials.push(materials[mesh.materialID]!);
-                usedNames.push(materialNames[mesh.materialID]!);
-            }
-            mesh.materialID = id;
+        for (const mesh of json.meshes) {
+            if (mesh.triangles.length === 0 || remap.has(mesh.materialindex)) continue;
+            remap.set(mesh.materialindex, usedMaterials.length);
+            usedMaterials.push(materials[mesh.materialindex]!);
+            usedNames.push(materialNames[mesh.materialindex]!);
         }
+        for (const mesh of meshDescs) mesh.materialID = remap.get(mesh.materialID)!;
         return { meshes: meshDescs, materials: usedMaterials, materialNames: usedNames, nodes, animations, lights, cameras };
     }
 

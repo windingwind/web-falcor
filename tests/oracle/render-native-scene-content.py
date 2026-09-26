@@ -21,6 +21,8 @@ kCameraProps = ["name", "position", "target", "up", "focalLength", "frameHeight"
 
 device = falcor.Device(type=falcor.DeviceType.Vulkan, gpu=0, enable_debug_layer=False)
 testbed = falcor.Testbed(width=64, height=64, create_window=False, device=device)
+# The real-time clock would advance by the load duration; paused, animated cameras are posed at t = 0.
+testbed.clock.pause()
 testbed.load_scene(path)
 testbed.frame()
 scene = testbed.scene

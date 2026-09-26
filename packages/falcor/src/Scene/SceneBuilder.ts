@@ -859,6 +859,66 @@ function pretransformStaticMeshes(meshes: SceneMeshDesc[], nodes: SceneNode[], a
     }
 }
 
+/**
+ * SceneBuilder::optimizeSceneGraph's effect on instances: static single-child chains collapse into their top node,
+ * then identical static siblings (same parent and local transform) merge, so a mesh instanced by several merged
+ * nodes keeps one instance. Nodes are compared by their exact local TRS; collapsed chains by their TRS sequence.
+ */
+function removeMergedNodeInstances(meshes: SceneMeshDesc[], nodes: SceneNode[], animations: AnimationChannel[], animatableNodes: number[]): SceneMeshDesc[] {
+    const n = nodes.length;
+    const animated = new Set(animations.map((c) => c.nodeID));
+    const parent = nodes.map((nd) => nd.parent);
+    const key = nodes.map((nd) => [nd.t.x, nd.t.y, nd.t.z, nd.r.x, nd.r.y, nd.r.z, nd.r.w, nd.s.x, nd.s.y, nd.s.z].join(","));
+    const children: number[][] = Array.from({ length: n }, () => []);
+    parent.forEach((p, c) => p >= 0 && children[p]!.push(c));
+    const objects: number[][] = Array.from({ length: n }, () => []); // mesh desc indices per node
+    const hasOther = new Array<boolean>(n).fill(false); // animatables (lights, cameras)
+    meshes.forEach((m, i) => m.nodeID !== undefined && m.nodeID < n && objects[m.nodeID]!.push(i));
+    for (const a of animatableNodes) if (a < n) hasOther[a] = true;
+    const nodeOf = meshes.map((m) => m.nodeID);
+    const hasObjects = (i: number) => objects[i]!.length > 0 || hasOther[i]!;
+    // Moves node `from`'s objects and children to `to` (updateLinkedObjects).
+    const relink = (from: number, to: number) => {
+        for (const c of children[from]!) parent[c] = to;
+        for (const o of objects[from]!) nodeOf[o] = to;
+    };
+    for (let c = 0; c < n; c++) {
+        const p = parent[c]!;
+        if (p < 0 || animated.has(c)) continue;
+        if (children[p]!.length > 1 || hasObjects(p) || animated.has(p)) continue;
+        relink(c, p);
+        const grand = parent[p]!;
+        [children[p], objects[p], hasOther[p], key[p], parent[p]] = [children[c]!, objects[c]!, hasOther[c]!, `${key[p]}*${key[c]}`, grand];
+        [children[c], objects[c], hasOther[c], parent[c]] = [[], [], false, -1];
+    }
+    const unique = new Map<string, number>();
+    for (let i = 0; i < n; i++) {
+        if ((children[i]!.length === 0 && !hasObjects(i)) || animated.has(i)) continue;
+        const k = `${parent[i]}|${key[i]}`;
+        const dst = unique.get(k);
+        if (dst === undefined) {
+            unique.set(k, i);
+            continue;
+        }
+        relink(i, dst);
+        children[dst]!.push(...children[i]!);
+        objects[dst]!.push(...objects[i]!);
+        hasOther[dst] = hasOther[dst]! || hasOther[i]!;
+        [children[i], objects[i], hasOther[i], parent[i]] = [[], [], false, -1];
+    }
+    // A mesh keeps one instance per node (MeshSpec::instances is a set).
+    const seen = new Map<StaticVertex[], Set<number>>();
+    return meshes.filter((m, i) => {
+        const node = nodeOf[i];
+        if (node === undefined) return true;
+        const set = seen.get(m.vertices) ?? new Set<number>();
+        seen.set(m.vertices, set);
+        if (set.has(node)) return false;
+        set.add(node);
+        return true;
+    });
+}
+
 /** SceneBuilder::flipTriangleWinding: swaps the first two indices of every triangle. */
 function flipWinding(indices: Uint32Array): Uint32Array {
     const out = indices.slice();
@@ -1246,12 +1306,18 @@ export class SceneBuilderBridge {
     private generateMeshTangents(meshes: SceneMeshDesc[]): void {
         const keepAsset = this.hasFlag(SceneBuilderFlags.UseOriginalTangentSpace);
         const done = new Map<StaticVertex[], { indices: Uint32Array; result: ReturnType<typeof generateTangentsAndMerge> }[]>();
+        const zeroed = new Map<StaticVertex[], StaticVertex[]>(); // instances keep sharing one copy
         meshes.forEach((m, i) => {
             const mode = m.tangentSpace;
             if (!mode || mode === "keep" || (mode === "asset" && keepAsset)) return;
             if (mode === "noTexCrds") {
-                Logger.warning("Can't generate tangent space. The mesh doesn't have positions/normals/texCrd/indices.");
-                meshes[i] = { ...m, vertices: m.vertices.map((v) => copyVertex(v, { tangent: new float4(0, 0, 0, 0) })) };
+                let vertices = zeroed.get(m.vertices);
+                if (!vertices) {
+                    Logger.warning("Can't generate tangent space. The mesh doesn't have positions/normals/texCrd/indices.");
+                    vertices = m.vertices.map((v) => copyVertex(v, { tangent: new float4(0, 0, 0, 0) }));
+                    zeroed.set(m.vertices, vertices);
+                }
+                meshes[i] = { ...m, vertices };
                 return;
             }
             const list = done.get(m.vertices) ?? [];
@@ -1367,7 +1433,9 @@ export class SceneBuilderBridge {
         if (!transform) throw new RuntimeError(`addMeshInstance: unknown node ${nodeID}`);
         // One mesh may be instanced under many nodes (e.g. nested_dielectrics
         // instances one cube 30x) — accumulate, don't overwrite.
+        // Natively a std::set of nodes: instancing a mesh twice under one node adds nothing.
         const list = this.meshInstanced.get(meshID);
+        if (list?.some((i) => i.nodeID === nodeID)) return;
         if (list) list.push({ transform, nodeID });
         else this.meshInstanced.set(meshID, [{ transform, nodeID }]);
     }
@@ -2002,7 +2070,7 @@ export class SceneBuilderBridge {
         }
         // MaterialSystem::optimizeMaterials: constant textures become uniform material values.
         if (!this.hasFlag(SceneBuilderFlags.DontOptimizeMaterials)) {
-            await textureManager.prepareAnalyses();
+            await textureManager.prepareAnalyses(undefined, device);
             optimizeMaterialTextures(materials, textureManager);
         }
         // MaterialSystem::removeDuplicateMaterials, after the optimization so more materials match.
@@ -2012,6 +2080,10 @@ export class SceneBuilderBridge {
             for (const b of builtSdfGrids) b.materialID = idMap[b.materialID]!;
         }
         // SceneBuilder::createMeshGroups + sortMeshes: mesh (and instance) IDs follow native's mesh groups.
+        if (!this.hasFlag(SceneBuilderFlags.DontOptimizeGraph)) {
+            const animatableNodes = [...lights.map((l) => l.nodeID), cameraNodeID].filter((n): n is number => n !== undefined);
+            meshes = removeMergedNodeInstances(meshes, nodes, animations, animatableNodes);
+        }
         pretransformStaticMeshes(meshes, nodes, animations);
         meshes = sortMeshesLikeNative(meshes, materials);
         const scene = await Scene.create(device, meshes, materials, lights, textureManager, sdfGrids, nodes, animations, cameraNodeID, weightTracks, curves);

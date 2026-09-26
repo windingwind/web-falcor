@@ -121,8 +121,11 @@ export function determinant(m: float4x4): number {
     return b00 * b11 - b01 * b10 + b02 * b09 + b03 * b08 - b04 * b07 + b05 * b06;
 }
 
-/** General 4x4 inverse (throws on singular). */
-export function inverse(m: float4x4): float4x4 {
+/**
+ * General 4x4 inverse (throws on singular). `unchecked` divides regardless, as native math::inverse does
+ * (a singular matrix, e.g. a zero-scale animated node, then yields non-finite values instead of an error).
+ */
+export function inverse(m: float4x4, unchecked = false): float4x4 {
     const a = m.data;
     const b00 = a[0]! * a[5]! - a[1]! * a[4]!;
     const b01 = a[0]! * a[6]! - a[2]! * a[4]!;
@@ -137,7 +140,7 @@ export function inverse(m: float4x4): float4x4 {
     const b10 = a[9]! * a[15]! - a[11]! * a[13]!;
     const b11 = a[10]! * a[15]! - a[11]! * a[14]!;
     const det = b00 * b11 - b01 * b10 + b02 * b09 + b03 * b08 - b04 * b07 + b05 * b06;
-    if (Math.abs(det) < 1e-12) throw new Error("inverse(): singular matrix");
+    if (!unchecked && Math.abs(det) < 1e-12) throw new Error("inverse(): singular matrix");
     const invDet = 1 / det;
     const out = new float4x4();
     const o = out.data;

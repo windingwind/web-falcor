@@ -72,12 +72,15 @@ export class TextureAnalyzer {
         return 64;
     }
 
-    /** Mirrors TextureAnalyzer::analyze for one texture subresource. */
-    analyze(ctx: RenderContext, input: Texture, mipLevel: number, arraySlice: number, result: Buffer, resultOffset = 0, clearResult = true): void {
+    /**
+     * Mirrors TextureAnalyzer::analyze for one texture subresource. `extent` (web-only) limits the analysis to the
+     * real size of a BC texture padded to whole blocks, as WebGPU requires.
+     */
+    analyze(ctx: RenderContext, input: Texture, mipLevel: number, arraySlice: number, result: Buffer, resultOffset = 0, clearResult = true, extent?: [number, number]): void {
         if (resultOffset + 64 > result.size) throw new RuntimeError("TextureAnalyzer: result buffer too small");
         this.checkFormatSupport(input, mipLevel, arraySlice);
         if (clearResult) this.clear(ctx, result, resultOffset, 1);
-        const dim: [number, number] = [Math.max(1, input.width >> mipLevel), Math.max(1, input.height >> mipLevel)];
+        const dim: [number, number] = extent ?? [Math.max(1, input.width >> mipLevel), Math.max(1, input.height >> mipLevel)];
         const v = this.analyzePass.getRootVar()["gTextureAnalyzer"] as ShaderVar;
         v["input"] = input.getSRV(mipLevel, 1, arraySlice, 1);
         v["result"] = result;

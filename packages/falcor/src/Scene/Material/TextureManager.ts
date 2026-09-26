@@ -17,11 +17,13 @@
 
 import type { Device } from "../../Core/API/Device.js";
 import { Texture } from "../../Core/API/Texture.js";
-import { ResourceBindFlags, ResourceType } from "../../Core/API/Types.js";
+import { MemoryType, ResourceBindFlags, ResourceType } from "../../Core/API/Types.js";
 import { ResourceFormat } from "../../Core/API/Formats.js";
 import { RuntimeError } from "../../Core/Error.js";
 import { AssetCategory, AssetResolver } from "../../Core/AssetResolver.js";
 import { Logger } from "../../Utils/Logger.js";
+import { Buffer } from "../../Core/API/Buffer.js";
+import { TextureAnalyzer, TextureAnalyzerResult } from "../../Utils/Image/TextureAnalyzer.js";
 
 /** Decodes one image file; the default handles what createImageBitmap reads. */
 export type ImageDecoder = (bytes: Uint8Array, blob: Blob, url: string) => Promise<ImageBitmap>;
@@ -149,14 +151,19 @@ export class TextureManager {
     }
 
     /**
-     * Analyzes the given textures (all by default) from their exact, straight-alpha texels (VideoFrame readback),
-     * as native's TextureAnalyzer sees them; analyze() then returns these results.
+     * Analyzes the given textures (all by default) as native's TextureAnalyzer sees them: BC data on the GPU
+     * (hardware-decoded texels), images from their exact straight-alpha texels (VideoFrame readback).
      */
-    async prepareAnalyses(textureIDs: Iterable<number> = this.sources.keys()): Promise<void> {
-        if (typeof VideoFrame === "undefined") return;
+    async prepareAnalyses(textureIDs: Iterable<number> = this.sources.keys(), device?: Device): Promise<void> {
+        const onGpu: number[] = [];
         for (const id of textureIDs) {
             const source = this.sources[id];
             if (!source || this.analyses.has(id)) continue;
+            if (device && source.compressed) {
+                onGpu.push(id);
+                continue;
+            }
+            if (typeof VideoFrame === "undefined") continue;
             try {
                 const frame = new VideoFrame(source.bitmap, { timestamp: 0, alpha: "keep" });
                 const bytes = new Uint8Array(frame.allocationSize());
@@ -170,6 +177,47 @@ export class TextureManager {
                 // Falls back to the canvas analysis on demand.
             }
         }
+        if (onGpu.length > 0) await this.analyzeOnGpu(device!, onGpu);
+    }
+
+    /** Runs TextureAnalyzer over mip 0 of BC textures, in batches to bound memory. */
+    private async analyzeOnGpu(device: Device, ids: number[]): Promise<void> {
+        const analyzer = new TextureAnalyzer(device);
+        const kBatch = 64;
+        const result = new Buffer(device, { size: kBatch * 64, bindFlags: ResourceBindFlags.ShaderResource | ResourceBindFlags.UnorderedAccess, memoryType: MemoryType.DeviceLocal });
+        for (let i = 0; i < ids.length; i += kBatch) {
+            const batch = ids.slice(i, i + kBatch);
+            // WebGPU BC textures span whole blocks: upload padded, analyze the real extent.
+            const pad = (n: number) => Math.ceil(n / 4) * 4;
+            const textures = batch.map((id) => {
+                const c = this.sources[id]!.compressed!;
+                const t = new Texture(device, { type: ResourceType.Texture2D, width: pad(c.width), height: pad(c.height), format: c.format, bindFlags: ResourceBindFlags.ShaderResource });
+                t.setSubresourceBlob(0, 0, c.levels[0]!);
+                return t;
+            });
+            analyzer.clear(device.renderContext, result, 0, batch.length);
+            batch.forEach((id, k) => {
+                const c = this.sources[id]!.compressed!;
+                analyzer.analyze(device.renderContext, textures[k]!, 0, 0, result, k * 64, false, [c.width, c.height]);
+            });
+            const bytes = new Uint8Array((await device.renderContext.readBuffer(result)).buffer);
+            batch.forEach((id, k) => this.storeGpuAnalysis(id, TextureAnalyzerResult.fromBytes(bytes, k * 64)));
+            textures.forEach((t) => t.destroy());
+        }
+        result.destroy();
+    }
+
+    private storeGpuAnalysis(textureID: number, r: TextureAnalyzerResult): void {
+        const format = this.sources[textureID]!.compressed!.format;
+        // BC1/BC4/BC5 carry no alpha (doesFormatHaveAlpha).
+        const noAlpha = [ResourceFormat.BC1Unorm, ResourceFormat.BC1UnormSrgb, ResourceFormat.BC4Unorm, ResourceFormat.BC4Snorm, ResourceFormat.BC5Unorm, ResourceFormat.BC5Snorm].includes(format);
+        this.analyses.set(textureID, {
+            value: [r.value[0], r.value[1], r.value[2], noAlpha ? 1 : r.value[3]],
+            minAlpha: noAlpha ? 1 : r.minValue[3],
+            maxAlpha: noAlpha ? 1 : r.maxValue[3],
+            hasAlpha: !noAlpha,
+            isConstant: (mask: number) => r.isConstant(mask),
+        });
     }
 
     private storeAnalysis(textureID: number, bytes: Uint8Array | Uint8ClampedArray): TextureAnalysis {

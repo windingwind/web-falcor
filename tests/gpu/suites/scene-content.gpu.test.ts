@@ -33,15 +33,15 @@ function compare(path: string, web: Record<string, unknown>, nat: Record<string,
     }
 }
 
-/**
- * Known residual: grey_and_white_room's animated FBX camera (Assimp pivot helper chain, fixFbxCameraAnimation) poses
- * differently at load; native's up vector keeps the node's 0.01 scale.
- */
-const kResiduals = [/^test_scenes\/grey_and_white_room\/grey_and_white_room\.pyscene camera\[0\]\./];
+/** Known residuals (none currently). */
+const kResiduals: RegExp[] = [];
+
+/** EXTRA_QUERY=bigScenes=1: the large production scenes (Bistro, EmeraldSquare, SunTemple, ZeroDay) instead. */
+const kBigScenes = new URLSearchParams(location.search).get("bigScenes") === "1";
 
 gpuTest("Scene.contentMatchesNative", async ({ device }) => {
     await initScripting("/node_modules/pyodide");
-    const native = (await (await fetch("/tests/oracle/out-native/scene-content.json")).json()) as Record<string, { materials: Record<string, Json>[]; lights: Record<string, Json>[]; cameras: Record<string, Json>[] }>;
+    const native = (await (await fetch(`/tests/oracle/out-native/scene-content${kBigScenes ? "-big" : ""}.json`)).json()) as Record<string, { materials: Record<string, Json>[]; lights: Record<string, Json>[]; cameras: Record<string, Json>[] }>;
     const bad: string[] = [];
     for (const [path, want] of Object.entries(native)) {
         const url = await AssetResolver.getDefaultResolver().resolvePath(path, AssetCategory.Scene);

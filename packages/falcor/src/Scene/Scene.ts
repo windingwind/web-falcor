@@ -1144,7 +1144,7 @@ export class Scene {
         const world = new Float32Array(nodeCount * 2 * 16);
         const putNode = (i: number, m: float4x4) => {
             world.set(m.toArray(), i * 16);
-            world.set(transpose(inverse(m)).toArray(), (nodeCount + i) * 16);
+            world.set(transpose(inverse(m, true)).toArray(), (nodeCount + i) * 16);
         };
         meshes.forEach((mesh, i) => putNode(i, mesh.transform ?? float4x4.identity()));
         sdfGrids.forEach((desc, i) => putNode(meshes.length + i, desc.transform ?? float4x4.identity()));
@@ -2056,7 +2056,7 @@ export class Scene {
         const world = new Float32Array(nodeCount * 2 * 16);
         const putNode = (i: number, m: float4x4) => {
             world.set(m.toArray(), i * 16);
-            world.set(transpose(inverse(m)).toArray(), (nodeCount + i) * 16);
+            world.set(transpose(inverse(m, true)).toArray(), (nodeCount + i) * 16);
         };
         meshes.forEach((_m, i) => putNode(i, worldMats[i]!));
         this.sdfGrids.forEach((desc, i) => putNode(meshes.length + i, desc.transform ?? float4x4.identity()));
@@ -2138,13 +2138,14 @@ export class Scene {
         const UP = new float3(0, 1, 0);
         const animatedCamera = this.cameraList[this.animatedCameraIndex];
         if (this.cameraNodeID !== undefined && globals[this.cameraNodeID] && animatedCamera?.animated !== false) {
+            // Camera::updateFromAnimation takes the raw (unnormalized) up/-forward columns.
             const g = globals[this.cameraNodeID]!;
             const pos = transformPoint(g, ZERO);
-            const fwd = normalize3(transformVector(g, FWD));
+            const fwd = transformVector(g, FWD);
             const camera = animatedCamera!;
             camera.setPosition(pos);
             camera.setTarget(new float3(pos.x + fwd.x, pos.y + fwd.y, pos.z + fwd.z));
-            camera.setUpVector(normalize3(transformVector(g, UP)));
+            camera.setUpVector(transformVector(g, UP));
         }
         let lightsDirty = false;
         for (const light of this.analyticLights) {
@@ -3064,7 +3065,7 @@ export class Scene {
         const buffer = this.buffers["worldMatrices"];
         if (buffer) {
             buffer.setBlob(new Float32Array(transform.toArray()), node * 64);
-            buffer.setBlob(new Float32Array(transpose(inverse(transform)).toArray()), (this.invTransposeOffset + node) * 64);
+            buffer.setBlob(new Float32Array(transpose(inverse(transform, true)).toArray()), (this.invTransposeOffset + node) * 64);
         }
         this.invalidateSDFResources();
     }
