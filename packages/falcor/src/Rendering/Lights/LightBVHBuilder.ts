@@ -221,7 +221,7 @@ export function nthElement<T>(arr: T[], first: number, nth: number, last: number
 // ---- builder ----------------------------------------------------------------
 
 export interface LightBVHOptions {
-    /** Native SplitHeuristic; BinnedSAH is not ported (falls back to BinnedSAOH with a warning). */
+    /** Native SplitHeuristic. */
     splitHeuristicSelection: "Equal" | "BinnedSAH" | "BinnedSAOH";
     maxTriangleCountPerLeaf: number;
     binCount: number;
@@ -459,6 +459,76 @@ function computeSplitWithBinnedSAOH(data: BuildingData, begin: number, end: numb
     return best;
 }
 
+/** LightBVHBuilder::computeSplitWithBinnedSAH: binned SAH (bounds and counts only) along the largest or every axis. */
+function computeSplitWithBinnedSAH(data: BuildingData, begin: number, end: number, nodeBounds: Aabb, o: LightBVHOptions): SplitResult | null {
+    let bestCost = Infinity;
+    let best: SplitResult | null = null;
+    interface Bin {
+        bounds: Aabb;
+        triangleCount: number;
+    }
+    const newBin = (): Bin => ({ bounds: new Aabb(), triangleCount: 0 });
+    const bins: Bin[] = Array.from({ length: o.binCount }, newBin);
+    const costs = new Float32Array(o.binCount - 1);
+
+    const binAlongDimension = (dimension: number) => {
+        const bmin = nodeBounds.min[dimension]!;
+        const bmax = nodeBounds.max[dimension]!;
+        const w = f(bmax - bmin);
+        const scale = w > FLT_MIN ? f(o.binCount / w) : 0;
+        const getBinId = (td: TriangleSortData) => Math.min(Math.trunc(f(f(td.bounds.center()[dimension]! - bmin) * scale)), o.binCount - 1);
+
+        for (let i = 0; i < bins.length; i++) bins[i] = newBin();
+        for (let i = begin; i < end; i++) {
+            const td = data.trianglesData[i]!;
+            const bin = bins[getBinId(td)]!;
+            bin.bounds.includeAabb(td.bounds);
+            bin.triangleCount++;
+        }
+        // costs[i] is the split between bins i and i+1: left sweep, then right sweep.
+        let total = newBin();
+        for (let i = 0; i < costs.length; i++) {
+            total.bounds.includeAabb(bins[i]!.bounds);
+            total.triangleCount += bins[i]!.triangleCount;
+            costs[i] = evalSAH(total.bounds, total.triangleCount, o);
+        }
+        total = newBin();
+        for (let i = costs.length; i > 0; i--) {
+            total.bounds.includeAabb(bins[i]!.bounds);
+            total.triangleCount += bins[i]!.triangleCount;
+            costs[i - 1] = f(costs[i - 1]! + evalSAH(total.bounds, total.triangleCount, o));
+        }
+        let axisBestCost = Infinity;
+        let axisBest: SplitResult = { axis: dimension, triangleIndex: 0 };
+        for (let i = 0, triIdx = begin; i < costs.length; i++) {
+            triIdx += bins[i]!.triangleCount;
+            if (costs[i]! < axisBestCost) {
+                axisBestCost = costs[i]!;
+                axisBest = { axis: dimension, triangleIndex: triIdx };
+            }
+        }
+        // All lights on one side of the split: no split along this axis.
+        if (axisBest.triangleIndex === begin || axisBest.triangleIndex === end) return;
+        if (axisBestCost < bestCost) {
+            bestCost = axisBestCost;
+            best = axisBest;
+        }
+    };
+
+    if (o.splitAlongLargest) {
+        const d = nodeBounds.extent();
+        binAlongDimension(d[2] >= d[0] && d[2] >= d[1] ? 2 : d[1] >= d[0] && d[1] >= d[2] ? 1 : 0);
+    } else for (let d = 0; d < 3; d++) binAlongDimension(d);
+
+    if (!best) {
+        if (end - begin <= o.maxTriangleCountPerLeaf) return null;
+        console.warn("LightBVHBuilder::computeSplitWithBinnedSAH() was not able to compute a proper split: reverting to LightBVHBuilder::computeSplitWithEqual()");
+        return computeSplitWithEqual(data, begin, end, nodeBounds);
+    }
+    if (o.useLeafCreationCost && end - begin <= o.maxTriangleCountPerLeaf && evalSAH(nodeBounds, end - begin, o) <= bestCost) return null;
+    return best;
+}
+
 function buildInternal(
     o: LightBVHOptions,
     bitmaskLo: number,
@@ -480,7 +550,9 @@ function buildInternal(
     const splitResult = trySplitting
         ? o.splitHeuristicSelection === "Equal"
             ? computeSplitWithEqual(data, begin, end, nodeBounds)
-            : computeSplitWithBinnedSAOH(data, begin, end, nodeBounds, o)
+            : o.splitHeuristicSelection === "BinnedSAH"
+              ? computeSplitWithBinnedSAH(data, begin, end, nodeBounds, o)
+              : computeSplitWithBinnedSAOH(data, begin, end, nodeBounds, o)
         : null;
 
     if (splitResult) {
@@ -559,9 +631,6 @@ function computeLightingConesInternal(nodeIndex: number, data: BuildingData): { 
 }
 
 export function buildLightBVH(triangles: EmissiveTriangleInput[], options: LightBVHOptions = kDefaultLightBVHOptions): LightBVHBuildResult {
-    if (options.splitHeuristicSelection === "BinnedSAH") {
-        console.warn("LightBVH: BinnedSAH split heuristic not ported; using BinnedSAOH.");
-    }
     const data: BuildingData = {
         trianglesData: [],
         nodes: [],

@@ -126,6 +126,32 @@ describe("LightBVHBuilder options", () => {
     });
 });
 
+describe("LightBVHBuilder BinnedSAH", () => {
+    // Clusters at x = 0, 3, 50 and 53 (2 triangles each), with the flux concentrated in some of them.
+    const layout = (fluxes: number[]) => [0, 3, 50, 53].flatMap((x, i) => quadTris(x, 0, 0, fluxes[i]!));
+    const structure = (r: ReturnType<typeof buildLightBVH>) => Array.from({ length: r.nodeCount }, (_, i) => {
+        const n = nodeAt(r.nodes, i);
+        return n.isLeaf() ? `L${n.getLeafTriangleCount()}` : `I${n.getRightChildIdx()}`;
+    }).join(" ");
+    const opts = { ...kDefaultLightBVHOptions, splitHeuristicSelection: "BinnedSAH" as const, maxTriangleCountPerLeaf: 2 };
+
+    it("builds a valid tree that separates distant clusters first", () => {
+        const r = buildLightBVH(layout([1, 1, 1, 1]), opts);
+        expect(r.valid).toBe(true);
+        expect(nodeAt(r.nodes, 0).isLeaf()).toBe(false);
+        expect(structure(r)).toBe("I4 I3 L2 L2 I6 L2 L2"); // {0,3} | {50,53}, then each pair apart
+    });
+
+    it("ignores flux: the same tree and triangle order for any flux", () => {
+        const trees = [[1, 1, 1, 1], [100, 0.01, 0.01, 100], [0.01, 5, 100, 1]].map((fl) => {
+            const r = buildLightBVH(layout(fl), opts);
+            return `${structure(r)} | ${Array.from(r.triangleIndices).join(",")}`;
+        });
+        expect(trees[1]).toBe(trees[0]);
+        expect(trees[2]).toBe(trees[0]);
+    });
+});
+
 describe("LightBVHSampler option defines", () => {
     it("derives shader defines from sampler options", async () => {
         const { kDefaultLightBVHSamplerOptions } = await import("../src/Rendering/Lights/LightBVHSamplerHost.js");

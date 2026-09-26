@@ -70,12 +70,12 @@ export interface MogwaiRunResult {
 
 /** Records and replays the Mogwai script at `scriptUrl` (served path, e.g. /Falcor/tests/...). */
 export async function runMogwaiScript(device: Device, scriptUrl: string, opts: { download?: boolean } = {}): Promise<MogwaiRunResult> {
-    return runMogwaiSource(device, await (await fetch(scriptUrl)).text(), scriptUrl.slice(0, scriptUrl.lastIndexOf("/")), opts);
+    return runMogwaiSource(device, await (await fetch(scriptUrl)).text(), scriptUrl.slice(0, scriptUrl.lastIndexOf("/")), { ...opts, fileName: scriptUrl.slice(scriptUrl.lastIndexOf("/") + 1) });
 }
 
 /** Records and replays a Mogwai script's `source`, with local imports resolved against `dirUrl`. */
-export async function runMogwaiSource(device: Device, source: string, dirUrl: string, opts: { download?: boolean } = {}): Promise<MogwaiRunResult> {
-    const commands = await recordMogwaiSource(device, source, dirUrl);
+export async function runMogwaiSource(device: Device, source: string, dirUrl: string, opts: { download?: boolean; fileName?: string } = {}): Promise<MogwaiRunResult> {
+    const commands = await recordMogwaiSource(device, source, dirUrl, opts.fileName);
     const clock = new Clock();
     const host: MogwaiHost = {
         graphs: [],
@@ -95,9 +95,9 @@ export async function runMogwaiSource(device: Device, source: string, dirUrl: st
 }
 
 /** The script's local modules are fetched and it is recorded (see recordMogwaiScript). */
-export async function recordMogwaiSource(device: Device, source: string, dirUrl: string): Promise<MogwaiCommand[]> {
+export async function recordMogwaiSource(device: Device, source: string, dirUrl: string, fileName?: string): Promise<MogwaiCommand[]> {
     const files = await fetchLocalPythonModules(dirUrl, source, kScriptRoot);
-    return recordMogwaiScript(device, source, files, `${kScriptRoot}${dirUrl}`);
+    return recordMogwaiScript(device, source, files, `${kScriptRoot}${dirUrl}`, fileName);
 }
 
 /** Pyodide directory recorded scripts run in (os.path.abspath() paths start with it). */

@@ -867,7 +867,7 @@ export type MogwaiCommand =
  * (path -> source) are written to Pyodide's file system under /mogwai, `cwd`
  * becomes the working directory and first sys.path entry.
  */
-export function recordMogwaiScript(device: Device, source: string, files: Record<string, string>, cwd: string): MogwaiCommand[] {
+export function recordMogwaiScript(device: Device, source: string, files: Record<string, string>, cwd: string, fileName = "script.py"): MogwaiCommand[] {
     if (!pyodide) throw new RuntimeError("Call initScripting() first");
     const commands: MogwaiCommand[] = [];
     const added = new WeakSet<RenderGraph>();
@@ -1031,8 +1031,10 @@ export function recordMogwaiScript(device: Device, source: string, files: Record
     );
     try {
         pyodide.globals.set("__mogwai_script", source);
+        // Scripting::runScriptFromFile: the script sees its own path as __file__.
+        pyodide.globals.set("__file__", `${cwd}/${fileName}`);
         pyodide.runPython(kMogwaiShim);
-        pyodide.runPython(`try:\n    exec(compile(__mogwai_script, "script", "exec"), globals())\nexcept SystemExit:\n    pass\n`);
+        pyodide.runPython(`try:\n    exec(compile(__mogwai_script, __file__, "exec"), globals())\nexcept SystemExit:\n    pass\n`);
     } finally {
         // The recording falcor module must not leak into later graph/console scripts.
         pyodide.runPython(`sys.path.remove(${JSON.stringify(cwd)})\nsys.modules.pop("falcor", None)`);

@@ -7,7 +7,8 @@
  *   Falcor/build/linux-gcc/bin/Debug/Mogwai --script tests/oracle/render-native-fullpt-lightbvh.py --headless
  */
 
-import { GltfImporter, LightType, RenderGraph, createPass, float3 } from "@web-falcor/falcor";
+import { GltfImporter, LightType, RenderGraph, createPass, float3, initScripting } from "@web-falcor/falcor";
+import { runMogwaiSource } from "../../../packages/mogwai/src/ScriptRunner.js";
 import "@web-falcor/render-passes";
 import parseExr from "parse-exr";
 import { gpuTest, expectEq } from "../harness/registry.js";
@@ -127,4 +128,27 @@ gpuTest("FullPathTracerLightBVH.optionsMatchNativeOracle", async ({ device }) =>
     console.error(`# fullPTLightBVHOptions: meanAbs=${mean.toExponential(2)} rel=${rel.toExponential(2)} bad=${badPixels}`);
     expectEq(mean < 5e-3, true, `radiance mean abs diff ${mean}`);
     expectEq(badPixels < size * 4, true, `bad pixels ${badPixels}`);
+});
+
+gpuTest("FullPathTracerLightBVH.binnedSAHMatchesNativeOracle", async ({ device }) => {
+    // tests/oracle/render-native-lightbvh-sah.py run unchanged: a BinnedSAH LightBVH over ~1.4k emissive
+    // triangles. The same script with BinnedSAOH must differ more from native (the heuristic shapes the tree).
+    //   Mogwai --script tests/oracle/render-native-lightbvh-sah.py --headless
+    await initScripting("/node_modules/pyodide");
+    const nat = parseExr(await (await fetch("/tests/oracle/out-native/oracle-lightbvh-sah.PathTracer.color.0.exr")).arrayBuffer(), 1015) as { data: Float32Array; width: number; height: number };
+    const script = "/tests/oracle/render-native-lightbvh-sah.py";
+    const source = await (await fetch(script)).text();
+    const meanDiff = async (src: string) => {
+        const { frameCapture } = await runMogwaiSource(device, src, "/tests/oracle", { fileName: "render-native-lightbvh-sah.py" });
+        const exr = frameCapture.captured.find((f) => f.name.includes("PathTracer.color"))!;
+        const web = parseExr(exr.bytes.slice().buffer, 1015) as { data: Float32Array };
+        let sum = 0;
+        for (let i = 0; i < nat.width * nat.height; i++) for (let c = 0; c < 3; c++) sum += Math.abs(web.data[i * 4 + c]! - nat.data[i * 4 + c]!);
+        return sum / (nat.width * nat.height * 3);
+    };
+    const sah = await meanDiff(source);
+    const saoh = await meanDiff(source.replace("'BinnedSAH'", "'BinnedSAOH'"));
+    console.error(`# lightBVH BinnedSAH vs native: meanAbs ${sah.toExponential(2)}; with BinnedSAOH instead: ${saoh.toExponential(2)}`);
+    expectEq(sah < 5e-3, true, `BinnedSAH radiance mean abs diff ${sah}`);
+    expectEq(saoh > sah * 2, true, `BinnedSAOH differs more (${saoh} vs ${sah})`);
 });

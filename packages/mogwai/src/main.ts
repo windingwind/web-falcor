@@ -72,7 +72,7 @@ class TimingCapture {
 }
 
 async function loadGraph(state: ViewerState, url: string): Promise<void> {
-    await runScriptSource(state, await (await fetch(url)).text(), url.slice(0, url.lastIndexOf("/")));
+    await runScriptSource(state, await (await fetch(url)).text(), url.slice(0, url.lastIndexOf("/")), url.split(/[?#]/)[0]!.slice(url.lastIndexOf("/") + 1));
 }
 
 /** The viewer's built-in graph (native starts without one): a script's graphs replace it. */
@@ -82,8 +82,8 @@ let builtInGraph: RenderGraph | null = null;
  * Renderer::loadScript: the script runs with the full `m` (addGraph, loadScene, m.scene edits,
  * resizeFrameBuffer, renderFrame, captures, callbacks), recorded and replayed onto the viewer's state.
  */
-async function runScriptSource(state: ViewerState, source: string, dirUrl: string): Promise<void> {
-    const commands = await recordMogwaiSource(state.device, source, dirUrl);
+async function runScriptSource(state: ViewerState, source: string, dirUrl: string, fileName?: string): Promise<void> {
+    const commands = await recordMogwaiSource(state.device, source, dirUrl, fileName);
     if (builtInGraph && state.graphs.includes(builtInGraph)) {
         state.graphs.splice(state.graphs.indexOf(builtInGraph), 1);
         if (state.graph === builtInGraph) state.graph = null;
@@ -823,7 +823,7 @@ function wireControls(state: ViewerState, rebuildUI: () => void): void {
         ev.preventDefault();
         const ext = file.name.slice(file.name.lastIndexOf(".") + 1).toLowerCase();
         void (async () => {
-            if (ext === "py") await runScriptSource(state, await file.text(), location.pathname.replace(/\/[^/]*$/, ""));
+            if (ext === "py") await runScriptSource(state, await file.text(), location.pathname.replace(/\/[^/]*$/, ""), file.name);
             else if (ext === "pyscene") installScene(state, await runSceneScript(state.device, await file.text(), kProjectMediaUrl, { path: file.name }), null);
             else if (ext === "pbrt") installScene(state, await runPbrtScene(state.device, await file.text(), kProjectMediaUrl), null);
             else if (["fbx", "gltf", "glb", "obj", "usd", "usda", "usdc", "usdz", "dae", "3ds", "ply", "blend"].includes(ext)) {
@@ -898,7 +898,7 @@ function wireControls(state: ViewerState, rebuildUI: () => void): void {
     ($("graphFile") as HTMLInputElement | null)?.addEventListener("change", async (ev) => {
         const file = (ev.target as HTMLInputElement).files?.[0];
         if (file) {
-            await runScriptSource(state, await file.text(), location.pathname.replace(/\/[^/]*$/, ""));
+            await runScriptSource(state, await file.text(), location.pathname.replace(/\/[^/]*$/, ""), file.name);
             refreshOutputs(state);
             rebuildUI();
         }

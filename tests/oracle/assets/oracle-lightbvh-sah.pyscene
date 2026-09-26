@@ -1,0 +1,15 @@
+# Three emissive spheres of different power over a diffuse floor: ~1.4k emissive triangles,
+# enough for the LightBVH split heuristic to shape the tree.
+floor = StandardMaterial('Floor')
+floor.baseColor = float4(0.6, 0.6, 0.6, 1.0)
+floor.roughness = 0.8
+quad = TriangleMesh.createQuad(float2(4.0, 4.0))
+sceneBuilder.addMeshInstance(sceneBuilder.addNode('Floor', Transform(translation=float3(0.5, -0.5, -0.5))), sceneBuilder.addTriangleMesh(quad, floor))
+
+for i, (pos, color, factor) in enumerate([((-0.3, 0.1, -0.6), (1.0, 0.3, 0.2), 4.0), ((0.5, 0.4, -1.0), (0.2, 1.0, 0.3), 1.5), ((1.3, 0.0, -0.4), (0.3, 0.4, 1.0), 8.0)]):
+    mat = StandardMaterial('Emitter%d' % i)
+    mat.baseColor = float4(0.1, 0.1, 0.1, 1.0)
+    mat.emissiveColor = float3(*color)
+    mat.emissiveFactor = factor
+    sphere = TriangleMesh.createSphere(0.25, 24, 12)
+    sceneBuilder.addMeshInstance(sceneBuilder.addNode('Sphere%d' % i, Transform(translation=float3(*pos))), sceneBuilder.addTriangleMesh(sphere, mat))
