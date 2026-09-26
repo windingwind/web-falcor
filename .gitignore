@@ -29,3 +29,4 @@ tests/oracle/out-native/image-tests/*/*
 !tests/oracle/out-native/image-tests/scene/CameraAnimation
 !tests/oracle/out-native/image-tests/scene/USDPreviewSurface
 !tests/oracle/out-native/image-tests/scene/Volumes
+!tests/oracle/out-native/image-tests/scene/TriangleWinding

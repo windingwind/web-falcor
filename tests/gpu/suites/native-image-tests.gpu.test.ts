@@ -33,7 +33,7 @@ const kScripts = (
     "renderpasses/SimplePostFX renderpasses/Skinning renderpasses/SplitScreen renderpasses/TextureLOD renderpasses/ToneMapping renderpasses/VBufferRT renderpasses/VBufferRTInline " +
     "renderpasses/WARDiffPathTracerMaterialFwd renderpasses/WARDiffPathTracerTranslationBwd renderpasses/WARDiffPathTracerTranslationFwd renderscripts/BSDFViewer " +
     "renderscripts/MinimalPathTracer renderscripts/PathTracer renderscripts/RTXDI renderscripts/SceneDebugger renderscripts/WARDiffPathTracer scene/AnimationBehavior " +
-    "scene/CameraAnimation scene/Displacement scene/NDSDFGrids scene/RtProgram scene/SceneCache scene/SDFSBS scene/USDPreviewSurface scene/Volumes"
+    "scene/CameraAnimation scene/Displacement scene/NDSDFGrids scene/RtProgram scene/SceneCache scene/SDFSBS scene/TriangleWinding scene/USDPreviewSurface scene/Volumes"
 ).split(" ");
 
 const kStochastic = { tolerance: 1e-4, block: 1e-4 };
@@ -86,7 +86,7 @@ function blockMse(a: { width: number; height: number; data: Float32Array }, b: {
 }
 
 /** The committed capture sets run in every suite; the rest (~20 min) with --filter NativeImageCompare. */
-const kCommitted = new Set(["renderpasses/Skinning", "scene/CameraAnimation", "scene/USDPreviewSurface", "scene/Volumes"]);
+const kCommitted = new Set(["renderpasses/Skinning", "scene/CameraAnimation", "scene/USDPreviewSurface", "scene/Volumes", "scene/TriangleWinding"]);
 const kSelected = new URLSearchParams(location.search).get("filter")?.includes("NativeImageCompare") ?? false;
 
 for (const script of kScripts) {
