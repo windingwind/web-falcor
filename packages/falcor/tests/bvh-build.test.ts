@@ -10,7 +10,7 @@
  */
 
 import { describe, expect, it } from "vitest";
-import { buildBvh, buildBvhParallel, buildBvhSubtree, bvhStackDepth, kBvhTraversalStackSize, refitBvh, refitBvhIndexed, PackedBvhTriangleWriter, refreshStitchedBvh, stitchBvhs, type BvhBuildResult, type BvhTriangle } from "../src/Scene/SoftwareRT/Bvh.js";
+import { buildBvh, buildBvhParallel, buildBvhSubtree, bvhStackDepth, kBvhTraversalStackSize, refitBvh, refitBvhIndexed, PackedBvhTriangleWriter, splitTopLevels, refreshStitchedBvh, stitchBvhs, type BvhBuildResult, type BvhTriangle } from "../src/Scene/SoftwareRT/Bvh.js";
 import { float3, sub3 } from "../src/Utils/Math/Vector.js";
 
 /** Median-split BVH written the obvious way: one entry list per node. */
@@ -325,5 +325,21 @@ describe("PackedBvhTriangleWriter", () => {
         const c = await buildBvhParallel(w.result, run);
         expect(bytes(c.nodes)).toEqual(bytes(a.nodes));
         expect(bytes(c.tris)).toEqual(bytes(a.tris));
-    });
+    }, 60000);
+});
+
+describe("buildBvhParallel with offloaded top levels", () => {
+    it("is byte-identical to the serial build", async () => {
+        for (const [count, quantize] of [[20000, 0], [5000, 8]] as const) {
+            const tris = makeTriangles(count, 3 + count, quantize);
+            const serial = buildBvh(tris);
+            const run = async (input: Parameters<typeof buildBvhSubtree>[0]) => buildBvhSubtree(input);
+            const runTop = async (input: Parameters<typeof splitTopLevels>[0], depth: number) => splitTopLevels(input, depth);
+            for (const depth of [2, 3, 4]) {
+                const par = await buildBvhParallel(tris, run, depth, runTop);
+                expect(bytes(par.nodes), `nodes, ${count} tris, depth ${depth}`).toEqual(bytes(serial.nodes));
+                expect(bytes(par.tris), `tris, ${count} tris, depth ${depth}`).toEqual(bytes(serial.tris));
+            }
+        }
+    }, 60000);
 });

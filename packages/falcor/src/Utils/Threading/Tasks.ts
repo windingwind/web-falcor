@@ -5,7 +5,7 @@
 
 import { decodeDDSToRGBA } from "../../Scene/Importer/DDSLoader.js";
 import { decodeTGA } from "../Image/TGADecoder.js";
-import { buildBvhSubtree, type BvhInput, type BvhSubtree } from "../../Scene/SoftwareRT/Bvh.js";
+import { buildBvhSubtree, splitTopLevels, type BvhInput, type BvhSubtree, type TopSplitNode } from "../../Scene/SoftwareRT/Bvh.js";
 import { generateTangentsAndMerge } from "../../Scene/TangentSpace.js";
 import { createPackedVertices, kPackedVertexFloats, PackedVertex } from "../../Scene/SceneData.js";
 
@@ -29,6 +29,11 @@ export const kTasks = {
     buildBvhSubtree(args: BvhInput): TaskResult<BvhSubtree> {
         const tree = buildBvhSubtree(args);
         return { value: tree, transfer: [tree.nodes.buffer, tree.ordered.buffer] };
+    },
+    /** The top median splits of one half of buildBvhParallel (its levels below the root run in parallel). */
+    splitTopLevels(args: { input: BvhInput; depth: number }): TaskResult<{ index: Uint32Array; tree: TopSplitNode }> {
+        const r = splitTopLevels(args.input, args.depth);
+        return { value: r, transfer: [r.index.buffer] };
     },
     /** generateTangentsAndMerge on one packed vertex store (MikkTSpace; the worker loads its wasm first). */
     tangentsAndMerge(args: { data: Float32Array; indices: Uint32Array; boneIDs?: Uint32Array; boneWeights?: Float32Array }): TaskResult<{ data: Float32Array; indices: Uint32Array; source: Uint32Array } | null> {

@@ -1014,7 +1014,12 @@ export class Scene {
         const pool = WorkerPool.get();
         const bvh =
             bvhTriangleCount(geometry.bvhTris) >= 100_000 && pool.threadCount > 1
-                ? await buildBvhParallel(geometry.bvhTris, (input) => pool.run("buildBvhSubtree", input, [input.bmin.buffer, input.bmax.buffer, input.cent.buffer]))
+                ? await buildBvhParallel(
+                      geometry.bvhTris,
+                      (input) => pool.run("buildBvhSubtree", input, [input.bmin.buffer, input.bmax.buffer, input.cent.buffer]),
+                      3,
+                      (input, depth) => pool.run("splitTopLevels", { input, depth }, [input.bmin.buffer, input.bmax.buffer, input.cent.buffer]),
+                  )
                 : undefined;
         const withBvh = [...args] as ConstructorParameters<typeof Scene>;
         withBvh[11] = { geometry, bvh };

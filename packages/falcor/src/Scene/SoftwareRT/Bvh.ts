@@ -565,40 +565,19 @@ export function buildBvh(triangles: BvhTriangles): BvhBuildResult {
     return finishBvh(triangles, buildBvhSubtree(Array.isArray(triangles) ? bvhInput(triangles) : triangles.input));
 }
 
-/**
- * buildBvh with its subtrees built concurrently (`run`: e.g. the WorkerPool). The top `depth`
- * levels split on this thread, each remaining range is built by `run` from its triangles in
- * their current order, and the subtrees are stitched in DFS order, so the result is
- * byte-identical to buildBvh.
- */
-export async function buildBvhParallel(triangles: BvhTriangles, run: (input: BvhInput) => Promise<BvhSubtree>, depth = 3): Promise<BvhBuildResult> {
-    const n = bvhTriangleCount(triangles);
-    if (n === 0) return emptyBvh();
-    const input = Array.isArray(triangles) ? bvhInput(triangles) : triangles.input;
-    const { bmin, bmax, cent } = input;
-    const { sortRange, index } = makeBuilder(input, true);
+/** The top levels of a median-split build: inner nodes with their bounds, and leaf ranges of the permuted index. */
+export type TopSplitNode = { kind: "inner"; min: number[]; max: number[]; left: TopSplitNode; right: TopSplitNode } | { kind: "leaf"; lo: number; hi: number };
 
-    type Top = { kind: "inner"; min: number[]; max: number[]; left: Top; right: Top } | { kind: "job"; lo: number; hi: number; result: Promise<BvhSubtree> };
-    const jobs: Promise<BvhSubtree>[] = [];
-    const split = (lo: number, hi: number, level: number): Top => {
+/**
+ * The first `depth` median splits of the build over `input` (as buildBvhSubtree performs them): the index
+ * permutation and the split tree whose leaves are ranges into it. Runs on the main thread or in a worker.
+ */
+export function splitTopLevels(input: BvhInput, depth: number): { index: Uint32Array; tree: TopSplitNode } {
+    const { bmin, bmax } = input;
+    const { sortRange, index } = makeBuilder(input, true);
+    const split = (lo: number, hi: number, level: number): TopSplitNode => {
         const count = hi - lo;
-        if (level === depth || count <= 4 * 2) {
-            // The subtree's triangles, compacted in their current order.
-            const m = new Float32Array(count * 3);
-            const M = new Float32Array(count * 3);
-            const c = new Float64Array(count * 3);
-            for (let i = 0; i < count; i++) {
-                const e = index[lo + i]! * 3;
-                for (let k = 0; k < 3; k++) {
-                    m[i * 3 + k] = bmin[e + k]!;
-                    M[i * 3 + k] = bmax[e + k]!;
-                    c[i * 3 + k] = cent[e + k]!;
-                }
-            }
-            const result = run({ n: count, bmin: m, bmax: M, cent: c });
-            jobs.push(result);
-            return { kind: "job", lo, hi, result };
-        }
+        if (level === depth || count <= 4 * 2) return { kind: "leaf", lo, hi };
         const min = [Infinity, Infinity, Infinity];
         const max = [-Infinity, -Infinity, -Infinity];
         for (let i = lo; i < hi; i++) {
@@ -616,7 +595,68 @@ export async function buildBvhParallel(triangles: BvhTriangles, run: (input: Bvh
         const half = Math.ceil(count / 2);
         return { kind: "inner", min, max, left: split(lo, lo + half, level + 1), right: split(lo + half, hi, level + 1) };
     };
-    const top = split(0, n, 0);
+    const tree = split(0, input.n, 0);
+    return { index, tree };
+}
+
+/** The input's elements index[lo..hi), compacted in that order. */
+function compactInput(input: BvhInput, index: Uint32Array, lo: number, hi: number): BvhInput {
+    const count = hi - lo;
+    const m = new Float32Array(count * 3);
+    const M = new Float32Array(count * 3);
+    const c = new Float64Array(count * 3);
+    const { bmin, bmax, cent } = input;
+    for (let i = 0, o = 0; i < count; i++, o += 3) {
+        const e = index[lo + i]! * 3;
+        m[o] = bmin[e]!; m[o + 1] = bmin[e + 1]!; m[o + 2] = bmin[e + 2]!;
+        M[o] = bmax[e]!; M[o + 1] = bmax[e + 1]!; M[o + 2] = bmax[e + 2]!;
+        c[o] = cent[e]!; c[o + 1] = cent[e + 1]!; c[o + 2] = cent[e + 2]!;
+    }
+    return { n: count, bmin: m, bmax: M, cent: c };
+}
+
+/**
+ * buildBvh with its subtrees built concurrently (`run`: e.g. the WorkerPool). The top `depth` levels split first
+ * (the root on this thread; with `runTop`, each half's next levels concurrently too), each remaining range is built by
+ * `run` from its triangles in their current order, and the subtrees are stitched in DFS order, so the result is
+ * byte-identical to buildBvh.
+ */
+export async function buildBvhParallel(
+    triangles: BvhTriangles,
+    run: (input: BvhInput) => Promise<BvhSubtree>,
+    depth = 3,
+    runTop?: (input: BvhInput, depth: number) => Promise<{ index: Uint32Array; tree: TopSplitNode }>,
+): Promise<BvhBuildResult> {
+    const n = bvhTriangleCount(triangles);
+    if (n === 0) return emptyBvh();
+    const input = Array.isArray(triangles) ? bvhInput(triangles) : triangles.input;
+
+    // The root split here, then (with runTop) the levels below each half in parallel.
+    let { index, tree } = splitTopLevels(input, runTop ? 1 : depth);
+    if (runTop && tree.kind === "inner" && depth > 1) {
+        const offload = async (leaf: TopSplitNode): Promise<TopSplitNode> => {
+            if (leaf.kind !== "leaf") return leaf;
+            const { lo, hi } = leaf;
+            const sub = await runTop(compactInput(input, index, lo, hi), depth - 1);
+            const old = index.slice(lo, hi);
+            for (let i = 0; i < sub.index.length; i++) index[lo + i] = old[sub.index[i]!]!;
+            const shift = (t: TopSplitNode): TopSplitNode => (t.kind === "leaf" ? { kind: "leaf", lo: t.lo + lo, hi: t.hi + lo } : { ...t, left: shift(t.left), right: shift(t.right) });
+            return shift(sub.tree);
+        };
+        const [left, right] = await Promise.all([offload(tree.left), offload(tree.right)]);
+        tree = { ...tree, left, right };
+    }
+
+    // Leaves become subtree jobs over their triangles, compacted in their current order.
+    type Top = { kind: "inner"; min: number[]; max: number[]; left: Top; right: Top } | { kind: "job"; lo: number; hi: number; result: Promise<BvhSubtree> };
+    const jobs: Promise<BvhSubtree>[] = [];
+    const toJobs = (t: TopSplitNode): Top => {
+        if (t.kind === "inner") return { kind: "inner", min: t.min, max: t.max, left: toJobs(t.left), right: toJobs(t.right) };
+        const result = run(compactInput(input, index, t.lo, t.hi));
+        jobs.push(result);
+        return { kind: "job", lo: t.lo, hi: t.hi, result };
+    };
+    const top = toJobs(tree);
     await Promise.all(jobs);
 
     const nodes = new Float32Array(2 * n * 8 + 8);
