@@ -1680,6 +1680,7 @@ export class SceneBuilderBridge {
         weightTracks: WeightTrack[];
         /** SDF grids as rebuildable recipes + their instances (SceneCache v4). */
         sdfGrids: { recipes: SDFGridRecipe[]; instances: { gridIndex: number; materialID: number; transform?: float4x4 }[] };
+        bvh: import("./SoftwareRT/Bvh.js").BvhBuildResult;
         cacheable: boolean;
     } | null = null;
 
@@ -2130,7 +2131,7 @@ export class SceneBuilderBridge {
         pretransformStaticMeshes(meshes, nodes, animations);
         meshes = sortMeshesLikeNative(meshes, materials);
         timeReport.measure("Sorting meshes");
-        const scene = await Scene.create(device, meshes, materials, lights, textureManager, sdfGrids, nodes, animations, cameraNodeID, weightTracks, curves);
+        const { scene, bvh } = await Scene.createWithBvh(undefined, device, meshes, materials, lights, textureManager, sdfGrids, nodes, animations, cameraNodeID, weightTracks, curves);
         for (const c of this.customPrimitives) scene.addCustomPrimitive(c.userID, c.aabb);
         scene.importPaths.push(...importPaths);
         // Snapshot for the scene cache (v4: every scene class; grid volumes are
@@ -2149,6 +2150,7 @@ export class SceneBuilderBridge {
                 recipes: sdfRecipes,
                 instances: this.sdfInstances.map((inst) => ({ gridIndex: inst.sdfGridID, materialID: builtSdfGrids[inst.sdfGridID]!.materialID, transform: this.nodes[inst.nodeID] })),
             },
+            bvh,
             // Vertex caches aren't serialized by the web scene cache yet.
             cacheable: !meshes.some((m) => m.vertexCache) && this.builderAnimations.length === 0,
         };

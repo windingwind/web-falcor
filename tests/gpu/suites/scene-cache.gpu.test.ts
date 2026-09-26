@@ -70,6 +70,7 @@ gpuTest("SceneCache.cachedSceneRendersIdentically", async ({ device }) => {
             }
         }
         console.error(`# probe ${name}: ${d} diff bytes (${da.length}/${db.length}) ${detail.join(" | ")}`);
+        if (name === "bvhNodes") expectEq(d, 0, "the cached BVH uploads as built");
     }
     const texArr = (sc: unknown) => (sc as { textureBuckets: import("@web-falcor/falcor").Texture[] }).textureBuckets[0]!;
     for (let layer = 0; layer < Math.min(3, texArr(tex1).gpuTexture.depthOrArrayLayers); layer++) {

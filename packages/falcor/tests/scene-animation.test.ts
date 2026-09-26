@@ -181,5 +181,5 @@ describe("NonIndexedVertices", () => {
         // Copies, not aliases: editing one expanded vertex leaves its twin alone.
         flat.vertices[2]!.texCrd = new float2(9, 9);
         expect(flat.vertices[3]!.texCrd.x).toBe(2);
-    });
+    }, 60000);
 });

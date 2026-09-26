@@ -950,16 +950,18 @@ export class Scene {
     }
 
     /** The BVH's world-space triangles; displaced meshes are excluded (they intersect via their own AABB region). */
-    static collectBvhGeometry(meshes: SceneMeshDesc[], materials: SceneMaterialDesc[]) {
+    static collectBvhGeometry(meshes: SceneMeshDesc[], materials: SceneMaterialDesc[], displacedOnly = false) {
         const displacedAabbs: { min: [number, number, number]; max: [number, number, number] }[] = [];
         const displacedEntries: number[] = [];
         const identity = float4x4.identity();
         const isDisplaced = (mesh: SceneMeshDesc) => materials[mesh.materialID]?.basic.texDisplacement !== undefined;
         // Flat builder input (no per-triangle objects): the triangle count sizes it up front.
         let count = 0;
-        for (const mesh of meshes) if (!isDisplaced(mesh)) count += mesh.indices.length / 3;
+        for (const mesh of meshes) if (!isDisplaced(mesh) && !displacedOnly) count += mesh.indices.length / 3;
         const writer = new PackedBvhTriangleWriter(count);
         meshes.forEach((mesh, meshID) => {
+            // A prebuilt tree (scene cache) only needs the displaced meshes' AABBs.
+            if (displacedOnly && !isDisplaced(mesh)) return;
             const m = mesh.transform ?? identity;
             // Pretransformed (identity) meshes use their positions as is.
             const isIdentity = m === identity || m.data.every((v, i) => v === identity.data[i]);
@@ -1008,8 +1010,18 @@ export class Scene {
      * builds the scene with TaskManager); the tree is byte-identical to the serial build.
      */
     static async create(...args: ConstructorParameters<typeof Scene>): Promise<Scene> {
+        return (await Scene.createWithBvh(undefined, ...args)).scene;
+    }
+
+    /** Scene.create that also returns the triangle BVH (for the scene cache), or reuses a cached one. */
+    static async createWithBvh(cachedBvh: BvhBuildResult | undefined, ...args: ConstructorParameters<typeof Scene>): Promise<{ scene: Scene; bvh: BvhBuildResult }> {
         const [, meshes, materials = []] = args;
         Scene.roundVertices(meshes);
+        const withBvh = [...args] as ConstructorParameters<typeof Scene>;
+        if (cachedBvh) {
+            withBvh[11] = { bvh: cachedBvh };
+            return { scene: new Scene(...withBvh), bvh: cachedBvh };
+        }
         const geometry = Scene.collectBvhGeometry(meshes, materials);
         const pool = WorkerPool.get();
         const bvh =
@@ -1021,10 +1033,9 @@ export class Scene {
                       (input, depth) => pool.run("splitTopLevels", { input, depth }, [input.bmin.buffer, input.bmax.buffer, input.cent.buffer]),
                       (keys) => pool.run("stableSortKeys", { keys }, [keys.buffer]),
                   )
-                : undefined;
-        const withBvh = [...args] as ConstructorParameters<typeof Scene>;
+                : buildBvh(geometry.bvhTris);
         withBvh[11] = { geometry, bvh };
-        return new Scene(...withBvh);
+        return { scene: new Scene(...withBvh), bvh };
     }
 
     constructor(
@@ -1040,7 +1051,7 @@ export class Scene {
         weightTracks: WeightTrack[] = [],
         curves: SceneCurveDesc[] = [],
         /** From Scene.create: the gathered BVH geometry and the tree built off the main thread. */
-        prebuilt?: { geometry: ReturnType<typeof Scene.collectBvhGeometry>; bvh?: BvhBuildResult },
+        prebuilt?: { geometry?: ReturnType<typeof Scene.collectBvhGeometry>; bvh?: BvhBuildResult },
     ) {
         this.cameraNodeID = cameraNodeID;
         this.sdfGrids = sdfGrids;
@@ -1180,14 +1191,15 @@ export class Scene {
         this.sdfInstanceBase = meshes.length;
 
         // Software RT BVH over world-space triangles (docs §5); displaced meshes use their own AABB region.
-        const { bvhTris, displacedAabbs, displacedEntries } = prebuilt?.geometry ?? Scene.collectBvhGeometry(meshes, materials);
+        const { bvhTris, displacedAabbs, displacedEntries } = prebuilt?.geometry ?? Scene.collectBvhGeometry(meshes, materials, prebuilt?.bvh !== undefined);
         const bvh = prebuilt?.bvh ?? buildBvh(bvhTris);
+        const triCount = bvh.order.length;
         // Deeper trees would silently drop subtrees in the shaders' fixed-size traversal stack.
-        const stackDepth = bvhTriangleCount(bvhTris) > 0 ? bvhStackDepth(bvh.nodes) : 0;
+        const stackDepth = triCount > 0 ? bvhStackDepth(bvh.nodes) : 0;
         if (stackDepth > kBvhTraversalStackSize) Logger.warning(`Scene BVH needs a traversal stack of ${stackDepth} (> ${kBvhTraversalStackSize}); rays may miss geometry.`);
 
         // Whole-scene AABB = BVH root node bounds (nodes[0] = [min.xyz, _][max.xyz, _]).
-        if (bvhTriangleCount(bvhTris) > 0) {
+        if (triCount > 0) {
             this.worldBounds = {
                 min: [bvh.nodes[0]!, bvh.nodes[1]!, bvh.nodes[2]!],
                 max: [bvh.nodes[4]!, bvh.nodes[5]!, bvh.nodes[6]!],

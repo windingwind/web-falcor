@@ -807,7 +807,7 @@ async function resolveSceneScript(device: Device, builder: SceneBuilderBridge, b
     const env = scene.getEnvMap();
     // Programmatic env maps without retained source bytes can't be restored.
     if (cacheKey && builder.lastSceneArgs?.cacheable && (!env || env.sourceBytes)) {
-        const { meshes, materials, lights, nodes, cameraNodeID, textureManager, curves, animations, weightTracks, sdfGrids } = builder.lastSceneArgs;
+        const { meshes, materials, lights, nodes, cameraNodeID, textureManager, curves, animations, weightTracks, sdfGrids, bvh } = builder.lastSceneArgs;
         const textures = await encodeTextureSources(textureManager);
         await storeSceneCache(cacheKey, {
             meshes,
@@ -829,6 +829,7 @@ async function resolveSceneScript(device: Device, builder: SceneBuilderBridge, b
                 userID: scene.getCustomPrimitive(i).userID,
                 aabb: scene.getCustomPrimitiveAABB(i),
             })),
+            bvh,
         });
     }
     builder.lastSceneArgs = null;

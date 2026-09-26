@@ -30,9 +30,10 @@ type RecipeMeta = Omit<SDFGridRecipe, "ops"> & {
 import type { SceneSDFGridDesc } from "./Scene.js";
 import { GridVolume, type GridSlot } from "./Volume/GridVolume.js";
 import { Grid } from "./Volume/Grid.js";
+import type { BvhBuildResult } from "./SoftwareRT/Bvh.js";
 
 const kMagic = 0x43534657; // 'WFSC'
-const kVersion = 7; // v4: + animation, skin/morph, SDF recipes, grid volumes; v5: camera list; v6: DDS textures, metadata; v7: keyframe animations
+const kVersion = 8; // v4: + animation, skin/morph, SDF recipes, grid volumes; v5: camera list; v6: DDS textures, metadata; v7: keyframe animations; v8: triangle BVH
 const kFloatsPerVertex = 13; // pos3 + normal3 + tangent4 + texCrd2 + curveRadius
 
 export interface SceneCameraPose {
@@ -77,6 +78,8 @@ export interface CacheableScene {
     gridVolumes: CachedGridVolume[];
     /** SceneBuilder::addCustomPrimitive entries (user ID + AABB). */
     customPrimitives?: { userID: number; aabb: { min: [number, number, number]; max: [number, number, number] } }[];
+    /** The built triangle BVH (v8): cached loads skip the build. */
+    bvh?: BvhBuildResult;
 }
 
 export interface CachedGridVolume {
@@ -193,6 +196,7 @@ function wordBlobs(cached: CacheableScene): (Float32Array | Uint32Array)[] {
     // SDF corner values (grids loaded from `.sdfg`): bulk float data, so they
     // ride in the blobs rather than the JSON header.
     for (const r of cached.sdfGrids.recipes) for (const op of r.ops) if (op.kind === "values") blobs.push(op.values);
+    if (cached.bvh) blobs.push(cached.bvh.nodes, cached.bvh.tris, cached.bvh.order);
     return blobs;
 }
 
@@ -258,6 +262,7 @@ export function serializeScene(cached: CacheableScene): Uint8Array {
         },
         gridVolumes: cached.gridVolumes.map((v) => ({ ...v, grids: v.grids.map((g) => ({ slot: g.slot, byteLength: g.bytes.byteLength })) })),
         customPrimitives: cached.customPrimitives ?? [],
+        bvh: cached.bvh && { nodeFloats: cached.bvh.nodes.length, triFloats: cached.bvh.tris.length, orderCount: cached.bvh.order.length, nodeCount: cached.bvh.nodeCount, buildArea: cached.bvh.buildArea },
     };
     const json = new TextEncoder().encode(JSON.stringify(header));
     const jsonPadded = (json.length + 3) & ~3;
@@ -309,6 +314,7 @@ export function deserializeScene(bytes: Uint8Array): CacheableScene {
         sdfGrids: { recipes: RecipeMeta[]; instances: { gridIndex: number; materialID: number; transform?: { __m4: number[] } }[] };
         gridVolumes: (Omit<CachedGridVolume, "grids"> & { grids: { slot: GridSlot; byteLength: number }[] })[];
         customPrimitives?: CacheableScene["customPrimitives"];
+        bvh?: { nodeFloats: number; triFloats: number; orderCount: number; nodeCount: number; buildArea: number };
     };
 
     let off = 12 + ((jsonLen + 3) & ~3);
@@ -405,6 +411,8 @@ export function deserializeScene(bytes: Uint8Array): CacheableScene {
         ...r,
         ops: r.ops.map((op) => (op.kind === "values" ? { kind: op.kind, gridWidth: op.gridWidth, values: takeF32(op.valueCount) } : op)),
     }));
+    const b = header.bvh;
+    const bvh: BvhBuildResult | undefined = b && { nodes: takeF32(b.nodeFloats), tris: takeF32(b.triFloats), order: takeU32(b.orderCount), nodeCount: b.nodeCount, buildArea: b.buildArea };
 
     const textures = header.textures.map((meta) => ({ png: takeBytes(meta.byteLength), srgb: meta.srgb, dds: meta.dds }));
     let envMap: CacheableScene["envMap"];
@@ -432,6 +440,7 @@ export function deserializeScene(bytes: Uint8Array): CacheableScene {
         sdfGrids: { recipes: sdfRecipes, instances: header.sdfGrids.instances.map((i) => ({ gridIndex: i.gridIndex, materialID: i.materialID, transform: mat4(i.transform) })) },
         gridVolumes,
         customPrimitives: header.customPrimitives ?? [],
+        bvh,
     };
 }
 
@@ -525,7 +534,7 @@ export async function buildSceneFromCache(device: Device, cached: CacheableScene
     // SDF grids are rebuilt from their recipes (deterministic generators), shared across instances.
     const builtGrids = cached.sdfGrids.recipes.map(buildSDFGridFromRecipe);
     const sdfGrids: SceneSDFGridDesc[] = cached.sdfGrids.instances.map((i) => ({ grid: builtGrids[i.gridIndex]!, materialID: i.materialID, transform: i.transform }));
-    const scene = await Scene.create(device, cached.meshes, cached.materials, cached.lights, textureManager, sdfGrids, cached.nodes, cached.animations, cached.cameraNodeID, cached.weightTracks, cached.curves);
+    const { scene } = await Scene.createWithBvh(cached.bvh, device, cached.meshes, cached.materials, cached.lights, textureManager, sdfGrids, cached.nodes, cached.animations, cached.cameraNodeID, cached.weightTracks, cached.curves);
     for (const c of cached.customPrimitives ?? []) scene.addCustomPrimitive(c.userID, c.aabb);
     for (const v of cached.gridVolumes) {
         const vol = new GridVolume(v.name);
