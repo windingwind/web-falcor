@@ -8,6 +8,7 @@
  * work.
  */
 
+import { WorkerPool } from "../../Utils/Threading/WorkerPool.js";
 import type { Device } from "../../Core/API/Device.js";
 import { Texture } from "../../Core/API/Texture.js";
 import { Sampler, TextureAddressingMode, TextureFilteringMode } from "../../Core/API/Sampler.js";
@@ -101,10 +102,39 @@ export class EnvMap {
         return env;
     }
 
+    /**
+     * Fetches and decodes an env map file on the worker pool (SceneBuilder starts this before its imports so the
+     * download and decode overlap them); createFromDecoded makes the EnvMap on the device.
+     */
+    static async fetchAndDecode(url: string): Promise<{ image: { width: number; height: number; data: Float32Array }; bytes: Uint8Array; isExr: boolean; path: string }> {
+        const res = await fetch(url);
+        if (!res.ok) throw new RuntimeError(`Failed to fetch env map '${url}' (${res.status})`);
+        const bytes = new Uint8Array(await res.arrayBuffer());
+        const isExr = url.toLowerCase().endsWith(".exr");
+        const copy = bytes.slice();
+        const image = await WorkerPool.get().run("decodeEnvImage", { bytes: copy, isExr }, [copy.buffer]);
+        return { image, bytes, isExr, path: url };
+    }
+
+    static createFromDecoded(device: Device, decoded: Awaited<ReturnType<typeof EnvMap.fetchAndDecode>>, options: EnvMapLoadOptions = {}): EnvMap {
+        const image = options.equalAreaOctahedral ? convertEqualAreaOctToLatLong(decoded.image) : decoded.image;
+        const env = new EnvMap(device, image);
+        env.sourceBytes = decoded.bytes;
+        env.sourceIsExr = decoded.isExr;
+        env.sourceEqualAreaOctahedral = !!options.equalAreaOctahedral;
+        env.path = decoded.path;
+        return env;
+    }
+
+    /** Decodes an encoded .hdr/.exr/.pfm file (decodeEnvImage); used by the pool task and the scene cache. */
+    static decodeImage(bytes: Uint8Array, isExr: boolean): { width: number; height: number; data: Float32Array } {
+        // PFM is recognised by its signature (pbrt-v4 env maps); EXR/HDR by the flag.
+        return isPfm(bytes) ? decodePfm(bytes) : isExr ? decodeExr(bytes.slice().buffer as ArrayBuffer) : decodeHdr(bytes);
+    }
+
     /** Decodes an encoded .hdr/.exr file; retains the bytes for the scene cache. */
     static createFromBytes(device: Device, bytes: Uint8Array, isExr: boolean, options: EnvMapLoadOptions = {}): EnvMap {
-        // PFM is recognised by its signature (pbrt-v4 env maps); EXR/HDR by the flag.
-        let image = isPfm(bytes) ? decodePfm(bytes) : isExr ? decodeExr(bytes.slice().buffer as ArrayBuffer) : decodeHdr(bytes);
+        let image = EnvMap.decodeImage(bytes, isExr);
         if (options.equalAreaOctahedral) image = convertEqualAreaOctToLatLong(image);
         const env = new EnvMap(device, image);
         env.sourceBytes = bytes;

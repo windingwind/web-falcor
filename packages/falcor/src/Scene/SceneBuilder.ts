@@ -1701,6 +1701,12 @@ export class SceneBuilderBridge {
 
     async resolve(device: Device, baseUrl: string): Promise<Scene> {
         const timeReport = new TimeReport();
+        // The env map downloads and decodes on the worker pool while the assets import.
+        const envMapLoad =
+            this.envMap && !this.envMap.constantColor
+                ? resolveAssetUrl(this.envMap.path, baseUrl, AssetCategory.Any, this.assetResolver).then((url) => EnvMap.fetchAndDecode(url))
+                : null;
+        envMapLoad?.catch(() => undefined); // awaited (and its error raised) where the env map is set
         this.importedCameras = [];
         await loadMikkTSpace();
         const textureManager = new TextureManager();
@@ -2189,9 +2195,7 @@ export class SceneBuilderBridge {
             const constant = this.envMap.constantColor;
             const envMap = constant
                 ? new EnvMap(device, { width: 1, height: 1, data: new Float32Array([constant[0], constant[1], constant[2], 1]) })
-                : await EnvMap.createFromUrl(device, await resolveAssetUrl(this.envMap.path, baseUrl, AssetCategory.Any, this.assetResolver), {
-                      equalAreaOctahedral: this.envMap.equalAreaOctahedral,
-                  });
+                : EnvMap.createFromDecoded(device, await envMapLoad!, { equalAreaOctahedral: this.envMap.equalAreaOctahedral });
             envMap.intensity = this.envMap.intensity;
             if (this.envMap.rotation) envMap.setRotation([this.envMap.rotation.x, this.envMap.rotation.y, this.envMap.rotation.z]);
             if (this.envMap.tint) envMap.tint = this.envMap.tint;

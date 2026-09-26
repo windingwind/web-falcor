@@ -5,6 +5,9 @@
 
 import { decodeDDSToRGBA } from "../../Scene/Importer/DDSLoader.js";
 import { decodeTGA } from "../Image/TGADecoder.js";
+import { decodeHdr } from "../Image/HDRDecoder.js";
+import { decodeExr } from "../Image/EXRDecoder.js";
+import { decodePfm, isPfm } from "../Image/PFMDecoder.js";
 import { buildBvhSubtree, splitTopLevels, stableSortKeys, type BvhInput, type BvhSubtree, type TopSplitNode } from "../../Scene/SoftwareRT/Bvh.js";
 import { generateTangentsAndMerge } from "../../Scene/TangentSpace.js";
 import { createPackedVertices, kPackedVertexFloats, PackedVertex } from "../../Scene/SceneData.js";
@@ -34,6 +37,13 @@ export const kTasks = {
     splitTopLevels(args: { input: BvhInput; depth: number }): TaskResult<{ index: Uint32Array; tree: TopSplitNode }> {
         const r = splitTopLevels(args.input, args.depth);
         return { value: r, transfer: [r.index.buffer] };
+    },
+    /** An env map's .hdr/.exr/.pfm decode (EnvMap.fetchAndDecode). */
+    decodeEnvImage(args: { bytes: Uint8Array; isExr: boolean }): TaskResult<{ width: number; height: number; data: Float32Array }> {
+        const { bytes, isExr } = args;
+        const image = isPfm(bytes) ? decodePfm(bytes) : isExr ? decodeExr(bytes.slice().buffer as ArrayBuffer) : decodeHdr(bytes);
+        const value = { width: image.width, height: image.height, data: image.data };
+        return { value, transfer: [value.data.buffer] };
     },
     /** One chunk of the BVH root split's stable sort. */
     stableSortKeys(args: { keys: Float64Array }): TaskResult<Uint32Array> {
