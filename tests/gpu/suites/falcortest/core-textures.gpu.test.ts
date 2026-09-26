@@ -135,3 +135,28 @@ gpuTest("FalcorTest.TextureManager_LoadMips", async ({ device }) => {
     e.check(texels.join("|") === "255,0,0,255|0,255,0,255|0,0,255,255", () => `mip texels ${texels.join(" | ")}`);
     e.done("TextureManager_LoadMips");
 });
+
+gpuTest("RenderContext.blitRectsAndTransform", async ({ device }) => {
+    // Native blit(src, dst, srcRect, dstRect, Point) and the complex blit's componentsTransform.
+    const w = 4;
+    const src = Float32Array.from({ length: w * w * 4 }, (_, i) => i);
+    const pSrc = device.createTexture2D(w, w, ResourceFormat.RGBA32Float, 1, 1, src, ResourceBindFlags.ShaderResource);
+    const pDst = device.createTexture2D(8, 8, ResourceFormat.RGBA32Float, 1, 1, undefined, ResourceBindFlags.ShaderResource | ResourceBindFlags.RenderTarget);
+    const ctx = device.renderContext;
+    ctx.clearTexture(pDst, [-1, -1, -1, -1]);
+    ctx.blit(pSrc, pDst, "nearest", 0, 0, 0, 0, undefined, { srcRect: [1, 1, 3, 3], dstRect: [2, 0, 4, 2] });
+    // 2x magnified point blit of texel (0,0) into (6,6)-(8,8), swapping R and G and doubling A.
+    ctx.blit(pSrc, pDst, "nearest", 0, 0, 0, 0, undefined, { srcRect: [0, 0, 1, 1], dstRect: [6, 6, 100, 100], componentsTransform: [[0, 1, 0, 0], [1, 0, 0, 0], [0, 0, 1, 0], [0, 0, 0, 2]] });
+    const out = new Float32Array((await ctx.readTextureSubresource(pDst)).buffer);
+    const px = (x: number, y: number) => [...out.subarray((y * 8 + x) * 4, (y * 8 + x) * 4 + 4)];
+    const texel = (x: number, y: number) => [...src.subarray((y * w + x) * 4, (y * w + x) * 4 + 4)];
+    const e = new Expect();
+    for (let y = 0; y < 8; y++)
+        for (let x = 0; x < 8; x++) {
+            let want = [-1, -1, -1, -1];
+            if (x >= 2 && x < 4 && y < 2) want = texel(x - 1, y + 1);
+            if (x >= 6 && y >= 6) want = [1, 0, 2, 6];
+            e.check(px(x, y).every((v, i) => v === want[i]), () => `(${x},${y}): ${px(x, y)} vs ${want}`);
+        }
+    e.done("blit rects");
+});

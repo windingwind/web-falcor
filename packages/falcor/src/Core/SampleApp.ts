@@ -7,7 +7,7 @@
  * requestAnimationFrame), the Gui a DOM panel of UIWidgets rebuilt when a control
  * changes, screen captures download, and shader reload is F6 (the browser owns F5).
  * Headless apps (config.headless, no canvas) render only when renderFrame() is called,
- * which is how tests drive them. PixelZoom is not ported.
+ * which is how tests drive them.
  */
 
 import { Device, type DeviceDesc } from "./API/Device.js";
@@ -40,6 +40,7 @@ import type { Settings } from "../Utils/Settings.js";
 import { Logger } from "../Utils/Logger.js";
 import { Profiler } from "./API/Profiler.js";
 import { ProfilerUI } from "../Utils/Timing/ProfilerUI.js";
+import { PixelZoom } from "../Utils/UI/PixelZoom.js";
 
 /** Mirrors HotReloadFlags. */
 export enum HotReloadFlags {
@@ -82,6 +83,8 @@ const kKeyboardShortcuts =
     "V - Toggle VSync\n" +
     "Pause|Space - Pause/resume the global timer\n" +
     "Ctrl+Pause|Space - Pause/resume the renderer\n" +
+    "Z - Zoom in on a pixel\n" +
+    "MouseWheel - Change level of zoom\n" +
     "P - Enable/disable profiler\n";
 
 export abstract class SampleApp {
@@ -105,6 +108,7 @@ export abstract class SampleApp {
     private removeListeners: (() => void)[] = [];
     private readonly gamepad = new GamepadInput();
     private profilerWindow: HTMLDivElement | null = null;
+    private pixelZoom: PixelZoom | null = null;
     private profilerUI: ProfilerUI | null = null;
 
     constructor(config: SampleAppConfig = {}) {
@@ -270,6 +274,8 @@ export abstract class SampleApp {
 
     private resizeTargetFbo(width: number, height: number): void {
         this.targetFbo = Fbo.create2D(this.getDevice(), width, height, this.config.colorFormat, this.config.depthFormat);
+        if (this.pixelZoom) this.pixelZoom.onResize(this.targetFbo);
+        else this.pixelZoom = new PixelZoom(this.getDevice(), this.targetFbo);
     }
 
     /** Mirrors SampleApp::renderFrame. */
@@ -298,6 +304,7 @@ export abstract class SampleApp {
         device.profilerHook?.startEvent("renderUI");
         this.renderUI();
         device.profilerHook?.endEvent("renderUI");
+        this.pixelZoom?.render(ctx, target);
         device.profilerHook?.endFrame(ctx.getEncoder());
         if (this.captureScreenRequested) this.captureScreen(target.getColorTexture(0)!);
         if (this.context) presentToCanvas(device, target.getColorTexture(0)!, this.context.getCurrentTexture(), this.canvasFormat);
@@ -382,6 +389,8 @@ export abstract class SampleApp {
     /** Mirrors SampleApp::handleKeyboardEvent (after the app's own onKeyEvent). */
     handleKeyboardEvent(keyEvent: KeyboardEvent): void {
         if (this.onKeyEvent(keyEvent)) return;
+        // Checks if should toggle zoom.
+        this.pixelZoom?.onKeyboardEvent(keyEvent);
         if (keyEvent.type !== KeyboardEventType.KeyPressed) return;
         if (keyEvent.mods & ModifierFlags.Ctrl) {
             if (keyEvent.key === "Pause" || keyEvent.key === "Space") this.rendererPaused = !this.rendererPaused;
@@ -417,7 +426,8 @@ export abstract class SampleApp {
 
     /** Mirrors SampleApp::handleMouseEvent. */
     handleMouseEvent(mouseEvent: MouseEvent): void {
-        this.onMouseEvent(mouseEvent);
+        if (this.onMouseEvent(mouseEvent)) return;
+        this.pixelZoom?.onMouseEvent(mouseEvent);
     }
 
     /** Mirrors SampleApp::handleGamepadEvent. */

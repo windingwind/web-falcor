@@ -20,6 +20,17 @@ import { RuntimeError } from "../Error.js";
 
 type BlitKind = "f32" | "u32" | "i32";
 
+/** Mirrors RenderContext::kMaxRect: the whole view. */
+export const kMaxRect: readonly [number, number, number, number] = [0, 0, 0xffffffff, 0xffffffff];
+const kIdentityTransform: readonly (readonly number[])[] = [[1, 0, 0, 0], [0, 1, 0, 0], [0, 0, 1, 0], [0, 0, 0, 1]];
+
+/** blit()'s rectangles ([left, top, right, bottom), exclusive) and componentsTransform (one float4 per output channel). */
+export interface BlitRegion {
+    srcRect?: readonly number[];
+    dstRect?: readonly number[];
+    componentsTransform?: readonly (readonly number[])[];
+}
+
 const kStandardReductions = [TextureReductionMode.Standard, TextureReductionMode.Standard, TextureReductionMode.Standard, TextureReductionMode.Standard] as const;
 
 /**
@@ -28,9 +39,8 @@ const kStandardReductions = [TextureReductionMode.Standard, TextureReductionMode
  * (what a reduction sampler returns). Integer sources can't be filtered in WebGPU:
  * they load texels, and the linear filter averages the 2x2 footprint exactly (floor).
  */
-function blitWgsl(src: BlitKind, dst: BlitKind, reductions: readonly TextureReductionMode[], linear: boolean, sampleCount = 1): string {
+function blitWgsl(src: BlitKind, dst: BlitKind, reductions: readonly TextureReductionMode[], linear: boolean, sampleCount: number, complex: boolean): string {
     const vec = (k: BlitKind) => `vec4<${k}>`;
-    const complex = reductions.some((r) => r !== TextureReductionMode.Standard);
     let body: string;
     if (sampleCount > 1) {
         // Native's SAMPLE_COUNT > 1 path: the average of the texel's samples, point-sampled.
@@ -52,11 +62,13 @@ function blitWgsl(src: BlitKind, dst: BlitKind, reductions: readonly TextureRedu
     let c01 = textureLoad(gSrc, clamp(i0 + vec2<i32>(0, ${linear ? 1 : 0}), vec2<i32>(0), dims - 1), 0);
     let c11 = textureLoad(gSrc, clamp(i0 + vec2<i32>(${linear ? 1 : 0}), vec2<i32>(0), dims - 1), 0);`;
         if (src === "f32") {
+            // Native: res.c = dot(gCompTransformC, sample with channel c's reduction).
+            const sel = (r: TextureReductionMode) => (r === TextureReductionMode.Min ? "mn" : r === TextureReductionMode.Max ? "mx" : "avg");
             body += `
     let avg = textureSampleLevel(gSrc, gSampler, in.uv, 0.0);
     let mn = min(min(c00, c10), min(c01, c11));
     let mx = max(max(c00, c10), max(c01, c11));
-    let res = vec4<f32>(${reductions.map((r, i) => `${r === TextureReductionMode.Min ? "mn" : r === TextureReductionMode.Max ? "mx" : "avg"}[${i}]`).join(", ")});`;
+    let res = vec4<f32>(${reductions.map((r, i) => `dot(gParams.compTransform[${i}], ${sel(r)})`).join(", ")});`;
         } else if (linear) {
             // floor((a + b + c + d) / 4) without overflow.
             const avg = src === "u32" ? "(c00 >> vec4<u32>(2u)) + (c10 >> vec4<u32>(2u)) + (c01 >> vec4<u32>(2u)) + (c11 >> vec4<u32>(2u)) + (((c00 & vec4<u32>(3u)) + (c10 & vec4<u32>(3u)) + (c01 & vec4<u32>(3u)) + (c11 & vec4<u32>(3u))) >> vec4<u32>(2u))"
@@ -72,6 +84,12 @@ function blitWgsl(src: BlitKind, dst: BlitKind, reductions: readonly TextureRedu
     return /* wgsl */ `
 @group(0) @binding(0) var gSrc: ${sampleCount > 1 ? "texture_multisampled_2d" : "texture_2d"}<${src}>;
 ${src === "f32" && sampleCount === 1 ? "@group(0) @binding(1) var gSampler: sampler;" : ""}
+struct BlitParams {
+    offset: vec2f,
+    scale: vec2f,
+    compTransform: array<vec4f, 4>,
+};
+@group(0) @binding(2) var<uniform> gParams: BlitParams;
 
 struct VSOut {
     @builtin(position) pos: vec4f,
@@ -83,7 +101,7 @@ struct VSOut {
     var out: VSOut;
     let uv = vec2f(f32((vid << 1u) & 2u), f32(vid & 2u));
     out.pos = vec4f(uv * 2.0 - 1.0, 0.0, 1.0);
-    out.uv = vec2f(uv.x, 1.0 - uv.y);
+    out.uv = vec2f(uv.x, 1.0 - uv.y) * gParams.scale + gParams.offset;
     return out;
 }
 
@@ -127,6 +145,7 @@ export class RenderContext extends ComputeContext {
 
     private blitPipelines = new Map<string, GPURenderPipeline>();
     private blitSamplers = new Map<GPUFilterMode, GPUSampler>();
+    private blitDefaultParams: GPUBuffer | null = null;
 
     /** Mirrors RenderContext::clearRtv. */
     clearRtv(view: GPUTextureView, color: [number, number, number, number]): void {
@@ -199,9 +218,9 @@ export class RenderContext extends ComputeContext {
     }
 
     /**
-     * Mirrors RenderContext::blit: draws src into dst with optional filtering and,
-     * like the complex blit, per-channel min/max reduction. Identical full-resource
-     * blits take native's copyResource fast path.
+     * Mirrors RenderContext::blit: draws src's srcRect into dst's dstRect ([left, top, right, bottom) in texels of the
+     * views, clamped to them) with optional filtering and, like the complex blit, per-channel min/max reduction and
+     * component transforms. Full-resource blits of identical textures take native's copyResource fast path.
      */
     blit(
         src: Texture,
@@ -212,25 +231,44 @@ export class RenderContext extends ComputeContext {
         srcLayer = 0,
         dstLayer = 0,
         reductions: readonly TextureReductionMode[] = kStandardReductions,
+        region: BlitRegion = {},
     ): void {
         if (isDepthFormat(dst.format)) throw new RuntimeError("blit to depth target not supported (use copy)");
-        const complex = reductions.some((r) => r !== TextureReductionMode.Standard);
+        const srcW = Math.max(1, src.width >> srcMip), srcH = Math.max(1, src.height >> srcMip);
+        const dstW = Math.max(1, dst.width >> dstMip), dstH = Math.max(1, dst.height >> dstMip);
+        const sr = [...(region.srcRect ?? kMaxRect)];
+        const dr = [...(region.dstRect ?? kMaxRect)];
+        sr[2] = Math.min(sr[2]!, srcW);
+        sr[3] = Math.min(sr[3]!, srcH);
+        dr[2] = Math.min(dr[2]!, dstW);
+        dr[3] = Math.min(dr[3]!, dstH);
+        if (sr[0]! >= sr[2]! || sr[1]! >= sr[3]! || dr[0]! >= dr[2]! || dr[1]! >= dr[3]!) {
+            Logger.debug("RenderContext::blit() called with out-of-bounds src/dst rectangle");
+            return;
+        }
+        const transforms = region.componentsTransform ?? kIdentityTransform;
+        const identity = transforms.every((t, i) => t.every((v, j) => v === (i === j ? 1 : 0)));
+        const complex = reductions.some((r) => r !== TextureReductionMode.Standard) || !identity;
         const srcKind = blitKind(src.format);
-        if (complex && srcKind !== "f32") throw new RuntimeError("RenderContext::blit() requires non-integer source format for complex blit");
-        if (src.sampleCount > 1 && complex) throw new RuntimeError("RenderContext::blit() does not support complex blit for multisampled textures");
-        if (src.sampleCount > 1 && srcKind !== "f32") throw new RuntimeError("RenderContext::blit() does not support sample count > 1 for integer source formats");
+        const srcFull = sr[0] === 0 && sr[1] === 0 && sr[2] === srcW && sr[3] === srcH;
+        const dstFull = dr[0] === 0 && dr[1] === 0 && dr[2] === dstW && dr[3] === dstH;
         if (
-            !complex && src !== dst && src.format === dst.format && src.width === dst.width && src.height === dst.height &&
+            !complex && srcFull && dstFull && src !== dst && src.format === dst.format && src.width === dst.width && src.height === dst.height &&
             src.mipCount === 1 && dst.mipCount === 1 && src.arraySize === 1 && dst.arraySize === 1 && src.sampleCount === dst.sampleCount
         ) {
             this.getEncoder().copyTextureToTexture({ texture: src.gpuTexture }, { texture: dst.gpuTexture }, [src.width, src.height, 1]);
             return;
         }
+        if (complex && src.sampleCount > 1) throw new RuntimeError("RenderContext::blit() does not support sample count > 1 for complex blit");
+        if (srcKind !== "f32") {
+            if (src.sampleCount > 1) throw new RuntimeError("RenderContext::blit() requires non-integer source format for multi-sampled textures");
+            if (complex) throw new RuntimeError("RenderContext::blit() requires non-integer source format for complex blit");
+        }
         const dstKind = blitKind(dst.format);
-        const key = `${dst.gpuFormat}|${srcKind}|${reductions.join(",")}|${filter}|${src.sampleCount}`;
+        const key = `${dst.gpuFormat}|${srcKind}|${reductions.join(",")}|${complex}|${filter}|${src.sampleCount}`;
         let pipeline = this.blitPipelines.get(key);
         if (!pipeline) {
-            const module = this.device.gpuDevice.createShaderModule({ code: blitWgsl(srcKind, dstKind, reductions, filter === "linear", src.sampleCount) });
+            const module = this.device.gpuDevice.createShaderModule({ code: blitWgsl(srcKind, dstKind, reductions, filter === "linear", src.sampleCount, complex) });
             pipeline = this.device.gpuDevice.createRenderPipeline({
                 layout: "auto",
                 vertex: { module, entryPoint: "vsMain" },
@@ -239,7 +277,18 @@ export class RenderContext extends ComputeContext {
             });
             this.blitPipelines.set(key, pipeline);
         }
-        const entries: GPUBindGroupEntry[] = [{ binding: 0, resource: src.getSRV(srcMip, 1, srcLayer, 1) }];
+        // BlitParamsCB: srcRect offset/scale in uv, then the component transforms (shared when both are the defaults).
+        const makeParams = () => {
+            const params = new Float32Array(20);
+            params.set(srcFull ? [0, 0, 1, 1] : [sr[0]! / srcW, sr[1]! / srcH, (sr[2]! - sr[0]!) / srcW, (sr[3]! - sr[1]!) / srcH]);
+            transforms.forEach((t, i) => params.set(t, 4 + 4 * i));
+            const buffer = this.device.gpuDevice.createBuffer({ size: params.byteLength, usage: GPUBufferUsage.UNIFORM, mappedAtCreation: true });
+            new Float32Array(buffer.getMappedRange()).set(params);
+            buffer.unmap();
+            return buffer;
+        };
+        const paramsBuffer = srcFull && identity ? (this.blitDefaultParams ??= makeParams()) : makeParams();
+        const entries: GPUBindGroupEntry[] = [{ binding: 0, resource: src.getSRV(srcMip, 1, srcLayer, 1) }, { binding: 2, resource: { buffer: paramsBuffer } }];
         if (srcKind === "f32" && src.sampleCount === 1) {
             let sampler = this.blitSamplers.get(filter);
             if (!sampler) {
@@ -250,10 +299,11 @@ export class RenderContext extends ComputeContext {
         }
         const bindGroup = this.device.gpuDevice.createBindGroup({ layout: pipeline.getBindGroupLayout(0), entries });
         const pass = this.getEncoder().beginRenderPass(this.withTimestamps({
-            colorAttachments: [{ view: dst.getRTV(dstMip, dstLayer), loadOp: "clear", clearValue: { r: 0, g: 0, b: 0, a: 0 }, storeOp: "store" }],
+            colorAttachments: [{ view: dst.getRTV(dstMip, dstLayer), loadOp: "load", storeOp: "store" }],
         }));
         pass.setPipeline(pipeline);
         pass.setBindGroup(0, bindGroup);
+        pass.setViewport(dr[0]!, dr[1]!, dr[2]! - dr[0]!, dr[3]! - dr[1]!, 0, 1);
         pass.draw(3);
         pass.end();
     }

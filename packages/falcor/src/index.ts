@@ -79,6 +79,7 @@ export * from "./Utils/Image/ImageCompare.js";
 export * from "./Utils/UI/DomWidgets.js";
 export * from "./Utils/UI/OverlayDrawList.js";
 export * from "./Utils/UI/InputTypes.js";
+export * from "./Utils/UI/PixelZoom.js";
 export * from "./Core/Program/ShaderSources.js";
 export * from "./Core/SampleApp.js";
 export * from "./Utils/Scripting/Testbed.js";
