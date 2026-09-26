@@ -11,6 +11,8 @@ import { createServer } from "vite";
 import { chromium } from "playwright";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { existsSync, realpathSync } from "node:fs";
+import { dirListing } from "../../../scripts/vite-plugin-dir-listing.mjs";
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../../..");
 const useSwiftShader = process.argv.includes("--swiftshader");
@@ -28,6 +30,7 @@ const vite = await createServer({
         },
     },
     logLevel: "warn",
+    plugins: [dirListing({ root: repoRoot, allow: existsSync(resolve(repoRoot, "Falcor/media")) ? [realpathSync(resolve(repoRoot, "Falcor/media"))] : [] })],
 });
 await vite.listen();
 const port = vite.config.server.port === 0 ? vite.httpServer.address().port : vite.config.server.port;

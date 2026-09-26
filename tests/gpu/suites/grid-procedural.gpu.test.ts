@@ -5,7 +5,7 @@
  * whose interior native's signed flood fill leaves partly empty. The volume's density grid binds.
  */
 
-import { Buffer, ComputePass, MemoryType, ResourceBindFlags, initScripting, runSceneScript } from "@web-falcor/falcor";
+import { Buffer, ComputePass, GridVolumeBridge, MemoryType, ResourceBindFlags, SceneBuilderBridge, initScripting, runSceneScript } from "@web-falcor/falcor";
 import { gpuTest, expectEq } from "../harness/registry.js";
 
 gpuTest("Grid.proceduralMatchesNative", async ({ device }) => {
@@ -46,3 +46,14 @@ gpuTest("Grid.gpuLookupsMatchNativeProbes", async ({ device }) => {
     expectEq(bad.length, 0, "GPU lookups equal native getValue at every probe");
 });
 
+
+// GridVolume.loadGridSequence(slot, directory): every .vdb/.nvdb in it, by length then name (native's sort),
+// over the dev server's directory listing.
+gpuTest("GridVolume.loadGridSequenceDirectory", async () => {
+    const builder = new SceneBuilderBridge();
+    const files = await (builder as unknown as { listGridDirectory(p: string, base: string): Promise<string[]> }).listGridDirectory("openvdb", "/Falcor/media");
+    expectEq(files.map((f) => f.slice(f.lastIndexOf("/") + 1)).join(), "cube.vdb,smoke.vdb,torus.vdb,sphere.vdb", "native order");
+    const volume = new GridVolumeBridge("Seq");
+    volume.loadGridSequence("Density", "openvdb", "density");
+    expectEq(volume.gridSequences[0]!.directory, true, "a string is the directory overload");
+});

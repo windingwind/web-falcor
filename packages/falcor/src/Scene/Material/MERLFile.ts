@@ -55,6 +55,8 @@ export interface MERLIndexMap {
     height: number;
     /** One index per texel, row-major from the top-left; wraps modulo the BRDF count. */
     indices: Uint8Array;
+    /** Loaded from an Index texture (native keeps it in the TextureManager, with mips). */
+    fromTexture?: boolean;
 }
 
 /** Host-side data of a MERLMix material: N BRDFs plus the map that selects them. */

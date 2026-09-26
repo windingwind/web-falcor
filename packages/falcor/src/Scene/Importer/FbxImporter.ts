@@ -699,9 +699,9 @@ export class FbxImporter {
      *  smoothNormals is set (aiProcess_GenNormals / GenSmoothNormals).
      *  Materials are ignored (the caller assigns its own material/instance).
      *  `filename` must keep the real extension so assimp picks the right importer. */
-    static async parseMeshOnly(bytes: Uint8Array, filename: string, smoothNormals = false): Promise<{ vertices: StaticVertex[]; indices: Uint32Array }> {
-        // TriangleMesh::createFromFile's flags (default ImportFlags: no JoinIdenticalVertices).
-        const flags = aiProcess.FlipUVs | aiProcess.Triangulate | aiProcess.PreTransformVertices | (smoothNormals ? aiProcess.GenSmoothNormals : aiProcess.GenNormals);
+    static async parseMeshOnly(bytes: Uint8Array, filename: string, smoothNormals = false, joinIdenticalVertices = false): Promise<{ vertices: StaticVertex[]; indices: Uint32Array }> {
+        // TriangleMesh::createFromFile's flags (ImportFlags GenSmoothNormals / JoinIdenticalVertices).
+        const flags = aiProcess.FlipUVs | aiProcess.Triangulate | aiProcess.PreTransformVertices | (smoothNormals ? aiProcess.GenSmoothNormals : aiProcess.GenNormals) | (joinIdenticalVertices ? aiProcess.JoinIdenticalVertices : 0);
         const json = await assimpImport([{ name: filename.split("/").pop()!, bytes }], flags, 0, `TriangleMesh.createFromFile('${filename}')`);
 
         // Bake node transforms (native aiProcess_PreTransformVertices).

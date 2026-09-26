@@ -1,7 +1,8 @@
 /**
  * Asset path resolution mirroring Falcor/Core/AssetResolver.h over URLs.
  * Web divergence (docs §9): file existence is an HTTP HEAD probe, so
- * resolvePath is async; resolvePathPattern has no directory listing to glob.
+ * resolvePath is async; resolvePathPattern globs over the dev server's directory
+ * listing (`/__webfalcor/ls`, scripts/vite-plugin-dir-listing.mjs; none on static hosting).
  */
 
 import { ArgumentError } from "./Error.js";
@@ -25,6 +26,40 @@ export enum SearchPathPriority {
 export const kProjectMediaUrl = "/Falcor/media";
 
 export type ExistsProbe = (url: string) => Promise<boolean>;
+/** Lists a directory's regular files (names), or null if it doesn't exist or listings are unavailable. */
+export type DirectoryLister = (url: string) => Promise<string[] | null>;
+
+/** The dev server's directory listing (scripts/vite-plugin-dir-listing.mjs): files and subdirectories of a served path. */
+export async function fetchDirectoryListing(url: string): Promise<{ files: string[]; dirs: string[] } | null> {
+    const origin = typeof location !== "undefined" ? location.origin : "http://localhost";
+    const u = new URL(url, origin);
+    if (u.origin !== origin) return null;
+    let pending = listingCache.get(u.pathname);
+    if (!pending) {
+        pending = (async () => {
+            try {
+                const res = await fetch(`/__webfalcor/ls?path=${encodeURIComponent(u.pathname)}`);
+                if (!res.ok || !(res.headers.get("content-type") ?? "").includes("json")) return null;
+                return (await res.json()) as { files: string[]; dirs: string[] };
+            } catch {
+                return null;
+            }
+        })();
+        listingCache.set(u.pathname, pending);
+    }
+    return pending;
+}
+const listingCache = new Map<string, Promise<{ files: string[]; dirs: string[] } | null>>();
+
+/** Default lister over fetchDirectoryListing. */
+export const listDirectory: DirectoryLister = async (url) => (await fetchDirectoryListing(url))?.files ?? null;
+
+/** Virtual file-system roots Python scripts see the served tree under (scene scripts, Testbed); paths map back by dropping them. */
+export const kPythonFsRoots = ["/mogwai", "/testbed"];
+function fromPythonFs(path: string): string {
+    for (const root of kPythonFsRoots) if (path.startsWith(`${root}/`)) return path.slice(root.length);
+    return path;
+}
 
 /** Absolute for URL purposes: root-relative path or scheme-qualified. */
 export function isAbsoluteUrl(path: string): boolean {
@@ -88,11 +123,14 @@ export function clearUrlExistsCache(): void {
 export class AssetResolver {
     private searchContexts: string[][] = [[], [], []];
 
-    constructor(private readonly exists: ExistsProbe = urlExists) {}
+    constructor(
+        private readonly exists: ExistsProbe = urlExists,
+        private readonly list: DirectoryLister = listDirectory,
+    ) {}
 
     /** Copy (native AssetResolver is a value type: Mogwai saves/restores the default). */
     clone(): AssetResolver {
-        const r = new AssetResolver(this.exists);
+        const r = new AssetResolver(this.exists, this.list);
         r.searchContexts = this.searchContexts.map((c) => [...c]);
         return r;
     }
@@ -104,6 +142,7 @@ export class AssetResolver {
     async resolvePath(path: string, category: AssetCategory = AssetCategory.Any): Promise<string> {
         this.checkCategory(category);
         if (!path) return "";
+        path = fromPythonFs(path);
         if (isAbsoluteUrl(path)) {
             const url = normalizeUrl(path);
             return (await this.exists(url)) ? url : "";
@@ -114,10 +153,32 @@ export class AssetResolver {
         return resolved;
     }
 
-    /** Mirrors resolvePathPattern — not available: browsers cannot list server directories (docs §9). */
-    async resolvePathPattern(path: string, pattern: string, _firstMatchOnly = false, category: AssetCategory = AssetCategory.Any): Promise<string[]> {
+    /**
+     * Mirrors resolvePathPattern: files in the directory `path` (absolute, else under the search paths) whose
+     * name fully matches the ECMAScript regex `pattern` (std::regex_match), in listing order.
+     */
+    async resolvePathPattern(path: string, pattern: string, firstMatchOnly = false, category: AssetCategory = AssetCategory.Any): Promise<string[]> {
         this.checkCategory(category);
-        Logger.warning(`Failed to resolve path pattern '${path}/${pattern}' for asset type '${AssetCategory[category]}' (no directory listing on the web).`);
+        const regex = new RegExp(`^(?:${pattern})$`);
+        path = fromPythonFs(path);
+        let resolved = isAbsoluteUrl(path) ? await this.glob(normalizeUrl(path), regex, firstMatchOnly) : [];
+        if (resolved.length === 0 && !isAbsoluteUrl(path)) resolved = await this.globIn(category, path, regex, firstMatchOnly);
+        if (resolved.length === 0 && !isAbsoluteUrl(path) && category !== AssetCategory.Any) resolved = await this.globIn(AssetCategory.Any, path, regex, firstMatchOnly);
+        if (resolved.length === 0) Logger.warning(`Failed to resolve path pattern '${path}/${pattern}' for asset type '${AssetCategory[category]}'.`);
+        return resolved;
+    }
+
+    /** Mirrors globFilesInDirectory. */
+    private async glob(dir: string, regex: RegExp, firstMatchOnly: boolean): Promise<string[]> {
+        const files = (await this.list(dir)) ?? [];
+        const matches = files.filter((name) => regex.test(name)).map((name) => `${dir.replace(/\/+$/, "")}/${name}`);
+        return firstMatchOnly ? matches.slice(0, 1) : matches;
+    }
+    private async globIn(category: AssetCategory, path: string, regex: RegExp, firstMatchOnly: boolean): Promise<string[]> {
+        for (const searchPath of this.searchContexts[category]!) {
+            const resolved = await this.glob(normalizeUrl(`${searchPath}/${path}`), regex, firstMatchOnly);
+            if (resolved.length > 0) return resolved;
+        }
         return [];
     }
 

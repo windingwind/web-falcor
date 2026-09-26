@@ -2,6 +2,7 @@ import { defineConfig } from "vite";
 import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
 import { realpathSync } from "node:fs";
+import { dirListing } from "../../scripts/vite-plugin-dir-listing.mjs";
 
 // Root Vite at the repo (like tests/gpu/harness) so asset trees outside mogwai
 // — /Falcor, /packages/falcor/shaders, /tools, /node_modules/pyodide — serve as static files.
@@ -29,6 +30,7 @@ export default defineConfig({
         },
     },
     plugins: [
+        dirListing({ root: repoRoot, allow: falcorMediaReal ? [falcorMediaReal] : [] }),
         {
             name: "web-falcor:mogwai-entry",
             configureServer(server) {

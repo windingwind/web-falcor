@@ -2,7 +2,7 @@
  * Scene.stats / getSceneStats against native `scene.stats` (tests/oracle/render-native-scene-stats.py).
  * Counts must match; memory sizes follow the web's own layouts (48-byte vertices, 32-bit indices,
  * flattened instances, software BVH), so they are only logged, as are transformCount (no scene graph
- * here) and the vertex counts: native MikkTSpace splits vertices at UV seams, the web keeps them shared.
+ * here). Vertex counts are exact except the residuals below.
  */
 
 import { AssetCategory, AssetResolver, initScripting, runSceneScript } from "@web-falcor/falcor";
@@ -16,6 +16,13 @@ const kExact = [
     "gridVolumeCount", "gridCount", "gridVoxelCount",
 ];
 
+/**
+ * Known vertex-count residuals: CesiumMan's glTF goes through the web GltfImporter, which lacks Assimp's
+ * JoinIdenticalVertices (native imports glTF with Assimp); the spheres scenes' createSphere poles merge
+ * slightly differently (browser vs glibc sin/cos last bits change which pole vertices compare equal).
+ */
+const kVertexResiduals: Record<string, number> = { "test_scenes/cesium_man/CesiumMan.pyscene": 0.4, "inv_rendering_scenes/spheres_material_init.pyscene": 1e-3, "inv_rendering_scenes/spheres_material_ref.pyscene": 1e-3 };
+
 gpuTest("Scene.statsMatchNative", async ({ device }) => {
     await initScripting("/node_modules/pyodide");
     const native = (await (await fetch("/tests/oracle/out-native/scene-stats.json")).json()) as Record<string, Record<string, number>>;
@@ -24,11 +31,20 @@ gpuTest("Scene.statsMatchNative", async ({ device }) => {
         const url = await AssetResolver.getDefaultResolver().resolvePath(path, AssetCategory.Scene);
         const scene = await runSceneScript(device, await (await fetch(url)).text(), url.slice(0, url.lastIndexOf("/")), { path: url });
         const got = scene.stats as unknown as Record<string, number>;
-        for (const k of kExact) if (got[k] !== want[k]) bad.push(`${path} ${k}: ${got[k]} vs ${want[k]}`);
+        for (const k of kExact) {
+            if (got[k] === want[k]) continue;
+            const tol = k.endsWith("VertexCount") ? kVertexResiduals[path] : undefined;
+            if (tol !== undefined && Math.abs(got[k]! - want[k]!) <= tol * want[k]!) console.error(`# scene-stats ${path} ${k}: ${got[k]} vs ${want[k]} (known residual)`);
+            else bad.push(`${path} ${k}: ${got[k]} vs ${want[k]}`);
+        }
         const logged = Object.keys(want).filter((k) => !kExact.includes(k) && got[k] !== want[k]).map((k) => `${k} ${got[k]}/${want[k]}`);
         console.error(`# scene-stats ${path}: other fields web/native: ${logged.join(", ")}`);
         const text = scene.getSceneStatsText();
-        expectEq(text.startsWith(`Path: ${url}`) && text.includes(`  Mesh count: ${want["meshCount"]}`), true, `stats text for ${path}`);
+        // Native prints the last import path (a pyscene's imported asset comes after the pyscene itself).
+        const last = scene.importPaths.at(-1) ?? url;
+        if (!(text.startsWith(`Path: ${last}`) && text.includes(`  Mesh count: ${want["meshCount"]}`))) bad.push(`${path}: stats text ${JSON.stringify(text.split("\n").slice(0, 2))}`);
+        scene.destroy();
     }
+    for (const line of bad) console.error(`# scene-stats mismatch ${line}`);
     expectEq(bad.length, 0, `mismatches: ${bad.join("; ")}`);
 });

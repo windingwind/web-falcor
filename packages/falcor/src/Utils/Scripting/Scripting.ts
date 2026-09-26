@@ -15,7 +15,7 @@ import { buildSceneFromCache, encodeTextureSources, loadSceneCache, sceneCacheKe
 import { createPass, type RenderPass } from "../../RenderGraph/RenderPass.js";
 import { Properties } from "../Properties.js";
 import { RuntimeError } from "../../Core/Error.js";
-import { AssetResolver, withScriptSearchPath } from "../../Core/AssetResolver.js";
+import { AssetResolver, fetchDirectoryListing, withScriptSearchPath } from "../../Core/AssetResolver.js";
 import { AnimationBridge, CameraBridge, GridVolumeBridge, LightBridge, MaterialBridge, SceneBuilderBridge, SceneBuilderFlags, SDFGridBridge, TransformBridge, TriangleMesh, kSceneBuilderFlagsPython, makeTransform } from "../../Scene/SceneBuilder.js";
 import type { Scene } from "../../Scene/Scene.js";
 import { LightType, type StaticVertex } from "../../Scene/SceneData.js";
@@ -364,10 +364,11 @@ class TriangleMesh:
         return _TriangleMesh.createDisk(radius, segments)
     @staticmethod
     def createFromFile(path, smoothNormals=False, flags=None):
-        # ImportFlags overload: GenSmoothNormals is the flag the web honors.
+        # ImportFlags overload (GenSmoothNormals, JoinIdenticalVertices).
         if isinstance(smoothNormals, int) and not isinstance(smoothNormals, bool):
             flags, smoothNormals = smoothNormals, False
-        return _TriangleMesh.createFromFile(path, smoothNormals or bool((flags or 0) & TriangleMeshImportFlags.GenSmoothNormals))
+        f = int(flags or 0)
+        return _TriangleMesh.createFromFile(path, smoothNormals or bool(f & TriangleMeshImportFlags.GenSmoothNormals), bool(f & TriangleMeshImportFlags.JoinIdenticalVertices))
 
 class CompositionOrder:
     Default = 1
@@ -635,7 +636,7 @@ async function runSceneScriptInternal(device: Device, source: string, baseUrl: s
             createCube: (size?: VecLike | null) => TriangleMesh.createCube(size ? new float3(size.x, size.y, size.z) : undefined),
             createSphere: (radius?: number, segmentsU?: number, segmentsV?: number) => TriangleMesh.createSphere(radius, segmentsU, segmentsV),
             createDisk: (radius?: number, segments?: number) => TriangleMesh.createDisk(radius, segments),
-            createFromFile: (path: string, smoothNormals?: boolean) => TriangleMesh.createFromFile(String(path), !!smoothNormals),
+            createFromFile: (path: string, smoothNormals?: boolean, joinIdenticalVertices?: boolean) => TriangleMesh.createFromFile(String(path), !!smoothNormals, !!joinIdenticalVertices),
             // Mutable builder: TriangleMesh() then addVertex()/addTriangle() (tutorial.pyscene).
             createEmpty: () => {
                 const vertices: StaticVertex[] = [];
@@ -718,7 +719,10 @@ async function runSceneScriptInternal(device: Device, source: string, baseUrl: s
 
     // Native runs scene scripts as files: define __file__ and provide their local imports.
     const sceneDir = `/mogwai${new URL(`${baseUrl.startsWith("http") ? baseUrl : location.origin + (baseUrl.startsWith("/") ? "" : "/") + baseUrl}/`).pathname.replace(/\/$/, "")}`;
-    if (/^\s*(from|import)\s/m.test(source)) writePythonFiles(await fetchLocalPythonModules(baseUrl, source, "/mogwai"));
+    const localModules = /^\s*(from|import)\s/m.test(source) ? await fetchLocalPythonModules(baseUrl, source, "/mogwai") : {};
+    writePythonFiles(localModules);
+    // glob / os.listdir in the script or its modules: mirror the scene directory's listing into Pyodide.
+    if ([source, ...Object.values(localModules)].some((t) => /\b(glob\.|os\.(listdir|scandir|walk)\b)/.test(t))) await mirrorDirectoryTree(sceneDir.slice("/mogwai".length), "/mogwai");
     pyodide.globals.set("__file__", `${sceneDir}/scene.pyscene`);
     // Modules the scene imports do `from falcor import *` and expect the scene API, as natively.
     const exposeSceneApi = `
@@ -728,8 +732,10 @@ _scene_falcor = _types.ModuleType("falcor")
 if _prev_falcor is not None:
     for _k in dir(_prev_falcor):
         if not _k.startswith("__"): setattr(_scene_falcor, _k, getattr(_prev_falcor, _k))
+# Not sceneBuilder: native's falcor module has none, and a cached module's 'from falcor import *'
+# would otherwise hand the next scene the previous scene's builder.
 for _k, _v in list(globals().items()):
-    if not _k.startswith("_") and _k != "sys": setattr(_scene_falcor, _k, _v)
+    if not _k.startswith("_") and _k not in ("sys", "sceneBuilder"): setattr(_scene_falcor, _k, _v)
 sys.modules["falcor"] = _scene_falcor
 `;
     // Each scene script runs in fresh globals, as natively: a script rebinding a name (e.g.
@@ -833,6 +839,24 @@ export async function fetchLocalPythonModules(dirUrl: string, source: string, ro
         }
     }
     return files;
+}
+
+/**
+ * Mirrors a served directory tree (the dev server's listing) into Pyodide's file system as empty
+ * placeholder files, so Python's glob/os.listdir/os.path.exists see it; existing files are kept.
+ * Paths the script builds from them map back to URLs in AssetResolver (kPythonFsRoots).
+ */
+async function mirrorDirectoryTree(dirPath: string, root: string, depth = 3, budget = { entries: 5000 }): Promise<void> {
+    const listing = await fetchDirectoryListing(dirPath);
+    if (!listing) return;
+    const fs = (pyodide as unknown as { FS: { mkdirTree(p: string): void; writeFile(p: string, d: string): void; analyzePath(p: string): { exists: boolean } } }).FS;
+    fs.mkdirTree(`${root}${dirPath}`);
+    for (const name of listing.files) {
+        if (budget.entries-- <= 0) return;
+        const p = `${root}${dirPath}/${name}`;
+        if (!fs.analyzePath(p).exists) fs.writeFile(p, "");
+    }
+    if (depth > 0) for (const d of listing.dirs) await mirrorDirectoryTree(`${dirPath}/${d}`, root, depth - 1, budget);
 }
 
 /** Writes path -> source files into Pyodide's file system. */

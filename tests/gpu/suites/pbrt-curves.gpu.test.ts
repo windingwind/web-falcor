@@ -44,7 +44,8 @@ function strandDistance(p: [number, number, number]): { left: boolean; d: number
 gpuTest("PbrtCurves.strandsBecomeSweptSpheresOrPolyTubes", async ({ device }) => {
     const lss = await load(device);
     expectEq(lss.hasCurves, true, "curves stay curves by default");
-    expectEq(lss.stats.materials, 2, "one aggregate per material");
+    // One aggregate per material, plus native's dummy mesh material (the scene has no meshes).
+    expectEq(lss.stats.materials, 3, "one aggregate per material");
 
     let leftWorst = 0;
     let rightOutside = 0;

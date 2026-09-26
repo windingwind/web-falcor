@@ -30,7 +30,7 @@ import { getTextureSlotSrgb } from "./Material/TextureSlots.js";
 import { float2, float3, float4 } from "../Utils/Math/Vector.js";
 import { float4x4, inverse, transpose, matrixFromTranslation, matrixFromScaling, mulMat } from "../Utils/Math/Matrix.js";
 import { RuntimeError } from "../Core/Error.js";
-import { AssetCategory, AssetResolver, resolveAssetUrl } from "../Core/AssetResolver.js";
+import { AssetCategory, AssetResolver, fetchDirectoryListing, isAbsoluteUrl, normalizeUrl, resolveAssetUrl } from "../Core/AssetResolver.js";
 import { Logger } from "../Utils/Logger.js";
 
 /** The python prelude wraps bridge objects in a setattr guard; JS entry
@@ -45,7 +45,7 @@ export interface TriangleMeshDesc {
     vertices: StaticVertex[];
     indices: Uint32Array;
     /** TriangleMesh.createFromFile: geometry is loaded from this asset in resolve(). */
-    _fromFile?: { path: string; smoothNormals: boolean };
+    _fromFile?: { path: string; smoothNormals: boolean; joinIdenticalVertices?: boolean };
     /** TriangleMesh::setName / setFrontFaceCW (clockwise meshes get their winding flipped in resolve()). */
     name?: string;
     frontFaceCW?: boolean;
@@ -54,8 +54,8 @@ export interface TriangleMeshDesc {
 /** Mirrors TriangleMesh factories (TriangleMesh.cpp). */
 export const TriangleMesh = {
     /** Mirrors TriangleMesh::createFromFile; the asset is fetched in resolve(). */
-    createFromFile(path: string, smoothNormals = false): TriangleMeshDesc {
-        return { vertices: [], indices: new Uint32Array(0), _fromFile: { path: String(path), smoothNormals: !!smoothNormals } };
+    createFromFile(path: string, smoothNormals = false, joinIdenticalVertices = false): TriangleMeshDesc {
+        return { vertices: [], indices: new Uint32Array(0), _fromFile: { path: String(path), smoothNormals: !!smoothNormals, joinIdenticalVertices: !!joinIdenticalVertices } };
     },
     createQuad(size: float2 = new float2(1, 1)): TriangleMeshDesc {
         const hx = 0.5 * size.x;
@@ -361,7 +361,7 @@ export class MaterialBridge {
             // must be point-sampled and the packed array shares a linear sampler,
             // so the bytes go into the material buffer instead (docs §9).
             if (t.slot === "Index" && this.materialType === MaterialType.MERLMix) {
-                this._indexMap = await loadIndexMap(url, t.path);
+                this._indexMap = { ...(await loadIndexMap(url, t.path)), fromTexture: true };
                 continue;
             }
             // Mirrors MaterialTextureLoader::loadTexture: the material's own slot
@@ -1053,7 +1053,7 @@ export class GridVolumeBridge {
     emissionTemperature = 0;
     grids: { slot: string; path: string; gridname: string }[] = [];
     /** Pending loadGridSequence calls: several files feeding one slot. */
-    gridSequences: { slot: string; paths: string[]; gridname: string }[] = [];
+    gridSequences: { slot: string; paths: string[]; gridname: string; directory?: boolean }[] = [];
     frameRate = 30;
     startFrame = 0;
     playbackEnabled = true;
@@ -1069,12 +1069,16 @@ export class GridVolumeBridge {
         this.name = String(name);
     }
 
-    /** Mirrors GridVolume::loadGridSequence(slot, paths, gridname). */
+    /**
+     * Mirrors GridVolume::loadGridSequence(slot, paths, gridname) and its directory overload (a string: every
+     * .vdb/.nvdb in the directory, listed in resolve(); §9: the count returned here is 1 until then).
+     */
     loadGridSequence(slot: unknown, paths: unknown, gridname: unknown): number {
         // A python list arrives as a proxy, not a JS array; both are iterable.
         const iterable = paths as Iterable<unknown> | null;
-        const list = (typeof paths === "string" || !iterable || typeof iterable[Symbol.iterator] !== "function" ? [paths] : [...iterable]).map((p) => String(p));
-        this.gridSequences.push({ slot: String(slot), paths: list, gridname: String(gridname) });
+        const directory = typeof paths === "string";
+        const list = (directory || !iterable || typeof iterable[Symbol.iterator] !== "function" ? [paths] : [...iterable]).map((p) => String(p));
+        this.gridSequences.push({ slot: String(slot), paths: list, gridname: String(gridname), directory });
         return list.length;
     }
 
@@ -1146,7 +1150,7 @@ export class SceneBuilderBridge {
     private meshGeometry: TriangleMeshDesc[] = [];
     private meshInstanced = new Map<number, { transform: float4x4; nodeID: number }[]>();
     private nodes: float4x4[] = [];
-    private lights: LightBridge[] = [];
+    private mLights: LightBridge[] = [];
     /** Cameras from imported files (native adds them at import, ahead of later pyscene cameras). */
     private importedCameras: ImportedCamera[] = [];
     private gridVolumesList: GridVolumeBridge[] = [];
@@ -1363,12 +1367,37 @@ export class SceneBuilderBridge {
     }
 
     addLight(light: LightBridge): void {
-        this.lights.push(unwrapGuard(light));
+        this.mLights.push(unwrapGuard(light));
     }
 
-    /** Mirrors SceneBuilder::getLight (python None when absent). */
-    getLight(name: string): LightBridge | undefined {
-        return this.lights.find((l) => l.name === String(name));
+    /** Deferred edits to imported lights (by name, or all of them for name null); imports resolve later. */
+    private lightEdits: { name: string | null; prop: string; value: unknown }[] = [];
+    private get hasImports(): boolean {
+        return this.commands.some((c) => c.kind === "import");
+    }
+    private deferredLight(name: string | null): unknown {
+        const edits = this.lightEdits;
+        return new Proxy({}, {
+            set(_t, prop, value) {
+                edits.push({ name, prop: String(prop), value });
+                return true;
+            },
+            get(_t, prop) {
+                return prop === "name" ? (name ?? undefined) : undefined;
+            },
+        });
+    }
+    /**
+     * Mirrors SceneBuilder::getLights: the builder's lights, plus (once something is imported) a handle
+     * standing for the imported lights, whose property writes apply to all of them in resolve().
+     */
+    get lights(): unknown[] {
+        return this.hasImports ? [...this.mLights, this.deferredLight(null)] : [...this.mLights];
+    }
+
+    /** Mirrors SceneBuilder::getLight (python None when absent; imported lights get a deferred handle). */
+    getLight(name: string): unknown {
+        return this.mLights.find((l) => l.name === String(name)) ?? (this.hasImports ? this.deferredLight(String(name)) : undefined);
     }
     /** Mirrors SceneBuilder::getGridVolume / getVolume by name. */
     getGridVolume(name: string): GridVolumeBridge | undefined {
@@ -1532,6 +1561,22 @@ export class SceneBuilderBridge {
         sdfGrids: { recipes: SDFGridRecipe[]; instances: { gridIndex: number; materialID: number; transform?: float4x4 }[] };
         cacheable: boolean;
     } | null = null;
+
+    /**
+     * GridVolume::loadGridSequence's directory enumeration: the .vdb/.nvdb files, by length then name, over the
+     * dev server's directory listing (the script directory, then the search paths).
+     */
+    private async listGridDirectory(path: string, baseUrl: string): Promise<string[]> {
+        const candidates = isAbsoluteUrl(path) ? [path] : [`${baseUrl}/${path}`, ...this.assetResolver.getSearchPaths().map((sp) => `${sp}/${path}`)];
+        for (const dir of candidates) {
+            const listing = await fetchDirectoryListing(normalizeUrl(dir));
+            if (!listing) continue;
+            const files = listing.files.filter((f) => /\.n?vdb$/i.test(f)).map((f) => `${normalizeUrl(dir)}/${f}`);
+            return files.sort((a, b) => (a.length !== b.length ? a.length - b.length : a < b ? -1 : a > b ? 1 : 0));
+        }
+        Logger.warning(`'${path}' does not exist.`);
+        return [];
+    }
 
     async resolve(device: Device, baseUrl: string): Promise<Scene> {
         this.importedCameras = [];
@@ -1773,7 +1818,7 @@ export class SceneBuilderBridge {
             const url = await resolveAssetUrl(geo._fromFile.path, baseUrl, AssetCategory.Any, this.assetResolver);
             const res = await fetch(url);
             if (!res.ok) throw new RuntimeError(`TriangleMesh.createFromFile: failed to fetch '${url}' (${res.status})`);
-            const loaded = await FbxImporter.parseMeshOnly(new Uint8Array(await res.arrayBuffer()), geo._fromFile.path, geo._fromFile.smoothNormals);
+            const loaded = await FbxImporter.parseMeshOnly(new Uint8Array(await res.arrayBuffer()), geo._fromFile.path, geo._fromFile.smoothNormals, geo._fromFile.joinIdenticalVertices);
             geo.vertices = loaded.vertices;
             geo.indices = loaded.indices;
             geo._fromFile = undefined;
@@ -1817,6 +1862,15 @@ export class SceneBuilderBridge {
             }
         });
 
+        // SceneBuilder::getScene: a scene without meshes (e.g. volumes only) gets a dummy (degenerate) mesh.
+        if (meshes.length === 0) {
+            Logger.warning("Scene contains no meshes. Creating a dummy mesh.");
+            const materialID = materials.length;
+            materials.push(new MaterialBridge(MaterialType.Standard, "Dummy").toDesc());
+            const vertices = copyVertexArray([{ position: new float3(0, 0, 0), normal: new float3(0, 1, 0), tangent: new float4(0, 0, 0, 0), texCrd: new float2(0, 0) }]);
+            meshes.push({ vertices, indices: new Uint32Array([0, 0, 0]), materialID, tangentSpace: "generate" });
+        }
+
         // Builder-added curves share the builder materials' IDs.
         for (const c of this.builderCurves) {
             let materialID = materialIDs.get(c.material);
@@ -1828,7 +1882,7 @@ export class SceneBuilderBridge {
             curves.push({ positionsRadii: c.positionsRadii, texCrds: null, indices: c.indices, materialID, transform: this.nodes[c.nodeID]! });
         }
 
-        const lights: AnalyticLight[] = this.lights.map((l) => {
+        const lights: AnalyticLight[] = this.mLights.map((l) => {
             const isArea = l.lightType === LightType.Rect || l.lightType === LightType.Disc || l.lightType === LightType.Sphere;
             return {
                 type: l.lightType,
@@ -1845,6 +1899,18 @@ export class SceneBuilderBridge {
                 animated: l.animated !== false,
             };
         });
+        // Apply deferred edits to imported lights (sceneBuilder.lights / getLight after importScene).
+        for (const edit of this.lightEdits) {
+            const targets = importedLights.filter((l) => edit.name === null || l.name === edit.name);
+            if (edit.name !== null && targets.length === 0) Logger.warning(`SceneBuilder.getLight('${edit.name}'): no such light`);
+            for (const l of targets) {
+                const v = edit.value as { x?: number; y?: number; z?: number } | boolean | number;
+                if (edit.prop === "active") l.active = !!v;
+                else if (edit.prop === "animated") l.animated = !!v;
+                else if (edit.prop === "intensity" && typeof v === "object") l.intensity = new float3(Number(v.x), Number(v.y), Number(v.z));
+                else Logger.warning(`Imported light ${l.name}.${edit.prop}: unsupported on the web bridge; ignored`);
+            }
+        }
         lights.push(...importedLights); // lights imported from FBX/assets
 
         // SDF grids (ND + SBS implementations; instances reference builder nodes).
@@ -2008,7 +2074,8 @@ export class SceneBuilderBridge {
             }
             for (const seq of v.gridSequences) {
                 const grids = [];
-                for (const path of seq.paths) {
+                const paths = seq.directory ? await this.listGridDirectory(seq.paths[0]!, baseUrl) : seq.paths;
+                for (const path of paths) {
                     const url = await resolveAssetUrl(path, baseUrl, AssetCategory.Any, this.assetResolver);
                     grids.push(await Grid.createFromUrl(device, url, seq.gridname));
                 }

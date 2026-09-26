@@ -639,10 +639,11 @@ export class Scene {
                 materialCount: this.materialDescs.length,
                 materialOpaqueCount: opaque.filter(Boolean).length,
                 materialMemoryInBytes: size("materialData"),
-                textureCount: tm.count,
+                // Native also registers measured materials' albedo LUTs and MERLMix index maps as textures.
+                textureCount: tm.count + this.measuredTextures.count,
                 textureCompressedCount: compressed,
-                textureTexelCount: texelCount,
-                textureTexelChannelCount: channelCount,
+                textureTexelCount: texelCount + this.measuredTextures.texels,
+                textureTexelChannelCount: channelCount + this.measuredTextures.texels * 4,
                 textureMemoryInBytes: this.builtTextureCount > 0 ? this.textureBuckets.reduce((n, t) => n + t.getTextureSizeInBytes(), 0) : 0,
             },
             blasGroupCount: bvhMemory > 0 ? 1 : 0,
@@ -900,6 +901,7 @@ export class Scene {
     private mEnvMap: EnvMap | null = null;
     private hasEmissiveMaterials = false;
     private materialTypes = new Set<MaterialType>();
+    private measuredTextures = { count: 0, texels: 0 };
     private materialDescs: SceneMaterialDesc[] = [];
     /** Byte offsets of each MERL material's table and albedo LUT in materialBuffer0. */
     private readonly merlOffsets = new Map<number, { data: number; lut: number }>();
@@ -1265,6 +1267,23 @@ export class Scene {
             bufferSize += floats * 4;
             return at;
         };
+        // Textures native keeps in its TextureManager but the web in the material buffer (for getSceneStats).
+        this.measuredTextures = { count: 0, texels: 0 };
+        const addMeasuredTexture = (w: number, h: number, mips = false) => {
+            this.measuredTextures.count++;
+            for (let [x, y] = [w, h]; ; [x, y] = [Math.max(1, x >> 1), Math.max(1, y >> 1)]) {
+                this.measuredTextures.texels += x * y;
+                if (!mips || (x === 1 && y === 1)) break;
+            }
+        };
+        materials.forEach((m, i) => {
+            if (m.merl) addMeasuredTexture(kMERLAlbedoLUTSize, 1);
+            else if (m.rgl) addMeasuredTexture(kRGLAlbedoLUTSize, 1);
+            else if (m.merlMix) {
+                addMeasuredTexture(kMERLAlbedoLUTSize, m.merlMix.brdfs.length);
+                if (m.merlMix.indexMap.fromTexture) addMeasuredTexture(m.merlMix.indexMap.width, m.merlMix.indexMap.height, true);
+            }
+        });
         materials.forEach((m, i) => {
             if (m.merl) {
                 const data = append(m.merl.data);
