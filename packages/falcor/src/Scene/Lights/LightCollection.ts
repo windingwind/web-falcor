@@ -133,6 +133,12 @@ export interface LightCollectionData {
     perMeshInstanceOffset: Uint32Array;
 }
 
+/**
+ * Per-triangle texture-averaged radiance by (mesh indices, emissive texels): it depends on the UVs only, so animated
+ * rebuilds reuse it (native integrates once and only updates positions per frame). NaN = not integrated yet.
+ */
+const averageCache = new WeakMap<Uint32Array, WeakMap<Float32Array, Float32Array>>();
+
 export function buildLightCollection(meshes: SceneMeshDesc[], materials: EmissiveMaterialInfo[]): LightCollectionData {
     interface Tri {
         posW: float3[];
@@ -141,6 +147,7 @@ export function buildLightCollection(meshes: SceneMeshDesc[], materials: Emissiv
         area: number;
         materialID: number;
         lightIdx: number;
+        average?: { cache: Float32Array; index: number };
     }
     const tris: Tri[] = [];
     const meshLights: number[] = []; // instanceID, triangleOffset, triangleCount, materialID
@@ -169,7 +176,16 @@ export function buildLightCollection(meshes: SceneMeshDesc[], materials: Emissiv
             const len = Math.hypot(n.x, n.y, n.z);
             const area = 0.5 * len;
             const normal = len > 0 ? new float3((flip * n.x) / len, (flip * n.y) / len, (flip * n.z) / len) : new float3(0, 0, 1);
-            tris.push({ posW: p, uv, normal, area, materialID: mesh.materialID, lightIdx });
+            let average: Tri["average"];
+            const texels = mat.emissiveTexture?.rgb;
+            if (texels) {
+                let perTexture = averageCache.get(mesh.indices);
+                if (!perTexture) averageCache.set(mesh.indices, (perTexture = new WeakMap()));
+                let cache = perTexture.get(texels);
+                if (!cache) perTexture.set(texels, (cache = new Float32Array(mesh.indices.length).fill(NaN)));
+                average = { cache, index: t };
+            }
+            tris.push({ posW: p, uv, normal, area, materialID: mesh.materialID, lightIdx, average });
         }
         meshLights.push(instanceID, triangleOffset, tris.length - triangleOffset, mesh.materialID);
     });
@@ -195,7 +211,9 @@ export function buildLightCollection(meshes: SceneMeshDesc[], materials: Emissiv
         const mat = materials[tri.materialID]!;
         let rad = mat.radiance;
         if (mat.emissiveTexture) {
-            const avg = integrateEmissiveTexture(mat.emissiveTexture, tri.uv);
+            const c = tri.average;
+            if (c && Number.isNaN(c.cache[c.index]!)) c.cache.set(integrateEmissiveTexture(mat.emissiveTexture, tri.uv), c.index);
+            const avg: [number, number, number] = c ? [c.cache[c.index]!, c.cache[c.index + 1]!, c.cache[c.index + 2]!] : integrateEmissiveTexture(mat.emissiveTexture, tri.uv);
             const factor = mat.emissiveFactor ?? 1;
             rad = [avg[0] * factor, avg[1] * factor, avg[2] * factor];
         }

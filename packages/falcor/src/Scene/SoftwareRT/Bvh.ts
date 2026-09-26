@@ -412,6 +412,64 @@ function emptyBvh(): BvhBuildResult {
     return { nodes, tris: new Float32Array(12), nodeCount: 1, order: new Uint32Array(0), buildArea: 0 };
 }
 
+/**
+ * One BVH over two: a root whose left child is `a` (node 1) and right child is `b`, with `a`'s triangles first.
+ * Animated scenes keep static geometry in `a` (built once) and refit only `b` per frame (see refreshStitchedBvh).
+ */
+export function stitchBvhs(a: BvhBuildResult, b: BvhBuildResult): BvhBuildResult {
+    const aTris = a.tris.length / 12;
+    const nodeCount = 1 + a.nodeCount + b.nodeCount;
+    const nodes = new Float32Array(nodeCount * 8);
+    const u = new Uint32Array(nodes.buffer);
+    nodes.set(a.nodes.subarray(0, a.nodeCount * 8), 8);
+    nodes.set(b.nodes.subarray(0, b.nodeCount * 8), (1 + a.nodeCount) * 8);
+    // Inner nodes point at their right child (left = node + 1); leaves at their first triangle.
+    const shift = (first: number, count: number, nodeShift: number, triShift: number) => {
+        for (let i = first; i < first + count; i++) {
+            const o = i * 8;
+            u[o + 3] = u[o + 3]! + (u[o + 7]! > 0 ? triShift : nodeShift);
+        }
+    };
+    shift(1, a.nodeCount, 1, 0);
+    shift(1 + a.nodeCount, b.nodeCount, 1 + a.nodeCount, aTris);
+    u[3] = 1 + a.nodeCount; // root: right child = b's root
+    u[7] = 0;
+    const tris = new Float32Array(a.tris.length + b.tris.length);
+    tris.set(a.tris, 0);
+    tris.set(b.tris, a.tris.length);
+    const order = new Uint32Array(a.order.length + b.order.length);
+    order.set(a.order, 0);
+    for (let i = 0; i < b.order.length; i++) order[a.order.length + i] = b.order[i]! + a.order.length;
+    const result = { nodes, tris, nodeCount, order, buildArea: a.buildArea + b.buildArea };
+    refreshStitchedRoot(result);
+    return result;
+}
+
+/** Root bounds of a stitched BVH = its two children's. */
+function refreshStitchedRoot(st: BvhBuildResult): void {
+    const u = new Uint32Array(st.nodes.buffer, st.nodes.byteOffset, st.nodes.length);
+    const [l, r] = [8, u[3]! * 8];
+    for (let k = 0; k < 3; k++) {
+        st.nodes[k] = Math.min(st.nodes[l + k]!, st.nodes[r + k]!);
+        st.nodes[4 + k] = Math.max(st.nodes[l + 4 + k]!, st.nodes[r + 4 + k]!);
+    }
+}
+
+/**
+ * After `b` was refit in place (same topology), copies its bounds and triangles into the stitched tree.
+ * Returns the float ranges that changed: [nodes offset, nodes length] and [tris offset, tris length].
+ */
+export function refreshStitchedBvh(st: BvhBuildResult, a: BvhBuildResult, b: BvhBuildResult): { nodes: [number, number]; tris: [number, number] } {
+    const base = (1 + a.nodeCount) * 8;
+    for (let i = 0; i < b.nodeCount; i++) {
+        const [src, dst] = [i * 8, base + i * 8];
+        for (const k of [0, 1, 2, 4, 5, 6]) st.nodes[dst + k] = b.nodes[src + k]!;
+    }
+    st.tris.set(b.tris, a.tris.length);
+    refreshStitchedRoot(st);
+    return { nodes: [base, b.nodeCount * 8], tris: [a.tris.length, b.tris.length] };
+}
+
 export function buildBvh(triangles: BvhTriangle[]): BvhBuildResult {
     if (triangles.length === 0) return emptyBvh();
     return finishBvh(triangles, buildBvhSubtree(bvhInput(triangles)));

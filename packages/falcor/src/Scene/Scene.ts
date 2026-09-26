@@ -19,7 +19,7 @@ import { Camera } from "./Camera/Camera.js";
 import { FirstPersonCameraController, OrbiterCameraController, SixDoFCameraController, UpDirection, toControllerKeyEvent, toControllerMouseEvent, type CameraController } from "./Camera/CameraController.js";
 import { KeyboardEventType, ModifierFlags, type GamepadEvent, type GamepadState, type KeyboardEvent, type MouseEvent } from "../Utils/UI/InputTypes.js";
 import { float4x4, transpose, inverse } from "../Utils/Math/Matrix.js";
-import { buildBvh, buildBvhParallel, buildAabbBvh, refitBvh, bvhStackDepth, kBvhTraversalStackSize, type BvhBuildResult, type BvhTriangle } from "./SoftwareRT/Bvh.js";
+import { buildBvh, buildBvhParallel, buildAabbBvh, refitBvh, refreshStitchedBvh, stitchBvhs, bvhStackDepth, kBvhTraversalStackSize, type BvhBuildResult, type BvhTriangle } from "./SoftwareRT/Bvh.js";
 import { WorkerPool } from "../Utils/Threading/WorkerPool.js";
 import { packLights, LightType, SceneLight, type AnalyticLight } from "./SceneData.js";
 import { TextureManager, kMaxTextureBuckets } from "./Material/TextureManager.js";
@@ -869,6 +869,8 @@ export class Scene {
     private bvhTrisOffset = 0;
     /** Last animated-frame BVH, refit on the next animation step. */
     private animatedBvh: import("./SoftwareRT/Bvh.js").BvhBuildResult | null = null;
+    /** The BVH whose full layout is in the bvhNodes buffer (partial uploads update it in place). */
+    private uploadedBvh: import("./SoftwareRT/Bvh.js").BvhBuildResult | null = null;
     private invTransposeOffset = 0;
     /** Geometry instance (and node) index of SDF grid 0; mesh instances come first. */
     private sdfInstanceBase = 0;
@@ -1491,7 +1493,8 @@ export class Scene {
         // Host copies too: a destroyed scene still referenced (e.g. by a pass) must not pin them.
         this.lcMeshes = [];
         this.sourceMeshes = null;
-        this.animatedBvh = null;
+        this.animatedBvh = this.uploadedBvh = this.staticBvh = this.dynamicBvh = null;
+        this.staticWorldMats = this.staticLcInputs = null;
         this.lcTextureManager = new TextureManager();
     }
 
@@ -1616,6 +1619,10 @@ export class Scene {
 
     /** Rebuilds the merged software-RT BVH of a static scene after a geometry edit (updateForInverseRendering). */
     private rebuildStaticBvh(): void {
+        // Geometry changed: animate() must re-pose and rebuild its BVH halves from scratch.
+        this.animatedBvh = this.uploadedBvh = this.staticBvh = this.dynamicBvh = null;
+        this.staticWorldMats = this.staticLcInputs = null;
+        this.invalidateAnimation();
         const { bvhTris, displacedAabbs, displacedEntries } = Scene.collectBvhGeometry(this.lcMeshes, this.materialDescs);
         const bvh = buildBvh(bvhTris);
         if (bvhTris.length > 0) this.worldBounds = { min: [bvh.nodes[0]!, bvh.nodes[1]!, bvh.nodes[2]!], max: [bvh.nodes[4]!, bvh.nodes[5]!, bvh.nodes[6]!] };
@@ -2016,8 +2023,10 @@ export class Scene {
         // (glTF cameras/lights aim down local -Z; up is local +Y).
         if (this.hasAnimatedCameraOrLights) this.updateAnimatedCameraAndLights(globals);
         // Only the camera/lights animate (EmeraldSquare, BistroInterior): geometry, matrices and the BVH stay as built.
-        this.hasDynamicGeometry ??= this.computeHasDynamicGeometry();
+        this.dynamicMeshes ??= this.computeDynamicMeshes();
+        this.hasDynamicGeometry ??= this.dynamicMeshes.some((d) => d) || this.sceneCurves.some((c) => c.vertexCache);
         if (!this.hasDynamicGeometry) return true;
+        const dynamicMeshes = this.dynamicMeshes;
 
         // Per mesh: current world matrix + world-space vertex positions. Skinned
         // meshes deform to world space on the CPU (identity world matrix, skinned
@@ -2029,7 +2038,15 @@ export class Scene {
         const lcInputs: SceneMeshDesc[] = [];
         let emissiveChanged = false;
         let vbOffset = 0;
+        const staticMats = this.staticWorldMats;
         for (const [meshID, mesh] of meshes.entries()) {
+            if (staticMats && !dynamicMeshes[meshID]) {
+                worldMats.push(staticMats[meshID]!);
+                worldPos.push([]);
+                lcInputs.push(this.staticLcInputs![meshID]!);
+                vbOffset += mesh.vertices.length;
+                continue;
+            }
             // Morph (blend shapes) deform the bind pose first (glTF applies morph
             // before skinning); the morphed object-space verts feed skin or matrix.
             const base = mesh.polytubeCache
@@ -2070,6 +2087,10 @@ export class Scene {
             }
             vbOffset += mesh.vertices.length;
         }
+        if (!staticMats) {
+            this.staticWorldMats = worldMats.slice();
+            this.staticLcInputs = lcInputs.slice();
+        }
         // Mirrors LightCollection::update (UpdateTriangleVertices): emissive triangles follow
         // their animated instances; samplers refit/rebuild off emissiveVersion.
         if (emissiveChanged && this.hasEmissiveMaterials) {
@@ -2094,25 +2115,35 @@ export class Scene {
         this.lastWorldMats = world;
         this.buffers["worldMatrices"]!.setBlob(world);
 
-        // Rebuild the world-space triangle BVH over the current (rigid/skinned) verts.
-        const bvhTris: BvhTriangle[] = [];
-        meshes.forEach((mesh, meshID) => {
-            const wp = worldPos[meshID]!;
-            const flags = windingFlipFlag(worldMats[meshID]!);
-            for (let p = 0; p < mesh.indices.length / 3; p++) {
-                bvhTris.push({
-                    v0: wp[mesh.indices[p * 3]!]!,
-                    v1: wp[mesh.indices[p * 3 + 1]!]!,
-                    v2: wp[mesh.indices[p * 3 + 2]!]!,
-                    instanceIndex: meshID,
-                    primitiveIndex: p,
-                    flags,
-                });
-            }
-        });
-        // Refit the previous frame's BVH (rebuilt when the refit degrades; see refitBvh).
-        const bvh = this.animatedBvh ? refitBvh(this.animatedBvh, bvhTris) : buildBvh(bvhTris);
+        // The world-space triangle BVH: static geometry is built once, dynamic geometry refit per frame
+        // (rebuilt when the refit degrades; see refitBvh), both under one root (stitchBvhs).
+        const trianglesOf = (dynamic: boolean): BvhTriangle[] => {
+            const out: BvhTriangle[] = [];
+            meshes.forEach((mesh, meshID) => {
+                if (dynamicMeshes[meshID] !== dynamic) return;
+                const wp = worldPos[meshID]!;
+                const flags = windingFlipFlag(worldMats[meshID]!);
+                for (let p = 0; p < mesh.indices.length / 3; p++) {
+                    out.push({ v0: wp[mesh.indices[p * 3]!]!, v1: wp[mesh.indices[p * 3 + 1]!]!, v2: wp[mesh.indices[p * 3 + 2]!]!, instanceIndex: meshID, primitiveIndex: p, flags });
+                }
+            });
+            return out;
+        };
+        this.staticBvh ??= buildBvh(trianglesOf(false));
+        const prevDynamic = this.dynamicBvh;
+        const dynamicTris = trianglesOf(true);
+        const dynamic = prevDynamic ? refitBvh(prevDynamic, dynamicTris) : buildBvh(dynamicTris);
+        this.dynamicBvh = dynamic;
+        const staticOnlyEmpty = this.staticBvh.order.length === 0;
+        let changed: { nodes: [number, number]; tris: [number, number] } | null = null;
+        let bvh: import("./SoftwareRT/Bvh.js").BvhBuildResult;
+        if (staticOnlyEmpty) bvh = dynamic;
+        else if (this.animatedBvh && dynamic === prevDynamic) {
+            changed = refreshStitchedBvh(this.animatedBvh, this.staticBvh, dynamic);
+            bvh = this.animatedBvh;
+        } else bvh = stitchBvhs(this.staticBvh, dynamic);
         this.animatedBvh = bvh;
+        const bvhTris = { length: bvh.order.length };
         if (bvhTris.length > 0) {
             this.worldBounds = { min: [bvh.nodes[0]!, bvh.nodes[1]!, bvh.nodes[2]!], max: [bvh.nodes[4]!, bvh.nodes[5]!, bvh.nodes[6]!] };
         }
@@ -2125,6 +2156,15 @@ export class Scene {
             this.curveBvhBytes = built.data;
             this.curvePrimOffset = this.curveBvhOffset + built.nodeWords / 4;
         }
+        // A refit keeps the layout: upload only the root, the dynamic nodes and the dynamic triangles.
+        if (changed && !this.sceneCurves.some((c) => c.vertexCache) && this.uploadedBvh === bvh) {
+            const buf = this.buffers["bvhNodes"]!;
+            buf.setBlob(bvh.nodes.subarray(0, 8), 0);
+            buf.setBlob(bvh.nodes.subarray(changed.nodes[0], changed.nodes[0] + changed.nodes[1]), changed.nodes[0] * 4);
+            buf.setBlob(bvh.tris.subarray(changed.tris[0], changed.tris[0] + changed.tris[1]), (bvh.nodes.length + changed.tris[0]) * 4);
+            return true;
+        }
+        this.uploadedBvh = bvh;
         const curveExtra = this.curveBvhBytes ?? new Float32Array(0);
         const bvhMerged = new Float32Array(bvh.nodes.length + bvh.tris.length + curveExtra.length);
         bvhMerged.set(bvh.nodes, 0);
@@ -2321,8 +2361,16 @@ export class Scene {
     private lastAnimateKey = "";
     private hasDynamicGeometry: boolean | undefined;
 
-    /** Whether any mesh or curve deforms or rides an animated node (else animate() only re-poses camera/lights). */
-    private computeHasDynamicGeometry(): boolean {
+    private dynamicMeshes: boolean[] | null = null;
+    /** Static meshes' world matrices and LightCollection inputs, cached by the first animate(). */
+    private staticWorldMats: float4x4[] | null = null;
+    private staticLcInputs: SceneMeshDesc[] | null = null;
+    /** Animated scenes' BVH halves: static geometry (built once) and dynamic geometry (refit per frame). */
+    private staticBvh: import("./SoftwareRT/Bvh.js").BvhBuildResult | null = null;
+    private dynamicBvh: import("./SoftwareRT/Bvh.js").BvhBuildResult | null = null;
+
+    /** Per mesh: whether it deforms or rides an animated node (else animate() leaves it as built). */
+    private computeDynamicMeshes(): boolean[] {
         const anim = this.animData!;
         const animated = new Set(anim.channels.map((c) => c.nodeID));
         for (const w of anim.weightTracks ?? []) animated.add(w.nodeID);
@@ -2330,10 +2378,7 @@ export class Scene {
             for (; n !== undefined && n >= 0; n = anim.nodes[n]?.parent) if (animated.has(n)) return true;
             return false;
         };
-        return (
-            this.sourceMeshes!.some((m) => m.skin || m.morph || m.vertexCache || m.polytubeCache || underAnimated(m.nodeID)) ||
-            this.sceneCurves.some((c) => c.vertexCache)
-        );
+        return this.sourceMeshes!.map((m) => !!(m.skin || m.morph || m.vertexCache || m.polytubeCache || underAnimated(m.nodeID)));
     }
     private prevAnimateKey = "";
 

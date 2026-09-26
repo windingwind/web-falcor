@@ -64,6 +64,8 @@ export interface TextureBucket {
 export class TextureManager {
     private sources: TextureSource[] = [];
     private analyses = new Map<number, TextureAnalysis>();
+    /** readLinearPixels results (emissive textures, re-read on every LightCollection rebuild). */
+    private linearPixels = new Map<number, { width: number; height: number; rgb: Float32Array }>();
     /** Each texture's format in the built arrays (BC data, or the decoded image past the binding budget). */
     private gpuFormats = new Map<number, ResourceFormat>();
 
@@ -120,6 +122,8 @@ export class TextureManager {
     }
 
     readLinearPixels(textureID: number): { width: number; height: number; rgb: Float32Array } | null {
+        const cached = this.linearPixels.get(textureID);
+        if (cached) return cached;
         const source = this.sources[textureID];
         if (!source) return null;
         const { bitmap, srgb } = source;
@@ -137,7 +141,9 @@ export class TextureManager {
             rgb[i * 3 + 1] = decode(bytes[i * 4 + 1]!);
             rgb[i * 3 + 2] = decode(bytes[i * 4 + 2]!);
         }
-        return { width: bitmap.width, height: bitmap.height, rgb };
+        const result = { width: bitmap.width, height: bitmap.height, rgb };
+        this.linearPixels.set(textureID, result);
+        return result;
     }
 
     /**

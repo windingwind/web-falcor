@@ -10,7 +10,7 @@
  */
 
 import { describe, expect, it } from "vitest";
-import { buildBvh, buildBvhParallel, buildBvhSubtree, bvhStackDepth, kBvhTraversalStackSize, refitBvh, type BvhTriangle } from "../src/Scene/SoftwareRT/Bvh.js";
+import { buildBvh, buildBvhParallel, buildBvhSubtree, bvhStackDepth, kBvhTraversalStackSize, refitBvh, refreshStitchedBvh, stitchBvhs, type BvhBuildResult, type BvhTriangle } from "../src/Scene/SoftwareRT/Bvh.js";
 import { float3, sub3 } from "../src/Utils/Math/Vector.js";
 
 /** Median-split BVH written the obvious way: one entry list per node. */
@@ -233,5 +233,63 @@ describe("refitBvh", () => {
         expect(rebuilt).not.toBe(bvh);
         expect(bytes(rebuilt.nodes)).toEqual(bytes(buildBvh(scattered).nodes));
         expect(refitBvh(bvh, triangles.slice(1))).not.toBe(bvh);
+    });
+});
+
+/** Closest hit along +z from (x, y, -100) by walking the BVH as the shaders do (Moller-Trumbore on the packed tris). */
+function traceZ(bvh: BvhBuildResult, x: number, y: number): { t: number; prim: number } {
+    const u = new Uint32Array(bvh.nodes.buffer, bvh.nodes.byteOffset, bvh.nodes.length);
+    const tu = new Uint32Array(bvh.tris.buffer, bvh.tris.byteOffset, bvh.tris.length);
+    let best = { t: Infinity, prim: -1 };
+    const stack = [0];
+    while (stack.length) {
+        const n = stack.pop()!;
+        const o = n * 8;
+        if (x < bvh.nodes[o]! || x > bvh.nodes[o + 4]! || y < bvh.nodes[o + 1]! || y > bvh.nodes[o + 5]!) continue;
+        const count = u[o + 7]!;
+        if (count === 0) {
+            stack.push(u[o + 3]!, n + 1);
+            continue;
+        }
+        for (let k = u[o + 3]!; k < u[o + 3]! + count; k++) {
+            const T = bvh.tris.subarray(k * 12, k * 12 + 12);
+            const [v0, e1, e2] = [[T[0]!, T[1]!, T[2]!], [T[4]!, T[5]!, T[6]!], [T[8]!, T[9]!, T[10]!]];
+            const d = [0, 0, 1];
+            const p = [d[1]! * e2[2]! - d[2]! * e2[1]!, d[2]! * e2[0]! - d[0]! * e2[2]!, d[0]! * e2[1]! - d[1]! * e2[0]!];
+            const det = e1[0]! * p[0]! + e1[1]! * p[1]! + e1[2]! * p[2]!;
+            if (Math.abs(det) < 1e-12) continue;
+            const s0 = [x - v0[0]!, y - v0[1]!, -100 - v0[2]!];
+            const uu = (s0[0]! * p[0]! + s0[1]! * p[1]! + s0[2]! * p[2]!) / det;
+            const q = [s0[1]! * e1[2]! - s0[2]! * e1[1]!, s0[2]! * e1[0]! - s0[0]! * e1[2]!, s0[0]! * e1[1]! - s0[1]! * e1[0]!];
+            const vv = (d[0]! * q[0]! + d[1]! * q[1]! + d[2]! * q[2]!) / det;
+            const t = (e2[0]! * q[0]! + e2[1]! * q[1]! + e2[2]! * q[2]!) / det;
+            if (uu >= 0 && vv >= 0 && uu + vv <= 1 && t > 0 && t < best.t) best = { t, prim: tu[k * 12 + 7]! };
+        }
+    }
+    return best;
+}
+
+describe("stitchBvhs", () => {
+    it("finds the same closest hits as one BVH over all triangles, also after refitting the dynamic part", () => {
+        const all = makeTriangles(3000, 77).map((t, i) => ({ ...t, primitiveIndex: i }));
+        const [stat, dyn] = [all.slice(0, 2000), all.slice(2000)];
+        const a = buildBvh(stat);
+        let b = buildBvh(dyn);
+        const st = stitchBvhs(a, b);
+        const check = (tris: BvhTriangle[]) => {
+            const one = buildBvh(tris);
+            for (let i = 0; i < 400; i++) {
+                const [x, y] = [((i * 37) % 97) / 9.7 - 5, ((i * 53) % 89) / 8.9 - 5];
+                expect(traceZ(st, x, y).prim).toBe(traceZ(one, x, y).prim);
+            }
+        };
+        check(all);
+        // Move the dynamic triangles and refit only them.
+        const moved = dyn.map((t) => ({ ...t, v0: new float3(t.v0.x + 0.3, t.v0.y, t.v0.z), v1: new float3(t.v1.x + 0.3, t.v1.y, t.v1.z), v2: new float3(t.v2.x + 0.3, t.v2.y, t.v2.z) }));
+        const refit = refitBvh(b, moved);
+        expect(refit).toBe(b);
+        b = refit;
+        refreshStitchedBvh(st, a, b);
+        check([...stat, ...moved]);
     });
 });
