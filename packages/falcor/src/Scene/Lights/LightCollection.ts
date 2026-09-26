@@ -153,6 +153,9 @@ export function buildLightCollection(meshes: SceneMeshDesc[], materials: Emissiv
         const triangleOffset = tris.length;
         perMeshInstanceOffset[instanceID] = triangleOffset;
         const world = mesh.transform ?? float4x4.identity();
+        // isWorldFrontFaceCW: a mirroring transform reverses the world winding, so the face normal flips.
+        const d = world.data;
+        const flip = d[0]! * (d[5]! * d[10]! - d[6]! * d[9]!) - d[1]! * (d[4]! * d[10]! - d[6]! * d[8]!) + d[2]! * (d[4]! * d[9]! - d[5]! * d[8]!) < 0 ? -1 : 1;
         for (let t = 0; t + 2 < mesh.indices.length; t += 3) {
             const p = [0, 1, 2].map((k) => transformPoint(world, mesh.vertices[mesh.indices[t + k]!]!.position));
             const uv = [0, 1, 2].map((k) => {
@@ -165,7 +168,7 @@ export function buildLightCollection(meshes: SceneMeshDesc[], materials: Emissiv
             const n = new float3(e0.y * e1.z - e0.z * e1.y, e0.z * e1.x - e0.x * e1.z, e0.x * e1.y - e0.y * e1.x);
             const len = Math.hypot(n.x, n.y, n.z);
             const area = 0.5 * len;
-            const normal = len > 0 ? new float3(n.x / len, n.y / len, n.z / len) : new float3(0, 0, 1);
+            const normal = len > 0 ? new float3((flip * n.x) / len, (flip * n.y) / len, (flip * n.z) / len) : new float3(0, 0, 1);
             tris.push({ posW: p, uv, normal, area, materialID: mesh.materialID, lightIdx });
         }
         meshLights.push(instanceID, triangleOffset, tris.length - triangleOffset, mesh.materialID);

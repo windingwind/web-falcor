@@ -78,7 +78,11 @@ async function run() {
     const filter = new URLSearchParams(location.search).get("filter");
     const selected = filter ? tests.filter((t) => filter.split("|").some((f) => t.name.includes(f))) : tests;
 
-    const device = await Device.create();
+    let device = await Device.create();
+    // A lost device (the browser's GPU process died) would fail every later test: recreate it and retry once.
+    let lost = false;
+    const watchLoss = (d: Device) => void d.gpuDevice.lost.then(() => (lost = true));
+    watchLoss(device);
     const info = device.adapter.info;
     log(`# adapter: ${info?.vendor ?? "?"} ${info?.architecture ?? "?"}`);
     const t0 = performance.now();
@@ -87,7 +91,9 @@ async function run() {
     log(`# tests: ${selected.length}${filter ? ` (filter '${filter}' of ${tests.length})` : ""}`);
 
     const results: TestResult[] = [];
-    for (const test of selected) {
+    const retried = new Set<string>();
+    for (let i = 0; i < selected.length; i++) {
+        const test = selected[i]!;
         const start = performance.now();
         try {
             await test.fn({ device });
@@ -99,7 +105,17 @@ async function run() {
             results.push({ name: test.name, status: "pass", ms: performance.now() - start });
             log(`PASS ${test.name}`);
         } catch (err) {
-            device.renderContext.submit(); // drop a failed test's pending commands before the next test records
+            if (lost && !retried.has(test.name)) {
+                retried.add(test.name);
+                console.error(`# device lost during ${test.name}; recreating the device and retrying it`);
+                device = await Device.create();
+                lost = false;
+                watchLoss(device);
+                await initProgramSystem(device);
+                i--;
+                continue;
+            }
+            if (!lost) device.renderContext.submit(); // drop a failed test's pending commands before the next test records
             if (err instanceof SkipError) {
                 results.push({ name: test.name, status: "skip", error: err.message, ms: performance.now() - start });
                 log(`SKIP ${test.name} (${err.message})`);
