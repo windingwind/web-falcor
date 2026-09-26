@@ -599,6 +599,59 @@ export function splitTopLevels(input: BvhInput, depth: number): { index: Uint32A
     return { index, tree };
 }
 
+/** Stable ascending order of `keys` (the build's radix sort on one axis); runs in a worker for the root split. */
+export function stableSortKeys(keys: Float64Array): Uint32Array {
+    const n = keys.length;
+    const cent = new Float64Array(n * 3);
+    for (let i = 0; i < n; i++) cent[i * 3] = keys[i]!;
+    const { sortRange, index } = makeBuilder({ n, bmin: new Float32Array(0), bmax: new Float32Array(0), cent }, true);
+    sortRange(0, n, 0);
+    return index;
+}
+
+/**
+ * The root split of splitTopLevels with its sort done in parallel: `sortChunk` stable-sorts chunks of the keys and
+ * a stable merge (earlier chunk first on ties) yields exactly the single stable sort's order.
+ */
+async function splitRootParallel(input: BvhInput, sortChunk: (keys: Float64Array) => Promise<Uint32Array>, chunks: number): Promise<{ index: Uint32Array; tree: TopSplitNode }> {
+    const { n, bmin, bmax, cent } = input;
+    if (n <= 4 * 2) return splitTopLevels(input, 1);
+    const min = [Infinity, Infinity, Infinity];
+    const max = [-Infinity, -Infinity, -Infinity];
+    for (let i = 0; i < n; i++) {
+        for (let k = 0; k < 3; k++) {
+            if (bmin[i * 3 + k]! < min[k]!) min[k] = bmin[i * 3 + k]!;
+            if (bmax[i * 3 + k]! > max[k]!) max[k] = bmax[i * 3 + k]!;
+        }
+    }
+    const ex = max[0]! - min[0]!, ey = max[1]! - min[1]!, ez = max[2]! - min[2]!;
+    const axis = ex > ey ? (ex > ez ? 0 : 2) : ey > ez ? 1 : 2;
+    const bounds = Array.from({ length: chunks + 1 }, (_v, c) => Math.round((c * n) / chunks));
+    const sorted = await Promise.all(
+        bounds.slice(0, -1).map((lo, c) => {
+            const keys = new Float64Array(bounds[c + 1]! - lo);
+            for (let i = 0; i < keys.length; i++) keys[i] = cent[(lo + i) * 3 + axis]!;
+            return sortChunk(keys);
+        }),
+    );
+    // k-way merge: the smallest key next, the lowest chunk among equal keys (stability).
+    const index = new Uint32Array(n);
+    const pos = new Array<number>(chunks).fill(0);
+    const keyOf = (c: number) => cent[(bounds[c]! + sorted[c]![pos[c]!]!) * 3 + axis]!;
+    for (let out = 0; out < n; out++) {
+        let best = -1, bestKey = 0;
+        for (let c = 0; c < chunks; c++) {
+            if (pos[c]! >= sorted[c]!.length) continue;
+            const k = keyOf(c);
+            // As the radix sort orders bit patterns: -0 before +0.
+            if (best < 0 || k < bestKey || (k === 0 && bestKey === 0 && Object.is(k, -0) && !Object.is(bestKey, -0))) (best = c), (bestKey = k);
+        }
+        index[out] = bounds[best]! + sorted[best]![pos[best]!++]!;
+    }
+    const half = Math.ceil(n / 2);
+    return { index, tree: { kind: "inner", min, max, left: { kind: "leaf", lo: 0, hi: half }, right: { kind: "leaf", lo: half, hi: n } } };
+}
+
 /** The input's elements index[lo..hi), compacted in that order. */
 function compactInput(input: BvhInput, index: Uint32Array, lo: number, hi: number): BvhInput {
     const count = hi - lo;
@@ -626,13 +679,14 @@ export async function buildBvhParallel(
     run: (input: BvhInput) => Promise<BvhSubtree>,
     depth = 3,
     runTop?: (input: BvhInput, depth: number) => Promise<{ index: Uint32Array; tree: TopSplitNode }>,
+    sortChunk?: (keys: Float64Array) => Promise<Uint32Array>,
 ): Promise<BvhBuildResult> {
     const n = bvhTriangleCount(triangles);
     if (n === 0) return emptyBvh();
     const input = Array.isArray(triangles) ? bvhInput(triangles) : triangles.input;
 
     // The root split here; with runTop, every split below runs as its own task and both children proceed in parallel.
-    let { index, tree } = splitTopLevels(input, runTop ? 1 : depth);
+    let { index, tree } = runTop && sortChunk ? await splitRootParallel(input, sortChunk, 8) : splitTopLevels(input, runTop ? 1 : depth);
     if (runTop && tree.kind === "inner" && depth > 1) {
         const splitBelow = async (leaf: TopSplitNode, level: number): Promise<TopSplitNode> => {
             if (leaf.kind !== "leaf" || level === depth || leaf.hi - leaf.lo <= 4 * 2) return leaf;

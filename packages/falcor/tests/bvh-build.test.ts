@@ -10,7 +10,7 @@
  */
 
 import { describe, expect, it } from "vitest";
-import { buildBvh, buildBvhParallel, buildBvhSubtree, bvhStackDepth, kBvhTraversalStackSize, refitBvh, refitBvhIndexed, PackedBvhTriangleWriter, splitTopLevels, refreshStitchedBvh, stitchBvhs, type BvhBuildResult, type BvhTriangle } from "../src/Scene/SoftwareRT/Bvh.js";
+import { buildBvh, buildBvhParallel, buildBvhSubtree, bvhStackDepth, kBvhTraversalStackSize, refitBvh, refitBvhIndexed, PackedBvhTriangleWriter, splitTopLevels, stableSortKeys, refreshStitchedBvh, stitchBvhs, type BvhBuildResult, type BvhTriangle } from "../src/Scene/SoftwareRT/Bvh.js";
 import { float3, sub3 } from "../src/Utils/Math/Vector.js";
 
 /** Median-split BVH written the obvious way: one entry list per node. */
@@ -336,7 +336,7 @@ describe("buildBvhParallel with offloaded top levels", () => {
             const run = async (input: Parameters<typeof buildBvhSubtree>[0]) => buildBvhSubtree(input);
             const runTop = async (input: Parameters<typeof splitTopLevels>[0], depth: number) => splitTopLevels(input, depth);
             for (const depth of [2, 3, 4, 6]) {
-                const par = await buildBvhParallel(tris, run, depth, runTop);
+                const par = await buildBvhParallel(tris, run, depth, runTop, async (keys) => stableSortKeys(keys));
                 expect(bytes(par.nodes), `nodes, ${count} tris, depth ${depth}`).toEqual(bytes(serial.nodes));
                 expect(bytes(par.tris), `tris, ${count} tris, depth ${depth}`).toEqual(bytes(serial.tris));
             }

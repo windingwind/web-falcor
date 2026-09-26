@@ -1019,6 +1019,7 @@ export class Scene {
                       (input) => pool.run("buildBvhSubtree", input, [input.bmin.buffer, input.bmax.buffer, input.cent.buffer]),
                       5, // 32 subtree jobs keep the pool busy; the splits above them run in parallel too
                       (input, depth) => pool.run("splitTopLevels", { input, depth }, [input.bmin.buffer, input.bmax.buffer, input.cent.buffer]),
+                      (keys) => pool.run("stableSortKeys", { keys }, [keys.buffer]),
                   )
                 : undefined;
         const withBvh = [...args] as ConstructorParameters<typeof Scene>;
