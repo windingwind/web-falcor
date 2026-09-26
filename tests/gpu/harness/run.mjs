@@ -37,8 +37,9 @@ const port = vite.config.server.port === 0 ? vite.httpServer.address().port : vi
 // EXTRA_QUERY (e.g. "dbg=scene/SceneCache") is appended for tests that read their own parameters.
 const url = `http://127.0.0.1:${port}/tests/gpu/harness/index.html?filter=${encodeURIComponent(filter ?? "")}${process.env.EXTRA_QUERY ? `&${process.env.EXTRA_QUERY}` : ""}`;
 
-// --disable-gpu-process-crash-limit: after a lost device main.ts recreates it; Chromium would refuse WebGPU after repeated GPU-process crashes.
-const args = ["--enable-unsafe-webgpu", "--no-sandbox", "--disable-gpu-sandbox", "--ignore-gpu-blocklist", "--disable-gpu-process-crash-limit"];
+// --disable-gpu-watchdog: long pipeline compiles (PathTracer with every material type) tripped the GPU watchdog, which
+// kills the GPU process (exit 512) and loses the device. --disable-gpu-process-crash-limit: main.ts recreates a lost device.
+const args = ["--enable-unsafe-webgpu", "--no-sandbox", "--disable-gpu-sandbox", "--ignore-gpu-blocklist", "--disable-gpu-watchdog", "--disable-gpu-process-crash-limit"];
 if (useSwiftShader) {
     args.push("--enable-features=Vulkan", "--use-webgpu-adapter=swiftshader");
 } else {
