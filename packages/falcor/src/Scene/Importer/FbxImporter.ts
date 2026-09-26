@@ -94,7 +94,12 @@ interface AiLight {
     name: string; // matches a node in the hierarchy (gives the light's world transform)
     type: number; // aiLightSource: 1=directional, 2=point, 3=spot
     diffusecolor?: number[];
+    specularcolor?: number[];
+    position?: number[];
     direction?: number[];
+    up?: number[];
+    angleinnercone?: number;
+    angleoutercone?: number;
 }
 
 interface AiScene {
@@ -407,10 +412,10 @@ export class FbxImporter {
                     // ImageData holds raw RGBA already — no colour-space/premultiply
                     // decode step applies, so createImageBitmap needs no options.
                     const imageData = new ImageData(new Uint8ClampedArray(rgba), width, height);
-                    bitmap = await createImageBitmap(imageData);
+                    bitmap = await createImageBitmap(imageData, { premultiplyAlpha: "none" });
                 } else {
                     // Same decode options as the pyscene path and the scene cache (a cached scene must render the same).
-                    bitmap = await createImageBitmap(await res.blob(), { colorSpaceConversion: "none" });
+                    bitmap = await createImageBitmap(await res.blob(), { colorSpaceConversion: "none", premultiplyAlpha: "none" });
                 }
             } catch {
                 skippedFormats.add(ext);
@@ -473,6 +478,8 @@ export class FbxImporter {
                 header: {
                     doubleSided,
                     emissive: emissive.some((c) => c !== 0) || ids.emissive !== undefined,
+                    // AI_MATKEY_REFRACTI -> setIndexOfRefraction (the material header's IoR).
+                    ...(refracti !== undefined ? { ior: refracti } : {}),
                 },
                 basic: {
                     baseColor: new float4(diffuse[0]!, diffuse[1]!, diffuse[2]!, opacity),
@@ -480,7 +487,6 @@ export class FbxImporter {
                     specular: new float4(specular[0]!, specular[1]!, specular[2]!, shininess),
                     emissive: new float3(emissive[0]!, emissive[1]!, emissive[2]!),
                     shadingModel,
-                    ...(refracti !== undefined ? { indexOfRefraction: refracti } : {}),
                     ...(opacity < 1 ? { specularTransmission: 1 - opacity } : {}),
                     texBaseColor: ids.baseColor !== undefined ? packTextureHandle(TextureHandleMode.Texture, ids.baseColor) : undefined,
                     texSpecular: ids.specular !== undefined ? packTextureHandle(TextureHandleMode.Texture, ids.specular) : undefined,
@@ -659,14 +665,31 @@ export class FbxImporter {
 
         // Analytic lights (directional/point), placed by their node's world transform.
         const lights: AnalyticLight[] = [];
+        // Mirrors createDirLight / createPointLight (spot lights become point lights with cone angles); the light
+        // follows its node: world = node world * the light's base matrix (addLightCommon).
         for (const L of json.lights ?? []) {
             const nodeWorld = nameToWorld.get(L.name) ?? float4x4.identity();
-            const c = L.diffusecolor ?? [1, 1, 1];
+            const c = L.specularcolor ?? L.diffusecolor ?? [1, 1, 1];
             const intensity = new float3(c[0]!, c[1]!, c[2]!);
-            if (L.type === 1 && L.direction) {
-                lights.push({ type: LightType.Directional, dirW: normalize3(transformVector(nodeWorld, new float3(L.direction[0]!, L.direction[1]!, L.direction[2]!))), intensity });
-            } else if (L.type === 2) {
-                lights.push({ type: LightType.Point, posW: transformPoint(nodeWorld, new float3(0, 0, 0)), intensity });
+            const vec = (v: number[] | undefined, fallback: float3) => (v && Math.hypot(v[0]!, v[1]!, v[2]!) > 0 ? normalize3(new float3(v[0]!, v[1]!, v[2]!)) : fallback);
+            if (L.type === 1) {
+                const direction = vec(L.direction, new float3(0, 0, -1));
+                lights.push({ type: LightType.Directional, name: L.name, dirW: normalize3(transformVector(nodeWorld, direction)), intensity });
+            } else if (L.type === 2 || L.type === 3) {
+                const p = L.position ?? [0, 0, 0];
+                // assjson omits a point light's direction; Assimp's FBX converter sets (0, -1, 0) for every light.
+                const direction = vec(L.direction, fileName.toLowerCase().endsWith(".fbx") ? new float3(0, -1, 0) : new float3(0, 0, -1));
+                const outer = L.angleoutercone ?? Math.PI, inner = L.angleinnercone ?? outer;
+                const opening = Math.min(Math.max(outer, 0), Math.PI);
+                lights.push({
+                    type: LightType.Point,
+                    name: L.name,
+                    posW: transformPoint(nodeWorld, new float3(p[0]!, p[1]!, p[2]!)),
+                    dirW: normalize3(transformVector(nodeWorld, direction)),
+                    openingAngle: opening,
+                    penumbraAngle: Math.min(Math.max(outer - inner, 0), opening),
+                    intensity,
+                });
             }
         }
 

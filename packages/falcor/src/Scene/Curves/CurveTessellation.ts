@@ -134,6 +134,8 @@ export interface BasisCurvesDesc {
     pointsSamples?: { time: number; points: Float32Array }[];
     /** The earliest sample, dropped or not (native builds a poly-tube's base mesh at EarliestTime). */
     earliestPoints?: Float32Array;
+    /** Authored extent (min xyz, max xyz), what UsdGeomBBoxCache bounds the prim by. */
+    extent?: Float32Array;
 }
 
 /** Extracts BasisCurves prims from USDA text (tinyusdz's RenderScene API
@@ -177,6 +179,7 @@ export function extractBasisCurvesFromUsda(source: string): BasisCurvesDesc[] {
             if (pointsSamples.length < 2) pointsSamples = undefined;
         }
         const widths = nums("float\\[\\] widths");
+        const extent = nums("float3\\[\\] extent");
         if (!counts || !pts) continue;
         const vertexTotal = counts.reduce((acc, c) => acc + c, 0);
         out.push({
@@ -187,6 +190,7 @@ export function extractBasisCurvesFromUsda(source: string): BasisCurvesDesc[] {
             widths: new Float32Array(widths ?? new Array<number>(vertexTotal).fill(1)),
             pointsSamples,
             earliestPoints,
+            ...(extent && extent.length === 6 ? { extent: new Float32Array(extent) } : {}),
         });
     }
     return out;

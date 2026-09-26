@@ -444,6 +444,14 @@ function f16Round(v: number): number {
     return float16ToFloat32(float32ToFloat16(v));
 }
 
+/** BasicMaterial::adjustDoubleSidedFlag: transmissive or displaced materials are double-sided. */
+export function isEffectivelyDoubleSided(header: Partial<MaterialHeaderDesc>, basic: BasicMaterialDesc): boolean {
+    return !!header.doubleSided || (basic.diffuseTransmission ?? 0) > 0 || (basic.specularTransmission ?? 0) > 0 || basic.texDisplacement !== undefined;
+}
+
+/** Material types whose base color slot has an alpha channel (BasicMaterial::isAlphaSupported). */
+const kAlphaSupportedMaterials = new Set([MaterialType.Standard, MaterialType.Cloth, MaterialType.PBRTDiffuse, MaterialType.PBRTConductor, MaterialType.PBRTCoatedConductor, MaterialType.PBRTCoatedDiffuse, MaterialType.PBRTDiffuseTransmission]);
+
 /** BvhTriangle flags bit 0: the transform mirrors, so DXR's object-space facing is the world winding reversed. */
 function windingFlipFlag(m: float4x4): number {
     const d = m.data;
@@ -1686,7 +1694,7 @@ export class Scene {
 
     /** A material record as a SceneMaterial (native property names; edits repack it). */
     private wrapMaterial(m: SceneMaterialDesc): SceneMaterial {
-        return m instanceof SceneMaterial ? m : new SceneMaterial(m, (self) => this.updateMaterial(self));
+        return m instanceof SceneMaterial ? m : new SceneMaterial(m, (self) => this.updateMaterial(self), (h, b) => this.deriveAlphaMode(h, b));
     }
 
     /** Python `scene.materials` (Scene::getMaterials). */
@@ -1753,6 +1761,7 @@ export class Scene {
         }
         if (header.alphaMode === undefined) header.alphaMode = this.deriveAlphaMode(header, m.basic);
         if (header.deltaSpecular === undefined) header.deltaSpecular = isDeltaSpecularStandard(header, m.basic);
+        header.doubleSided = isEffectivelyDoubleSided(header, m.basic);
         return packBasicMaterialBlob(header, m.basic);
     }
 
@@ -1810,10 +1819,11 @@ export class Scene {
      * Mirrors BasicMaterial::updateAlphaMode: alpha testing is enabled only when the
      * base color alpha can fall below the threshold — the texture's alpha range
      * (TextureAnalyzer parity via a CPU scan) when textured, else the constant alpha.
-     * Only StandardMaterial has an alpha channel in its base color slot.
+     * Alpha is supported where the base color slot has an alpha channel (isAlphaSupported): Standard, Cloth and
+     * the PBRT diffuse/conductor/coated/diffuse-transmission materials, not Hair.
      */
-    private deriveAlphaMode(header: MaterialHeaderDesc, basic: BasicMaterialDesc): AlphaMode {
-        if (header.materialType !== MaterialType.Standard) return AlphaMode.Opaque;
+    deriveAlphaMode(header: Partial<MaterialHeaderDesc>, basic: BasicMaterialDesc): AlphaMode {
+        if (!kAlphaSupportedMaterials.has(header.materialType ?? MaterialType.Standard)) return AlphaMode.Opaque;
         const threshold = header.alphaThreshold ?? 0.5;
         let minAlpha = basic.baseColor?.w ?? 1;
         const tex = basic.texBaseColor;

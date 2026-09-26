@@ -4,7 +4,7 @@
  * and repacks the material, as MaterialSystem::update does for BasicMaterial::markUpdates.
  */
 
-import { float3, float4 } from "../../Utils/Math/Vector.js";
+import { float2, float3, float4 } from "../../Utils/Math/Vector.js";
 import type { SceneMaterialDesc } from "../Scene.js";
 import { AlphaMode, MaterialType, ShadingModel, type BasicMaterialDesc, type MaterialHeaderDesc } from "./MaterialData.js";
 import type { MERLBRDF, MERLMixData } from "./MERLFile.js";
@@ -22,7 +22,11 @@ export class SceneMaterial implements SceneMaterialDesc {
     rgl?: RGLMeasurement;
     merlMix?: MERLMixData;
 
-    constructor(desc: SceneMaterialDesc, private readonly changed: (m: SceneMaterial) => void = () => {}) {
+    constructor(
+        desc: SceneMaterialDesc,
+        private readonly changed: (m: SceneMaterial) => void = () => {},
+        private readonly derivedAlphaMode: (header: Partial<MaterialHeaderDesc>, basic: BasicMaterialDesc) => AlphaMode = () => AlphaMode.Opaque,
+    ) {
         this.name = desc.name;
         this.header = desc.header;
         this.basic = desc.basic;
@@ -54,11 +58,33 @@ export class SceneMaterial implements SceneMaterialDesc {
     set baseColor(v: float4) { this.setBasic({ baseColor: f4(v) }); }
     get specularParams(): float4 { return this.specular; }
     set specularParams(v: float4) { this.setBasic({ specular: f4(v) }); }
-    /** Metal-rough: specular.g (StandardMaterial::setRoughness). */
-    get roughness(): number { return this.specular.y; }
-    set roughness(v: number) { const s = this.specular; this.setBasic({ specular: new float4(s.x, Number(v), s.z, s.w) }); }
-    /** Metal-rough: specular.b (StandardMaterial::setMetallic). */
-    get metallic(): number { return this.specular.z; }
+    /**
+     * Per material type as natively: PBRT conductor/dielectric/coated-diffuse roughness is specular.rg (float2), the
+     * coated conductor's all of specular (float4), Cloth's specular.g; Standard's specular.g, or 0 unless metal-rough.
+     */
+    get roughness(): number | float2 | float4 {
+        const s = this.specular;
+        switch (this.type) {
+            case MaterialType.PBRTConductor:
+            case MaterialType.PBRTDielectric:
+            case MaterialType.PBRTCoatedDiffuse:
+                return new float2(s.x, s.y);
+            case MaterialType.PBRTCoatedConductor:
+                return new float4(s.x, s.y, s.z, s.w);
+            case MaterialType.Cloth:
+                return s.y;
+            default:
+                return this.shadingModel === ShadingModel.MetalRough ? s.y : 0;
+        }
+    }
+    set roughness(v: number | Vec) {
+        const s = this.specular;
+        if (typeof v === "number") this.setBasic({ specular: new float4(s.x, Number(v), s.z, s.w) });
+        else if (v.w !== undefined && this.type === MaterialType.PBRTCoatedConductor) this.setBasic({ specular: f4(v) });
+        else this.setBasic({ specular: new float4(Number(v.x), Number(v.y), s.z, s.w) });
+    }
+    /** StandardMaterial::getMetallic: specular.b, or 0 unless metal-rough. */
+    get metallic(): number { return this.shadingModel === ShadingModel.MetalRough ? this.specular.z : 0; }
     set metallic(v: number) { const s = this.specular; this.setBasic({ specular: new float4(s.x, s.y, Number(v), s.w) }); }
     get transmissionColor(): float3 { return this.basic.transmission ?? new float3(1, 1, 1); }
     set transmissionColor(v: float3) { this.setBasic({ transmission: f3(v) }); }
@@ -72,11 +98,16 @@ export class SceneMaterial implements SceneMaterialDesc {
     set emissiveColor(v: float3) { this.setBasic({ emissive: f3(v) }); }
     get emissiveFactor(): number { return this.basic.emissiveFactor ?? 1; }
     set emissiveFactor(v: number) { this.setBasic({ emissiveFactor: Number(v) }); }
-    get alphaMode(): AlphaMode { return this.header?.alphaMode ?? AlphaMode.Opaque; }
+    /** Set explicitly, else derived as BasicMaterial::updateAlphaMode does. */
+    get alphaMode(): AlphaMode { return this.header?.alphaMode ?? this.derivedAlphaMode(this.header ?? {}, this.basic); }
     set alphaMode(v: AlphaMode) { this.setHeader({ alphaMode: Number(v) as AlphaMode }); }
     get alphaThreshold(): number { return this.header?.alphaThreshold ?? 0.5; }
     set alphaThreshold(v: number) { this.setHeader({ alphaThreshold: Number(v) }); }
-    get doubleSided(): boolean { return this.header?.doubleSided ?? false; }
+    /** Material::isDoubleSided after BasicMaterial::adjustDoubleSidedFlag (transmission or displacement force it on). */
+    get doubleSided(): boolean {
+        const b = this.basic;
+        return !!this.header?.doubleSided || (b.diffuseTransmission ?? 0) > 0 || (b.specularTransmission ?? 0) > 0 || b.texDisplacement !== undefined;
+    }
     set doubleSided(v: boolean) { this.setHeader({ doubleSided: Boolean(v) }); }
     get thinSurface(): boolean { return this.header?.thinSurface ?? false; }
     set thinSurface(v: boolean) { this.setHeader({ thinSurface: Boolean(v) }); }

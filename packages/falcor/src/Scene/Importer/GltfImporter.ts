@@ -260,7 +260,7 @@ export class GltfImporter {
                 const imgUrl = new URL(img.uri!, new URL(baseUrl, "http://x/")).pathname;
                 blob = await (await fetch(imgUrl)).blob();
             }
-            return createImageBitmap(blob, { colorSpaceConversion: "none" });
+            return createImageBitmap(blob, { colorSpaceConversion: "none", premultiplyAlpha: "none" });
         };
         const decoded = await Promise.all(Array.from({ length: (json.textures ?? []).length }, (_v, t) => decodeTexture(t)));
         decoded.forEach((bitmap, t) => {
@@ -274,11 +274,13 @@ export class GltfImporter {
             const emissive = m.emissiveFactor ?? [0, 0, 0];
             const baseColorTex = pbr.baseColorTexture !== undefined ? textureIDs.get(pbr.baseColorTexture.index) : undefined;
             return {
+                ...(m.name !== undefined ? { name: m.name } : {}),
                 // Emissive flag mirrors BasicMaterial::updateEmissiveFlag (factor defaults to 1).
                 header: { doubleSided: m.doubleSided ?? false, emissive: emissive.some((c) => c !== 0) },
                 basic: {
                     baseColor: new float4(bc[0]!, bc[1]!, bc[2]!, bc[3]!),
-                    specular: new float4(1, pbr.roughnessFactor ?? 1, pbr.metallicFactor ?? 1, 0),
+                    // specular.r stays 0 as natively (Assimp's glTF path sets roughness and metallic only).
+                    specular: new float4(0, pbr.roughnessFactor ?? 1, pbr.metallicFactor ?? 1, 0),
                     emissive: new float3(emissive[0]!, emissive[1]!, emissive[2]!),
                     texBaseColor: baseColorTex !== undefined ? packTextureHandle(TextureHandleMode.Texture, baseColorTex) : undefined,
                 },

@@ -461,12 +461,12 @@ async function decodeTextureSources(textures: CachedTexture[]): Promise<TextureM
             const { ddsCompressedPayload, decodeDDSToRGBA } = await import("./Importer/DDSLoader.js");
             const buffer = t.png.slice().buffer as ArrayBuffer;
             const { width, height, rgba } = decodeDDSToRGBA(buffer, t.srgb, 512);
-            const bitmap = await createImageBitmap(new ImageData(new Uint8ClampedArray(rgba), width, height));
+            const bitmap = await createImageBitmap(new ImageData(new Uint8ClampedArray(rgba), width, height), { premultiplyAlpha: "none" });
             tm.addTexture({ bitmap, srgb: t.srgb, bytes: t.png, compressed: ddsCompressedPayload(buffer, t.srgb), dds: true });
             continue;
         }
         // Same decode options as the pyscene import path (parity-critical).
-        const bitmap = await createImageBitmap(new Blob([t.png.slice().buffer as ArrayBuffer]), { colorSpaceConversion: "none" });
+        const bitmap = await createImageBitmap(new Blob([t.png.slice().buffer as ArrayBuffer]), { colorSpaceConversion: "none", premultiplyAlpha: "none" });
         tm.addTexture({ bitmap, srgb: t.srgb, bytes: t.png } as TextureSource);
     }
     return tm;
@@ -530,7 +530,7 @@ export async function buildSceneFromCache(device: Device, cached: CacheableScene
         scene.setEnvMap(env);
     }
     const cameras = cached.cameras.map((pose) => {
-        const cam = new Camera(pose.name ?? "Camera");
+        const cam = new Camera(pose.name ?? "");
         cam.setPosition(new float3(...pose.position));
         cam.setTarget(new float3(...pose.target));
         cam.setUpVector(new float3(...pose.up));

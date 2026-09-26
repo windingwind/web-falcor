@@ -84,7 +84,7 @@ export class Camera {
     private prevViewProjMatNoJitter: float4x4 | null = null;
     private lastFrameViewProjMatNoJitter: float4x4 | null = null;
 
-    constructor(name = "Camera") {
+    constructor(name = "") {
         this.name = name;
     }
 

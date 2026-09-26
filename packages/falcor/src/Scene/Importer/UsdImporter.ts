@@ -390,7 +390,7 @@ export class UsdImporter {
                     header: { materialType: MaterialType.Standard, ior: m.ior ?? 1.5, emissive, doubleSided: true },
                     basic: {
                         baseColor: new float4(dc[0]!, dc[1]!, dc[2]!, 1),
-                        specular: new float4(0, m.roughness ?? 0.5, m.metallic ?? 0, 1),
+                        specular: new float4(0, m.roughness ?? 0.5, m.metallic ?? 0, 0),
                         emissive: new float3(em[0]!, em[1]!, em[2]!),
                         emissiveFactor: 1,
                     },
@@ -418,7 +418,7 @@ export class UsdImporter {
                 desc = {
                     name,
                     header: { materialType: MaterialType.Standard, ior: 1.5, doubleSided: true },
-                    basic: { baseColor: new float4(c[0]!, c[1]!, c[2]!, 1), specular: new float4(0, 0.3, 0, 1) },
+                    basic: { baseColor: new float4(c[0]!, c[1]!, c[2]!, 1), specular: new float4(0, 0.3, 0, 0) },
                 };
             }
             const index = materials.length;
@@ -682,6 +682,24 @@ export class UsdImporter {
 
         // Native's stage root transform: meters per unit, Z-up rotated to Y-up.
         walk(usd.getDefaultRootNode(), rootXform, float4x4.identity());
+        // BasisCurves count toward the world bound too: the authored extent, else control points padded by half their width.
+        // §9: the extracted curves carry no parent transform, so they bound in their own space.
+        for (const c of curves) {
+            if (c.extent) {
+                for (let k = 0; k < 3; k++) {
+                    lo[k] = Math.min(lo[k]!, c.extent[k]!);
+                    hi[k] = Math.max(hi[k]!, c.extent[k + 3]!);
+                }
+                continue;
+            }
+            for (let i = 0; i < c.points.length / 3; i++) {
+                const r = (c.widths[Math.min(i, c.widths.length - 1)] ?? 0) / 2;
+                for (let k = 0; k < 3; k++) {
+                    lo[k] = Math.min(lo[k]!, c.points[i * 3 + k]! - r);
+                    hi[k] = Math.max(hi[k]!, c.points[i * 3 + k]! + r);
+                }
+            }
+        }
         const mpu = stageInfo?.metersPerUnit ?? 1;
         const diagonal = Math.hypot(hi[0]! - lo[0]!, hi[1]! - lo[1]!, hi[2]! - lo[2]!);
         const stage = Number.isFinite(diagonal) ? { center: new float3(((lo[0]! + hi[0]!) / 2) * mpu, ((lo[1]! + hi[1]!) / 2) * mpu, ((lo[2]! + hi[2]!) / 2) * mpu), diagonal: diagonal * mpu } : null;
@@ -836,7 +854,7 @@ async function resolveMaterialTextures(
                     orm[i + 3] = 255;
                 }
             }
-            const bitmap = await createImageBitmap(new ImageData(orm, w, h));
+            const bitmap = await createImageBitmap(new ImageData(orm, w, h), { premultiplyAlpha: "none" });
             desc.basic.texSpecular = packTextureHandle(TextureHandleMode.Texture, textureManager.addTexture({ bitmap, srgb: false }));
         } catch (err) {
             Logger.warning(`UsdImporter: failed to pack spec texture (${String(err)})`);
@@ -893,7 +911,7 @@ async function resolveImageBitmap(usd: TinyUsdzScene, textureId: number, baseUrl
                 rgba[i * 4 + 2] = image.data[i * channels + (channels > 2 ? 2 : 0)]!;
                 rgba[i * 4 + 3] = channels > 3 ? image.data[i * channels + 3]! : 255;
             }
-            return createImageBitmap(new ImageData(rgba, image.width, image.height));
+            return createImageBitmap(new ImageData(rgba, image.width, image.height), { premultiplyAlpha: "none" });
         }
         return createImageBitmap(new Blob([image.data.slice().buffer as ArrayBuffer]), opts);
     }

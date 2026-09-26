@@ -25,7 +25,7 @@ import { Logger } from "../../Utils/Logger.js";
 
 /** Decodes one image file; the default handles what createImageBitmap reads. */
 export type ImageDecoder = (bytes: Uint8Array, blob: Blob, url: string) => Promise<ImageBitmap>;
-const decodeWithBrowser: ImageDecoder = (_bytes, blob) => createImageBitmap(blob, { colorSpaceConversion: "none" });
+const decodeWithBrowser: ImageDecoder = (_bytes, blob) => createImageBitmap(blob, { colorSpaceConversion: "none", premultiplyAlpha: "none" });
 
 export interface TextureSource {
     /** Decoded image (CPU consumers: alpha analysis, readback; the GPU fallback for compressed data). */
@@ -140,11 +140,40 @@ export class TextureManager {
         if (cached) return cached;
         const source = this.sources[textureID];
         if (!source) return null;
-        const { bitmap, srgb, compressed } = source;
+        const { bitmap } = source;
+        // A 2D canvas stores premultiplied alpha: transparent texels read back black (prepareAnalyses reads exactly).
         const canvas = new OffscreenCanvas(bitmap.width, bitmap.height);
         const c2d = canvas.getContext("2d", { willReadFrequently: true })!;
         c2d.drawImage(bitmap, 0, 0);
-        const bytes = c2d.getImageData(0, 0, bitmap.width, bitmap.height).data;
+        return this.storeAnalysis(textureID, c2d.getImageData(0, 0, bitmap.width, bitmap.height).data);
+    }
+
+    /**
+     * Analyzes the given textures (all by default) from their exact, straight-alpha texels (VideoFrame readback),
+     * as native's TextureAnalyzer sees them; analyze() then returns these results.
+     */
+    async prepareAnalyses(textureIDs: Iterable<number> = this.sources.keys()): Promise<void> {
+        if (typeof VideoFrame === "undefined") return;
+        for (const id of textureIDs) {
+            const source = this.sources[id];
+            if (!source || this.analyses.has(id)) continue;
+            try {
+                const frame = new VideoFrame(source.bitmap, { timestamp: 0, alpha: "keep" });
+                const bytes = new Uint8Array(frame.allocationSize());
+                await frame.copyTo(bytes);
+                const format = frame.format;
+                frame.close();
+                if (format === "BGRA" || format === "BGRX") for (let i = 0; i < bytes.length; i += 4) [bytes[i], bytes[i + 2]] = [bytes[i + 2]!, bytes[i]!];
+                if (format === "RGBX" || format === "BGRX") for (let i = 3; i < bytes.length; i += 4) bytes[i] = 255;
+                if (format === "RGBA" || format === "BGRA" || format === "RGBX" || format === "BGRX") this.storeAnalysis(id, bytes);
+            } catch {
+                // Falls back to the canvas analysis on demand.
+            }
+        }
+    }
+
+    private storeAnalysis(textureID: number, bytes: Uint8Array | Uint8ClampedArray): TextureAnalysis {
+        const { srgb, compressed } = this.sources[textureID]!;
         const min = [255, 255, 255, 255];
         const max = [0, 0, 0, 0];
         for (let i = 0; i < bytes.length; i += 4) {

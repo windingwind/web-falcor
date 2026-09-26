@@ -373,7 +373,7 @@ export class MaterialBridge {
             }
             if (t.path.includes("<MIP>")) {
                 const srgb = slotSrgb && t.useSrgb && !assumeLinearSpaceTextures;
-                const decode = (bytes: Uint8Array, blob: Blob, u: string) => (u.toLowerCase().endsWith(".tga") ? decodeTgaToBitmap(bytes) : u.toLowerCase().endsWith(".dds") ? decodeDdsToBitmap(bytes, u, device) : createImageBitmap(blob, { colorSpaceConversion: "none" }));
+                const decode = (bytes: Uint8Array, blob: Blob, u: string) => (u.toLowerCase().endsWith(".tga") ? decodeTgaToBitmap(bytes) : u.toLowerCase().endsWith(".dds") ? decodeDdsToBitmap(bytes, u, device) : createImageBitmap(blob, { colorSpaceConversion: "none", premultiplyAlpha: "none" }));
                 const id = await tm.loadTexture(t.path, true, srgb, resolver, baseUrl, decode);
                 if (id !== undefined) this.assignTextureHandle(t.slot, packTextureHandle(TextureHandleMode.Texture, id));
                 continue;
@@ -392,7 +392,7 @@ export class MaterialBridge {
                         ? await decodeTgaToBitmap(bytes)
                         : ext === ".dds"
                           ? await decodeDdsToBitmap(bytes, url, device)
-                          : await createImageBitmap(blob, { colorSpaceConversion: "none" });
+                          : await createImageBitmap(blob, { colorSpaceConversion: "none", premultiplyAlpha: "none" });
                 // DDS: the GPU gets the full-resolution BC chain in its own format.
                 // The levels view the file's own buffer (a copy would hold every DDS twice).
                 const whole = bytes.byteOffset === 0 && bytes.byteLength === bytes.buffer.byteLength;
@@ -435,8 +435,23 @@ export class MaterialBridge {
     set emissiveColor(v: { x: number; y: number; z: number }) {
         this._emissiveColor = toF3(v);
     }
-    get roughness(): number { return this._specularParams.y; }
-    get metallic(): number { return this._specularParams.z; }
+    /** Per material type as natively (see SceneMaterial.roughness). */
+    get roughness(): number | float2 | float4 {
+        const s = this._specularParams;
+        switch (this.materialType) {
+            case MaterialType.PBRTConductor:
+            case MaterialType.PBRTDielectric:
+            case MaterialType.PBRTCoatedDiffuse:
+                return new float2(s.x, s.y);
+            case MaterialType.PBRTCoatedConductor:
+                return new float4(s.x, s.y, s.z, s.w);
+            case MaterialType.Cloth:
+                return s.y;
+            default:
+                return this._shadingModel === ShadingModel.MetalRough ? s.y : 0;
+        }
+    }
+    get metallic(): number { return this._shadingModel === ShadingModel.MetalRough ? this._specularParams.z : 0; }
     get lightProfileEnabled(): boolean { return this._lightProfileEnabled; }
 
     /** ClothMaterial/BasicMaterial::setRoughness -> specular.g. */
@@ -569,8 +584,16 @@ export class LightBridge {
         this._intensity = toF3(v);
     }
     get direction(): float3 { return this._direction; }
+    /** Mirrors Point/Directional/DistantLight::setWorldDirection: normalized (f32); zero length is ignored. */
     set direction(v: { x: number; y: number; z: number }) {
-        this._direction = toF3(v);
+        const d = toF3(v);
+        const f = Math.fround;
+        const len = f(Math.sqrt(f(f(f(d.x * d.x) + f(d.y * d.y)) + f(d.z * d.z))));
+        if (!(len > 0)) {
+            Logger.warning("Can't set light direction to zero length vector. Ignoring call.");
+            return;
+        }
+        this._direction = new float3(f(d.x / len), f(d.y / len), f(d.z / len));
     }
     set scaling(v: { x: number; y: number; z: number } | number) {
         this._scaling = typeof v === "number" ? v : toF3(v);
@@ -1770,7 +1793,7 @@ export class SceneBuilderBridge {
                     for (const ch of parsed.animations) animations.push({ ...ch, nodeID: ch.nodeID + nodeOffset });
                     for (const l of parsed.lights) importedLights.push({ ...l, nodeID: l.nodeID !== undefined ? l.nodeID + nodeOffset : undefined });
                     for (const wt of parsed.weightTracks) weightTracks.push({ ...wt, nodeID: wt.nodeID + nodeOffset });
-                    if (parsed.camera) this.importedCameras.push({ name: parsed.camera.name ?? "Camera", pose: parsed.camera, nodeID: parsed.cameraNodeID !== undefined ? parsed.cameraNodeID + nodeOffset : undefined });
+                    if (parsed.camera) this.importedCameras.push({ name: parsed.camera.name ?? "", pose: parsed.camera, nodeID: parsed.cameraNodeID !== undefined ? parsed.cameraNodeID + nodeOffset : undefined });
                     for (const m of parsed.meshes)
                         meshes.push({
                             ...m,
@@ -1978,7 +2001,10 @@ export class SceneBuilderBridge {
             cameraNodeID = builderNodeIDs.get(this._cameras[scriptedCamera]!.nodeID!);
         }
         // MaterialSystem::optimizeMaterials: constant textures become uniform material values.
-        if (!this.hasFlag(SceneBuilderFlags.DontOptimizeMaterials)) optimizeMaterialTextures(materials, textureManager);
+        if (!this.hasFlag(SceneBuilderFlags.DontOptimizeMaterials)) {
+            await textureManager.prepareAnalyses();
+            optimizeMaterialTextures(materials, textureManager);
+        }
         // MaterialSystem::removeDuplicateMaterials, after the optimization so more materials match.
         if (!this.hasFlag(SceneBuilderFlags.DontMergeMaterials)) {
             const idMap = removeDuplicateMaterials(materials);
@@ -2026,7 +2052,7 @@ export class SceneBuilderBridge {
             cameraList.push(cam);
         }
         for (const c of this._cameras) {
-            const cam = new Camera(c.name || "Camera");
+            const cam = new Camera(c.name ?? "");
             cam.setPosition(c.getPosition());
             cam.setTarget(c.getTarget());
             cam.setUpVector(c.getUp());
@@ -2100,6 +2126,8 @@ export class SceneBuilderBridge {
             await profile.bake(device.renderContext);
             scene.lightProfile = profile;
         }
+        // Scene::finalize animates to t = 0 and initializeCameras poses animated cameras from their nodes.
+        scene.animate(0);
         return scene;
     }
 }
