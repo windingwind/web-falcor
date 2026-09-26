@@ -37,7 +37,7 @@ import {
     type CPUSampleGenerator,
     type Device,
     type RenderContext,
-    type UIWidgets,
+    type UIWidgets, kRenderPassGBufferAdjustShadingNormals
 } from "@web-falcor/falcor";
 import { cullRayFlags } from "./VBufferRT.js";
 
@@ -199,6 +199,8 @@ export class GBufferRT extends RenderPass {
     }
 
     override execute(ctx: RenderContext, renderData: RenderData): void {
+        // GBufferBase::execute: consumers re-adjust shading normals the VBuffer can't carry.
+        renderData.dictionary.set(kRenderPassGBufferAdjustShadingNormals, this.adjustShadingNormals);
         if (!this.scene) return;
         const anyOutput = kChannels.map(([name]) => renderData.getTexture(name)).find((t) => t !== undefined);
         if (!anyOutput) return;

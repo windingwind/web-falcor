@@ -58,6 +58,8 @@ export class RenderData {
 
 /** Dictionary key: PRNG dimensions consumed upstream of a tracer (mirrors kRenderPassPRNGDimension). */
 export const kRenderPassPRNGDimension = "prngDimension";
+/** Dictionary key: the G-buffer's adjustShadingNormals, for passes that load its hits (kRenderPassGBufferAdjustShadingNormals). */
+export const kRenderPassGBufferAdjustShadingNormals = "_gbufferAdjustShadingNormals";
 
 export abstract class RenderPass {
     name = "";

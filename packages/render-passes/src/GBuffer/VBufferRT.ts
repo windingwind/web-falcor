@@ -30,7 +30,7 @@ import {
     type CompileData,
     type Device,
     type RenderContext,
-    type UIWidgets,
+    type UIWidgets, kRenderPassGBufferAdjustShadingNormals
 } from "@web-falcor/falcor";
 
 const kShaderFile = "RenderPasses/GBuffer/VBuffer/VBufferRT.cs.slang";
@@ -173,6 +173,8 @@ export class VBufferRT extends RenderPass {
     }
 
     override execute(ctx: RenderContext, renderData: RenderData): void {
+        // GBufferBase::execute: consumers re-adjust shading normals the VBuffer can't carry.
+        renderData.dictionary.set(kRenderPassGBufferAdjustShadingNormals, this.adjustShadingNormals);
         if (!this.scene) return;
         const vbuffer = renderData.getTexture("vbuffer")!;
         // Mirrors GBufferBase::updateFrameDim (first jitter sample lands next frame).

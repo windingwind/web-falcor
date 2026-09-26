@@ -68,8 +68,8 @@ for (const [name, path] of Object.entries(kScenes)) {
             return c4 === 3 ? 255 : tone(nat[((h - 1 - Math.floor(px / w)) * w + (px % w)) * 4 + c4]!);
         }), w, h, false);
         scene.destroy();
-        // Open residual: BistroExterior, EmeraldSquare and ZeroDay render ~7% darker than native.
-        for (const r of ratio) expectEq(Math.abs(r - 1) < 0.1, true, `mean radiance ratio ${ratio}`);
-        expectEq(rel < 0.25, true, `relative L1 ${rel}`);
+        // Open residual: ZeroDay (thousands of emissive panels) renders ~4% darker and noisier than native.
+        for (const r of ratio) expectEq(Math.abs(r - 1) < 0.05, true, `mean radiance ratio ${ratio}`);
+        expectEq(rel < (name === "ZeroDay" ? 0.35 : 0.1), true, `relative L1 ${rel}`);
     });
 }

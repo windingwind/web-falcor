@@ -49,7 +49,7 @@ import {
     type Device,
     type RenderContext,
     type ShaderVar,
-    type UIWidgets,
+    type UIWidgets, kRenderPassGBufferAdjustShadingNormals
 } from "@web-falcor/falcor";
 
 const kShaderFile = "RenderPasses/GBuffer/GBuffer/GBufferRaster.3d.slang";
@@ -288,6 +288,8 @@ export class GBufferRaster extends RenderPass {
     }
 
     override execute(ctx: RenderContext, renderData: RenderData): void {
+        // GBufferBase::execute: consumers re-adjust shading normals the VBuffer can't carry.
+        renderData.dictionary.set(kRenderPassGBufferAdjustShadingNormals, this.adjustShadingNormals);
         const depth = renderData.getTexture("depth")!;
         const [w, h] = [depth.width, depth.height];
         const present = kChannels.filter((ch) => renderData.getTexture(ch.name) !== undefined);

@@ -4,9 +4,6 @@
  * Rendering/RTXDI module, which carries the actual RTXDI SDK resampling).
  *
  * Web divergences (documented, docs §RenderPasses):
- * - GBUFFER_ADJUST_SHADING_NORMALS is fixed to 0: the web RenderData carries
- *   no inter-pass dictionary and the native flag defaults to false (GBufferBase
- *   default; VBufferRT never enables it in the shipped graphs).
  * - Optional outputs bind format-matched 1x1 dummies when their is_valid_*
  *   define is 0 but the storage binding survives DCE (native binds null UAVs;
  *   WebGPU requires every layout entry bound and forbids writable aliasing).
@@ -33,7 +30,7 @@ import {
     type UIWidgets,
     parseRTXDIOptions,
     serializeRTXDIOptions,
-    type RTXDIMode,
+    type RTXDIMode, kRenderPassGBufferAdjustShadingNormals
 } from "@web-falcor/falcor";
 
 const kPrepareSurfaceDataFile = "RenderPasses/RTXDIPass/PrepareSurfaceData.cs.slang";
@@ -152,6 +149,8 @@ export class RTXDIPass extends RenderPass {
         this.finalShadingPass = null;
     }
 
+    private gbufferAdjustShadingNormals = false;
+
     override execute(ctx: RenderContext, renderData: RenderData): void {
         if (!this.scene || !this.rtxdi) {
             for (const { name } of kOutputChannels) {
@@ -162,6 +161,13 @@ export class RTXDIPass extends RenderPass {
         }
 
         const vbuffer = renderData.getTexture("vbuffer")!;
+        // RTXDIPass::beginFrame: the VBuffer producer's adjustShadingNormals.
+        const adjust = renderData.dictionary.get(kRenderPassGBufferAdjustShadingNormals) === true;
+        if (adjust !== this.gbufferAdjustShadingNormals) {
+            this.gbufferAdjustShadingNormals = adjust;
+            this.prepareSurfaceDataPass = null;
+            this.finalShadingPass = null;
+        }
         // Native binds null SRVs for missing optional inputs (reads return
         // zero); WebGPU needs a texture for every surviving binding.
         if (!this.rg32Dummy) {
@@ -198,7 +204,7 @@ export class RTXDIPass extends RenderPass {
         if (!this.prepareSurfaceDataPass) {
             const defines = this.scene!.getSceneDefines()
                 .addAll(this.rtxdi!.getDefines())
-                .add("GBUFFER_ADJUST_SHADING_NORMALS", 0);
+                .add("GBUFFER_ADJUST_SHADING_NORMALS", this.gbufferAdjustShadingNormals ? 1 : 0);
             this.prepareSurfaceDataPass = ComputePass.create(this.device, { path: kPrepareSurfaceDataFile, defines });
         }
 
@@ -218,7 +224,7 @@ export class RTXDIPass extends RenderPass {
         if (!this.finalShadingPass) {
             const defines = this.scene!.getSceneDefines()
                 .addAll(this.rtxdi!.getDefines())
-                .add("GBUFFER_ADJUST_SHADING_NORMALS", 0)
+                .add("GBUFFER_ADJUST_SHADING_NORMALS", this.gbufferAdjustShadingNormals ? 1 : 0)
                 .add("USE_ENV_BACKGROUND", this.scene!.useEnvBackground ? 1 : 0);
             // is_valid_<name> defines for the optional outputs (connectivity is
             // fixed per graph compile; native re-adds them per frame).

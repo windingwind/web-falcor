@@ -47,7 +47,7 @@ import {
     Logger,
     MaterialType,
     calculateIOSize,
-    parseIOSize,
+    parseIOSize, kRenderPassGBufferAdjustShadingNormals
 } from "@web-falcor/falcor";
 
 const kGeneratePathsFile = "RenderPasses/PathTracer/GeneratePaths.cs.slang";
@@ -161,6 +161,7 @@ export class PathTracer extends RenderPass {
     private misPowerExponent = 2;
     private useAlphaTest = true;
     private adjustShadingNormals = false;
+    private gbufferAdjustShadingNormals = false;
     private sampleGeneratorType = SAMPLE_GENERATOR_TINY_UNIFORM;
     private maxNestedMaterials = 2;
     private useLightsInDielectricVolumes = false;
@@ -502,7 +503,7 @@ export class PathTracer extends RenderPass {
                     : { _EMISSIVE_LIGHT_SAMPLER_TYPE: kEmissiveSamplerTypes[this.emissiveSampler]! }
                 : {}),
             INTERIOR_LIST_SLOT_COUNT: this.maxNestedMaterials,
-            GBUFFER_ADJUST_SHADING_NORMALS: 0,
+            GBUFFER_ADJUST_SHADING_NORMALS: this.gbufferAdjustShadingNormals ? 1 : 0,
             USE_ENV_LIGHT: scene.useEnvLight ? 1 : 0,
             USE_ANALYTIC_LIGHTS: scene.useAnalyticLights ? 1 : 0,
             USE_EMISSIVE_LIGHTS: scene.useEmissiveLights ? 1 : 0,
@@ -663,6 +664,8 @@ export class PathTracer extends RenderPass {
         // Mirrors beginFrame's mOutputNRDData / mOutputNRDAdditionalData.
         const outputNRDData = kNRDDataOutputs.some((name) => renderData.getTexture(name) !== undefined);
         const outputNRDAdditionalData = kNRDOutputs.some(([name, , , , additional]) => additional && renderData.getTexture(name) !== undefined);
+        // Mirrors PathTracer::beginFrame: the VBuffer producer's adjustShadingNormals (default false).
+        const gbufferAdjustShadingNormals = renderData.dictionary.get(kRenderPassGBufferAdjustShadingNormals) === true;
         this.nrdRegions = new Map(kNRDOutputs.filter(([name]) => renderData.getTexture(name) !== undefined).map(([name], i, arr) => [name, arr.findIndex(([n]) => n === name)]));
         // The resolve reads the primary-hit diffuse reflectance, so it always gets a region with NRD data.
         if (outputNRDData && !this.nrdRegions.has("nrdDiffuseReflectance")) this.nrdRegions.set("nrdDiffuseReflectance", this.nrdRegions.size);
@@ -672,8 +675,10 @@ export class PathTracer extends RenderPass {
             outputNRDAdditionalData !== this.outputNRDAdditionalData ||
             fixedSampleCount !== this.fixedSampleCount ||
             statsEnabled !== this.statsEnabled ||
-            useViewDir !== this.useViewDir
+            useViewDir !== this.useViewDir ||
+            gbufferAdjustShadingNormals !== this.gbufferAdjustShadingNormals
         ) {
+            this.gbufferAdjustShadingNormals = gbufferAdjustShadingNormals;
             this.outputGuideData = outputGuideData;
             this.outputNRDData = outputNRDData;
             this.outputNRDAdditionalData = outputNRDAdditionalData;
