@@ -15,7 +15,7 @@ import { buildSceneFromCache, encodeTextureSources, loadSceneCache, sceneCacheKe
 import { createPass, type RenderPass } from "../../RenderGraph/RenderPass.js";
 import { Properties } from "../Properties.js";
 import { RuntimeError } from "../../Core/Error.js";
-import { AssetResolver, fetchDirectoryListing, withScriptSearchPath } from "../../Core/AssetResolver.js";
+import { AssetResolver, fetchDirectoryListing, kPythonFsRoots, withScriptSearchPath } from "../../Core/AssetResolver.js";
 import { AnimationBridge, CameraBridge, GridVolumeBridge, LightBridge, MaterialBridge, SceneBuilderBridge, SceneBuilderFlags, SDFGridBridge, TransformBridge, TriangleMesh, kSceneBuilderFlagsPython, makeTransform } from "../../Scene/SceneBuilder.js";
 import type { Scene } from "../../Scene/Scene.js";
 import { LightType, type StaticVertex } from "../../Scene/SceneData.js";
@@ -63,6 +63,48 @@ export async function initScripting(indexURL: string): Promise<void> {
     };
     // Packages (numpy) come from tools/pyodide-packages/, provisioned by scripts/setup-web.mjs.
     pyodide = await mod.loadPyodide({ indexURL, packageBaseUrl: new URL(kPyodidePackagesUrl, globalThis.location?.href ?? "http://localhost/").href });
+    installServedFileOpen(pyodide);
+}
+
+/**
+ * Scripts read arbitrary files natively (e.g. `exec(open(".../scripts/PathTracer.py").read())`). Python's open()
+ * fetches a missing file under the served Python roots on first read (a synchronous request, since Python is).
+ */
+function installServedFileOpen(py: PyodideApi): void {
+    py.registerJsModule("_webfalcor_fs", {
+        fetchFile(path: string): Uint8Array | undefined {
+            const root = kPythonFsRoots.find((r) => path.startsWith(`${r}/`));
+            if (!root || typeof XMLHttpRequest === "undefined") return undefined;
+            const xhr = new XMLHttpRequest();
+            xhr.open("GET", path.slice(root.length), false);
+            xhr.overrideMimeType("text/plain; charset=x-user-defined");
+            try {
+                xhr.send();
+            } catch {
+                return undefined;
+            }
+            if (xhr.status !== 200) return undefined;
+            const text = xhr.responseText;
+            return Uint8Array.from({ length: text.length }, (_c, i) => text.charCodeAt(i) & 0xff);
+        },
+    });
+    py.runPython(`
+import builtins, io, os
+import _webfalcor_fs
+_webfalcor_open = io.open
+def _webfalcor_served_open(file, mode="r", *args, **kwargs):
+    if isinstance(file, (str, os.PathLike)) and not any(c in mode for c in "wax+"):
+        path = os.path.abspath(os.fspath(file))
+        if not os.path.exists(path):
+            data = _webfalcor_fs.fetchFile(path)
+            if data is not None:
+                os.makedirs(os.path.dirname(path), exist_ok=True)
+                with _webfalcor_open(path, "wb") as f:
+                    f.write(bytes(data.to_py()))
+    return _webfalcor_open(file, mode, *args, **kwargs)
+builtins.open = _webfalcor_served_open
+io.open = _webfalcor_served_open
+`);
 }
 
 /** Shared Settings instance (native: SampleApp::getSettings()). */
