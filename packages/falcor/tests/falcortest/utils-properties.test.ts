@@ -4,7 +4,7 @@
  */
 
 import { describe, expect, it } from "vitest";
-import { Properties, type PropertyValue } from "../../src/Utils/Properties.js";
+import { Properties, PropertiesReader, PropertiesWriter, type PropertiesArchive, type PropertyValue } from "../../src/Utils/Properties.js";
 
 enum TestEnum {
     A,
@@ -136,5 +136,51 @@ describe("PropertiesTests", () => {
             ["b", 2],
             ["c", "3"],
         ]);
+    });
+    it("PropertiesSerialization", () => {
+        class NestedStruct {
+            a = 11;
+            b = 22;
+            c = "33";
+            serialize(ar: PropertiesArchive): void {
+                this.a = ar("a", this.a);
+                this.b = ar("b", this.b);
+                this.c = ar("c", this.c);
+            }
+        }
+        class TestStruct {
+            a = 1;
+            b = 2;
+            c = "3";
+            nested = new NestedStruct();
+            serialize(ar: PropertiesArchive): void {
+                this.a = ar("a", this.a);
+                this.b = ar("b", this.b);
+                this.c = ar("c", this.c);
+                this.nested = ar("nested", this.nested);
+            }
+        }
+
+        let ts = new TestStruct();
+        const props = PropertiesWriter.write(ts);
+        expect(props.get("a", 0)).toBe(1);
+        expect(props.get("b", 0)).toBe(2);
+        expect(props.get("c", "")).toBe("3");
+        const nestedProps = props.getProperties("nested");
+        expect(nestedProps.get("a", 0)).toBe(11);
+        expect(nestedProps.get("b", 0)).toBe(22);
+        expect(nestedProps.get("c", "")).toBe("33");
+
+        props.set("a", 2);
+        props.set("b", 4);
+        props.set("c", "6");
+        nestedProps.set("a", 22);
+        nestedProps.set("b", 44);
+        nestedProps.set("c", "66");
+        props.set("nested", nestedProps);
+        ts = PropertiesReader.read(TestStruct, props);
+
+        expect([ts.a, ts.b, ts.c]).toEqual([2, 4, "6"]);
+        expect([ts.nested.a, ts.nested.b, ts.nested.c]).toEqual([22, 44, "66"]);
     });
 });

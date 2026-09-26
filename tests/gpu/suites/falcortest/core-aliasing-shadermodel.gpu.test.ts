@@ -43,7 +43,7 @@ gpuTest("FalcorTest.BufferAliasing_StructRead", async ({ device }) => {
     e.done("BufferAliasing_StructRead");
 });
 
-for (const sm of ["6_0", "6_1", "6_2", "6_3", "6_4", "6_5"]) {
+for (const sm of ["6_0", "6_1", "6_2", "6_3", "6_4", "6_5", "6_6"]) {
     gpuTest(`FalcorTest.ShaderModel${sm}`, async ({ device }) => {
         const ctx = new GPUUnitTestContext(device);
         ctx.createProgram("Tests/Slang/ShaderModel.cs.slang", "main");

@@ -9,7 +9,7 @@ import { Device } from "../API/Device.js";
 import { DefineList } from "./DefineList.js";
 import { SlangCompiler, ShaderType, loadSlangRuntime, type SlangRuntime, parenthesizeNegations, type CompileModule, type ShaderSourceResolver, type EntryPointDesc } from "./SlangCompiler.js";
 import { kShaderOverrides } from "./ShaderOverrides.js";
-import { ProgramReflection, parseWgslBindings, type WgslBinding } from "./ProgramReflection.js";
+import { ProgramReflection, isLoadOnlyWgsl, parseWgslBindings, type WgslBinding } from "./ProgramReflection.js";
 import { RuntimeError } from "../Error.js";
 
 /** Mirrors ProgramDesc::ShaderSource: a file (shader-root path) or a code string. */
@@ -323,14 +323,16 @@ export class ProgramManager {
         const t0 = performance.now();
         const result = compiler.compile(programModules(desc), desc.entryPoints, allDefines, desc.typeConformances ?? []);
         const t1 = performance.now();
+        const codes = desc.entryPoints.map((_ep, i) => fixupWgsl(result.entryPointCode[i]!));
+        const loadOnly = isLoadOnlyWgsl(codes);
         const kernels = desc.entryPoints.map((ep, i) => {
-            const wgsl = fixupWgsl(result.entryPointCode[i]!);
+            const wgsl = codes[i]!;
             return {
                 name: ep.name,
                 type: ep.type,
                 wgsl,
                 module: this.device.gpuDevice.createShaderModule({ label: `${String(desc.path ?? desc.modules?.[0]?.name ?? "")}:${ep.name}`, code: wgsl }),
-                bindings: parseWgslBindings(wgsl, shaderTypeToVisibility(ep.type)),
+                bindings: parseWgslBindings(wgsl, shaderTypeToVisibility(ep.type), loadOnly),
             };
         });
         const [versionTime, kernelsTime] = [(t1 - t0) / 1000, (performance.now() - t1) / 1000];

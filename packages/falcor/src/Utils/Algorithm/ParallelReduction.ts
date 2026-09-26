@@ -10,7 +10,8 @@ import type { Texture } from "../../Core/API/Texture.js";
 import { Buffer } from "../../Core/API/Buffer.js";
 import { ResourceBindFlags } from "../../Core/API/Types.js";
 import { ComputePass } from "../../Core/Pass/ComputePass.js";
-import { ResourceFormat } from "../../Core/API/Formats.js";
+import { FormatType as NativeFormatType, ResourceFormat, getFormatChannelCount, getFormatType } from "../../Core/API/Formats.js";
+import { RuntimeError } from "../../Core/Error.js";
 
 const kShaderFile = "Utils/Algorithm/ParallelReduction.cs.slang";
 
@@ -26,11 +27,20 @@ enum FormatType {
     Uint = 3,
 }
 
-function getFormatType(format: ResourceFormat): FormatType {
-    const name = ResourceFormat[format]!;
-    if (name.includes("Int") && !name.includes("Uint")) return FormatType.Sint;
-    if (name.includes("Uint")) return FormatType.Uint;
-    return FormatType.Float;
+/** Native's switch: float/unorm/snorm reduce as float; sRGB and other formats are unsupported. */
+function getReductionFormatType(format: ResourceFormat): FormatType {
+    switch (getFormatType(format)) {
+        case NativeFormatType.Float:
+        case NativeFormatType.Unorm:
+        case NativeFormatType.Snorm:
+            return FormatType.Float;
+        case NativeFormatType.Sint:
+            return FormatType.Sint;
+        case NativeFormatType.Uint:
+            return FormatType.Uint;
+        default:
+            throw new RuntimeError("ParallelReduction::execute() - Input texture format unsupported.");
+    }
 }
 
 export class ParallelReduction {
@@ -40,11 +50,11 @@ export class ParallelReduction {
 
     constructor(public readonly device: Device) {}
 
-    private getPasses(reductionType: ParallelReductionType, formatType: FormatType): { initial: ComputePass; final: ComputePass } {
-        const key = `${reductionType}:${formatType}`;
+    private getPasses(reductionType: ParallelReductionType, formatType: FormatType, channels: number): { initial: ComputePass; final: ComputePass } {
+        const key = `${reductionType}:${formatType}:${channels}`;
         let p = this.passes.get(key);
         if (!p) {
-            const defines = { REDUCTION_TYPE: reductionType, FORMAT_CHANNELS: 4, FORMAT_TYPE: formatType };
+            const defines = { REDUCTION_TYPE: reductionType, FORMAT_CHANNELS: channels, FORMAT_TYPE: formatType };
             p = {
                 initial: ComputePass.create(this.device, { path: kShaderFile, csEntry: "initialPass", defines }),
                 final: ComputePass.create(this.device, { path: kShaderFile, csEntry: "finalPass", defines }),
@@ -66,12 +76,12 @@ export class ParallelReduction {
     }
 
     /**
-     * Mirrors ParallelReduction::execute<float4>: reduces a texture, returns
-     * 4 values (Sum) or 8 values (MinMax: min.xyzw, max.xyzw).
+     * Mirrors ParallelReduction::execute<float4/int4/uint4>: reduces a texture, returns 4 values (Sum) or
+     * 8 values (MinMax: min.xyzw, max.xyzw), and copies them to `resultBuffer` at `resultOffset` if given.
      */
-    async execute(ctx: RenderContext, input: Texture, type: ParallelReductionType): Promise<Float32Array | Int32Array | Uint32Array> {
-        const formatType = getFormatType(input.format);
-        const { initial, final } = this.getPasses(type, formatType);
+    async execute(ctx: RenderContext, input: Texture, type: ParallelReductionType, resultBuffer?: Buffer, resultOffset = 0): Promise<Float32Array | Int32Array | Uint32Array> {
+        const formatType = getReductionFormatType(input.format);
+        const { initial, final } = this.getPasses(type, formatType, getFormatChannelCount(input.format));
 
         const numTilesX = Math.ceil(input.width / 32);
         const numTilesY = Math.ceil(input.height / 32);
@@ -102,6 +112,10 @@ export class ParallelReduction {
             elems = groups;
         }
 
+        if (resultBuffer) {
+            if (resultOffset + 16 * valueMult > resultBuffer.size) throw new RuntimeError("ParallelReduction::execute() - Results buffer is too small.");
+            ctx.copyBufferRegion(resultBuffer, resultOffset, this.buffers[inputIdx]!, 0, 16 * valueMult);
+        }
         const bytes = await ctx.readBuffer(this.buffers[inputIdx]!, 0, 16 * valueMult);
         if (formatType === FormatType.Sint) return new Int32Array(bytes.buffer, 0, 4 * valueMult);
         if (formatType === FormatType.Uint) return new Uint32Array(bytes.buffer, 0, 4 * valueMult);

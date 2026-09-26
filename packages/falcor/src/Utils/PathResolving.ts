@@ -50,3 +50,36 @@ export function resolveSearchPaths(current: readonly string[], update: readonly 
     }
     return result;
 }
+
+/** Lexical std::filesystem::weakly_canonical for '/'-separated paths (drops '.', resolves '..'). */
+export function weaklyCanonical(path: string): string {
+    const root = /^([a-zA-Z]:)?\//.exec(path)?.[0] ?? "";
+    const out: string[] = [];
+    for (const part of path.slice(root.length).split("/")) {
+        if (part === "" || part === ".") continue;
+        if (part === ".." && out.length > 0 && out[out.length - 1] !== "..") out.pop();
+        else if (part !== ".." || !root) out.push(part);
+    }
+    return root + out.join("/");
+}
+
+export type FileChecker = (path: string) => boolean;
+
+/**
+ * Mirrors resolvePath: an absolute path if it exists, a '.'-relative one against the working directory,
+ * otherwise the first search path holding the file; "" when nothing matches.
+ */
+export function resolvePath(searchPaths: readonly string[], currentWorkingDirectory: string, filePath: string, fileChecker: FileChecker): string {
+    if (!filePath) return "";
+    const join = (base: string, rel: string) => (base.endsWith("/") ? base : `${base}/`) + rel;
+    if (/^([a-zA-Z]:)?\//.test(filePath)) return fileChecker(filePath) ? weaklyCanonical(filePath) : "";
+    if (filePath[0] === ".") {
+        const result = join(currentWorkingDirectory, filePath);
+        return fileChecker(result) ? weaklyCanonical(result) : "";
+    }
+    for (const searchPath of searchPaths) {
+        const result = join(searchPath, filePath);
+        if (fileChecker(result)) return weaklyCanonical(result);
+    }
+    return "";
+}

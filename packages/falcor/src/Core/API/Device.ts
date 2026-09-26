@@ -76,6 +76,7 @@ export class Device {
             "float32-blendable", // alpha-blended overlays (TextRenderer) onto float targets
             "indirect-first-instance",
             "subgroups",
+            "texture-formats-tier1" as GPUFeatureName, // r/rg/rgba16 unorm/snorm, as native supports
             "chromium-experimental-timestamp-query-inside-passes" as GPUFeatureName,
         ];
         const features = wanted.filter((f) => adapter.features.has(f));

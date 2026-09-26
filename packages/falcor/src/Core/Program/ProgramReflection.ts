@@ -126,12 +126,17 @@ export interface WgslBinding {
     layoutEntry: GPUBindGroupLayoutEntry;
 }
 
+/** True if no stage of a program samples or gathers a texture. */
+export function isLoadOnlyWgsl(stages: readonly string[]): boolean {
+    return !stages.some((code) => /\btexture(?:Sample|Gather)\w*\(/.test(code));
+}
+
 /**
  * Parses @group/@binding declarations out of Slang-emitted WGSL to build explicit
  * bind-group layouts. Explicit layouts (not 'auto') mirror Falcor's reflection-built
  * root signatures and avoid WebGPU auto-layout's unused-binding stripping.
  */
-export function parseWgslBindings(wgsl: string, visibility: GPUShaderStageFlags): WgslBinding[] {
+export function parseWgslBindings(wgsl: string, visibility: GPUShaderStageFlags, loadOnly = false): WgslBinding[] {
     const bindings: WgslBinding[] = [];
     const re = /@binding\((\d+)\)\s*@group\((\d+)\)\s*var\s*(?:<([^>]+)>)?\s*([A-Za-z0-9_]+)\s*:\s*([^;]+);/g;
     for (const m of wgsl.matchAll(re)) {
@@ -174,6 +179,12 @@ export function parseWgslBindings(wgsl: string, visibility: GPUShaderStageFlags)
             continue;
         }
         bindings.push({ group: Number(groupStr), binding: Number(bindingStr), name: name!, layoutEntry: entry });
+    }
+    // A program that never samples (`loadOnly`, over all its stages) only loads its float textures: bind them as
+    // unfilterable-float, which also admits formats WebGPU can't filter (16-bit norm, 32-bit float without
+    // float32-filterable), as natively. Per-texture tracking isn't safe: textures reach textureSample through parameters.
+    if (loadOnly) {
+        for (const b of bindings) if (b.layoutEntry.texture?.sampleType === "float" && !b.layoutEntry.texture.multisampled) b.layoutEntry.texture.sampleType = "unfilterable-float";
     }
     // A sampler used with an integer texture (e.g. textureGather on u32) must be bound as
     // non-filtering; point samplers are valid there (NRD's gNearestClamp over uint pools).
