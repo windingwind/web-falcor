@@ -335,7 +335,7 @@ describe("buildBvhParallel with offloaded top levels", () => {
             const serial = buildBvh(tris);
             const run = async (input: Parameters<typeof buildBvhSubtree>[0]) => buildBvhSubtree(input);
             const runTop = async (input: Parameters<typeof splitTopLevels>[0], depth: number) => splitTopLevels(input, depth);
-            for (const depth of [2, 3, 4]) {
+            for (const depth of [2, 3, 4, 6]) {
                 const par = await buildBvhParallel(tris, run, depth, runTop);
                 expect(bytes(par.nodes), `nodes, ${count} tris, depth ${depth}`).toEqual(bytes(serial.nodes));
                 expect(bytes(par.tris), `tris, ${count} tris, depth ${depth}`).toEqual(bytes(serial.tris));

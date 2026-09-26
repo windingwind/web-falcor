@@ -631,19 +631,22 @@ export async function buildBvhParallel(
     if (n === 0) return emptyBvh();
     const input = Array.isArray(triangles) ? bvhInput(triangles) : triangles.input;
 
-    // The root split here, then (with runTop) the levels below each half in parallel.
+    // The root split here; with runTop, every split below runs as its own task and both children proceed in parallel.
     let { index, tree } = splitTopLevels(input, runTop ? 1 : depth);
     if (runTop && tree.kind === "inner" && depth > 1) {
-        const offload = async (leaf: TopSplitNode): Promise<TopSplitNode> => {
-            if (leaf.kind !== "leaf") return leaf;
+        const splitBelow = async (leaf: TopSplitNode, level: number): Promise<TopSplitNode> => {
+            if (leaf.kind !== "leaf" || level === depth || leaf.hi - leaf.lo <= 4 * 2) return leaf;
             const { lo, hi } = leaf;
-            const sub = await runTop(compactInput(input, index, lo, hi), depth - 1);
+            const sub = await runTop(compactInput(input, index, lo, hi), 1);
             const old = index.slice(lo, hi);
             for (let i = 0; i < sub.index.length; i++) index[lo + i] = old[sub.index[i]!]!;
+            if (sub.tree.kind !== "inner") return leaf;
             const shift = (t: TopSplitNode): TopSplitNode => (t.kind === "leaf" ? { kind: "leaf", lo: t.lo + lo, hi: t.hi + lo } : { ...t, left: shift(t.left), right: shift(t.right) });
-            return shift(sub.tree);
+            const inner = shift(sub.tree) as Extract<TopSplitNode, { kind: "inner" }>;
+            const [left, right] = await Promise.all([splitBelow(inner.left, level + 1), splitBelow(inner.right, level + 1)]);
+            return { ...inner, left, right };
         };
-        const [left, right] = await Promise.all([offload(tree.left), offload(tree.right)]);
+        const [left, right] = await Promise.all([splitBelow(tree.left, 1), splitBelow(tree.right, 1)]);
         tree = { ...tree, left, right };
     }
 

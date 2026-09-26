@@ -1017,7 +1017,7 @@ export class Scene {
                 ? await buildBvhParallel(
                       geometry.bvhTris,
                       (input) => pool.run("buildBvhSubtree", input, [input.bmin.buffer, input.bmax.buffer, input.cent.buffer]),
-                      3,
+                      5, // 32 subtree jobs keep the pool busy; the splits above them run in parallel too
                       (input, depth) => pool.run("splitTopLevels", { input, depth }, [input.bmin.buffer, input.bmax.buffer, input.cent.buffer]),
                   )
                 : undefined;
