@@ -404,29 +404,50 @@ export function parseOpenVDBFloatGrid(buffer: ArrayBuffer, gridname = "density")
     const background = g.f32();
     const numTiles = g.u32();
     const numChildren = g.u32();
-    // Root tiles are constant regions at the top level; NanoVDB's builder here
-    // emits leaf nodes only, so a file that uses them would lose data.
-    if (numTiles !== 0) throw new RuntimeError(`OpenVDB: root tiles are unsupported (${numTiles} in this grid)`);
+    // Root tiles cover 4096^3 voxels each: too large to expand into the leaves the web NanoVDB writer emits.
+    // Inactive background tiles read back as the background anyway; anything else is rejected.
+    for (let t = 0; t < numTiles; t++) {
+        g.coord();
+        const value = g.f32();
+        const active = g.byte() !== 0;
+        if (active || value !== background) throw new RuntimeError(`OpenVDB: root tiles with a value or active state are unsupported (value ${value}, active ${active})`);
+    }
 
     const leafOrigins: [number, number, number][] = [];
     const leafMasks: Uint8Array[] = [];
+    // Active internal-node tiles (a constant over a 128^3 or 8^3 region) become fully active leaves, so lookups
+    // and voxel counts match NanoVDB's tiles. Inactive tiles (e.g. a level set's interior) still read back as the
+    // background, since the writer's per-leaf statistics need an active voxel.
+    const tileLeaves: { origin: [number, number, number]; mask: Uint8Array; values: Float32Array }[] = [];
+    const addTile = (origin: [number, number, number], size: number, value: number, active: boolean) => {
+        if (!active) return;
+        const mask = new Uint8Array(64).fill(0xff);
+        const values = new Float32Array(512).fill(value);
+        for (let x = 0; x < size; x += 8) for (let y = 0; y < size; y += 8) for (let z = 0; z < size; z += 8) tileLeaves.push({ origin: [origin[0] + x, origin[1] + y, origin[2] + z], mask, values });
+    };
     for (let c = 0; c < numChildren; c++) {
         const org5 = g.coord();
         const cm5 = g.raw(4096).slice();
         const vm5 = g.raw(4096).slice();
-        readCompressed(g, 32768, vm5, half, background, codec);
+        const tiles5 = readCompressed(g, 32768, vm5, half, background, codec);
         for (let i5 = 0; i5 < 32768; i5++) {
-            if (!bit(cm5, i5)) continue;
             const org4: [number, number, number] = [
                 org5[0] + ((i5 >> 10) << 7),
                 org5[1] + (((i5 >> 5) & 31) << 7),
                 org5[2] + ((i5 & 31) << 7),
             ];
+            if (!bit(cm5, i5)) {
+                addTile(org4, 128, tiles5[i5]!, bit(vm5, i5));
+                continue;
+            }
             const cm4 = g.raw(512).slice();
             const vm4 = g.raw(512).slice();
-            readCompressed(g, 4096, vm4, half, background, codec);
+            const tiles4 = readCompressed(g, 4096, vm4, half, background, codec);
             for (let i4 = 0; i4 < 4096; i4++) {
-                if (!bit(cm4, i4)) continue;
+                if (!bit(cm4, i4)) {
+                    addTile([org4[0] + ((i4 >> 8) << 3), org4[1] + (((i4 >> 4) & 15) << 3), org4[2] + ((i4 & 15) << 3)], 8, tiles4[i4]!, bit(vm4, i4));
+                    continue;
+                }
                 leafOrigins.push([
                     org4[0] + ((i4 >> 8) << 3),
                     org4[1] + (((i4 >> 4) & 15) << 3),
@@ -447,6 +468,11 @@ export function parseOpenVDBFloatGrid(buffer: ArrayBuffer, gridname = "density")
         leafValues.push(readCompressed(g, 512, leafMasks[i]!, half, background, codec));
     }
     if (g.o !== found.endPos && g.o !== data.length) throw new RuntimeError(`OpenVDB: buffers ended at ${g.o}`);
+    for (const t of tileLeaves) {
+        leafOrigins.push(t.origin);
+        leafMasks.push(t.mask);
+        leafValues.push(t.values);
+    }
 
     return { translation, scale, background, leafOrigins, leafMasks, leafValues };
 }
