@@ -161,11 +161,23 @@ export function createPass(device: Device, type: string, props: Properties | Rec
  * types it added. Native loads .dll/.so plugins from the plugins directory instead.
  */
 export async function loadRenderPassLibrary(url: string): Promise<string[]> {
-    const before = new Set(registry.keys());
+    return (await loadPluginLibrary(url)).renderPasses;
+}
+
+/**
+ * Mirrors PluginManager::loadPlugin: imports a JS plugin module, which may register render passes and importers
+ * (`registerRenderPass`, `registerImporter`); returns what it added.
+ */
+export async function loadPluginLibrary(url: string): Promise<{ renderPasses: string[]; importers: string[] }> {
+    const { registerImporter, getRegisteredImporterExtensions } = await import("../Scene/Importer/ImporterRegistry.js");
+    const [passesBefore, importersBefore] = [new Set(registry.keys()), new Set(getRegisteredImporterExtensions())];
     // Plugins may import the package or use this hook (blob:/data: modules can't resolve bare specifiers).
-    (globalThis as { webFalcorPlugins?: unknown }).webFalcorPlugins = { registerRenderPass };
+    (globalThis as { webFalcorPlugins?: unknown }).webFalcorPlugins = { registerRenderPass, registerImporter };
     await import(/* @vite-ignore */ url);
-    return [...registry.keys()].filter((type) => !before.has(type));
+    return {
+        renderPasses: [...registry.keys()].filter((type) => !passesBefore.has(type)),
+        importers: getRegisteredImporterExtensions().filter((ext) => !importersBefore.has(ext)),
+    };
 }
 
 export function getRegisteredRenderPasses(): string[] {

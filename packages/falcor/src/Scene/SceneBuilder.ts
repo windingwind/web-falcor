@@ -16,6 +16,7 @@ import { Scene, type SceneMaterialDesc, type SceneMeshDesc, type SceneMetadata }
 import { decomposeTRS, type SceneNode, type AnimationChannel, type WeightTrack } from "./Animation/SceneAnimation.js";
 import { KeyframeAnimation, type Keyframe } from "./Animation/KeyframeAnimation.js";
 import { eulerAngles, matrixFromQuat, quatFromEulerAngles, quatFromLookAt, quatf } from "../Utils/Math/Quaternion.js";
+import { getRegisteredImporter } from "./Importer/ImporterRegistry.js";
 import { GltfImporter } from "./Importer/GltfImporter.js";
 import { FbxImporter, kAssimpSceneExtensions, objMaterialLibraries, type ImportedCamera } from "./Importer/FbxImporter.js";
 import { UsdImporter } from "./Importer/UsdImporter.js";
@@ -1692,7 +1693,9 @@ export class SceneBuilderBridge {
                 if (!res.ok) throw new RuntimeError(`SceneBuilder: Can't find scene file '${cmd.path}' (tried '${url}', ${res.status})`);
                 const bytes = new Uint8Array(await res.arrayBuffer());
                 const materialOffset = materials.length;
-                if (/\.usd[acz]?$/.test(cmd.path.toLowerCase())) {
+                // Importer plugins (registerImporter) take precedence, as native picks the importer by extension.
+                const plugin = getRegisteredImporter(cmd.path);
+                if (!plugin && /\.usd[acz]?$/.test(cmd.path.toLowerCase())) {
                     const dir = url.slice(0, url.lastIndexOf("/"));
                     const settings = (await import("../Utils/Scripting/Scripting.js")).getGlobalSettings();
                     // BasisCurves come back from the (composed) layer text; the importer drops tinyusdz's tessellated duplicates.
@@ -1811,7 +1814,7 @@ export class SceneBuilderBridge {
                             }
                         }
                     }
-                } else if (kAssimpSceneExtensions.includes(cmd.path.slice(cmd.path.lastIndexOf(".") + 1).toLowerCase())) {
+                } else if (!plugin && kAssimpSceneExtensions.includes(cmd.path.slice(cmd.path.lastIndexOf(".") + 1).toLowerCase())) {
                     // Every format AssimpImporter registers except glTF/USD/pbrt,
                     // which have their own importers (as natively).
                     const dir = url.slice(0, url.lastIndexOf("/"));
@@ -1852,7 +1855,7 @@ export class SceneBuilderBridge {
                             skin: m.skin ? { ...m.skin, boneNodeIDs: m.skin.boneNodeIDs.map((n) => n + nodeOffset) } : undefined,
                         });
                 } else {
-                    const parsed = await GltfImporter.parseToDescs(bytes, url, textureManager, { ...this.importOptions, useOriginalTangentSpace: this.hasFlag(SceneBuilderFlags.UseOriginalTangentSpace) });
+                    const parsed = await (plugin ?? GltfImporter.parseToDescs)(bytes, url, textureManager, { ...this.importOptions, useOriginalTangentSpace: this.hasFlag(SceneBuilderFlags.UseOriginalTangentSpace) });
                     materials.push(...parsed.materials);
                     importedMaterialNames.push(...parsed.materials.map(() => ""));
                     // Offset the imported node graph so multiple imports don't collide.
