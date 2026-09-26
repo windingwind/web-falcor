@@ -94,21 +94,26 @@ async function depthBad(device: Device, graph: RenderGraph, oracle: string): Pro
 // clip follows its own post-infinity behavior instead of wrapping (tests/oracle/render-native-anim-loop.py).
 gpuTest("AnimBehaviors.loopAnimationsFalseMatchesNative", async ({ device }) => {
     const { graph, scene } = await setup(device);
-    for (const [time, frame] of [
-        [12.5, 125],
-        [14, 140],
+    // The loop length is the FBX animation's duration (14.58 s), past its last key: looping only matters at 16 s.
+    for (const [time, frame, loopedOracle] of [
+        [12.5, 125, "oracle-anim-loop"],
+        [14, 140, "oracle-anim-loop"],
+        [16, 160, "oracle-anim-looped"],
     ] as const) {
-        const oracle = `/tests/oracle/out-native/oracle-anim-loop.VBufferRT.depth.${frame}.exr`;
         scene.loopAnimations = true;
         scene.animate(time);
         graph.execute(device.renderContext);
-        const looped = await depthBad(device, graph, oracle);
+        const looped = await depthBad(device, graph, `/tests/oracle/out-native/${loopedOracle}.VBufferRT.depth.${frame}.exr`);
+        if (frame === 160) {
+            const cross = await depthBad(device, graph, `/tests/oracle/out-native/oracle-anim-loop.VBufferRT.depth.160.exr`);
+            expectEq(cross > looped + 60, true, `looping changes the poses at 16 s (${cross} vs ${looped} px differ)`);
+        }
         scene.loopAnimations = false;
         scene.animate(time);
         graph.execute(device.renderContext);
-        const bad = await depthBad(device, graph, oracle);
+        const bad = await depthBad(device, graph, `/tests/oracle/out-native/oracle-anim-loop.VBufferRT.depth.${frame}.exr`);
         console.error(`# anim-loop t=${time}: silhouette diff unlooped ${bad}, looped ${looped}`);
-        expectEq(looped > 300, true, `looping changes the poses (${looped} px differ)`);
+        expectEq(looped <= 200, true, `looped silhouette pixels ${looped}`);
         expectEq(bad <= 200, true, `silhouette pixels ${bad}`);
     }
 });

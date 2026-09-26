@@ -21,6 +21,8 @@ import { getTextureSlotSrgb } from "../Material/TextureSlots.js";
 import { WorkerPool } from "../../Utils/Threading/WorkerPool.js";
 import { ddsCompressedPayload } from "./DDSLoader.js";
 import type { SceneMaterialDesc, SceneMeshDesc } from "../Scene.js";
+import { KeyframeAnimation } from "../Animation/KeyframeAnimation.js";
+import { quatf } from "../../Utils/Math/Quaternion.js";
 import { decomposeTRS, type SceneNode, type AnimationChannel, type SkinDesc } from "../Animation/SceneAnimation.js";
 import { LightType, copyVertex, createPackedVertices, kPackedVertexFloats, type AnalyticLight, type StaticVertex } from "../SceneData.js";
 import type { TextureManager } from "../Material/TextureManager.js";
@@ -531,7 +533,8 @@ export class FbxImporter {
 
         // Retained node graph for animation (assimp channels target nodes by name).
         const nodes: SceneNode[] = [];
-        const nameToNodeID = new Map<string, number>();
+        const nameToNodeID = new Map<string, number>(); // the first node of a name (getFalcorNodeID(name, 0))
+        const nameToNodeIDs = new Map<string, number[]>(); // every instance, for animations
         const nodeNames: string[] = [];
         const nameToWorld = new Map<string, float4x4>(); // for placing lights on their nodes
         const visit = (node: AiNode, parentWorld: float4x4, parentID: number) => {
@@ -542,8 +545,9 @@ export class FbxImporter {
             nodes.push({ parent: parentID, ...decomposeTRS(local) });
             nodeNames[nodeID] = node.name;
             if (node.name) {
-                nameToNodeID.set(node.name, nodeID);
-                nameToWorld.set(node.name, world);
+                if (!nameToNodeID.has(node.name)) nameToNodeID.set(node.name, nodeID);
+                if (!nameToWorld.has(node.name)) nameToWorld.set(node.name, world);
+                nameToNodeIDs.set(node.name, [...(nameToNodeIDs.get(node.name) ?? []), nodeID]);
             }
             // SceneBuilder::addMeshInstance keeps a set of instancing nodes: a repeated mesh is one instance.
             for (const mi of new Set(node.meshes ?? [])) {
@@ -602,27 +606,50 @@ export class FbxImporter {
             if (skin) desc.skin = skin;
         }
 
-        // Animation channels (assimp: per-node position/rotation/scaling key tracks;
-        // times in ticks -> seconds; rotation quaternions are [w,x,y,z]).
+        // createAnimation: one Animation per assimp node-anim and node instance, with keyframes merged as natively
+        // (the next time is the latest pending key; a track only takes a key at that exact time).
         const animations: AnimationChannel[] = [];
         // Clip ordinal mirrors native (one Animation per assimp node-anim, in
         // order) so pyscene `sceneBuilder.animations[i]` behavior writes land.
         let clip = 0;
         for (const anim of json.animations ?? []) {
-            const tps = anim.tickspersecond && anim.tickspersecond > 0 ? anim.tickspersecond : 24;
+            const tps = anim.tickspersecond && anim.tickspersecond > 0 ? anim.tickspersecond : 25;
+            const duration = (anim.duration ?? 0) / tps;
             for (const ch of anim.channels ?? []) {
                 const thisClip = clip++; // count every node-anim (native creates an Animation even for unmatched nodes)
-                const nodeID = nameToNodeID.get(ch.name);
-                if (nodeID === undefined) continue;
-                const track = (keys: AiKey[] | undefined, path: "translation" | "rotation" | "scale", quat: boolean) => {
-                    if (!keys?.length) return;
-                    const times = new Float32Array(keys.map((k) => k[0] / tps));
-                    const values = new Float32Array(quat ? keys.flatMap((k) => [k[1][1]!, k[1][2]!, k[1][3]!, k[1][0]!]) : keys.flatMap((k) => k[1]));
-                    animations.push({ nodeID, path, times, values, interp: "LINEAR", clip: thisClip });
-                };
-                track(ch.positionkeys, "translation", false);
-                track(ch.rotationkeys, "rotation", true);
-                track(ch.scalingkeys, "scale", false);
+                const instances = nameToNodeIDs.get(ch.name);
+                if (!instances) continue;
+                // resetNegativeKeyframeTimes: a negative first key moves to 0.
+                const tracks = [ch.positionkeys ?? [], ch.rotationkeys ?? [], ch.scalingkeys ?? []].map((keys) => keys.map((k, i) => [i === 0 && k[0] < 0 ? 0 : k[0], k[1]] as AiKey));
+                const idx = [0, 0, 0];
+                let translation = new float3(0, 0, 0), rotation = quatf.identity(), scaling = new float3(1, 1, 1);
+                const keyframes: { time: number; translation: float3; rotation: quatf; scaling: float3 }[] = [];
+                for (let done = false; !done; ) {
+                    let time = -Number.MAX_VALUE;
+                    tracks.forEach((keys, t) => idx[t]! < keys.length && (time = Math.max(time, keys[idx[t]!]![0])));
+                    const take = (t: number) => {
+                        const keys = tracks[t]!;
+                        if (idx[t]! >= keys.length) return true;
+                        const k = keys[idx[t]!]!;
+                        if (k[0] === time) {
+                            const v = k[1];
+                            if (t === 0) translation = new float3(v[0]!, v[1]!, v[2]!);
+                            else if (t === 1) rotation = new quatf(v[1]!, v[2]!, v[3]!, v[0]!); // assimp [w,x,y,z]
+                            else scaling = new float3(v[0]!, v[1]!, v[2]!);
+                            idx[t]!++;
+                        }
+                        return idx[t]! >= keys.length;
+                    };
+                    done = take(0);
+                    done = take(1) && done;
+                    done = take(2) && done;
+                    keyframes.push({ time: time / tps, translation, rotation, scaling });
+                }
+                instances.forEach((nodeID, j) => {
+                    const ka = new KeyframeAnimation(`${ch.name}.${j}`, nodeID, duration);
+                    for (const k of keyframes) ka.addKeyframe({ ...k });
+                    animations.push({ nodeID, path: "transform", times: new Float32Array([0, duration]), values: new Float32Array(0), interp: "LINEAR", clip: thisClip, keyframes: ka });
+                });
             }
         }
 
@@ -655,6 +682,8 @@ export class FbxImporter {
                 imported.pose.target = new float3(pos.x - g.get(0, 2), pos.y - g.get(1, 2), pos.z - g.get(2, 2));
             }
             if (nodeID !== undefined && animations.some((a) => a.nodeID === nodeID)) {
+                // setNodeInterpolationMode(kCameraInterpolationMode = Linear, kCameraEnableWarping = true).
+                for (const a of animations) if (a.nodeID === nodeID && a.keyframes) a.keyframes.enableWarping = true;
                 imported.nodeID = nodes.length;
                 nodes.push({ parent: nodeID, ...decomposeTRS(cam.getViewMatrix()) });
                 // fixFbxCameraAnimation: the animation already holds the pivot helpers' transforms.

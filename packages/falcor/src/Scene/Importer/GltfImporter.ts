@@ -139,7 +139,7 @@ export class GltfImporter {
         bytes: Uint8Array,
         baseUrl = "",
         textureManager = new TextureManager(),
-        options: { assumeLinearSpaceTextures?: boolean } = {},
+        options: { assumeLinearSpaceTextures?: boolean; useOriginalTangentSpace?: boolean } = {},
     ): Promise<{ meshes: SceneMeshDesc[]; materials: SceneMaterialDesc[]; nodes: SceneNode[]; animations: AnimationChannel[]; lights: AnalyticLight[]; cameraNodeID?: number; camera?: GltfCameraPose; weightTracks: WeightTrack[] }> {
         let json: GltfJson;
         let binChunk: Uint8Array | null = null;
@@ -399,12 +399,20 @@ export class GltfImporter {
                         if (draco) return draco.attributes.get(semantic) ?? null;
                         return prim.attributes[semantic] !== undefined ? toFloats(readAccessor(prim.attributes[semantic]!)) : null;
                     };
-                    const pos = attribute("POSITION");
-                    if (!pos) continue; // a primitive without positions has no geometry
+                    const rawPos = attribute("POSITION");
+                    if (!rawPos) continue; // a primitive without positions has no geometry
+                    const rawIndices =
+                        draco ? draco.indices
+                        : prim.indices !== undefined ? new Uint32Array(readAccessor(prim.indices))
+                        : Uint32Array.from({ length: rawPos.length / 3 }, (_v, i) => i);
+                    // Native imports glTF with Assimp's JoinIdenticalVertices (tangents only compared when kept).
+                    const join = joinIdenticalVertices(rawIndices, rawPos, attribute("NORMAL"), attribute("TEXCOORD_0"), options.useOriginalTangentSpace ? attribute("TANGENT") : null);
+                    const pick = (a: Float32Array | null, n: number) => a && gather(a, join.source, n);
+                    const pos = pick(rawPos, 3)!;
                     const count = pos.length / 3;
-                    const normals = attribute("NORMAL");
-                    const tangents = attribute("TANGENT");
-                    const uvs = attribute("TEXCOORD_0");
+                    const normals = pick(attribute("NORMAL"), 3);
+                    const tangents = pick(attribute("TANGENT"), 4);
+                    const uvs = pick(attribute("TEXCOORD_0"), 2);
                     // KHR_texture_transform: bake the material's uv transform into the
                     // vertices. Quantized assets rely on it to rescale integer uvs, and
                     // a primitive has exactly one material, so baking is exact.
@@ -433,10 +441,7 @@ export class GltfImporter {
                         if (uvs) [data[o + 10], data[o + 11]] = [uvs[i * 2]!, uvs[i * 2 + 1]!];
                     }
                     const vertices: StaticVertex[] = createPackedVertices(count, data);
-                    const indices =
-                        draco ? draco.indices
-                        : prim.indices !== undefined ? new Uint32Array(readAccessor(prim.indices))
-                        : new Uint32Array(Array.from({ length: count }, (_v, i) => i));
+                    const indices = join.indices;
 
                     // Skinning: per-vertex joints/weights + the skin's joint→node
                     // mapping and inverse-bind matrices (node indices are offset by
@@ -453,8 +458,8 @@ export class GltfImporter {
                         skin = {
                             boneNodeIDs: gltfSkin.joints.slice(),
                             inverseBind,
-                            boneIDs: readAccessor(prim.attributes["JOINTS_0"]) as Uint32Array,
-                            weights: readAccessor(prim.attributes["WEIGHTS_0"]) as Float32Array,
+                            boneIDs: gather(readAccessor(prim.attributes["JOINTS_0"]) as Uint32Array, join.source, 4),
+                            weights: gather(readAccessor(prim.attributes["WEIGHTS_0"]) as Float32Array, join.source, 4),
                         };
                     }
                     // Morph targets: per-target POSITION (and optional NORMAL)
@@ -462,8 +467,8 @@ export class GltfImporter {
                     let morph: MorphDesc | undefined;
                     if (prim.targets && prim.targets.length > 0) {
                         const targets = prim.targets.map((t) => ({
-                            position: readAccessor(t["POSITION"]!) as Float32Array,
-                            normal: t["NORMAL"] !== undefined ? (readAccessor(t["NORMAL"]) as Float32Array) : undefined,
+                            position: gather(readAccessor(t["POSITION"]!) as Float32Array, join.source, 3),
+                            normal: t["NORMAL"] !== undefined ? gather(readAccessor(t["NORMAL"]) as Float32Array, join.source, 3) : undefined,
                         }));
                         const baseWeights = node.weights ?? json.meshes![node.mesh]!.weights ?? new Array(targets.length).fill(0);
                         morph = { targets, nodeID: nodeIndex, baseWeights };
@@ -481,4 +486,46 @@ export class GltfImporter {
 
         return { meshes: meshDescs, materials, nodes: sceneNodes, animations, lights, cameraNodeID, camera: cameraPose, weightTracks };
     }
+}
+
+/** Copies the `n`-component elements `source[i]` of `data` in order. */
+function gather<T extends Float32Array | Uint32Array>(data: T, source: Uint32Array, n: number): T {
+    const out = new (data.constructor as { new (len: number): T })(source.length * n);
+    source.forEach((src, i) => out.set(data.subarray(src * n, src * n + n), i * n));
+    return out;
+}
+
+/**
+ * Mirrors Assimp 5.2.5's JoinVerticesProcess: used vertices in order, one per exact position whose normal, uv and
+ * tangent lie within 1e-5 of an earlier one's (bone weights are not compared; the first vertex's are kept).
+ */
+export function joinIdenticalVertices(indices: Uint32Array, pos: Float32Array, normals: Float32Array | null, uvs: Float32Array | null, tangents: Float32Array | null): { indices: Uint32Array; source: Uint32Array } {
+    const count = pos.length / 3;
+    const used = new Uint8Array(count);
+    for (const i of indices) used[i] = 1;
+    const kEps2 = Math.fround(1e-5 * 1e-5);
+    const f = Math.fround;
+    const far = (a: Float32Array | null, n: number, i: number, j: number) => {
+        if (!a) return false;
+        let d = 0;
+        for (let c = 0; c < Math.min(n, 3); c++) d = f(d + f(f(a[i * n + c]! - a[j * n + c]!) ** 2));
+        return d > kEps2;
+    };
+    const buckets = new Map<string, number[]>();
+    const remap = new Uint32Array(count);
+    const source: number[] = [];
+    for (let v = 0; v < count; v++) {
+        if (!used[v]) continue;
+        const key = `${pos[v * 3]},${pos[v * 3 + 1]},${pos[v * 3 + 2]}`;
+        const bucket = buckets.get(key) ?? [];
+        buckets.set(key, bucket);
+        const hit = bucket.find((u) => !far(pos, 3, v, source[u]!) && !far(normals, 3, v, source[u]!) && !far(uvs, 2, v, source[u]!) && !far(tangents, 4, v, source[u]!));
+        if (hit !== undefined) remap[v] = hit;
+        else {
+            remap[v] = source.length;
+            bucket.push(source.length);
+            source.push(v);
+        }
+    }
+    return { indices: indices.map((i) => remap[i]!), source: Uint32Array.from(source) };
 }

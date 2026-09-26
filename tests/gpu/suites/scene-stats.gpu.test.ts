@@ -17,12 +17,11 @@ const kExact = [
 ];
 
 /**
- * Known vertex-count residuals: CesiumMan's glTF goes through the web GltfImporter, which lacks Assimp's
- * JoinIdenticalVertices (native imports glTF with Assimp); the spheres scenes' createSphere poles merge
+ * Known vertex-count residuals: the spheres scenes' createSphere poles merge
  * slightly differently (browser vs glibc sin/cos last bits change which pole vertices compare equal); ZeroDay's
  * post-MikkTSpace vertex merge keeps 3 of 1.47M vertices more (tangent last bits).
  */
-const kVertexResiduals: Record<string, number> = { "test_scenes/cesium_man/CesiumMan.pyscene": 0.4, "inv_rendering_scenes/spheres_material_init.pyscene": 1e-3, "inv_rendering_scenes/spheres_material_ref.pyscene": 1e-3, "ZeroDay_v1/ZeroDay.pyscene": 1e-5 };
+const kVertexResiduals: Record<string, number> = { "inv_rendering_scenes/spheres_material_init.pyscene": 1e-3, "inv_rendering_scenes/spheres_material_ref.pyscene": 1e-3, "ZeroDay_v1/ZeroDay.pyscene": 1e-5 };
 
 /** EXTRA_QUERY=bigScenes=1: the large production scenes (Bistro, EmeraldSquare, SunTemple, ZeroDay) instead. */
 const kBigScenes = new URLSearchParams(location.search).get("bigScenes") === "1";

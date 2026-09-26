@@ -2138,14 +2138,17 @@ export class Scene {
         const UP = new float3(0, 1, 0);
         const animatedCamera = this.cameraList[this.animatedCameraIndex];
         if (this.cameraNodeID !== undefined && globals[this.cameraNodeID] && animatedCamera?.animated !== false) {
-            // Camera::updateFromAnimation takes the raw (unnormalized) up/-forward columns.
+            // Camera::updateFromAnimation takes the raw (unnormalized) up/-forward columns, in float32: with a
+            // node scale of 0.01 the rounding of target = pos + fwd visibly turns the view, as natively.
             const g = globals[this.cameraNodeID]!;
-            const pos = transformPoint(g, ZERO);
-            const fwd = transformVector(g, FWD);
+            const f = Math.fround;
+            const f3 = (v: float3) => new float3(f(v.x), f(v.y), f(v.z));
+            const pos = f3(transformPoint(g, ZERO));
+            const fwd = f3(transformVector(g, FWD));
             const camera = animatedCamera!;
             camera.setPosition(pos);
-            camera.setTarget(new float3(pos.x + fwd.x, pos.y + fwd.y, pos.z + fwd.z));
-            camera.setUpVector(transformVector(g, UP));
+            camera.setTarget(new float3(f(pos.x + fwd.x), f(pos.y + fwd.y), f(pos.z + fwd.z)));
+            camera.setUpVector(f3(transformVector(g, UP)));
         }
         let lightsDirty = false;
         for (const light of this.analyticLights) {

@@ -862,13 +862,13 @@ function pretransformStaticMeshes(meshes: SceneMeshDesc[], nodes: SceneNode[], a
 /**
  * SceneBuilder::optimizeSceneGraph's effect on instances: static single-child chains collapse into their top node,
  * then identical static siblings (same parent and local transform) merge, so a mesh instanced by several merged
- * nodes keeps one instance. Nodes are compared by their exact local TRS; collapsed chains by their TRS sequence.
+ * nodes keeps one instance. Nodes are compared by their exact local matrix; collapsed chains by their matrix sequence.
  */
 function removeMergedNodeInstances(meshes: SceneMeshDesc[], nodes: SceneNode[], animations: AnimationChannel[], animatableNodes: number[]): SceneMeshDesc[] {
     const n = nodes.length;
     const animated = new Set(animations.map((c) => c.nodeID));
     const parent = nodes.map((nd) => nd.parent);
-    const key = nodes.map((nd) => [nd.t.x, nd.t.y, nd.t.z, nd.r.x, nd.r.y, nd.r.z, nd.r.w, nd.s.x, nd.s.y, nd.s.z].join(","));
+    const key = nodes.map((nd) => (nd.matrix ? Array.from(nd.matrix.data) : [nd.t.x, nd.t.y, nd.t.z, nd.r.x, nd.r.y, nd.r.z, nd.r.w, nd.s.x, nd.s.y, nd.s.z]).join(","));
     const children: number[][] = Array.from({ length: n }, () => []);
     parent.forEach((p, c) => p >= 0 && children[p]!.push(c));
     const objects: number[][] = Array.from({ length: n }, () => []); // mesh desc indices per node
@@ -1852,7 +1852,7 @@ export class SceneBuilderBridge {
                             skin: m.skin ? { ...m.skin, boneNodeIDs: m.skin.boneNodeIDs.map((n) => n + nodeOffset) } : undefined,
                         });
                 } else {
-                    const parsed = await GltfImporter.parseToDescs(bytes, url, textureManager, this.importOptions);
+                    const parsed = await GltfImporter.parseToDescs(bytes, url, textureManager, { ...this.importOptions, useOriginalTangentSpace: this.hasFlag(SceneBuilderFlags.UseOriginalTangentSpace) });
                     materials.push(...parsed.materials);
                     importedMaterialNames.push(...parsed.materials.map(() => ""));
                     // Offset the imported node graph so multiple imports don't collide.
@@ -1884,6 +1884,8 @@ export class SceneBuilderBridge {
                 if (ch.clip !== i) continue;
                 if (pre != null) ch.preInfinity = Number(pre);
                 if (post != null) ch.postInfinity = Number(post);
+                if (ch.keyframes && pre != null) ch.keyframes.preInfinityBehavior = Number(pre);
+                if (ch.keyframes && post != null) ch.keyframes.postInfinityBehavior = Number(post);
             }
         }
 

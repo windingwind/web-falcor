@@ -19,6 +19,7 @@ import { Scene, type SceneMeshDesc, type SceneMaterialDesc, type SceneCurveDesc,
 import { TextureManager, type TextureSource } from "./Material/TextureManager.js";
 import { EnvMap } from "./Lights/EnvMap.js";
 import { createPackedVertices, kPackedVertexFloats, type AnalyticLight, type StaticVertex } from "./SceneData.js";
+import { KeyframeAnimation } from "./Animation/KeyframeAnimation.js";
 import type { AnimationChannel, MorphDesc, SceneNode, SkinDesc, WeightTrack } from "./Animation/SceneAnimation.js";
 import { buildSDFGridFromRecipe, type SDFGridRecipe } from "./SDFs/SDFGridRecipe.js";
 
@@ -31,7 +32,7 @@ import { GridVolume, type GridSlot } from "./Volume/GridVolume.js";
 import { Grid } from "./Volume/Grid.js";
 
 const kMagic = 0x43534657; // 'WFSC'
-const kVersion = 6; // v4: + animation, skin/morph, SDF recipes, grid volumes; v5: camera list; v6: DDS textures, metadata
+const kVersion = 7; // v4: + animation, skin/morph, SDF recipes, grid volumes; v5: camera list; v6: DDS textures, metadata; v7: keyframe animations
 const kFloatsPerVertex = 13; // pos3 + normal3 + tangent4 + texCrd2 + curveRadius
 
 export interface SceneCameraPose {
@@ -158,6 +159,20 @@ interface TrackMeta {
     preInfinity?: number;
     postInfinity?: number;
     numTargets?: number;
+    /** path "transform": the Animation (keyframes as [time, t.xyz, r.xyzw, s.xyz]). */
+    keyframes?: { name: string; duration: number; interpolationMode: number; preInfinity: number; postInfinity: number; enableWarping: boolean; frames: number[][] };
+}
+
+function encodeKeyframes(k: KeyframeAnimation): TrackMeta["keyframes"] {
+    const frames = k.getKeyframes().map((f) => [f.time, f.translation.x, f.translation.y, f.translation.z, f.rotation.x, f.rotation.y, f.rotation.z, f.rotation.w, f.scaling.x, f.scaling.y, f.scaling.z]);
+    return { name: k.name, duration: k.duration, interpolationMode: k.interpolationMode, preInfinity: k.preInfinityBehavior, postInfinity: k.postInfinityBehavior, enableWarping: k.enableWarping, frames };
+}
+
+function decodeKeyframes(nodeID: number, m: NonNullable<TrackMeta["keyframes"]>): KeyframeAnimation {
+    const k = new KeyframeAnimation(m.name, nodeID, m.duration);
+    [k.interpolationMode, k.preInfinityBehavior, k.postInfinityBehavior, k.enableWarping] = [m.interpolationMode, m.preInfinity, m.postInfinity, m.enableWarping];
+    for (const f of m.frames) k.addKeyframe({ time: f[0]!, translation: new float3(f[1]!, f[2]!, f[3]!), rotation: new quatf(f[4]!, f[5]!, f[6]!, f[7]!), scaling: new float3(f[8]!, f[9]!, f[10]!) });
+    return k;
 }
 
 /** Word-aligned typed-array payload of the mesh/curve/animation classes, in file order. */
@@ -231,7 +246,7 @@ export function serializeScene(cached: CacheableScene): Uint8Array {
               }
             : undefined,
         animations: cached.animations.map(
-            (a): TrackMeta => ({ nodeID: a.nodeID, path: a.path, interp: a.interp, clip: a.clip, preInfinity: a.preInfinity, postInfinity: a.postInfinity, timesCount: a.times.length, valuesCount: a.values.length }),
+            (a): TrackMeta => ({ nodeID: a.nodeID, path: a.path, interp: a.interp, clip: a.clip, preInfinity: a.preInfinity, postInfinity: a.postInfinity, timesCount: a.times.length, valuesCount: a.values.length, keyframes: a.keyframes && encodeKeyframes(a.keyframes) }),
         ),
         weightTracks: cached.weightTracks.map((w): TrackMeta => ({ nodeID: w.nodeID, numTargets: w.numTargets, interp: w.interp, timesCount: w.times.length, valuesCount: w.values.length })),
         sdfGrids: {
@@ -375,6 +390,7 @@ export function deserializeScene(bytes: Uint8Array): CacheableScene {
         clip: meta.clip,
         preInfinity: meta.preInfinity,
         postInfinity: meta.postInfinity,
+        keyframes: meta.keyframes && decodeKeyframes(meta.nodeID, meta.keyframes),
     }));
     const weightTracks: WeightTrack[] = header.weightTracks.map((meta) => ({
         nodeID: meta.nodeID,

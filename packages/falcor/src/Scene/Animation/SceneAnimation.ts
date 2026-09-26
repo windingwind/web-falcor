@@ -40,11 +40,13 @@ export interface SceneNode {
     t: float3;
     r: quatf;
     s: float3;
+    /** The exact local matrix (TRS loses shear and mirroring); used unless an animation overrides the node. */
+    matrix?: float4x4;
 }
 
 /** Decomposes a local matrix into TRS (for retaining animatable nodes whose
  *  transform is given as a matrix; animation channels override the components). */
-export function decomposeTRS(m: float4x4): { t: float3; r: quatf; s: float3 } {
+export function decomposeTRS(m: float4x4): { t: float3; r: quatf; s: float3; matrix: float4x4 } {
     const t = new float3(m.get(0, 3), m.get(1, 3), m.get(2, 3));
     const col = (c: number) => [m.get(0, c), m.get(1, c), m.get(2, c)] as [number, number, number];
     const c0 = col(0);
@@ -73,7 +75,7 @@ export function decomposeTRS(m: float4x4): { t: float3; r: quatf; s: float3 } {
         const s = Math.sqrt(1 + R[2]![2]! - R[0]![0]! - R[1]![1]!) * 2;
         w = (R[1]![0]! - R[0]![1]!) / s; x = (R[0]![2]! + R[2]![0]!) / s; y = (R[1]![2]! + R[2]![1]!) / s; z = s / 4;
     }
-    return { t, r: new quatf(x, y, z, w), s: new float3(sx, sy, sz) };
+    return { t, r: new quatf(x, y, z, w), s: new float3(sx, sy, sz), matrix: m.clone() };
 }
 
 /** Morph (blend-shape) animation of a node's weights (glTF path === "weights"). */
@@ -293,13 +295,18 @@ function sampleQuat(ch: AnimationChannel, time: number): quatf {
 export function evaluateGlobals(anim: SceneAnimations, time: number): float4x4[] {
     const n = anim.nodes.length;
     const locals = anim.nodes.map((nd) => ({ t: nd.t, r: nd.r, s: nd.s }));
+    const animated = new Uint8Array(n);
     for (const ch of anim.channels) {
         if (ch.path === "transform") {
             if (ch.keyframes && ch.keyframes.getKeyframes().length > 0) {
                 const k = ch.keyframes.animate(time);
                 locals[ch.nodeID] = { t: k.translation, r: k.rotation, s: k.scaling };
+                animated[ch.nodeID] = 1;
             }
-        } else if (ch.path === "translation") locals[ch.nodeID]!.t = sampleVec3(ch, time);
+            continue;
+        }
+        animated[ch.nodeID] = 1;
+        if (ch.path === "translation") locals[ch.nodeID]!.t = sampleVec3(ch, time);
         else if (ch.path === "scale") locals[ch.nodeID]!.s = sampleVec3(ch, time);
         else locals[ch.nodeID]!.r = sampleQuat(ch, time);
     }
@@ -310,7 +317,8 @@ export function evaluateGlobals(anim: SceneAnimations, time: number): float4x4[]
         const cached = global[i];
         if (cached) return cached;
         const l = locals[i]!;
-        const localM = mulMat(matrixFromTranslation(l.t), mulMat(matrixFromQuat(l.r), matrixFromScaling(l.s)));
+        const exact = animated[i] ? undefined : anim.nodes[i]!.matrix;
+        const localM = exact ?? mulMat(matrixFromTranslation(l.t), mulMat(matrixFromQuat(l.r), matrixFromScaling(l.s)));
         const p = anim.nodes[i]!.parent;
         const g = p >= 0 ? mulMat(resolve(p), localM) : localM;
         global[i] = g;

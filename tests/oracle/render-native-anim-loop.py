@@ -19,8 +19,15 @@ m.clock.pause()
 m.frameCapture.outputDir = os.path.join(base, "out-native")
 m.frameCapture.baseFilename = "oracle-anim-loop"  # the test keeps only the depth captures
 
-for frame in [125, 140]:
+for frame in [125, 140, 160]:
     m.clock.frame = frame
     m.renderFrame()
     m.frameCapture.capture()
+
+# Looped, 16 s wraps at the animation's 14.58 s duration.
+m.scene.loopAnimations = True
+m.frameCapture.baseFilename = "oracle-anim-looped"
+m.clock.frame = 160
+m.renderFrame()
+m.frameCapture.capture()
 exit()
