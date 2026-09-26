@@ -406,9 +406,7 @@ async function main() {
         (state.graph?.getPass("Accumulate") as { reset?: () => void } | undefined)?.reset?.();
         state.frame = 0;
     };
-    const camControl = new CameraController(canvas);
-    // Mirrors Scene::setCameraControlsEnabled (e.g. the SDF editor takes the mouse while a modifier is held).
-    camControl.inputEnabled = () => state.scene?.cameraControlsEnabled ?? true;
+    const camControl = new CameraController(canvas, () => state.scene);
     const gamepad = new GamepadInput();
     /** MogwaiSettings::selectNextGraph (N key, gamepad Y). */
     const selectNextGraph = () => {
@@ -417,6 +415,7 @@ async function main() {
         refreshOutputs(state);
         rebuildUI();
     };
+    camControl.onViewpointAdded = () => rebuildUI();
     const rebuildUI = () =>
         buildUIPanel(passesEl, state.graph, resetAccum, state.scene, {
             notify: resetAccum,
@@ -434,10 +433,7 @@ async function main() {
                 getUp: () => camControl.getUpDirection() as number,
                 setUp: (i) => camControl.setUpDirection(i),
                 getSpeed: () => camControl.getSpeed(),
-                setSpeed: (v) => {
-                    camControl.setSpeed(v);
-                    if (state.scene) state.scene.cameraSpeed = camControl.getSpeed();
-                },
+                setSpeed: (v) => camControl.setSpeed(v),
             },
         }, state.device.programManager);
 
@@ -480,15 +476,8 @@ async function main() {
         // Reload shaders in place. Native binds this to F5, which the browser
         // owns, so the viewer uses F6 (docs §9).
         const modified = ev.ctrlKey || ev.shiftKey || ev.altKey;
-        // Scene::onKeyEvent: F3 adds a viewpoint; C or F7 with a modifier re-enables camera animation.
-        if (ev.key === "F3" && !modified) {
-            ev.preventDefault();
-            state.scene?.addViewpoint();
-            rebuildUI();
-        } else if (modified && (ev.key === "c" || ev.key === "C" || ev.key === "F7")) {
-            ev.preventDefault();
-            if (state.scene) state.scene.camera.animated = true;
-        } else if (ev.key === "F7") {
+        // F3 and modified C/F7 belong to Scene::onKeyEvent (via camControl).
+        if (ev.key === "F7" && !modified) {
             ev.preventDefault();
             overlayCanvas.hidden = !overlayCanvas.hidden;
         }
@@ -536,7 +525,6 @@ async function main() {
     let lastGpuLine = "";
     let lastNow = -1;
     function frame(now: number) {
-        const cam = state.scene?.camera;
         // Renderer::onFrameRender: m.sceneUpdateCallback, then Scene::update (the scene's python updateCallback first).
         if (state.graph) runRendererCallback("sceneUpdateCallback", () => state.callbacks.sceneUpdateCallback?.(state.scene, state.clock.getTime()));
         state.scene?.runUpdateCallback(state.clock.getTime());
@@ -547,9 +535,7 @@ async function main() {
             },
             handleGamepadState: (s) => camControl.onGamepadState(s),
         });
-        let dirty = cam ? camControl.update(cam, now, state.scene ?? undefined) : false;
-        // Scene::onKeyEvent: moving the camera by hand stops its animation.
-        if (dirty && cam) cam.animated = false;
+        let dirty = state.scene ? camControl.update(state.scene, now) : false;
         // Advance the global clock (mirrors m.clock; console pause/frame stepping applies here).
         if (state.playing) {
             state.clock.tick();

@@ -1,15 +1,16 @@
 /**
  * Camera controllers mirroring Scene/Camera/CameraController: Orbiter
  * (arcball around a point) and FirstPerson/SixDoF (WASD + mouse-look).
- * Web divergences (docs §9): normalized input events replace the native
- * Input types, gamepad state is not wired, and update() takes the current
- * time in seconds (native reads an internal CpuTimer).
+ * Web divergences (docs §9): the controllers take normalized input events
+ * (toController*Event adapt the native Input types), and update() takes the
+ * current time in seconds (native reads an internal CpuTimer).
  */
 
 import type { Camera } from "./Camera.js";
 import { float2, float3, add3, sub3, mul3, cross, normalize3, min3, max3 } from "../../Utils/Math/Vector.js";
 import { float4x4 } from "../../Utils/Math/Matrix.js";
 import { matrixFromQuat, quatFromAngleAxis, quatFromRotationBetweenVectors } from "../../Utils/Math/Quaternion.js";
+import { KeyboardEventType, ModifierFlags, MouseButton, type KeyboardEvent, type MouseEvent } from "../../Utils/UI/InputTypes.js";
 
 export enum UpDirection { XPos, XNeg, YPos, YNeg, ZPos, ZNeg }
 
@@ -75,6 +76,19 @@ function applyPowerCurve1(v: number, power: number): number {
 
 function applyPowerCurve2(v: float2, power: number): float2 {
     return new float2(applyPowerCurve1(v.x, power), applyPowerCurve1(v.y, power));
+}
+
+/** A native MouseEvent (Utils/UI/InputTypes) as a controller event. */
+export function toControllerMouseEvent(e: MouseEvent): ControllerMouseEvent {
+    const type = (["buttonDown", "buttonUp", "move", "wheel"] as const)[e.type];
+    const button = e.button === MouseButton.Left ? "left" : e.button === MouseButton.Right ? "right" : e.button === MouseButton.Middle ? "middle" : undefined;
+    return { type, button, pos: new float2(e.pos[0], e.pos[1]), wheelDelta: new float2(e.wheelDelta[0], e.wheelDelta[1]) };
+}
+
+/** A native KeyboardEvent as a controller event; null for repeats and text input (the controllers ignore them). */
+export function toControllerKeyEvent(e: KeyboardEvent): ControllerKeyEvent | null {
+    if (e.type !== KeyboardEventType.KeyPressed && e.type !== KeyboardEventType.KeyReleased) return null;
+    return { type: e.type === KeyboardEventType.KeyPressed ? "keyPressed" : "keyReleased", key: e.key.toLowerCase(), shift: (e.mods & ModifierFlags.Shift) !== 0, ctrl: (e.mods & ModifierFlags.Ctrl) !== 0 };
 }
 
 /** [0,1] screen position to [-1,1] with y flipped (native convertCamPosRange). */

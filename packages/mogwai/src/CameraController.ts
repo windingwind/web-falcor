@@ -1,23 +1,19 @@
-// Viewer camera input: translates DOM mouse/keyboard/gamepad events into the
-// native controller events and drives the ported Scene/Camera controllers
-// (First Person / Orbiter / 6-DoF, mirrors Scene::setCameraController).
+// Viewer camera input: forwards DOM mouse/keyboard events and gamepad state to the
+// scene's own camera controller (Scene::onMouseEvent/onKeyEvent/onGamepadState).
 // update() returns true when the camera moved so the caller resets accumulation.
 import {
-    FirstPersonCameraController,
-    OrbiterCameraController,
-    SixDoFCameraController,
+    CameraControllerType as NativeControllerType,
+    KeyboardEventType,
+    MouseEventType,
     UpDirection,
-    float2,
-    float3,
     add3,
     mul3,
     normalize3,
     sub3,
-    length3,
-    type Camera,
-    type CameraController as NativeController,
-    type ControllerMouseEvent,
-    type ControllerGamepadState,
+    toKeyboardEvent,
+    toMouseEvent,
+    type GamepadState,
+    type Scene,
 } from "@web-falcor/falcor";
 
 /** Mirrors Scene::CameraControllerType (dropdown spellings from Scene.cpp). */
@@ -25,28 +21,18 @@ export const kCameraControllerTypes = ["First Person", "Orbiter", "6-DOF"] as co
 export type CameraControllerType = (typeof kCameraControllerTypes)[number];
 export const kUpDirectionNames = ["X+", "X-", "Y+", "Y-", "Z+", "Z-"] as const;
 
-/** The Scene properties native's Scene forwards to its camera controller. */
-export interface SceneCameraSettings {
-    cameraSpeed: number;
-    cameraBounds: { minPoint: float3; maxPoint: float3 } | null;
-}
-
 export class CameraController {
-    private camera: Camera | null = null;
-    private controller: NativeController | null = null;
-    private type: CameraControllerType = "First Person";
-    private upDirection = UpDirection.YPos;
-    private speed = 1; // native Scene::mCameraSpeed default
-    private appliedSpeed = 1;
-    private appliedBounds: SceneCameraSettings["cameraBounds"] = null;
     private dollyAccum = 0; // wheel dolly for the first-person controllers (web extra; native ignores the wheel there)
-    /** False while the scene's camera controls are disabled (Scene::setCameraControlsEnabled). */
-    inputEnabled: () => boolean = () => true;
+    /** Called after the scene handled F3 (Scene::addViewpoint) so the viewpoint list refreshes. */
+    onViewpointAdded: () => void = () => {};
 
-    constructor(private readonly canvas: HTMLCanvasElement) {
-        canvas.addEventListener("mousedown", this.onMouseDown);
-        window.addEventListener("mouseup", this.onMouseUp);
-        window.addEventListener("mousemove", this.onMouseMove);
+    constructor(
+        private readonly canvas: HTMLCanvasElement,
+        private readonly getScene: () => Scene | null,
+    ) {
+        canvas.addEventListener("mousedown", (e) => this.onMouse(e, MouseEventType.ButtonDown));
+        window.addEventListener("mouseup", (e) => this.onMouse(e, MouseEventType.ButtonUp));
+        window.addEventListener("mousemove", (e) => this.onMouse(e, MouseEventType.Move));
         canvas.addEventListener("wheel", this.onWheel, { passive: false });
         canvas.addEventListener("contextmenu", (e) => e.preventDefault());
         window.addEventListener("keydown", this.onKey);
@@ -54,108 +40,57 @@ export class CameraController {
     }
 
     getControllerType(): CameraControllerType {
-        return this.type;
+        return kCameraControllerTypes[this.getScene()?.getCameraControllerType() ?? NativeControllerType.FirstPerson];
     }
-    /** Mirrors Scene::setCameraController; Orbiter keeps the current view (no scene AABB on the web). */
+    /** Mirrors Scene::setCameraController. */
     setControllerType(type: CameraControllerType): void {
-        this.type = type;
-        this.controller = null;
-        if (this.camera) this.createController(this.camera);
+        this.getScene()?.setCameraController(kCameraControllerTypes.indexOf(type) as NativeControllerType);
     }
     getUpDirection(): UpDirection {
-        return this.upDirection;
+        return this.getScene()?.getUpDirection() ?? UpDirection.YPos;
     }
     setUpDirection(up: UpDirection): void {
-        this.upDirection = up;
-        this.controller?.setUpDirection(up);
+        this.getScene()?.setUpDirection(up);
     }
     /** Movement speed in world units/second (Scene::setCameraSpeed). */
     setSpeed(s: number): void {
-        this.speed = Math.max(0.01, s);
-        this.controller?.setCameraSpeed(this.speed);
+        const scene = this.getScene();
+        if (scene) scene.cameraSpeed = s;
     }
     getSpeed(): number {
-        return this.speed;
+        return this.getScene()?.cameraSpeed ?? 1;
     }
 
-    private createController(camera: Camera): void {
-        this.camera = camera;
-        switch (this.type) {
-            case "Orbiter": {
-                const c = new OrbiterCameraController(camera);
-                // Native: scene AABB center/radius with distance 3.5 radii; here the current target/distance so the view is kept.
-                const center = camera.getTarget();
-                const distance = Math.max(1e-3, length3(sub3(camera.getPosition(), center)));
-                c.setModelParams(center, distance / 3.5, 3.5);
-                this.controller = c;
-                break;
-            }
-            case "6-DOF":
-                this.controller = new SixDoFCameraController(camera);
-                break;
-            default:
-                this.controller = new FirstPersonCameraController(camera);
-        }
-        this.controller.setUpDirection(this.upDirection);
-        this.controller.setCameraSpeed(this.speed);
-    }
-
-    private pos(e: MouseEvent): float2 {
-        const r = this.canvas.getBoundingClientRect();
-        return new float2((e.clientX - r.left) / r.width, (e.clientY - r.top) / r.height);
-    }
-    private button(e: MouseEvent): ControllerMouseEvent["button"] {
-        return e.button === 0 ? "left" : e.button === 2 ? "right" : e.button === 1 ? "middle" : undefined;
-    }
     private isTypingTarget(t: EventTarget | null): boolean {
         const el = t as HTMLElement | null;
         return !!el && /^(INPUT|SELECT|TEXTAREA|BUTTON)$/.test(el.tagName);
     }
-    private onMouseDown = (e: MouseEvent) => {
-        if (!this.inputEnabled()) return;
-        const button = this.button(e);
-        if (button) this.controller?.onMouseEvent({ type: "buttonDown", button, pos: this.pos(e) });
-    };
-    private onMouseUp = (e: MouseEvent) => {
-        const button = this.button(e);
-        if (button) this.controller?.onMouseEvent({ type: "buttonUp", button, pos: this.pos(e) });
-    };
-    private onMouseMove = (e: MouseEvent) => {
-        if (!this.inputEnabled()) return;
-        this.controller?.onMouseEvent({ type: "move", pos: this.pos(e) });
-    };
+    private onMouse(e: MouseEvent, type: MouseEventType): void {
+        this.getScene()?.onMouseEvent(toMouseEvent(e, type, this.canvas));
+    }
     private onWheel = (e: WheelEvent) => {
         e.preventDefault();
-        if (!this.inputEnabled()) return;
-        const up = -Math.sign(e.deltaY); // native wheelDelta.y: +1 = scroll up
-        const handled = this.controller?.onMouseEvent({ type: "wheel", pos: this.pos(e), wheelDelta: new float2(0, up) }) ?? false;
-        if (!handled) this.dollyAccum += up * this.speed * 0.5;
+        const scene = this.getScene();
+        if (!scene?.cameraControlsEnabled) return;
+        if (!scene.onMouseEvent(toMouseEvent(e, MouseEventType.Wheel, this.canvas))) this.dollyAccum += -Math.sign(e.deltaY) * scene.cameraSpeed * 0.5;
     };
     private onKey = (e: KeyboardEvent) => {
         if (this.isTypingTarget(e.target)) return;
-        // Releases still go through, so no key stays held while controls are off.
-        if (e.type === "keydown" && !this.inputEnabled()) return;
-        this.controller?.onKeyEvent({ type: e.type === "keydown" ? "keyPressed" : "keyReleased", key: e.key.toLowerCase(), shift: e.shiftKey, ctrl: e.ctrlKey });
+        const handled = this.getScene()?.onKeyEvent(toKeyboardEvent(e, e.type === "keydown" ? KeyboardEventType.KeyPressed : KeyboardEventType.KeyReleased)) ?? false;
+        if (handled && e.type === "keydown" && /^F\d+$/.test(e.key)) e.preventDefault();
+        if (handled && e.type === "keydown" && e.key === "F3") this.onViewpointAdded();
     };
-    /** Mirrors Scene::onGamepadState: forwarded while camera controls are enabled. */
-    onGamepadState(state: ControllerGamepadState): boolean {
-        return this.inputEnabled() ? (this.controller?.onGamepadState(state) ?? false) : false;
+
+    /** Mirrors Scene::onGamepadState. */
+    onGamepadState(state: GamepadState): boolean {
+        return this.getScene()?.onGamepadState(state) ?? false;
     }
 
-    /** Applies pending input to `camera`. `now` is the rAF timestamp (ms). */
-    update(camera: Camera, now: number, scene?: SceneCameraSettings): boolean {
-        if (camera !== this.camera || !this.controller) {
-            this.createController(camera);
-            this.appliedBounds = null;
-        }
-        if (scene) {
-            // Native Scene owns the controller: its cameraSpeed and cameraBounds drive it.
-            if (scene.cameraSpeed !== this.appliedSpeed) this.setSpeed((this.appliedSpeed = scene.cameraSpeed));
-            const b = scene.cameraBounds;
-            if (b && b !== this.appliedBounds) this.controller!.setCameraBounds((this.appliedBounds = b).minPoint, b.maxPoint);
-        }
-        let changed = this.controller!.update(now / 1000);
+    /** Scene::updateSelectedCamera's controller step, plus the wheel dolly. `now` is the rAF timestamp (ms). */
+    update(scene: Scene, now: number): boolean {
+        let changed = scene.updateCamera(now / 1000);
         if (this.dollyAccum !== 0) {
+            const camera = scene.camera;
             const viewDir = normalize3(sub3(camera.getTarget(), camera.getPosition()));
             camera.setPosition(add3(camera.getPosition(), mul3(viewDir, this.dollyAccum)));
             camera.setTarget(add3(camera.getPosition(), viewDir));

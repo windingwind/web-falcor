@@ -23,7 +23,7 @@ import { FrameRate } from "../Timing/FrameRate.js";
 import { PyUiScreen } from "../UI/PythonUI.js";
 import { TextRenderer } from "../UI/TextRenderer.js";
 import { runSceneScript } from "./Scripting.js";
-import { KeyboardEventType, MouseEventType, toKeyboardEvent, toMouseEvent, type KeyboardEvent, type MouseEvent } from "../UI/InputTypes.js";
+import { GamepadInput, KeyboardEventType, MouseEventType, toKeyboardEvent, toMouseEvent, type GamepadEvent, type GamepadState, type KeyboardEvent, type MouseEvent } from "../UI/InputTypes.js";
 import { kProjectMediaUrl } from "../../Core/AssetResolver.js";
 import { RuntimeError } from "../../Core/Error.js";
 
@@ -94,6 +94,7 @@ export class Testbed {
 
     /** Python `keyboard_event_callback` / `mouse_event_callback`: return True to consume the event. */
     keyboardEventCallback: ((e: KeyboardEvent) => unknown) | null = null;
+    private readonly gamepad = new GamepadInput();
     mouseEventCallback: ((e: MouseEvent) => unknown) | null = null;
     /** Python `window_size_change_callback(width, height)`. */
     windowSizeChangeCallback: ((width: number, height: number) => void) | null = null;
@@ -105,11 +106,28 @@ export class Testbed {
             else if (e.key === "F2") this.showUI = !this.showUI;
             else if (e.key === "P" && this.device.profilerHook) this.device.profilerHook.setEnabled(!this.device.profilerHook.enabled);
         }
-        this.keyboardEventCallback?.(e);
+        if (this.keyboardEventCallback?.(e)) return;
+        this.scene?.onKeyEvent(e);
     }
     /** Mirrors Testbed::handleMouseEvent. */
     handleMouseEvent(e: MouseEvent): void {
-        this.mouseEventCallback?.(e);
+        if (this.mouseEventCallback?.(e)) return;
+        this.scene?.onMouseEvent(e);
+    }
+    /** Mirrors Testbed::handleGamepadEvent / handleGamepadState. */
+    handleGamepadEvent(e: GamepadEvent): void {
+        this.scene?.onGamepadEvent(e);
+    }
+    handleGamepadState(s: GamepadState): void {
+        this.scene?.onGamepadState(s);
+    }
+
+    /** Testbed::frame's Scene::update: script callback, animation, then the camera controller. */
+    private updateScene(): void {
+        if (!this.scene) return;
+        this.scene.runUpdateCallback(this.clock.getTime());
+        if (this.scene.isAnimated()) this.scene.animate(this.clock.getTime());
+        this.scene.updateCamera(performance.now() / 1000);
     }
 
     /** Mirrors Testbed::loadSceneFromString (pyscene sources; paths in it resolve against the media directory). */
@@ -204,13 +222,14 @@ export class Testbed {
         this.clock.tick();
         this.frameRate.newFrame();
         ctx.clearFbo(this.targetFbo, [1, 0, 1, 1], 1, 0, FboAttachmentType.All);
+        // Window::pollForEvents.
+        if (this.context) this.gamepad.poll(this);
+        if (this.renderGraph && this.graphNeedsInit) {
+            await this.renderGraph.init();
+            this.graphNeedsInit = false;
+        }
+        this.updateScene();
         if (this.renderGraph) {
-            if (this.graphNeedsInit) {
-                await this.renderGraph.init();
-                this.graphNeedsInit = false;
-            }
-            this.scene?.runUpdateCallback(this.clock.getTime());
-            if (this.scene?.isAnimated()) this.scene.animate(this.clock.getTime());
             this.renderGraph.execute(ctx);
             const names = this.renderGraph.getOutputNames();
             const out = names.length > 0 ? this.renderGraph.getOutput(names[0]!) : undefined;

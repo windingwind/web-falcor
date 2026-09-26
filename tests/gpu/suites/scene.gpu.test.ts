@@ -4,7 +4,12 @@
  */
 
 import {
+    CameraControllerType,
     ComputePass,
+    KeyboardEventType,
+    ModifierFlags,
+    MouseButton,
+    MouseEventType,
     ResourceBindFlags,
     Scene,
     float2,
@@ -69,4 +74,50 @@ gpuTest("Scene.gSceneSmoke", async ({ device }) => {
     // 7: world transform (identity) of vertex 0.
     expectArrayClose(r.subarray(28, 32), [0, 0, 0, 1], 1e-6, "world-space vertex");
     out.destroy();
+});
+
+gpuTest("Scene.cameraControllerInput", async ({ device }) => {
+    // Scene owns the controller (Scene::onKeyEvent/onMouseEvent/onGamepadState + updateSelectedCamera).
+    const scene = makeTriangleScene(device);
+    const cam = scene.camera;
+    cam.setPosition(new float3(0, 0, 5));
+    cam.setTarget(new float3(0, 0, 4));
+    const key = (k: string, type = KeyboardEventType.KeyPressed, mods = ModifierFlags.None) => scene.onKeyEvent({ type, key: k, mods, codepoint: 0 });
+    scene.cameraSpeed = 2;
+    scene.updateCamera(0);
+    expectEq(key("W"), true, "W handled");
+    scene.updateCamera(0.05);
+    expectClose(cam.getPosition().z, 5 - 0.1, 1e-5, "moved speed * dt forward");
+    key("W", KeyboardEventType.KeyReleased);
+
+    // A handled event stops the camera's animation; C with a modifier restarts it.
+    cam.animated = true;
+    scene.onMouseEvent({ type: MouseEventType.ButtonDown, pos: [0.5, 0.5], screenPos: [0, 0], wheelDelta: [0, 0], mods: ModifierFlags.None, button: MouseButton.Left });
+    expectEq(cam.animated, false, "click stops animation");
+    expectEq(key("C", KeyboardEventType.KeyPressed, ModifierFlags.Ctrl), true, "Ctrl+C handled");
+    expectEq(cam.animated, true, "Ctrl+C restarts animation");
+
+    // Disabled controls: events are ignored and held keys released.
+    key("S");
+    scene.setCameraControlsEnabled(false);
+    expectEq(key("S"), false, "ignored while disabled");
+    expectEq(scene.updateCamera(0.1), false, "held key reset on disable");
+    scene.setCameraControlsEnabled(true);
+
+    // F3 adds a viewpoint; the gamepad left stick moves forward.
+    const vps = scene.getViewpointCount();
+    key("F3");
+    expectEq(scene.getViewpointCount(), vps + 1, "F3 adds a viewpoint");
+    const z = cam.getPosition().z;
+    scene.onGamepadState({ leftX: 0, leftY: -1, rightX: 0, rightY: 0, leftTrigger: -1, rightTrigger: -1, buttons: [] });
+    scene.updateCamera(0.15);
+    expectClose(cam.getPosition().z, z - 0.1, 1e-5, "gamepad moves speed * dt forward");
+
+    // Orbiter orbits the scene bounds (center, 3.5 radii away), as native setModelParams does.
+    scene.setCameraController(CameraControllerType.Orbiter);
+    expectEq(scene.getCameraControllerType(), CameraControllerType.Orbiter, "controller type");
+    scene.updateCamera(0.2);
+    const bb = scene.bounds;
+    const p = cam.getPosition(), c = bb.center;
+    expectClose(Math.hypot(p.x - c.x, p.y - c.y, p.z - c.z), 3.5 * bb.radius, 1e-4, "orbit distance");
 });

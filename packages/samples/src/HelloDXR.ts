@@ -13,11 +13,9 @@ import {
     DepthStencilState,
     DepthStencilStateDesc,
     FboAttachmentType,
-    FirstPersonCameraController,
     GraphicsState,
     InputClass,
     KeyboardEventType,
-    MouseButton,
     ParameterBlock,
     RasterizerState,
     RasterizerStateDesc,
@@ -29,7 +27,6 @@ import {
     Vao,
     VertexBufferLayout,
     VertexLayout,
-    float2,
     focalLengthToFovY,
     inverse,
     makeRootVar,
@@ -67,7 +64,6 @@ export class HelloDXR extends SampleApp {
     private raytracePass: ComputePass | null = null;
     private rtOut: Texture | null = null;
     private sampleIndex = 0;
-    private camControl: FirstPersonCameraController | null = null;
 
     override async onLoad(): Promise<void> {
         await this.loadScene(kDefaultScene);
@@ -85,7 +81,7 @@ export class HelloDXR extends SampleApp {
     override onFrameRender(renderContext: RenderContext, targetFbo: Fbo): void {
         renderContext.clearFbo(targetFbo, kClearColor, 1.0, 0, FboAttachmentType.All);
         if (this.scene) {
-            this.camControl?.update(performance.now() / 1000);
+            this.scene.updateCamera(performance.now() / 1000);
             this.scene.runUpdateCallback(this.getGlobalClock().getTime());
             if (this.scene.isAnimated()) this.scene.animate(this.getGlobalClock().getTime());
             if (this.rayTrace) this.renderRT(renderContext, targetFbo);
@@ -106,16 +102,11 @@ export class HelloDXR extends SampleApp {
             this.rayTrace = !this.rayTrace;
             return true;
         }
-        if (keyEvent.type !== KeyboardEventType.KeyPressed && keyEvent.type !== KeyboardEventType.KeyReleased) return false;
-        return (
-            this.camControl?.onKeyEvent({ type: keyEvent.type === KeyboardEventType.KeyPressed ? "keyPressed" : "keyReleased", key: keyEvent.key.toLowerCase(), shift: (keyEvent.mods & 1) !== 0, ctrl: (keyEvent.mods & 2) !== 0 }) ?? false
-        );
+        return this.scene?.onKeyEvent(keyEvent) ?? false;
     }
 
     override onMouseEvent(mouseEvent: MouseEvent): boolean {
-        const type = (["buttonDown", "buttonUp", "move", "wheel"] as const)[mouseEvent.type];
-        const button = mouseEvent.button === MouseButton.Left ? "left" : mouseEvent.button === MouseButton.Right ? "right" : "middle";
-        return this.camControl?.onMouseEvent({ type, button, pos: new float2(mouseEvent.pos[0], mouseEvent.pos[1]), wheelDelta: new float2(mouseEvent.wheelDelta[0], mouseEvent.wheelDelta[1]) }) ?? false;
+        return this.scene?.onMouseEvent(mouseEvent) ?? false;
     }
 
     /** Mirrors HelloDXR::loadScene: scene, camera depth range/speed, raster and RT programs. */
@@ -130,8 +121,7 @@ export class HelloDXR extends SampleApp {
         // Update the controllers.
         const b = this.scene.worldBounds;
         const radius = b ? 0.5 * Math.hypot(b.max[0] - b.min[0], b.max[1] - b.min[1], b.max[2] - b.min[2]) : 1;
-        this.camControl = new FirstPersonCameraController(camera);
-        this.camControl.setCameraSpeed(radius * 0.25);
+        this.scene.cameraSpeed = radius * 0.25;
         const nearZ = Math.max(0.1, radius / 750);
         const farZ = radius * 10;
         camera.setDepthRange(nearZ, farZ);

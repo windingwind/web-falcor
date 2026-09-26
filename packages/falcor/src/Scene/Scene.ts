@@ -16,6 +16,8 @@ import { ResourceFormat } from "../Core/API/Formats.js";
 import { DefineList } from "../Core/Program/DefineList.js";
 import type { ShaderVar } from "../Core/Program/ParameterBlock.js";
 import { Camera } from "./Camera/Camera.js";
+import { FirstPersonCameraController, OrbiterCameraController, SixDoFCameraController, UpDirection, toControllerKeyEvent, toControllerMouseEvent, type CameraController } from "./Camera/CameraController.js";
+import { KeyboardEventType, ModifierFlags, type GamepadEvent, type GamepadState, type KeyboardEvent, type MouseEvent } from "../Utils/UI/InputTypes.js";
 import { float4x4, transpose, inverse } from "../Utils/Math/Matrix.js";
 import { buildBvh, buildBvhParallel, buildAabbBvh, refitBvh, type BvhBuildResult, type BvhTriangle } from "./SoftwareRT/Bvh.js";
 import { WorkerPool } from "../Utils/Threading/WorkerPool.js";
@@ -58,6 +60,13 @@ import { SDFSBS, packSBSGrids, type PackedSBS } from "./SDFs/SDFSBS.js";
 import { encodeBC4Texture } from "./SDFs/BC4Encode.js";
 import { SDFSVS } from "./SDFs/SDFSVS.js";
 import { SDFSVO } from "./SDFs/SDFSVO.js";
+
+/** Mirrors Scene::CameraControllerType. */
+export enum CameraControllerType {
+    FirstPerson,
+    Orbiter,
+    SixDOF,
+}
 
 /** Mirrors Scene::SDFGridIntersectionMethod. */
 export enum SDFGridIntersectionMethod {
@@ -1450,6 +1459,7 @@ export class Scene {
     /** Mirrors Scene::setCameraBounds; the camera controller clamps its position to the box. */
     setCameraBounds(minPoint: { x: number; y: number; z: number }, maxPoint: { x: number; y: number; z: number }): void {
         this.cameraBounds = new AABB(minPoint, maxPoint);
+        this.camCtrl?.setCameraBounds(this.cameraBounds.minPoint, this.cameraBounds.maxPoint);
     }
     cameraBounds: AABB | null = null;
 
@@ -1888,8 +1898,15 @@ export class Scene {
     isLooped(): boolean {
         return this.loopAnimations;
     }
-    /** Mirrors Scene::setCameraSpeed (the camera controller's speed). */
-    cameraSpeed = 1;
+    private _cameraSpeed = 1;
+    /** Mirrors Scene::getCameraSpeed / setCameraSpeed (the camera controller's speed). */
+    get cameraSpeed(): number {
+        return this._cameraSpeed;
+    }
+    set cameraSpeed(speed: number) {
+        this._cameraSpeed = Math.max(speed, 0);
+        this.camCtrl?.setCameraSpeed(speed);
+    }
     /** Mirrors Scene::getMetadata (camera and render settings from the imported asset). */
     metadata: SceneMetadata = {};
 
@@ -2880,9 +2897,93 @@ export class Scene {
         return { HIT_INFO_TYPE_BITS: typeBits, HIT_INFO_INSTANCE_ID_BITS: instanceBits, HIT_INFO_PRIMITIVE_INDEX_BITS: primitiveBits };
     }
 
-    /** Mirrors Scene::setCameraControlsEnabled. */
+    /** Mirrors Scene::setCameraControlsEnabled; disabling resets the controller's input state. */
     setCameraControlsEnabled(enabled: boolean): void {
         this.cameraControlsEnabled = enabled;
+        if (!enabled) this.camCtrl?.resetInputState();
+    }
+
+    private camCtrl: CameraController | null = null;
+    private camCtrlCamera: Camera | null = null;
+    private camCtrlType = CameraControllerType.FirstPerson;
+    private upDirection = UpDirection.YPos;
+
+    getCameraControllerType(): CameraControllerType {
+        return this.camCtrlType;
+    }
+    /** Mirrors Scene::setCameraController (also rerun when the selected camera changes). */
+    setCameraController(type: CameraControllerType): void {
+        if (this.camCtrl && this.camCtrlCamera === this.camera && this.camCtrlType === type) return;
+        const camera = this.camera;
+        if (type === CameraControllerType.Orbiter) {
+            const orbiter = new OrbiterCameraController(camera);
+            const bb = this.bounds;
+            orbiter.setModelParams(bb.valid ? bb.center : new float3(0, 0, 0), bb.valid ? bb.radius : 1, 3.5);
+            this.camCtrl = orbiter;
+        } else {
+            this.camCtrl = type === CameraControllerType.SixDOF ? new SixDoFCameraController(camera) : new FirstPersonCameraController(camera);
+        }
+        this.camCtrl.setUpDirection(this.upDirection);
+        this.camCtrl.setCameraSpeed(this._cameraSpeed);
+        if (this.cameraBounds) this.camCtrl.setCameraBounds(this.cameraBounds.minPoint, this.cameraBounds.maxPoint);
+        this.camCtrlType = type;
+        this.camCtrlCamera = camera;
+    }
+    /** The selected camera's controller (Scene::mpCamCtrl). */
+    getCameraController(): CameraController {
+        this.setCameraController(this.camCtrlType);
+        return this.camCtrl!;
+    }
+    getUpDirection(): UpDirection {
+        return this.upDirection;
+    }
+    /** Mirrors Scene::setUpDirection. */
+    setUpDirection(up: UpDirection): void {
+        this.upDirection = up;
+        this.camCtrl?.setUpDirection(up);
+    }
+
+    /** Mirrors Scene::onMouseEvent: a handled event stops the camera's animation. */
+    onMouseEvent(mouseEvent: MouseEvent): boolean {
+        if (this.cameraControlsEnabled && this.getCameraController().onMouseEvent(toControllerMouseEvent(mouseEvent))) {
+            this.camera.animated = false;
+            return true;
+        }
+        return false;
+    }
+    /** Mirrors Scene::onKeyEvent: F3 adds a viewpoint, C/F7 with a modifier re-enables camera animation. */
+    onKeyEvent(keyEvent: KeyboardEvent): boolean {
+        if (keyEvent.type === KeyboardEventType.KeyPressed) {
+            if (keyEvent.mods === ModifierFlags.None) {
+                if (keyEvent.key === "F3") {
+                    this.addViewpoint();
+                    return true;
+                }
+            } else if (keyEvent.key === "C" || keyEvent.key === "F7") {
+                this.camera.animated = true;
+                return true;
+            }
+        }
+        const ev = toControllerKeyEvent(keyEvent);
+        if (this.cameraControlsEnabled && ev && this.getCameraController().onKeyEvent(ev)) {
+            this.camera.animated = false;
+            return true;
+        }
+        return false;
+    }
+    /** Mirrors Scene::onGamepadEvent. */
+    onGamepadEvent(_gamepadEvent: GamepadEvent): boolean {
+        return false;
+    }
+    /** Mirrors Scene::onGamepadState. */
+    onGamepadState(gamepadState: GamepadState): boolean {
+        return this.cameraControlsEnabled ? this.getCameraController().onGamepadState(gamepadState) : false;
+    }
+    /** Scene::updateSelectedCamera's controller step: moves a non-animated camera; returns whether it changed. */
+    updateCamera(nowSeconds?: number): boolean {
+        const camera = this.camera;
+        if (camera.hasAnimation && camera.animated) return false;
+        return this.getCameraController().update(nowSeconds);
     }
 
     /** Mirrors getGeometryInstanceIDsByType(SDFGrid): one instance per SDF grid, after the meshes. */
