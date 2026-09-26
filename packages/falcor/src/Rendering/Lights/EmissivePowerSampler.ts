@@ -7,6 +7,7 @@
  * range) and the f16-threshold + 2x24-bit index packing.
  */
 
+import { stdSort } from "../../Utils/Algorithm/StdAlgorithms.js";
 import type { Device } from "../../Core/API/Device.js";
 import { Buffer } from "../../Core/API/Buffer.js";
 import { MemoryType, ResourceBindFlags } from "../../Core/API/Types.js";
@@ -64,7 +65,8 @@ export class EmissivePowerSampler {
         for (let i = 0; i < N; i++) weights[i] = Math.fround(weights[i]! * scale);
 
         const permutation = Array.from({ length: N }, (_v, i) => i);
-        permutation.sort((a, b) => weights[a]! - weights[b]!);
+        // std::sort as natively: equal weights (symmetric emitters) must end up in native's order.
+        stdSort(permutation, (a, b) => weights[a]! < weights[b]!);
 
         const thresholds = new Float32Array(N);
         const redirect = new Uint32Array(N);
