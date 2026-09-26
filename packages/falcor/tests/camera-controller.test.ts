@@ -1,4 +1,5 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { GamepadButton, GamepadEventType, GamepadInput, type GamepadEvent, type GamepadState } from "../src/Utils/UI/InputTypes.js";
 import { Camera } from "../src/Scene/Camera/Camera.js";
 import {
     FirstPersonCameraController,
@@ -173,5 +174,44 @@ describe("Gamepad input (FirstPersonCameraControllerCommon)", () => {
         ctl.onGamepadState({ ...idle, leftTrigger: 1 });
         ctl.update(0.1);
         expect(cam.getPosition().y).toBeCloseTo(0, 6);
+    });
+});
+
+describe("GamepadInput (Window::handleGamepadInput)", () => {
+    const makePad = () => ({ id: "pad", index: 0, connected: true, mapping: "standard", axes: [0.5, -1, 0, 0.25], buttons: Array.from({ length: 17 }, () => ({ pressed: false, value: 0 })) });
+    afterEach(() => vi.unstubAllGlobals());
+
+    it("maps the standard layout to GLFW axes and synthesizes button events", () => {
+        const pad = makePad();
+        vi.stubGlobal("navigator", { getGamepads: () => [pad] });
+        const events: GamepadEvent[] = [];
+        const states: GamepadState[] = [];
+        const input = new GamepadInput();
+        const callbacks = { handleGamepadEvent: (e: GamepadEvent) => events.push(e), handleGamepadState: (s: GamepadState) => states.push(s) };
+        input.poll(callbacks);
+        expect(events).toEqual([{ type: GamepadEventType.Connected }]);
+        expect(states[0]).toMatchObject({ leftX: 0.5, leftY: -1, rightX: 0, rightY: 0.25, leftTrigger: -1, rightTrigger: -1 });
+        pad.buttons[3] = { pressed: true, value: 1 }; // Y
+        pad.buttons[15] = { pressed: true, value: 1 }; // dpad right
+        input.poll(callbacks);
+        expect(events.slice(1)).toEqual([
+            { type: GamepadEventType.ButtonDown, button: GamepadButton.Y },
+            { type: GamepadEventType.ButtonDown, button: GamepadButton.Right },
+        ]);
+        pad.buttons[3] = { pressed: false, value: 0 };
+        input.poll(callbacks);
+        expect(events[3]).toEqual({ type: GamepadEventType.ButtonUp, button: GamepadButton.Y });
+        pad.connected = false;
+        input.poll(callbacks);
+        expect(events[4]).toEqual({ type: GamepadEventType.Disconnected });
+        expect(states).toHaveLength(3);
+    });
+
+    it("released triggers (-1) don't move the camera", () => {
+        const cam = lookNegZ();
+        const ctl = new FirstPersonCameraController(cam);
+        ctl.update(0);
+        expect(ctl.onGamepadState({ leftX: 0, leftY: 0, rightX: 0, rightY: 0, leftTrigger: -1, rightTrigger: -1 })).toBe(false);
+        expect(ctl.update(0.05)).toBe(false);
     });
 });

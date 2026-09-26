@@ -21,7 +21,7 @@ export interface ControllerMouseEvent {
     wheelDelta?: float2;
 }
 
-/** Mirrors GamepadState (axes in [-1,1], triggers in [0,1]). */
+/** Mirrors GamepadState's axes (GLFW convention: [-1,1], y down, triggers -1 when released). */
 export interface ControllerGamepadState {
     leftX: number;
     leftY: number;

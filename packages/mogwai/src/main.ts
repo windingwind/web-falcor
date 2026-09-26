@@ -5,7 +5,7 @@
 
 import { FrameCaptureExtension, captureOutput } from "./FrameCapture.js";
 import { recordMogwaiSource, replayMogwaiCommands, type MogwaiHost } from "./ScriptRunner.js";
-import { AssetCategory, AssetResolver, isAbsoluteUrl, kProjectMediaUrl, Clock, Device, Logger, LogLevel, SceneBuilderFlags, getGlobalSettings, Profiler, ProfilerUI, VideoRecorder, ProgramManager, RenderGraph, ResourceFormat, Bitmap, BitmapExportFlags, createPass, initScripting, initSlang, runConsoleCommand, runSceneScript, DomWidgets, nativeKeyCode, type MogwaiCallbacks, runPbrtScene, runMitsubaScene, presentToCanvas, OverlayDrawList, type Scene } from "@web-falcor/falcor";
+import { AssetCategory, AssetResolver, isAbsoluteUrl, kProjectMediaUrl, Clock, Device, Logger, LogLevel, SceneBuilderFlags, getGlobalSettings, Profiler, ProfilerUI, VideoRecorder, ProgramManager, RenderGraph, ResourceFormat, Bitmap, BitmapExportFlags, createPass, initScripting, initSlang, runConsoleCommand, runSceneScript, DomWidgets, nativeKeyCode, GamepadInput, GamepadEventType, GamepadButton, type MogwaiCallbacks, runPbrtScene, runMitsubaScene, presentToCanvas, OverlayDrawList, type Scene } from "@web-falcor/falcor";
 import "@web-falcor/render-passes";
 import { CameraController, kCameraControllerTypes, kUpDirectionNames } from "./CameraController.js";
 import { buildUIPanel } from "./UIPanel.js";
@@ -409,6 +409,14 @@ async function main() {
     const camControl = new CameraController(canvas);
     // Mirrors Scene::setCameraControlsEnabled (e.g. the SDF editor takes the mouse while a modifier is held).
     camControl.inputEnabled = () => state.scene?.cameraControlsEnabled ?? true;
+    const gamepad = new GamepadInput();
+    /** MogwaiSettings::selectNextGraph (N key, gamepad Y). */
+    const selectNextGraph = () => {
+        if (state.graphs.length < 2) return;
+        selectGraph(state, state.graphs[(state.graphs.indexOf(state.graph!) + 1) % state.graphs.length]!);
+        refreshOutputs(state);
+        rebuildUI();
+    };
     const rebuildUI = () =>
         buildUIPanel(passesEl, state.graph, resetAccum, state.scene, {
             notify: resetAccum,
@@ -512,10 +520,8 @@ async function main() {
         } else if (!modified && ev.key === "F12") {
             ev.preventDefault();
             (document.getElementById("capture") as HTMLButtonElement | null)?.click();
-        } else if (!modified && (ev.key === "n" || ev.key === "N") && state.graphs.length > 1) {
-            selectGraph(state, state.graphs[(state.graphs.indexOf(state.graph!) + 1) % state.graphs.length]!);
-            refreshOutputs(state);
-            rebuildUI();
+        } else if (!modified && (ev.key === "n" || ev.key === "N")) {
+            selectNextGraph();
         } else if (!modified && ev.key === "`") {
             ev.preventDefault();
             (document.getElementById("consoleToggle") as HTMLButtonElement | null)?.click();
@@ -534,6 +540,13 @@ async function main() {
         // Renderer::onFrameRender: m.sceneUpdateCallback, then Scene::update (the scene's python updateCallback first).
         if (state.graph) runRendererCallback("sceneUpdateCallback", () => state.callbacks.sceneUpdateCallback?.(state.scene, state.clock.getTime()));
         state.scene?.runUpdateCallback(state.clock.getTime());
+        // Window::pollForEvents: MogwaiSettings takes Y (next graph), the scene's camera the sticks.
+        gamepad.poll({
+            handleGamepadEvent: (e) => {
+                if (e.type === GamepadEventType.ButtonDown && e.button === GamepadButton.Y) selectNextGraph();
+            },
+            handleGamepadState: (s) => camControl.onGamepadState(s),
+        });
         let dirty = cam ? camControl.update(cam, now, state.scene ?? undefined) : false;
         // Scene::onKeyEvent: moving the camera by hand stops its animation.
         if (dirty && cam) cam.animated = false;

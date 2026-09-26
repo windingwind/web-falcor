@@ -7,7 +7,7 @@
  * requestAnimationFrame), the Gui a DOM panel of UIWidgets rebuilt when a control
  * changes, screen captures download, and shader reload is F6 (the browser owns F5).
  * Headless apps (config.headless, no canvas) render only when renderFrame() is called,
- * which is how tests drive them. PixelZoom and gamepad input are not ported.
+ * which is how tests drive them. PixelZoom is not ported.
  */
 
 import { Device, type DeviceDesc } from "./API/Device.js";
@@ -23,11 +23,14 @@ import { TextRenderer } from "../Utils/UI/TextRenderer.js";
 import { DomWidgets } from "../Utils/UI/DomWidgets.js";
 import type { UIWidgets } from "../RenderGraph/UIWidgets.js";
 import {
+    GamepadInput,
     KeyboardEventType,
     ModifierFlags,
     MouseEventType,
     toKeyboardEvent,
     toMouseEvent,
+    type GamepadEvent,
+    type GamepadState,
     type KeyboardEvent,
     type MouseEvent,
 } from "../Utils/UI/InputTypes.js";
@@ -96,6 +99,7 @@ export abstract class SampleApp {
     private uiDirty = true;
     private lastUiBuild = 0;
     private removeListeners: (() => void)[] = [];
+    private readonly gamepad = new GamepadInput();
 
     constructor(config: SampleAppConfig = {}) {
         this.config = {
@@ -123,6 +127,12 @@ export abstract class SampleApp {
         return false;
     }
     onMouseEvent(_mouseEvent: MouseEvent): boolean {
+        return false;
+    }
+    onGamepadEvent(_gamepadEvent: GamepadEvent): boolean {
+        return false;
+    }
+    onGamepadState(_gamepadState: GamepadState): boolean {
         return false;
     }
 
@@ -215,6 +225,8 @@ export abstract class SampleApp {
             await new Promise<number>((resolve) => {
                 const loop = () => {
                     if (this.shouldTerminate) return resolve(this.returnCode);
+                    // Window::pollForEvents polls the gamepad before each frame.
+                    this.gamepad.poll(this);
                     this.renderFrame();
                     requestAnimationFrame(loop);
                 };
@@ -353,6 +365,16 @@ export abstract class SampleApp {
     /** Mirrors SampleApp::handleMouseEvent. */
     handleMouseEvent(mouseEvent: MouseEvent): void {
         this.onMouseEvent(mouseEvent);
+    }
+
+    /** Mirrors SampleApp::handleGamepadEvent. */
+    handleGamepadEvent(gamepadEvent: GamepadEvent): void {
+        this.onGamepadEvent(gamepadEvent);
+    }
+
+    /** Mirrors SampleApp::handleGamepadState. */
+    handleGamepadState(gamepadState: GamepadState): void {
+        this.onGamepadState(gamepadState);
     }
 
     private attachInput(canvas: HTMLCanvasElement): void {

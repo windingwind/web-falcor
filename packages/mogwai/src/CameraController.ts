@@ -17,6 +17,7 @@ import {
     type Camera,
     type CameraController as NativeController,
     type ControllerMouseEvent,
+    type ControllerGamepadState,
 } from "@web-falcor/falcor";
 
 /** Mirrors Scene::CameraControllerType (dropdown spellings from Scene.cpp). */
@@ -136,18 +137,9 @@ export class CameraController {
         if (e.type === "keydown" && !this.inputEnabled()) return;
         this.controller?.onKeyEvent({ type: e.type === "keydown" ? "keyPressed" : "keyReleased", key: e.key.toLowerCase(), shift: e.shiftKey, ctrl: e.ctrlKey });
     };
-    private pollGamepad(): void {
-        const pad = typeof navigator.getGamepads === "function" ? navigator.getGamepads().find((g) => g && g.connected) : null;
-        if (!pad) return;
-        const a = pad.axes;
-        this.controller?.onGamepadState({
-            leftX: a[0] ?? 0,
-            leftY: -(a[1] ?? 0),
-            rightX: a[2] ?? 0,
-            rightY: -(a[3] ?? 0),
-            leftTrigger: pad.buttons[6]?.value ?? 0,
-            rightTrigger: pad.buttons[7]?.value ?? 0,
-        });
+    /** Mirrors Scene::onGamepadState: forwarded while camera controls are enabled. */
+    onGamepadState(state: ControllerGamepadState): boolean {
+        return this.inputEnabled() ? (this.controller?.onGamepadState(state) ?? false) : false;
     }
 
     /** Applies pending input to `camera`. `now` is the rAF timestamp (ms). */
@@ -162,7 +154,6 @@ export class CameraController {
             const b = scene.cameraBounds;
             if (b && b !== this.appliedBounds) this.controller!.setCameraBounds((this.appliedBounds = b).minPoint, b.maxPoint);
         }
-        this.pollGamepad();
         let changed = this.controller!.update(now / 1000);
         if (this.dollyAccum !== 0) {
             const viewDir = normalize3(sub3(camera.getTarget(), camera.getPosition()));
