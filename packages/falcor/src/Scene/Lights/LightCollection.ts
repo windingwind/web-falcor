@@ -125,6 +125,8 @@ export interface LightCollectionData {
     /** EmissiveFlux[], 32B stride (WGSL vec3 alignment: flux@0, averageRadiance@16). */
     fluxData: ArrayBuffer;
     activeTriangles: Uint32Array;
+    /** Triangles with flux > 0 (activeTriangles is padded to one element when there are none). */
+    activeTriangleCount: number;
     triToActiveMapping: Uint32Array;
     /** MeshLightData[], 4 uints each. */
     meshData: Uint32Array;
@@ -201,14 +203,18 @@ export function buildLightCollection(meshes: SceneMeshDesc[], materials: Emissiv
         fv.setFloat32(i * 32 + 24, rad[2], true);
     });
 
-    // All triangles are active (native culls zero-flux triangles; radiance is
-    // uniform per material here, so emissive materials never yield zero flux).
-    const active = new Uint32Array(Math.max(tris.length, 1));
-    const mapping = new Uint32Array(Math.max(tris.length, 1));
+    // LightCollection::updateActiveTriangleList: only triangles with flux > 0 are active; degenerate
+    // (zero-area) triangles, e.g. at a sphere's pole, are culled from what the samplers pick from.
+    const activeList: number[] = [];
+    const mapping = new Uint32Array(Math.max(tris.length, 1)).fill(kInvalidIndex);
     for (let i = 0; i < tris.length; i++) {
-        active[i] = i;
-        mapping[i] = i;
+        if (fv.getFloat32(i * 32, true) > 0) {
+            mapping[i] = activeList.length;
+            activeList.push(i);
+        }
     }
+    const active = new Uint32Array(Math.max(activeList.length, 1));
+    active.set(activeList);
 
     return {
         triangleCount: tris.length,
@@ -216,6 +222,7 @@ export function buildLightCollection(meshes: SceneMeshDesc[], materials: Emissiv
         triangleData,
         fluxData,
         activeTriangles: active,
+        activeTriangleCount: activeList.length,
         triToActiveMapping: mapping,
         meshData: meshLights.length > 0 ? new Uint32Array(meshLights) : new Uint32Array([kInvalidIndex, kInvalidIndex, 0, kInvalidIndex]),
         perMeshInstanceOffset: perMeshInstanceOffset.length > 0 ? perMeshInstanceOffset : new Uint32Array([kInvalidIndex]),

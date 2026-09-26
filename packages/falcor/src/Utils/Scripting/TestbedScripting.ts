@@ -32,7 +32,7 @@ import { getMaterialParamLayoutForType, kMaterialParamCount, serializeMaterialPa
 import { RuntimeError } from "../../Core/Error.js";
 import { AssetCategory, AssetResolver } from "../../Core/AssetResolver.js";
 import { getPyodide, kPythonVectorTypes } from "./Scripting.js";
-import { Testbed, type TestbedOptions } from "./Testbed.js";
+import { Testbed, kTestbedFsRoot, type TestbedOptions } from "./Testbed.js";
 import { MaterialBridge } from "../../Scene/SceneBuilder.js";
 import { MaterialType } from "../../Scene/Material/MaterialData.js";
 
@@ -1006,7 +1006,7 @@ export async function runTestbedScript(
     const py = getPyodide() as Pyodide;
     const source = await (await fetch(scriptUrl)).text();
     const dirUrl = scriptUrl.slice(0, scriptUrl.lastIndexOf("/"));
-    const root = "/testbed";
+    const root = kTestbedFsRoot;
     const fsDir = `${root}${dirUrl}`;
     py.FS.mkdirTree(fsDir);
     if (options.cwd) py.FS.mkdirTree(`${root}${options.cwd}`);

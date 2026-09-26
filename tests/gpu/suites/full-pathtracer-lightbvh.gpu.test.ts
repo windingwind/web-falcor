@@ -8,7 +8,7 @@
  */
 
 import { GltfImporter, LightType, RenderGraph, createPass, float3, initScripting } from "@web-falcor/falcor";
-import { runMogwaiSource } from "../../../packages/mogwai/src/ScriptRunner.js";
+import { runMogwaiScript, runMogwaiSource } from "../../../packages/mogwai/src/ScriptRunner.js";
 import "@web-falcor/render-passes";
 import parseExr from "parse-exr";
 import { gpuTest, expectEq } from "../harness/registry.js";
@@ -151,4 +151,28 @@ gpuTest("FullPathTracerLightBVH.binnedSAHMatchesNativeOracle", async ({ device }
     console.error(`# lightBVH BinnedSAH vs native: meanAbs ${sah.toExponential(2)}; with BinnedSAOH instead: ${saoh.toExponential(2)}`);
     expectEq(sah < 5e-3, true, `BinnedSAH radiance mean abs diff ${sah}`);
     expectEq(saoh > sah * 2, true, `BinnedSAOH differs more (${saoh} vs ${sah})`);
+});
+
+gpuTest("EmissiveUniformSampler.matchesNativeOracle", async ({ device }) => {
+    // tests/oracle/render-native-emissive-uniform.py run unchanged: the Uniform sampler picks from the active
+    // (flux > 0) triangles, so the spheres' degenerate pole triangles must be culled as natively.
+    await initScripting("/node_modules/pyodide");
+    const nat = parseExr(await (await fetch("/tests/oracle/out-native/oracle-emissive-uniform.PathTracer.color.0.exr")).arrayBuffer(), 1015) as { data: Float32Array; width: number; height: number };
+    const { frameCapture } = await runMogwaiScript(device, "/tests/oracle/render-native-emissive-uniform.py");
+    const web = parseExr(frameCapture.captured.find((f) => f.name.includes("PathTracer.color"))!.bytes.slice().buffer, 1015) as { data: Float32Array };
+    let sum = 0;
+    let differing = 0;
+    for (let i = 0; i < nat.width * nat.height; i++) {
+        let d = 0;
+        for (let c = 0; c < 3; c++) {
+            const x = Math.abs(web.data[i * 4 + c]! - nat.data[i * 4 + c]!);
+            sum += x;
+            d = Math.max(d, x);
+        }
+        if (d > 1e-3) differing++;
+    }
+    const mean = sum / (nat.width * nat.height * 3);
+    console.error(`# uniform emissive sampler vs native: meanAbs ${mean.toExponential(2)}, differing pixels ${differing}`);
+    expectEq(mean < 1e-4, true, `radiance mean abs diff ${mean}`);
+    expectEq(differing < nat.width * nat.height * 0.002, true, `differing pixels ${differing}`);
 });

@@ -1809,7 +1809,7 @@ export class Scene {
             }),
         );
         this.emissiveTriangleCount = lc.triangleCount;
-        this.emissiveActiveTriangleCount = lc.activeTriangles.length;
+        this.emissiveActiveTriangleCount = lc.activeTriangleCount;
         this.emissiveMeshCount = lc.meshCount;
         this.emissiveMeshData = lc.meshData;
         this.emissiveFluxes = new Float32Array(lc.triangleCount);
@@ -2817,7 +2817,7 @@ export class Scene {
         // Emissive geometry (LightCollection.slang).
         const lightCollection = scene["lightCollection"];
         lightCollection["triangleCount"] = this.emissiveTriangleCount;
-        lightCollection["activeTriangleCount"] = this.emissiveTriangleCount;
+        lightCollection["activeTriangleCount"] = this.emissiveActiveTriangleCount;
         lightCollection["meshCount"] = this.emissiveMeshCount;
         lightCollection["triangleData"] = this.buffers["emissiveTriangles"]!;
         lightCollection["activeTriangles"] = this.buffers["emissiveActiveTriangles"]!;

@@ -17,7 +17,7 @@ import { presentToCanvas } from "../../Core/API/Present.js";
 import type { Texture } from "../../Core/API/Texture.js";
 import { RenderGraph } from "../../RenderGraph/RenderGraph.js";
 import type { Scene } from "../../Scene/Scene.js";
-import { AssetCategory, AssetResolver } from "../../Core/AssetResolver.js";
+import { AssetCategory, AssetResolver, normalizeUrl } from "../../Core/AssetResolver.js";
 import { Clock } from "../Timing/Clock.js";
 import { FrameRate } from "../Timing/FrameRate.js";
 import { PyUiScreen } from "../UI/PythonUI.js";
@@ -42,6 +42,9 @@ export interface TestbedOptions {
     /** Web: called after each frame (tests drive the UI from here). */
     onFrame?: (testbed: Testbed, frame: number) => void;
 }
+
+/** Pyodide directory Testbed scripts run in (their __file__ and os.getcwd() are under it). */
+export const kTestbedFsRoot = "/testbed";
 
 export class Testbed {
     readonly clock = new Clock();
@@ -181,10 +184,14 @@ export class Testbed {
 
     /** Mirrors Testbed::loadScene (paths resolve through the asset resolver, like native). */
     async loadScene(path: string, buildFlags = 0): Promise<void> {
-        const url = path.startsWith("/") ? path : await AssetResolver.getDefaultResolver().resolvePath(path, AssetCategory.Scene);
+        // Paths a script builds from __file__ point into Pyodide's file system: map them back to URLs.
+        const local = path.startsWith(`${kTestbedFsRoot}/`) ? path.slice(kTestbedFsRoot.length) : path;
+        const url = local.startsWith("/") ? normalizeUrl(local) : await AssetResolver.getDefaultResolver().resolvePath(local, AssetCategory.Scene);
+        const res = await fetch(url);
+        if (!res.ok) throw new RuntimeError(`Can't find scene file '${path}' (tried '${url}', ${res.status})`);
         const baseUrl = url.slice(0, url.lastIndexOf("/"));
         this.sceneBaseUrl = baseUrl;
-        this.scene = await runSceneScript(this.device, await (await fetch(url)).text(), baseUrl, { flags: buildFlags, path: url });
+        this.scene = await runSceneScript(this.device, await res.text(), baseUrl, { flags: buildFlags, path: url });
         if (this.renderGraph) {
             this.renderGraph.setScene(this.scene);
             this.graphNeedsInit = true;
