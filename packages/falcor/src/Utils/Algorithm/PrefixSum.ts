@@ -8,7 +8,7 @@ import type { RenderContext } from "../../Core/API/RenderContext.js";
 import { Buffer } from "../../Core/API/Buffer.js";
 import { ResourceBindFlags } from "../../Core/API/Types.js";
 import { ComputePass } from "../../Core/Pass/ComputePass.js";
-import { assert } from "../../Core/Error.js";
+import { assert, RuntimeError } from "../../Core/Error.js";
 
 const kShaderFile = "Utils/Algorithm/PrefixSum.cs.slang";
 const kGroupSize = 1024;
@@ -31,10 +31,10 @@ export class PrefixSum {
     }
 
     /**
-     * Mirrors PrefixSum::execute: in-place exclusive prefix sum over
-     * elementCount uint32 elements. Returns the total sum if readTotalSum.
+     * Mirrors PrefixSum::execute: in-place exclusive prefix sum over elementCount uint32 elements. Returns the
+     * total sum if readTotalSum, and copies it to `totalSumBuffer` at `totalSumOffset` if given.
      */
-    async execute(ctx: RenderContext, data: Buffer, elementCount: number, readTotalSum = false): Promise<number | undefined> {
+    async execute(ctx: RenderContext, data: Buffer, elementCount: number, readTotalSum = false, totalSumBuffer?: Buffer, totalSumOffset = 0): Promise<number | undefined> {
         assert(elementCount > 0, "PrefixSum: elementCount must be > 0");
         assert(data.size >= elementCount * 4, "PrefixSum: data buffer too small");
 
@@ -42,9 +42,11 @@ export class PrefixSum {
 
         const maxElementCountPerIteration = kGroupSize * kGroupSize * 2;
         const iterationsCount = Math.ceil(elementCount / maxElementCountPerIteration);
+        let remaining = elementCount;
 
         for (let iter = 0; iter < iterationsCount; iter++) {
-            const numPrefixGroups = Math.max(1, Math.ceil(Math.min(elementCount, maxElementCountPerIteration) / (kGroupSize * 2)));
+            // Each thread operates on two of this iteration's elements.
+            const numPrefixGroups = Math.max(1, Math.ceil(Math.min(remaining, maxElementCountPerIteration) / (kGroupSize * 2)));
             assert(numPrefixGroups > 0 && numPrefixGroups <= kGroupSize, "PrefixSum: invalid group count");
 
             // Copy previous iteration's total sum.
@@ -77,6 +79,13 @@ export class PrefixSum {
                 root["gPrevTotalSum"] = this.prevTotalSum;
                 this.finalizePass.execute(ctx, dispatchSizeX * kGroupSize);
             }
+            remaining -= maxElementCountPerIteration;
+        }
+
+        // Copy the total sum to a separate destination buffer, if specified.
+        if (totalSumBuffer) {
+            if (totalSumOffset + 4 > totalSumBuffer.size) throw new RuntimeError("PrefixSum::execute() - Results buffer is too small.");
+            ctx.copyBufferRegion(totalSumBuffer, totalSumOffset, this.totalSum, 0, 4);
         }
 
         if (readTotalSum) {

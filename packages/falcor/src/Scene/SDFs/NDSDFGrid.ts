@@ -11,13 +11,10 @@
  */
 
 import { Mt19937, canonicalFloat } from "../../Utils/SampleGenerators/CPUSampleGenerator.js";
+import { bitScanReverse } from "../../Core/Platform/OS.js";
 
 const f = Math.fround;
 const kSqrt3 = Math.fround(Math.sqrt(3));
-
-function bitScanReverse(v: number): number {
-    return 31 - Math.clz32(v);
-}
 
 /**
  * Mirrors SDFGrid::generateCheeseValues corner-value generation (shared by

@@ -5,6 +5,7 @@
 
 export * from "./Core/Error.js";
 export * from "./Core/Enum.js";
+export * from "./Core/Platform/OS.js";
 export * from "./Core/AssetResolver.js";
 export * from "./Core/API/Device.js";
 export * from "./Core/API/DeviceFactories.js";

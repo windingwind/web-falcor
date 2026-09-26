@@ -13,41 +13,7 @@ import { Buffer } from "../../Core/API/Buffer.js";
 import { MemoryType, ResourceBindFlags } from "../../Core/API/Types.js";
 import type { ShaderVar } from "../../Core/Program/ParameterBlock.js";
 import { f32tof16 } from "../../Scene/Material/MaterialData.js";
-
-/** std::mt19937 (32-bit Mersenne Twister), default seed 5489. */
-class Mt19937 {
-    private mt = new Uint32Array(624);
-    private index = 625;
-
-    constructor(seed = 5489) {
-        this.mt[0] = seed >>> 0;
-        for (let i = 1; i < 624; i++) {
-            const prev = this.mt[i - 1]! ^ (this.mt[i - 1]! >>> 30);
-            // 1812433253 * prev + i, in 32-bit arithmetic (split to avoid f64 precision loss).
-            const lo = (prev & 0xffff) * 1812433253;
-            const hi = (((prev >>> 16) * 1812433253) & 0xffff) << 16;
-            this.mt[i] = (((lo + hi) >>> 0) + i) >>> 0;
-        }
-        this.index = 624;
-    }
-
-    next(): number {
-        if (this.index >= 624) {
-            for (let i = 0; i < 624; i++) {
-                const y = ((this.mt[i]! & 0x80000000) | (this.mt[(i + 1) % 624]! & 0x7fffffff)) >>> 0;
-                let next = (this.mt[(i + 397) % 624]! ^ (y >>> 1)) >>> 0;
-                if (y & 1) next = (next ^ 0x9908b0df) >>> 0;
-                this.mt[i] = next;
-            }
-            this.index = 0;
-        }
-        let y = this.mt[this.index++]!;
-        y = (y ^ (y >>> 11)) >>> 0;
-        y = (y ^ ((y << 7) & 0x9d2c5680)) >>> 0;
-        y = (y ^ ((y << 15) & 0xefc60000)) >>> 0;
-        return (y ^ (y >>> 18)) >>> 0;
-    }
-}
+import { Mt19937 } from "../../Utils/SampleGenerators/CPUSampleGenerator.js";
 
 export class EmissivePowerSampler {
     private readonly table: Buffer;

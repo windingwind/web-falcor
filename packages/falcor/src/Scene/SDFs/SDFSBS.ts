@@ -15,13 +15,10 @@
 import { generateCheeseCornerValues } from "./NDSDFGrid.js";
 import { bc4RoundTripTexture } from "./BC4Encode.js";
 import { RuntimeError } from "../../Core/Error.js";
+import { bitScanReverse } from "../../Core/Platform/OS.js";
 
 const kSqrt3 = Math.sqrt(3);
 const UINT32_MAX = 0xffffffff;
-
-function bitScanReverse(v: number): number {
-    return 31 - Math.clz32(v);
-}
 
 /** One brick's world-space AABB (matches Utils/Math/AABB, 6 floats). */
 export interface BrickAABB {

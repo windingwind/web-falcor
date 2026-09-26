@@ -11,15 +11,12 @@
  */
 
 import { generateCheeseCornerValues } from "./NDSDFGrid.js";
+import { bitScanReverse } from "../../Core/Platform/OS.js";
 
 const kSqrt3 = Math.sqrt(3);
 const kMaxLevel = 19n;
 const kLocationCodeLevelOffset = 3n * kMaxLevel; // 57
 const kLocationCodeVoxelCoordsMask = (1n << (3n * kMaxLevel)) - 1n;
-
-function bitScanReverse(v: number): number {
-    return 31 - Math.clz32(v);
-}
 
 /** Morton bit-spread of a 21-bit coord into every 3rd bit (u64). */
 export function shiftCoord(x: number): bigint {
