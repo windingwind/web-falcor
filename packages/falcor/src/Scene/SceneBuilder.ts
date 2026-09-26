@@ -25,7 +25,8 @@ import { optimizeMaterialTextures, removeDuplicateMaterials } from "./Material/M
 import { TextureManager } from "./Material/TextureManager.js";
 import { EnvMap } from "./Lights/EnvMap.js";
 import { generateTangents, generateTangentsAndMerge, loadMikkTSpace } from "./TangentSpace.js";
-import { LightType, PackedVertex, copyVertex, copyVertexArray, type AnalyticLight, type StaticVertex } from "./SceneData.js";
+import { LightType, PackedVertex, copyVertex, copyVertexArray, createPackedVertices, kPackedVertexFloats, type AnalyticLight, type StaticVertex } from "./SceneData.js";
+import { WorkerPool } from "../Utils/Threading/WorkerPool.js";
 import { MaterialType, ShadingModel, packTextureHandle, TextureHandleMode } from "./Material/MaterialData.js";
 import { getTextureSlotSrgb } from "./Material/TextureSlots.js";
 import { float2, float3, float4 } from "../Utils/Math/Vector.js";
@@ -1305,9 +1306,36 @@ export class SceneBuilderBridge {
      * Mirrors the tangent part of SceneBuilder::addMesh for every mesh with a tangentSpace mode:
      * new vertices/indices, with skin, morph and vertex-cache data remapped to the split vertices.
      */
-    private generateMeshTangents(meshes: SceneMeshDesc[]): void {
+    private async generateMeshTangents(meshes: SceneMeshDesc[]): Promise<void> {
         const keepAsset = this.hasFlag(SceneBuilderFlags.UseOriginalTangentSpace);
         const done = new Map<StaticVertex[], { indices: Uint32Array; result: ReturnType<typeof generateTangentsAndMerge> }[]>();
+        // Like native's parallel createMeshes: each distinct packed mesh runs MikkTSpace on the worker pool first.
+        const pool = WorkerPool.get();
+        if (pool.threadCount > 1) {
+            const jobs: Promise<void>[] = [];
+            for (const m of meshes) {
+                const mode = m.tangentSpace;
+                if (!mode || mode === "keep" || mode === "noTexCrds" || (mode === "asset" && keepAsset)) continue;
+                const first = m.vertices[0];
+                const store = first instanceof PackedVertex ? first.data : null;
+                const contiguous = store !== null && store.length === m.vertices.length * kPackedVertexFloats && m.vertices.every((v, i) => v instanceof PackedVertex && v.data === store && v.offset === i * kPackedVertexFloats);
+                if (!contiguous) continue;
+                const list = done.get(m.vertices) ?? [];
+                done.set(m.vertices, list);
+                if (list.some((e) => e.indices === m.indices)) continue;
+                const entry: { indices: Uint32Array; result: ReturnType<typeof generateTangentsAndMerge> } = { indices: m.indices, result: null };
+                list.push(entry);
+                const data = store!.slice();
+                const indices = m.indices.slice();
+                jobs.push(
+                    pool.run("tangentsAndMerge", { data, indices, boneIDs: m.skin?.boneIDs, boneWeights: m.skin?.weights }, [data.buffer, indices.buffer]).then((r) => {
+                        entry.result = r ? { vertices: createPackedVertices(r.data.length / kPackedVertexFloats, r.data as Float32Array<ArrayBuffer>), indices: r.indices, source: r.source } : null;
+                        if (!r) generateTangents(m.vertices, m.indices); // no wasm in the worker: approximate, in place
+                    }),
+                );
+            }
+            await Promise.all(jobs);
+        }
         const zeroed = new Map<StaticVertex[], StaticVertex[]>(); // instances keep sharing one copy
         meshes.forEach((m, i) => {
             const mode = m.tangentSpace;
@@ -2047,7 +2075,7 @@ export class SceneBuilderBridge {
 
         timeReport.measure("Importing assets");
         // SceneBuilder::addMesh: MikkTSpace tangents and the vertex merge, once per shared vertex array.
-        this.generateMeshTangents(meshes);
+        await this.generateMeshTangents(meshes);
         applyTextureTransforms(meshes, texTransforms);
 
         // Flags::DontUseDisplacement: drop displacement maps (meshes stay plain triangles).
