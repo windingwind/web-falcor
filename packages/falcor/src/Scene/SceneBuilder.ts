@@ -24,7 +24,7 @@ import { optimizeMaterialTextures, removeDuplicateMaterials } from "./Material/M
 import { TextureManager } from "./Material/TextureManager.js";
 import { EnvMap } from "./Lights/EnvMap.js";
 import { generateTangents, generateTangentsAndMerge, loadMikkTSpace } from "./TangentSpace.js";
-import { LightType, PackedVertex, copyVertex, type AnalyticLight, type StaticVertex } from "./SceneData.js";
+import { LightType, PackedVertex, copyVertex, copyVertexArray, type AnalyticLight, type StaticVertex } from "./SceneData.js";
 import { MaterialType, ShadingModel, packTextureHandle, TextureHandleMode } from "./Material/MaterialData.js";
 import { getTextureSlotSrgb } from "./Material/TextureSlots.js";
 import { float2, float3, float4 } from "../Utils/Math/Vector.js";
@@ -1806,7 +1806,7 @@ export class SceneBuilderBridge {
                 materialIDs.set(mat, materialID);
             }
             // Tangents are generated below (native MikkTSpace); UseOriginalTangentSpace keeps supplied ones.
-            const vertices = geo.vertices.map((v) => copyVertex(v));
+            const vertices = copyVertexArray(geo.vertices);
             // SceneBuilder::unifyTriangleWinding: clockwise meshes are flipped to counter-clockwise.
             const indices = geo.frontFaceCW ? flipWinding(geo.indices) : geo.indices;
             const hasTangents = vertices.some((v) => v.tangent.x !== 0 || v.tangent.y !== 0 || v.tangent.z !== 0);

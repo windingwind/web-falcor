@@ -35,7 +35,7 @@
 import type { Device } from "../../Core/API/Device.js";
 import type { Scene } from "../Scene.js";
 import type { StaticVertex } from "../SceneData.js";
-import { LightType } from "../SceneData.js";
+import { LightType, createPackedVertices, kPackedVertexFloats } from "../SceneData.js";
 import { MaterialType } from "../Material/MaterialData.js";
 import { float2, float3, float4, normalize3, sub3, cross, dot3 } from "../../Utils/Math/Vector.js";
 import {
@@ -411,7 +411,6 @@ function parsePly(buf: ArrayBuffer): TriangleMeshDesc {
 // Mesh assembly (shared by trianglemesh + plymesh)
 // -------------------------------------------------------------------------
 
-const kZeroTangent = new float4(0, 0, 0, 0);
 
 /** Builds a TriangleMeshDesc; computes smooth normals if none are supplied. */
 function assembleMesh(positions: float3[], indices: number[], normals: float3[], uvs: float2[]): TriangleMeshDesc {
@@ -433,13 +432,13 @@ function assembleMesh(positions: float3[], indices: number[], normals: float3[],
             return l > 0 ? new float3(n.x / l, n.y / l, n.z / l) : new float3(0, 1, 0);
         });
     }
-    const vertices: StaticVertex[] = positions.map((p, i) => ({
-        position: p,
-        normal: N[i]!,
-        tangent: kZeroTangent,
-        texCrd: uvs[i] ?? new float2(0, 0),
-    }));
-    return { vertices, indices: new Uint32Array(indices) };
+    // Packed f32 vertices (native stores f32 from the start): large scenes stay within the JS heap.
+    const data = new Float32Array(positions.length * kPackedVertexFloats);
+    positions.forEach((p, i) => {
+        const [n, uv] = [N[i]!, uvs[i]];
+        data.set([p.x, p.y, p.z, n.x, n.y, n.z, 0, 0, 0, 0, uv?.x ?? 0, uv?.y ?? 0], i * kPackedVertexFloats);
+    });
+    return { vertices: createPackedVertices(positions.length, data), indices: new Uint32Array(indices) };
 }
 
 // -------------------------------------------------------------------------

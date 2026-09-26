@@ -26,8 +26,9 @@ export const kPackedVertexFloats = 12;
  */
 export class PackedVertex implements StaticVertex {
     constructor(
-        private readonly data: Float32Array,
-        private readonly offset: number,
+        /** The shared store and this vertex's first float in it. */
+        readonly data: Float32Array,
+        readonly offset: number,
     ) {}
     get position(): float3 { const d = this.data, o = this.offset; return new float3(d[o]!, d[o + 1]!, d[o + 2]!); }
     set position(v: float3) { const d = this.data, o = this.offset; d[o] = v.x; d[o + 1] = v.y; d[o + 2] = v.z; }
@@ -48,6 +49,15 @@ export function createPackedVertices(count: number, data = new Float32Array(coun
     const out = new Array<StaticVertex>(count);
     for (let i = 0; i < count; i++) out[i] = new PackedVertex(data, i * kPackedVertexFloats);
     return out;
+}
+
+/** A copy of a vertex array; one packed store (as createPackedVertices makes) is copied as a store. */
+export function copyVertexArray(vertices: StaticVertex[]): StaticVertex[] {
+    const first = vertices[0];
+    if (first instanceof PackedVertex && first.data.length === vertices.length * kPackedVertexFloats && vertices.every((v, i) => v instanceof PackedVertex && v.data === first.data && v.offset === i * kPackedVertexFloats)) {
+        return createPackedVertices(vertices.length, first.data.slice());
+    }
+    return vertices.map((v) => copyVertex(v));
 }
 
 /** `{...v, ...overrides}` for plain and packed vertices alike (the result is a plain vertex). */
