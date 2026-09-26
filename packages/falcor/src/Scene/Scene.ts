@@ -19,7 +19,7 @@ import { Camera } from "./Camera/Camera.js";
 import { FirstPersonCameraController, OrbiterCameraController, SixDoFCameraController, UpDirection, toControllerKeyEvent, toControllerMouseEvent, type CameraController } from "./Camera/CameraController.js";
 import { KeyboardEventType, ModifierFlags, type GamepadEvent, type GamepadState, type KeyboardEvent, type MouseEvent } from "../Utils/UI/InputTypes.js";
 import { float4x4, transpose, inverse } from "../Utils/Math/Matrix.js";
-import { buildBvh, buildBvhParallel, buildAabbBvh, refitBvh, type BvhBuildResult, type BvhTriangle } from "./SoftwareRT/Bvh.js";
+import { buildBvh, buildBvhParallel, buildAabbBvh, refitBvh, bvhStackDepth, kBvhTraversalStackSize, type BvhBuildResult, type BvhTriangle } from "./SoftwareRT/Bvh.js";
 import { WorkerPool } from "../Utils/Threading/WorkerPool.js";
 import { packLights, LightType, SceneLight, type AnalyticLight } from "./SceneData.js";
 import { TextureManager, kMaxTextureBuckets } from "./Material/TextureManager.js";
@@ -1156,6 +1156,9 @@ export class Scene {
         // Software RT BVH over world-space triangles (docs §5); displaced meshes use their own AABB region.
         const { bvhTris, displacedAabbs, displacedEntries } = prebuilt?.geometry ?? Scene.collectBvhGeometry(meshes, materials);
         const bvh = prebuilt?.bvh ?? buildBvh(bvhTris);
+        // Deeper trees would silently drop subtrees in the shaders' fixed-size traversal stack.
+        const stackDepth = bvhTris.length > 0 ? bvhStackDepth(bvh.nodes) : 0;
+        if (stackDepth > kBvhTraversalStackSize) Logger.warning(`Scene BVH needs a traversal stack of ${stackDepth} (> ${kBvhTraversalStackSize}); rays may miss geometry.`);
 
         // Whole-scene AABB = BVH root node bounds (nodes[0] = [min.xyz, _][max.xyz, _]).
         if (bvhTris.length > 0) {

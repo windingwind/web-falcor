@@ -36,6 +36,23 @@ export interface BvhBuildResult {
     buildArea: number;
 }
 
+/** Traversal stack entries the shaders' fixed `uint stack[32]` must hold for this tree. */
+export const kBvhTraversalStackSize = 32;
+
+/** Most right children pending at once in the shaders' DFS traversal (left = node + 1). */
+export function bvhStackDepth(nodes: Float32Array): number {
+    const u = new Uint32Array(nodes.buffer, nodes.byteOffset, nodes.length);
+    let max = 0;
+    const todo: [number, number][] = [[0, 0]];
+    while (todo.length > 0) {
+        const [node, pending] = todo.pop()!;
+        if (pending > max) max = pending;
+        if (u[node * 8 + 7]! > 0) continue;
+        todo.push([u[node * 8 + 3]!, pending], [node + 1, pending + 1]);
+    }
+    return max;
+}
+
 /** Sum of the nodes' AABB surface areas (the SAH cost's geometric part). */
 function totalArea(nodes: Float32Array, nodeCount: number): number {
     let area = 0;

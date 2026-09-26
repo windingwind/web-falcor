@@ -10,7 +10,7 @@
  */
 
 import { describe, expect, it } from "vitest";
-import { buildBvh, buildBvhParallel, buildBvhSubtree, refitBvh, type BvhTriangle } from "../src/Scene/SoftwareRT/Bvh.js";
+import { buildBvh, buildBvhParallel, buildBvhSubtree, bvhStackDepth, kBvhTraversalStackSize, refitBvh, type BvhTriangle } from "../src/Scene/SoftwareRT/Bvh.js";
 import { float3, sub3 } from "../src/Utils/Math/Vector.js";
 
 /** Median-split BVH written the obvious way: one entry list per node. */
@@ -123,6 +123,14 @@ describe("buildBvh", () => {
             expect(fast.nodeCount, `node count for ${count} triangles`).toBe(reference.nodeCount);
             expect(bytes(fast.nodes), `nodes for ${count} triangles`).toEqual(bytes(reference.nodes));
             expect(bytes(fast.tris), `triangles for ${count} triangles`).toEqual(bytes(reference.tris));
+        }
+    });
+
+    it("stays within the shaders' traversal stack (median splits: depth ~ log2 n)", () => {
+        for (const count of [1, 1000, 20000]) {
+            const depth = bvhStackDepth(buildBvh(makeTriangles(count, 99 + count)).nodes);
+            expect(depth).toBeLessThanOrEqual(Math.ceil(Math.log2(count)) + 1);
+            expect(depth).toBeLessThanOrEqual(kBvhTraversalStackSize);
         }
     });
 
