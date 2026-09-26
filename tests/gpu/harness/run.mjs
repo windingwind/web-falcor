@@ -79,6 +79,29 @@ page.on("crash", async () => {
         out.end(() => console.error(`[heap] snapshot written to ${m[1]}`));
     });
 }
+// CPU_PROFILE=1: a test logging "#CPUPROFILE_START" / "#CPUPROFILE_STOP <label>" gets the top self-time functions printed.
+if (process.env.CPU_PROFILE) {
+    const cdp = await page.context().newCDPSession(page);
+    await cdp.send("Profiler.enable");
+    await cdp.send("Profiler.setSamplingInterval", { interval: 1000 });
+    page.on("console", async (msg) => {
+        const text = msg.text();
+        if (text === "#CPUPROFILE_START") return void (await cdp.send("Profiler.start"));
+        const m = text.match(/^#CPUPROFILE_STOP (.*)/);
+        if (!m) return;
+        const { profile } = await cdp.send("Profiler.stop");
+        const dt = profile.timeDeltas.reduce((a, b) => a + b, 0) / Math.max(1, profile.samples.length);
+        const self = new Map();
+        const byId = new Map(profile.nodes.map((n) => [n.id, n]));
+        for (const id of profile.samples) {
+            const f = byId.get(id).callFrame;
+            const key = `${f.functionName || "(anon)"} ${f.url.split("/").pop()}:${f.lineNumber + 1}`;
+            self.set(key, (self.get(key) ?? 0) + dt);
+        }
+        const top = [...self].sort((a, b) => b[1] - a[1]).slice(0, 20);
+        console.error(`[cpu] ${m[1]}: ${top.map(([k, v]) => `\n  ${(v / 1000).toFixed(0)}ms ${k}`).join("")}`);
+    });
+}
 // HEAP_SAMPLING=1: sampled live allocations; a test logging "#HEAPPROFILE <label>" gets the top allocation sites printed.
 if (process.env.HEAP_SAMPLING) {
     const cdp = await page.context().newCDPSession(page);
