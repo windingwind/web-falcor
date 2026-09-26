@@ -22,6 +22,8 @@ import {
     kDefaultLightBVHSamplerOptions,
     kDefaultLightBVHOptions,
     kSolidAngleBoundMethods,
+    parseRTXDIOptions,
+    serializeRTXDIOptions,
     MemoryType,
     Properties,
     RenderData,
@@ -41,7 +43,11 @@ import {
     type ShaderVar,
     type UIWidgets,
     GeometryType,
+    IOSize,
     Logger,
+    MaterialType,
+    calculateIOSize,
+    parseIOSize,
 } from "@web-falcor/falcor";
 
 const kGeneratePathsFile = "RenderPasses/PathTracer/GeneratePaths.cs.slang";
@@ -86,6 +92,18 @@ const kNoRegion = 0xffffffff;
 /** UI range for the bounce sliders (Params.slang kMaxBounces). */
 const kMaxBounces = 254;
 
+const kMISHeuristics = ["Balance", "PowerTwo", "PowerExp"] as const;
+
+/** LightBVHSampler::Options as native serializes it (solidAngleBoundMethod by name). */
+function serializeLightBVHOptions(o: typeof kDefaultLightBVHSamplerOptions): Record<string, unknown> {
+    const bound = Object.keys(kSolidAngleBoundMethods).find((k) => kSolidAngleBoundMethods[k] === o.solidAngleBoundMethod) ?? o.solidAngleBoundMethod;
+    return { ...o, buildOptions: { ...o.buildOptions }, solidAngleBoundMethod: bound };
+}
+const kColorFormats = ["RGBA32F", "LogLuvHDR"] as const;
+const kTexLODModes = ["Mip0", "RayCones", "RayDiffs"] as const;
+/** parseProperties' keys (anything else warns, as natively). */
+const kPropertyKeys = ["samplesPerPixel", "maxSurfaceBounces", "maxDiffuseBounces", "maxSpecularBounces", "maxTransmissionBounces", "sampleGenerator", "fixedSeed", "useBSDFSampling", "useRussianRoulette", "useNEE", "useMIS", "misHeuristic", "misPowerExponent", "emissiveSampler", "lightBVHOptions", "useRTXDI", "RTXDIOptions", "useAlphaTest", "adjustShadingNormals", "maxNestedMaterials", "useLightsInDielectricVolumes", "disableCaustics", "specularRoughnessThreshold", "primaryLodMode", "lodBias", "useNRDDemodulation", "useSER", "outputSize", "fixedOutputSize", "colorFormat"];
+
 export class PathTracer extends RenderPass {
     private generatePass: ComputePass | null = null;
     private resolvePass: ComputePass | null = null;
@@ -117,7 +135,7 @@ export class PathTracer extends RenderPass {
     private traceDeltaTransmissionPass: ComputePass | null = null;
     private frameCount = 0;
     /** The runtime PathTracerParams members native's Debugging UI and Python edit. */
-    private readonly params = { useFixedSeed: false, fixedSeed: 1 };
+    private readonly params = { useFixedSeed: false, fixedSeed: 1, specularRoughnessThreshold: 0.25, lodBias: 0 };
     private sampleGenerator: SampleGenerator;
     // Dummies for optional members that survive dead-code elimination
     // (viewDir/sampleCount/... are only live for other configurations).
@@ -140,8 +158,18 @@ export class PathTracer extends RenderPass {
     private useNEE = true;
     private useMIS = true;
     private misHeuristic = 0; // Balance
+    private misPowerExponent = 2;
     private useAlphaTest = true;
     private adjustShadingNormals = false;
+    private sampleGeneratorType = SAMPLE_GENERATOR_TINY_UNIFORM;
+    private maxNestedMaterials = 2;
+    private useLightsInDielectricVolumes = false;
+    private disableCaustics = false;
+    /** Stored and scripted as natively; §9: SER is an NVAPI feature, so USE_SER stays 0. */
+    private useSER = true;
+    private colorFormat = 1; // ColorFormat::LogLuvHDR
+    private outputSize = IOSize.Default;
+    private fixedOutputSize: [number, number] = [512, 512];
     private emissiveSampler = "LightBVH"; // native default (PathTracer.h)
     private powerSampler: EmissivePowerSampler | null = null;
     private lightBVHSampler: LightBVHSampler | null = null;
@@ -186,6 +214,28 @@ export class PathTracer extends RenderPass {
         if (!(this.emissiveSampler in kEmissiveSamplerTypes)) {
             throw new Error(`PathTracer: unknown emissiveSampler '${this.emissiveSampler}'`);
         }
+        const enumValue = (key: string, names: readonly string[], fallback: number) => {
+            const v = props.getOpt<string | number>(key);
+            if (v === undefined) return fallback;
+            const i = typeof v === "string" ? names.indexOf(v) : v;
+            if (i < 0) throw new Error(`PathTracer: invalid ${key} '${v}'`);
+            return i;
+        };
+        this.misHeuristic = enumValue("misHeuristic", kMISHeuristics, this.misHeuristic);
+        this.misPowerExponent = props.get("misPowerExponent", this.misPowerExponent);
+        this.sampleGeneratorType = props.get("sampleGenerator", this.sampleGeneratorType);
+        this.adjustShadingNormals = props.get("adjustShadingNormals", this.adjustShadingNormals);
+        this.maxNestedMaterials = props.get("maxNestedMaterials", this.maxNestedMaterials);
+        this.useLightsInDielectricVolumes = props.get("useLightsInDielectricVolumes", this.useLightsInDielectricVolumes);
+        this.disableCaustics = props.get("disableCaustics", this.disableCaustics);
+        this.params.specularRoughnessThreshold = props.get("specularRoughnessThreshold", this.params.specularRoughnessThreshold);
+        this.params.lodBias = props.get("lodBias", this.params.lodBias);
+        this.useSER = props.get("useSER", this.useSER);
+        this.colorFormat = enumValue("colorFormat", kColorFormats, this.colorFormat);
+        this.outputSize = parseIOSize(props.getOpt("outputSize"), this.outputSize);
+        const fixed = props.getOpt<number[] | { x: number; y: number }>("fixedOutputSize");
+        if (fixed) this.fixedOutputSize = Array.isArray(fixed) ? [fixed[0]!, fixed[1]!] : [fixed.x, fixed.y];
+        for (const [key] of props.entries()) if (!kPropertyKeys.includes(key)) Logger.warning(`Unknown property '${key}' in PathTracer properties.`);
         // Mirrors kUseRTXDI / kRTXDIOptions.
         this.useRTXDI = props.get("useRTXDI", false);
         this.rtxdiOptions = (props.getOpt("RTXDIOptions") as Record<string, unknown> | undefined) ?? {};
@@ -220,14 +270,14 @@ export class PathTracer extends RenderPass {
             };
         }
         // PathTracer defaults to TinyUniform (unlike MinimalPathTracer).
-        this.sampleGenerator = SampleGenerator.create(device, SAMPLE_GENERATOR_TINY_UNIFORM);
+        this.sampleGenerator = SampleGenerator.create(device, this.sampleGeneratorType);
         // Native asserts spp fits the 16-bit tile sample offsets (tile 16x16 x 16 spp).
         if (this.samplesPerPixel < 1 || this.samplesPerPixel > 16) throw new Error("PathTracer: samplesPerPixel must be in [1,16]");
     }
 
     override reflect(compileData: CompileData): RenderPassReflection {
         const r = new RenderPassReflection();
-        const [w, h] = compileData.defaultTexDims;
+        const [w, h] = calculateIOSize(this.outputSize, this.fixedOutputSize, compileData.defaultTexDims);
         r.addInput("vbuffer", "Fullscreen V-buffer for the primary hits").bindFlags(ResourceBindFlags.ShaderResource);
         r.addInput("viewW", "World-space view direction (xyz float format)")
             .bindFlags(ResourceBindFlags.ShaderResource)
@@ -286,27 +336,38 @@ export class PathTracer extends RenderPass {
 
     /** Mirrors PathTracer::getProperties (StaticParams + sampler options). */
     override getProperties(): Properties {
-        const lodNames = ["Mip0", "RayCones", "RayDiffs"];
+        // Native's key order (PathTracer::getProperties).
         return new Properties({
             samplesPerPixel: this.samplesPerPixel,
-            useNRDDemodulation: this.useNRDDemodulation,
             maxSurfaceBounces: this.maxSurfaceBounces,
             maxDiffuseBounces: this.maxDiffuseBounces,
             maxSpecularBounces: this.maxSpecularBounces,
             maxTransmissionBounces: this.maxTransmissionBounces,
+            sampleGenerator: this.sampleGeneratorType,
             ...(this.params.useFixedSeed ? { fixedSeed: this.params.fixedSeed } : {}),
             useBSDFSampling: this.useBSDFSampling,
             useRussianRoulette: this.useRussianRoulette,
             useNEE: this.useNEE,
             useMIS: this.useMIS,
-            misHeuristic: this.misHeuristic,
+            misHeuristic: kMISHeuristics[this.misHeuristic]!,
+            misPowerExponent: this.misPowerExponent,
             emissiveSampler: this.emissiveSampler,
-            ...(this.emissiveSampler === "LightBVH" ? { lightBVHOptions: this.lightBVHOptions as unknown as Record<string, never> } : {}),
+            ...(this.emissiveSampler === "LightBVH" ? { lightBVHOptions: serializeLightBVHOptions(this.lightBVHOptions) as Record<string, never> } : {}),
             useRTXDI: this.useRTXDI,
-            RTXDIOptions: this.rtxdiOptions as Record<string, never>,
+            RTXDIOptions: serializeRTXDIOptions(parseRTXDIOptions(this.rtxdiOptions)) as Record<string, never>,
             useAlphaTest: this.useAlphaTest,
             adjustShadingNormals: this.adjustShadingNormals,
-            primaryLodMode: lodNames[this.primaryLodMode] ?? this.primaryLodMode,
+            maxNestedMaterials: this.maxNestedMaterials,
+            useLightsInDielectricVolumes: this.useLightsInDielectricVolumes,
+            disableCaustics: this.disableCaustics,
+            specularRoughnessThreshold: this.params.specularRoughnessThreshold,
+            primaryLodMode: kTexLODModes[this.primaryLodMode] ?? this.primaryLodMode,
+            lodBias: this.params.lodBias,
+            useNRDDemodulation: this.useNRDDemodulation,
+            useSER: this.useSER,
+            outputSize: IOSize[this.outputSize]!,
+            ...(this.outputSize === IOSize.Fixed ? { fixedOutputSize: this.fixedOutputSize } : {}),
+            colorFormat: kColorFormats[this.colorFormat]!,
         });
     }
 
@@ -349,23 +410,53 @@ export class PathTracer extends RenderPass {
         ui.slider("Max diffuse bounces", this.maxDiffuseBounces, 0, kMaxBounces, 1, rebuild((v) => (this.maxDiffuseBounces = Math.round(v))));
         ui.slider("Max specular bounces", this.maxSpecularBounces, 0, kMaxBounces, 1, rebuild((v) => (this.maxSpecularBounces = Math.round(v))));
         ui.slider("Max transmission bounces", this.maxTransmissionBounces, 0, kMaxBounces, 1, rebuild((v) => (this.maxTransmissionBounces = Math.round(v))));
+        const generators = ["Tiny uniform (32-bit)", "Uniform (128-bit)"];
+        ui.dropdown("Sample generator", generators, generators[this.sampleGeneratorType] ?? generators[0]!, rebuild((v: string) => {
+            this.sampleGeneratorType = generators.indexOf(v);
+            this.sampleGenerator = SampleGenerator.create(this.device, this.sampleGeneratorType);
+        }));
         ui.checkbox("BSDF importance sampling", this.useBSDFSampling, rebuild((v) => (this.useBSDFSampling = v)));
         ui.checkbox("Russian roulette", this.useRussianRoulette, rebuild((v) => (this.useRussianRoulette = v)));
         ui.checkbox("Next-event estimation (NEE)", this.useNEE, rebuild((v) => (this.useNEE = v)));
-        ui.checkbox("Multiple importance sampling (MIS)", this.useMIS, rebuild((v) => (this.useMIS = v)));
-        ui.dropdown("MIS heuristic", ["Balance", "PowerTwo", "PowerExp"], ["Balance", "PowerTwo", "PowerExp"][this.misHeuristic] ?? "Balance", rebuild((v: string) => (this.misHeuristic = ["Balance", "PowerTwo", "PowerExp"].indexOf(v))));
-        ui.dropdown("Emissive sampler", Object.keys(kEmissiveSamplerTypes), this.emissiveSampler, rebuild((v: string) => {
-            this.emissiveSampler = v;
-            this.lightBVHSampler = null;
-            this.powerSampler = null;
-        }));
-        ui.checkbox("Use RTXDI", this.useRTXDI, rebuild((v) => {
+        if (this.useNEE) {
+            ui.checkbox("Multiple importance sampling (MIS)", this.useMIS, rebuild((v) => (this.useMIS = v)));
+            if (this.useMIS) {
+                ui.dropdown("MIS heuristic", kMISHeuristics, kMISHeuristics[this.misHeuristic] ?? "Balance", rebuild((v: string) => (this.misHeuristic = kMISHeuristics.indexOf(v as (typeof kMISHeuristics)[number]))));
+                if (this.misHeuristic === 2) ui.slider("MIS power exponent", this.misPowerExponent, 0.01, 10, 0.01, rebuild((v) => (this.misPowerExponent = v)));
+            }
+            if (this.scene?.useEmissiveLights) {
+                ui.group("Emissive sampler").dropdown("Emissive sampler", Object.keys(kEmissiveSamplerTypes), this.emissiveSampler, rebuild((v: string) => {
+                    this.emissiveSampler = v;
+                    this.lightBVHSampler = null;
+                    this.powerSampler = null;
+                }));
+            }
+        }
+        ui.group("RTXDI").checkbox("Enabled", this.useRTXDI, rebuild((v) => {
             this.useRTXDI = v;
             if (!v) this.rtxdi = null;
         }));
-        ui.checkbox("Alpha test", this.useAlphaTest, rebuild((v) => (this.useAlphaTest = v)));
-        ui.checkbox("Adjust shading normals on secondary hits", this.adjustShadingNormals, rebuild((v) => (this.adjustShadingNormals = v)));
-        ui.dropdown("Primary LOD Mode", ["Mip0", "RayDiffs"], this.primaryLodMode === 2 ? "RayDiffs" : "Mip0", rebuild((v: string) => (this.primaryLodMode = v === "RayDiffs" ? 2 : 0)));
+        const material = ui.group("Material controls");
+        material.checkbox("Alpha test", this.useAlphaTest, rebuild((v) => (this.useAlphaTest = v)));
+        material.checkbox("Adjust shading normals on secondary hits", this.adjustShadingNormals, rebuild((v) => (this.adjustShadingNormals = v)));
+        material.slider("Max nested materials", this.maxNestedMaterials, 2, 4, 1, rebuild((v) => (this.maxNestedMaterials = Math.round(v))));
+        material.checkbox("Use lights in dielectric volumes", this.useLightsInDielectricVolumes, rebuild((v) => (this.useLightsInDielectricVolumes = v)));
+        material.checkbox("Disable caustics", this.disableCaustics, rebuild((v) => (this.disableCaustics = v)));
+        material.slider("Specular roughness threshold", this.params.specularRoughnessThreshold, 0, 1, 0.001, (v) => (this.params.specularRoughnessThreshold = v));
+        material.dropdown("Primary LOD Mode", ["Mip0", "RayDiffs"], this.primaryLodMode === 2 ? "RayDiffs" : "Mip0", rebuild((v: string) => (this.primaryLodMode = v === "RayDiffs" ? 2 : 0)));
+        material.slider("TexLOD bias", this.params.lodBias, -16, 16, 0.01, (v) => (this.params.lodBias = v));
+        ui.group("Denoiser options").checkbox("Use NRD demodulation", this.useNRDDemodulation, rebuild((v) => (this.useNRDDemodulation = v)));
+        ui.group("Scheduling options").checkbox("Use SER", this.useSER, (v) => (this.useSER = v));
+        const output = ui.group("Output options");
+        output.dropdown("Output size", ["Default", "Fixed", "Full", "Half", "Quarter", "Double"], IOSize[this.outputSize]!, (v) => {
+            this.outputSize = IOSize[v as keyof typeof IOSize];
+            this.requestRecompile();
+        });
+        if (this.outputSize === IOSize.Fixed) {
+            output.slider("Size in pixels (width)", this.fixedOutputSize[0], 32, 16384, 1, (v) => ((this.fixedOutputSize = [Math.round(v), this.fixedOutputSize[1]]), this.requestRecompile()));
+            output.slider("Size in pixels (height)", this.fixedOutputSize[1], 32, 16384, 1, (v) => ((this.fixedOutputSize = [this.fixedOutputSize[0], Math.round(v)]), this.requestRecompile()));
+        }
+        output.dropdown("Color format", kColorFormats, kColorFormats[this.colorFormat]!, rebuild((v: string) => (this.colorFormat = kColorFormats.indexOf(v as (typeof kColorFormats)[number]))));
         const debugging = ui.group("Debugging");
         debugging.checkbox("Use fixed seed", this.params.useFixedSeed, (v) => (this.params.useFixedSeed = v));
         // Native's unbounded uint field is a 0..1000 integer slider here (UIWidgets has no var()).
@@ -394,14 +485,14 @@ export class PathTracer extends RenderPass {
             USE_RUSSIAN_ROULETTE: this.useRussianRoulette ? 1 : 0,
             USE_RTXDI: this.rtxdi ? 1 : 0,
             USE_ALPHA_TEST: this.useAlphaTest ? 1 : 0,
-            USE_LIGHTS_IN_DIELECTRIC_VOLUMES: 0,
-            DISABLE_CAUSTICS: 0,
+            USE_LIGHTS_IN_DIELECTRIC_VOLUMES: this.useLightsInDielectricVolumes ? 1 : 0,
+            DISABLE_CAUSTICS: this.disableCaustics ? 1 : 0,
             PRIMARY_LOD_MODE: this.primaryLodMode,
             USE_NRD_DEMODULATION: this.useNRDDemodulation ? 1 : 0,
             USE_SER: 0,
-            COLOR_FORMAT: 1, // ColorFormat::LogLuvHDR (native default; unused at spp==1)
+            COLOR_FORMAT: this.colorFormat,
             MIS_HEURISTIC: this.misHeuristic,
-            MIS_POWER_EXPONENT: "2.0",
+            MIS_POWER_EXPONENT: Number.isInteger(this.misPowerExponent) ? this.misPowerExponent.toFixed(1) : String(this.misPowerExponent),
             // Mirrors native: the sampler-type define comes from the emissive
             // sampler's own getDefines(); without emissive lights there is no
             // sampler and the shader falls back to the NULL sampler.
@@ -410,14 +501,14 @@ export class PathTracer extends RenderPass {
                     ? Object.fromEntries(this.lightBVHSampler.getDefines().entries())
                     : { _EMISSIVE_LIGHT_SAMPLER_TYPE: kEmissiveSamplerTypes[this.emissiveSampler]! }
                 : {}),
-            INTERIOR_LIST_SLOT_COUNT: 2,
+            INTERIOR_LIST_SLOT_COUNT: this.maxNestedMaterials,
             GBUFFER_ADJUST_SHADING_NORMALS: 0,
             USE_ENV_LIGHT: scene.useEnvLight ? 1 : 0,
             USE_ANALYTIC_LIGHTS: scene.useAnalyticLights ? 1 : 0,
             USE_EMISSIVE_LIGHTS: scene.useEmissiveLights ? 1 : 0,
             USE_CURVES: scene.hasCurves ? 1 : 0,
-            USE_SDF_GRIDS: 0,
-            USE_HAIR_MATERIAL: 0,
+            USE_SDF_GRIDS: scene.hasGeometryType(GeometryType.SDFGrid) ? 1 : 0,
+            USE_HAIR_MATERIAL: scene.getMaterialCountByType(MaterialType.Hair) > 0 ? 1 : 0,
             USE_VIEW_DIR: this.useViewDir ? 1 : 0,
             OUTPUT_GUIDE_DATA: this.outputGuideData ? 1 : 0,
             OUTPUT_NRD_DATA: this.outputNRDData ? 1 : 0,
@@ -435,8 +526,8 @@ export class PathTracer extends RenderPass {
         const p = var_["params"] as ShaderVar;
         p["useFixedSeed"] = this.params.useFixedSeed ? 1 : 0;
         p["fixedSeed"] = this.params.fixedSeed;
-        p["lodBias"] = 0;
-        p["specularRoughnessThreshold"] = 0.25;
+        p["lodBias"] = this.params.lodBias;
+        p["specularRoughnessThreshold"] = this.params.specularRoughnessThreshold;
         p["frameDim"] = frameDim;
         p["screenTiles"] = tiles;
         p["frameCount"] = this.frameCount;
@@ -677,11 +768,12 @@ export class PathTracer extends RenderPass {
         }
 
         if (!this.fixedSampleCount || this.samplesPerPixel > 1) {
-            // ColorType at COLOR_FORMAT LogLuvHDR = one packed uint per sample.
-            if (!this.sampleColor || this.sampleColor.size < sampleCount * 4) {
+            // ColorType: one packed uint per sample for LogLuvHDR, a float4 for RGBA32F.
+            const colorSize = this.colorFormat === 0 ? 16 : 4;
+            if (!this.sampleColor || this.sampleColor.size < sampleCount * colorSize || this.sampleColor.structSize !== colorSize) {
                 this.sampleColor = new Buffer(this.device, {
-                    size: sampleCount * 4,
-                    structSize: 4,
+                    size: sampleCount * colorSize,
+                    structSize: colorSize,
                     bindFlags: ResourceBindFlags.ShaderResource | ResourceBindFlags.UnorderedAccess,
                     memoryType: MemoryType.DeviceLocal,
                     name: "PathTracer::sampleColor",
@@ -771,8 +863,8 @@ export class PathTracer extends RenderPass {
             const p = cb["params"] as ShaderVar;
             p["useFixedSeed"] = this.params.useFixedSeed ? 1 : 0;
             p["fixedSeed"] = this.params.fixedSeed;
-            p["lodBias"] = 0;
-            p["specularRoughnessThreshold"] = 0.25;
+            p["lodBias"] = this.params.lodBias;
+            p["specularRoughnessThreshold"] = this.params.specularRoughnessThreshold;
             p["frameDim"] = frameDim;
             p["screenTiles"] = tiles;
             p["frameCount"] = this.frameCount;

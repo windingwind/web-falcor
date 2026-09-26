@@ -31,6 +31,7 @@ import {
     calculateIOSize,
     float2,
     parseIOSize,
+    CullMode,
     registerRenderPass,
     type CompileData,
     type CPUSampleGenerator,
@@ -38,6 +39,7 @@ import {
     type RenderContext,
     type UIWidgets,
 } from "@web-falcor/falcor";
+import { cullRayFlags } from "./VBufferRT.js";
 
 const kShaderFile = "RenderPasses/GBuffer/GBuffer/GBufferRT.cs.slang";
 
@@ -78,6 +80,10 @@ export class GBufferRT extends RenderPass {
     private frameCount = 0;
     private useAlphaTest = true;
     private adjustShadingNormals = true;
+    private forceCullMode = false;
+    private cullMode = CullMode.Back;
+    /** Stored as natively; inline queries are the only web path. */
+    private useTraceRayInline = false;
     private useDOF = true;
     private computeDOF = false;
     private lodMode = 0;
@@ -98,7 +104,11 @@ export class GBufferRT extends RenderPass {
         this.outputSize = parseIOSize(props.getOpt("outputSize"));
         const fixed = props.getOpt<number[] | { x: number; y: number }>("fixedOutputSize");
         if (fixed) this.fixedOutputSize = Array.isArray(fixed) ? [fixed[0]!, fixed[1]!] : [fixed.x, fixed.y];
-        // 'useTraceRayInline' accepted: inline queries are the only web path.
+        this.useTraceRayInline = props.get("useTraceRayInline", false);
+        if (props.has("disableAlphaTest") && !props.has("useAlphaTest")) this.useAlphaTest = !props.get("disableAlphaTest", false);
+        this.forceCullMode = props.get("forceCullMode", false);
+        const cull = props.getOpt<string | number>("cull");
+        if (cull !== undefined) this.cullMode = (typeof cull === "string" ? CullMode[cull as keyof typeof CullMode] : cull) ?? CullMode.Back;
         this.useDOF = props.get("useDOF", true);
         this.sampleGenerator = SampleGenerator.create(device, SAMPLE_GENERATOR_DEFAULT);
         this.samplePattern = props.get<string>("samplePattern", "Center");
@@ -119,12 +129,15 @@ export class GBufferRT extends RenderPass {
     override getProperties(): Properties {
         return new Properties({
             outputSize: IOSize[this.outputSize]!,
-            fixedOutputSize: this.fixedOutputSize,
+            ...(this.outputSize === IOSize.Fixed ? { fixedOutputSize: this.fixedOutputSize } : {}),
             samplePattern: this.samplePattern,
             sampleCount: this.sampleCount,
             useAlphaTest: this.useAlphaTest,
             adjustShadingNormals: this.adjustShadingNormals,
+            forceCullMode: this.forceCullMode,
+            cull: CullMode[this.cullMode]!,
             texLOD: Object.keys(kLODModes).find((k) => kLODModes[k] === this.lodMode) ?? this.lodMode,
+            useTraceRayInline: this.useTraceRayInline,
             useDOF: this.useDOF,
         });
     }
@@ -158,6 +171,8 @@ export class GBufferRT extends RenderPass {
         });
         ui.checkbox("Alpha Test", this.useAlphaTest, rebuild((v) => (this.useAlphaTest = v)));
         ui.checkbox("Adjust shading normals", this.adjustShadingNormals, rebuild((v) => (this.adjustShadingNormals = v)));
+        ui.checkbox("Force cull mode", this.forceCullMode, rebuild((v) => (this.forceCullMode = v)));
+        if (this.forceCullMode) ui.dropdown("Cull mode", ["None", "Front", "Back"], CullMode[this.cullMode]!, rebuild((v: string) => (this.cullMode = CullMode[v as keyof typeof CullMode])));
         ui.dropdown("Texture LOD mode", Object.keys(kLODModes), Object.keys(kLODModes).find((k) => kLODModes[k] === this.lodMode) ?? "Mip0", rebuild((v: string) => (this.lodMode = kLODModes[v]!)));
         ui.checkbox("Depth-of-field", this.useDOF, rebuild((v) => (this.useDOF = v)));
     }
@@ -216,7 +231,7 @@ export class GBufferRT extends RenderPass {
                     USE_ALPHA_TEST: this.useAlphaTest ? 1 : 0,
                     ADJUST_SHADING_NORMALS: this.adjustShadingNormals ? 1 : 0,
                     LOD_MODE: this.lodMode,
-                    RAY_FLAGS: 0,
+                    RAY_FLAGS: cullRayFlags(this.forceCullMode, this.cullMode),
                     COMPUTE_DEPTH_OF_FIELD: this.computeDOF ? 1 : 0,
                     ...valid,
                 });

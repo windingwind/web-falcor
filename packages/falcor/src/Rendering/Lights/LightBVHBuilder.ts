@@ -147,9 +147,9 @@ export const kDefaultLightBVHOptions: LightBVHOptions = {
     useVolumeOverSA: false,
     useLeafCreationCost: true,
     createLeavesASAP: true,
+    allowRefitting: true,
     usePreintegration: true,
     useLightingCones: true,
-    allowRefitting: true,
 };
 
 export interface EmissiveTriangleInput {

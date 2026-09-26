@@ -92,6 +92,8 @@ export class SceneDebugger extends RenderPass {
     private flipSign = false;
     private remapRange = true;
     private showVolumes = true;
+    /** Primary hits from the connected vbuffer instead of traced rays (off without one, as natively). */
+    private useVBuffer = false;
     private volumeDensityScale = 1;
     private triangleDensityLogRange: [number, number] = [-16, 16];
     private selectedPixel: [number, number] = [0, 0];
@@ -108,17 +110,21 @@ export class SceneDebugger extends RenderPass {
         // 0 Emission, 1 Roughness, 2 GuideNormal, 3 DiffuseReflectionAlbedo, ...).
         const bp = props.getOpt<string | number>("bsdfProperty");
         if (bp !== undefined) this.bsdfProperty = (typeof bp === "string" ? kBSDFProps[bp] : bp) ?? this.bsdfProperty;
+        if (props.has("showVolumes")) this.showVolumes = !!props.get<number | boolean>("showVolumes", 1);
+        if (props.has("useVBuffer")) this.useVBuffer = !!props.get<number | boolean>("useVBuffer", 0);
     }
 
     override getProperties(): Properties {
         const name = (table: Record<string, number>, v: number) => Object.keys(table).find((k) => table[k] === v) ?? v;
-        return new Properties({ mode: name(kModes, this.modeValue), bsdfProperty: name(kBSDFProps, this.bsdfProperty) });
+        // Native serializes mParams: mode by name, the uint flags as numbers (bsdfProperty is UI-only natively).
+        return new Properties({ mode: name(kModes, this.modeValue), showVolumes: this.showVolumes ? 1 : 0, useVBuffer: this.useVBuffer ? 1 : 0 });
     }
 
     /** Mirrors SceneDebugger::renderUI (all runtime parameters; pixel-data readout lives in the viewer's picking). */
     override renderUI(ui: UIWidgets): void {
         const name = (table: Record<string, number>, v: number) => Object.keys(table).find((k) => table[k] === v) ?? Object.keys(table)[0]!;
         ui.dropdown("Mode", Object.keys(kModes), name(kModes, this.modeValue), (v) => (this.modeValue = kModes[v]!));
+        ui.checkbox("Use VBuffer", this.useVBuffer, (v) => (this.useVBuffer = v));
         ui.slider("Triangle density range min (log2)", this.triangleDensityLogRange[0], -32, 32, 1, (v) => (this.triangleDensityLogRange = [Math.round(v), this.triangleDensityLogRange[1]]));
         ui.slider("Triangle density range max (log2)", this.triangleDensityLogRange[1], -32, 32, 1, (v) => (this.triangleDensityLogRange = [this.triangleDensityLogRange[0], Math.round(v)]));
         ui.dropdown("BSDF property", Object.keys(kBSDFProps), name(kBSDFProps, this.bsdfProperty), (v) => (this.bsdfProperty = kBSDFProps[v]!));
@@ -215,7 +221,7 @@ export class SceneDebugger extends RenderPass {
         p["clamp"] = this.clamp ? 1 : 0;
         p["showVolumes"] = this.showVolumes ? 1 : 0;
         p["volumeDensityScale"] = this.volumeDensityScale;
-        p["useVBuffer"] = renderData.getTexture("vbuffer") ? 1 : 0;
+        p["useVBuffer"] = this.useVBuffer && renderData.getTexture("vbuffer") ? 1 : 0;
         p["profileSecondaryRays"] = 0;
         p["profileSecondaryLoadHit"] = 0;
         p["profileSecondaryConeAngle"] = 90;

@@ -4,8 +4,8 @@
  * async luminance readback (native blocks), so they land ~1 frame late —
  * the first HDR frame renders with the previous (or default) exposure range.
  * Pooled FLIP values (average/min/max) likewise land asynchronously on
- * `averageFLIP`/`minFLIP`/`maxFLIP`. Monitor info uses the native headless
- * defaults (useRealMonitorInfo has no browser equivalent for physical size).
+ * `averageFLIP`/`minFLIP`/`maxFLIP`. useRealMonitorInfo takes the screen's pixel width;
+ * the browser doesn't expose its physical size, so monitorWidthMeters keeps its value.
  *
  * Note: native binds gClampInput from mUseMagma (upstream quirk) — replicated
  * for 1:1 output parity.
@@ -64,6 +64,7 @@ export class FLIPPass extends RenderPass {
     private enabled = true;
     private isHDR = false;
     private toneMapper = FLIPToneMapperType.ACES;
+    private useRealMonitorInfo = false;
     private useCustomExposureParameters = false;
     private startExposure = 0;
     private stopExposure = 0;
@@ -106,7 +107,9 @@ export class FLIPPass extends RenderPass {
         this.monitorWidthMeters = props.get("monitorWidthMeters", 0.7);
         this.monitorDistanceMeters = props.get("monitorDistanceMeters", 0.7);
         this.computePooledFLIPValues = props.get("computePooledFLIPValues", false);
-        // 'useRealMonitorInfo' accepted; headless defaults used (see header).
+        this.useRealMonitorInfo = props.get("useRealMonitorInfo", false);
+        // Native reads the first monitor's resolution and physical size; the browser only knows the pixels.
+        if (this.useRealMonitorInfo && typeof screen !== "undefined" && screen.width > 0) this.monitorWidthPixels = Math.round(screen.width * (globalThis.devicePixelRatio ?? 1));
 
         this.pass = ComputePass.create(device, { path: kShaderFile, defines: { TONE_MAPPER: this.toneMapper } });
     }
@@ -143,7 +146,7 @@ export class FLIPPass extends RenderPass {
             useMagma: this.useMagma,
             clampInput: this.clampInput,
             isHDR: this.isHDR,
-            toneMapper: this.toneMapper,
+            toneMapper: FLIPToneMapperType[this.toneMapper]!,
             useCustomExposureParameters: this.useCustomExposureParameters,
             startExposure: this.startExposure,
             stopExposure: this.stopExposure,
@@ -152,6 +155,7 @@ export class FLIPPass extends RenderPass {
             monitorWidthMeters: this.monitorWidthMeters,
             monitorDistanceMeters: this.monitorDistanceMeters,
             computePooledFLIPValues: this.computePooledFLIPValues,
+            useRealMonitorInfo: this.useRealMonitorInfo,
         });
     }
 

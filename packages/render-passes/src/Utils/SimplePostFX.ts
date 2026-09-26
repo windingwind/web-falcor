@@ -244,6 +244,8 @@ export class SimplePostFX extends RenderPass {
     override getProperties(): Properties {
         return new Properties({
             enabled: this.mEnabled,
+            outputSize: IOSize[this.outputSize]!,
+            ...(this.outputSize === IOSize.Fixed ? { fixedOutputSize: this.fixedOutputSize } : {}),
             wipe: this.mWipe,
             bloomAmount: this.mBloomAmount,
             starAmount: this.mStarAmount,

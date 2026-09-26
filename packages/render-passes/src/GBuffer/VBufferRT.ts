@@ -21,6 +21,11 @@ import {
     ResourceFormat,
     SAMPLE_GENERATOR_DEFAULT,
     SampleGenerator,
+    CullMode,
+    IOSize,
+    RayFlags,
+    calculateIOSize,
+    parseIOSize,
     registerRenderPass,
     type CompileData,
     type Device,
@@ -30,10 +35,24 @@ import {
 
 const kShaderFile = "RenderPasses/GBuffer/VBuffer/VBufferRT.cs.slang";
 
+/** Mirrors VBufferRT/GBufferRT::getShaderDefines' ray flags: a forced front/back cull mode culls those faces. */
+export function cullRayFlags(forceCullMode: boolean, cullMode: CullMode): number {
+    if (forceCullMode && cullMode === CullMode.Front) return RayFlags.CullFrontFacingTriangles;
+    if (forceCullMode && cullMode === CullMode.Back) return RayFlags.CullBackFacingTriangles;
+    return RayFlags.None;
+}
+
 export class VBufferRT extends RenderPass {
     private pass: ComputePass | null = null;
     private frameCount = 0;
-    private useAlphaTest = false;
+    private useAlphaTest = true;
+    private adjustShadingNormals = true;
+    private forceCullMode = false;
+    private cullMode = CullMode.Back;
+    /** Stored as natively; inline queries are the only web path. */
+    private useTraceRayInline = false;
+    private outputSize = IOSize.Default;
+    private fixedOutputSize: [number, number] = [512, 512];
     private useDOF = true;
     private computeDOF = false;
     private sampleGenerator: SampleGenerator;
@@ -43,7 +62,17 @@ export class VBufferRT extends RenderPass {
 
     constructor(device: Device, props: Properties) {
         super(device);
-        this.useAlphaTest = props.get("useAlphaTest", false);
+        // GBufferBase::parseProperties.
+        this.outputSize = parseIOSize(props.getOpt("outputSize"));
+        const fixed = props.getOpt<number[] | { x: number; y: number }>("fixedOutputSize");
+        if (fixed) this.fixedOutputSize = Array.isArray(fixed) ? [fixed[0]!, fixed[1]!] : [fixed.x, fixed.y];
+        this.useAlphaTest = props.get("useAlphaTest", true);
+        if (props.has("disableAlphaTest") && !props.has("useAlphaTest")) this.useAlphaTest = !props.get("disableAlphaTest", false);
+        this.adjustShadingNormals = props.get("adjustShadingNormals", true);
+        this.forceCullMode = props.get("forceCullMode", false);
+        const cull = props.getOpt<string | number>("cull");
+        if (cull !== undefined) this.cullMode = (typeof cull === "string" ? CullMode[cull as keyof typeof CullMode] : cull) ?? CullMode.Back;
+        this.useTraceRayInline = props.get("useTraceRayInline", false);
         this.useDOF = props.get("useDOF", true);
         this.sampleGenerator = SampleGenerator.create(device, SAMPLE_GENERATOR_DEFAULT);
         this.samplePattern = props.get<string>("samplePattern", "Center");
@@ -62,7 +91,18 @@ export class VBufferRT extends RenderPass {
     }
 
     override getProperties(): Properties {
-        return new Properties({ samplePattern: this.samplePattern, sampleCount: this.sampleCount, useAlphaTest: this.useAlphaTest, useDOF: this.useDOF });
+        return new Properties({
+            outputSize: IOSize[this.outputSize]!,
+            ...(this.outputSize === IOSize.Fixed ? { fixedOutputSize: this.fixedOutputSize } : {}),
+            samplePattern: this.samplePattern,
+            sampleCount: this.sampleCount,
+            useAlphaTest: this.useAlphaTest,
+            adjustShadingNormals: this.adjustShadingNormals,
+            forceCullMode: this.forceCullMode,
+            cull: CullMode[this.cullMode]!,
+            useTraceRayInline: this.useTraceRayInline,
+            useDOF: this.useDOF,
+        });
     }
 
     /** Mirrors GBufferBase::renderUI + VBufferRT::renderUI (define changes drop the kernel). */
@@ -79,6 +119,16 @@ export class VBufferRT extends RenderPass {
             this.useAlphaTest = v;
             this.pass = null;
         });
+        ui.checkbox("Force cull mode", this.forceCullMode, (v) => {
+            this.forceCullMode = v;
+            this.pass = null;
+        });
+        if (this.forceCullMode) {
+            ui.dropdown("Cull mode", ["None", "Front", "Back"], CullMode[this.cullMode]!, (v) => {
+                this.cullMode = CullMode[v as keyof typeof CullMode];
+                this.pass = null;
+            });
+        }
         ui.checkbox("Depth-of-field", this.useDOF, (v) => {
             this.useDOF = v;
             this.pass = null;
@@ -87,7 +137,7 @@ export class VBufferRT extends RenderPass {
 
     override reflect(compileData: CompileData): RenderPassReflection {
         const r = new RenderPassReflection();
-        const [w, h] = compileData.defaultTexDims;
+        const [w, h] = calculateIOSize(this.outputSize, this.fixedOutputSize, compileData.defaultTexDims);
         r.addOutput("vbuffer", "Packed hit information")
             .texture2D(w, h)
             .format(ResourceFormat.RGBA32Uint)
@@ -140,7 +190,7 @@ export class VBufferRT extends RenderPass {
         if (!this.pass) {
             const defines = this.scene.getSceneDefines().addAll({
                 USE_ALPHA_TEST: this.useAlphaTest ? 1 : 0,
-                RAY_FLAGS: 0,
+                RAY_FLAGS: cullRayFlags(this.forceCullMode, this.cullMode),
                 COMPUTE_DEPTH_OF_FIELD: this.computeDOF ? 1 : 0,
                 is_valid_gDepth: renderData.getTexture("depth") ? 1 : 0,
                 is_valid_gMotionVector: renderData.getTexture("mvec") ? 1 : 0,

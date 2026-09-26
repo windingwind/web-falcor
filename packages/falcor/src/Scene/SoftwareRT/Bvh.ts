@@ -22,6 +22,8 @@ export interface BvhTriangle {
     v2: float3;
     instanceIndex: number;
     primitiveIndex: number;
+    /** Bit 0: the instance transform flips the winding (face culling reads it). */
+    flags?: number;
 }
 
 export interface BvhBuildResult {
@@ -58,7 +60,7 @@ function writeTris(tris: Float32Array, triangles: BvhTriangle[], order: Uint32Ar
         tris[i * 12 + 4] = e1.x; tris[i * 12 + 5] = e1.y; tris[i * 12 + 6] = e1.z;
         trisU32[i * 12 + 7] = t.primitiveIndex;
         tris[i * 12 + 8] = e2.x; tris[i * 12 + 9] = e2.y; tris[i * 12 + 10] = e2.z;
-        trisU32[i * 12 + 11] = 0;
+        trisU32[i * 12 + 11] = t.flags ?? 0;
     }
 }
 

@@ -47,6 +47,7 @@ export class CrossFade extends RenderPass {
 
     override getProperties(): Properties {
         return new Properties({
+            ...(this.outputFormat !== ResourceFormat.Unknown ? { outputFormat: ResourceFormat[this.outputFormat]! } : {}),
             enableAutoFade: this.enableAutoFade,
             waitFrameCount: this.waitFrameCount,
             fadeFrameCount: this.fadeFrameCount,

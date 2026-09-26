@@ -19,6 +19,7 @@ import {
     RenderPassReflection,
     ResourceBindFlags,
     ResourceFormat,
+    SAMPLE_GENERATOR_TINY_UNIFORM,
     SAMPLE_GENERATOR_UNIFORM,
     SampleGenerator,
     SceneGradients,
@@ -62,6 +63,8 @@ const floatDefine = (v: number) => v.toFixed(6);
 export class WARDiffPathTracer extends RenderPass {
     private pass: ComputePass | null = null;
     private sampleGenerator: SampleGenerator;
+    /** StaticParams::sampleGenerator: stored and reported; native renders with a uniform generator until the UI changes it. */
+    private sampleGeneratorType = SAMPLE_GENERATOR_TINY_UNIFORM;
     private frameCount = 0;
     private useFixedSeed = false;
     private fixedSeed = 1;
@@ -111,7 +114,7 @@ export class WARDiffPathTracer extends RenderPass {
                 case "maxBounces": this.maxBounces = Number(value); break;
                 case "diffMode": this.diffMode = typeof value === "string" ? DiffMode[value as keyof typeof DiffMode] : Number(value); break;
                 case "diffVarName": this.diffVarName = String(value); break;
-                case "sampleGenerator": break;
+                case "sampleGenerator": this.sampleGeneratorType = Number(value); break;
                 case "fixedSeed": this.fixedSeed = Number(value); this.useFixedSeed = true; break;
                 case "useBSDFSampling": this.useBSDFSampling = Boolean(value); break;
                 case "useNEE": this.useNEE = Boolean(value); break;
@@ -134,7 +137,7 @@ export class WARDiffPathTracer extends RenderPass {
             maxBounces: this.maxBounces,
             diffMode: DiffMode[this.diffMode],
             diffVarName: this.diffVarName,
-            sampleGenerator: SAMPLE_GENERATOR_UNIFORM,
+            sampleGenerator: this.sampleGeneratorType,
         };
         if (this.useFixedSeed) p.fixedSeed = this.fixedSeed;
         Object.assign(p, {

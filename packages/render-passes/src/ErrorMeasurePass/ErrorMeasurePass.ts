@@ -33,6 +33,11 @@ import {
 
 const kShaderFile = "RenderPasses/ErrorMeasurePass/ErrorMeasurer.cs.slang";
 
+/** printf("%e") / std::scientific: six digits, a two-digit signed exponent. */
+function scientific(v: number): string {
+    return v.toExponential(6).replace(/e([+-])(\d)$/, (_m, sign: string, d: string) => `e${sign}0${d}`);
+}
+
 export class ErrorMeasurePass extends RenderPass {
     private referenceImagePath = "";
     private ignoreBackground = true;
@@ -69,8 +74,19 @@ export class ErrorMeasurePass extends RenderPass {
         this.reportRunningError = props.get("ReportRunningError", true);
         this.useLoadedReference = props.get("UseLoadedReference", false);
         this.runningErrorSigma = props.get("RunningErrorSigma", 0.995);
-        // 'MeasurementsFilePath' accepted: no file IO on the web (docs §9).
+        this.measurementsFilePath = props.get("MeasurementsFilePath", "");
+        this.loadMeasurementsFile();
     }
+
+    /** Mirrors loadMeasurementsFile: starts the CSV (kept in `measurementsCsv`; no file IO on the web, docs §9). */
+    private loadMeasurementsFile(): boolean {
+        if (!this.measurementsFilePath) return false;
+        this.measurementsCsv = this.computeSquaredDifference ? "avg_L2_error,red_L2_error,green_L2_error,blue_L2_error\n" : "avg_L1_error,red_L1_error,green_L1_error,blue_L1_error\n";
+        return true;
+    }
+    /** The measurements file native writes to MeasurementsFilePath, one std::scientific line per frame. */
+    measurementsCsv = "";
+    private measurementsFilePath = "";
 
     override async initAsync(): Promise<void> {
         this.runningAvgError = -1; // Mirrors loadReference: running error restarts with a new reference.
@@ -99,11 +115,13 @@ export class ErrorMeasurePass extends RenderPass {
     override getProperties(): Properties {
         return new Properties({
             ReferenceImagePath: this.referenceImagePath,
+            MeasurementsFilePath: this.measurementsFilePath,
             IgnoreBackground: this.ignoreBackground,
             ComputeSquaredDifference: this.computeSquaredDifference,
             ComputeAverage: this.computeAverage,
             UseLoadedReference: this.useLoadedReference,
             ReportRunningError: this.reportRunningError,
+            RunningErrorSigma: this.runningErrorSigma,
             SelectedOutputId: this.selectedOutput,
         });
     }
@@ -173,6 +191,8 @@ export class ErrorMeasurePass extends RenderPass {
                 const error: [number, number, number] = [sum[0]! / n, sum[1]! / n, sum[2]! / n];
                 const avgError = (error[0] + error[1] + error[2]) / 3;
                 this.measurements = { valid: true, error, avgError };
+                // Mirrors saveMeasurementsToFile.
+                if (this.measurementsFilePath) this.measurementsCsv += [avgError, ...error].map(scientific).join(",") + "\n";
                 // Mirrors the native running-error update (endFrame).
                 if (this.runningAvgError < 0) {
                     this.runningError = [...error];

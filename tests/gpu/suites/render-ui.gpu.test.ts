@@ -90,8 +90,10 @@ gpuTest("RenderUI.controlsDriveOptionsAndKernelRebuild", async ({ device }) => {
     pt.renderUI(ptUI);
     ptUI.find("Max surface bounces")!.flip(); // -> 254 clamps nothing, then per-lobe limits follow the surface cap
     expectEq(pt.getProperties().get("maxSurfaceBounces", 0), 254, "surface bounce slider writes the static param");
-    ptUI.find("Emissive sampler")!.flip();
-    expectEq(pt.getProperties().get("emissiveSampler", ""), "Power", "emissive sampler dropdown cycles LightBVH -> Power");
+    ptUI.find("MIS heuristic")!.flip();
+    expectEq(pt.getProperties().get("misHeuristic", ""), "PowerTwo", "MIS heuristic dropdown cycles Balance -> PowerTwo");
+    // Native shows the emissive sampler only when the scene has emissive lights.
+    expectEq(ptUI.find("Emissive sampler"), undefined, "no emissive sampler control without a scene");
 
     // BSDFViewer lists the scene's materials once a scene is set.
     const viewer = createPass(device, "BSDFViewer", {});

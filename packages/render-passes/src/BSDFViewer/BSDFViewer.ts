@@ -74,11 +74,12 @@ export class BSDFViewer extends RenderPass {
         this.materialID = props.get("materialID", 0);
         const mode = props.getOpt<string | number>("viewerMode");
         if (mode !== undefined) this.viewerMode = mode === "Slice" || mode === 1 ? 1 : 0;
+        this.useEnvMap = props.get("useEnvMap", this.useEnvMap);
         this.sampleGenerator = SampleGenerator.create(device, SAMPLE_GENERATOR_DEFAULT);
     }
 
     override getProperties(): Properties {
-        return new Properties({ materialID: this.materialID, viewerMode: this.viewerMode === 1 ? "Slice" : "Material" });
+        return new Properties({ materialID: this.materialID, viewerMode: this.viewerMode === 1 ? "Slice" : "Material", useEnvMap: this.useEnvMap });
     }
 
     /** Mirrors BSDFViewer::renderUI (Material viewer mode; every change restarts accumulation). */

@@ -31,7 +31,8 @@ import {
     type RTXDIOptions,
     type ShaderVar,
     type UIWidgets,
-    kDefaultRTXDIOptions,
+    parseRTXDIOptions,
+    serializeRTXDIOptions,
     type RTXDIMode,
 } from "@web-falcor/falcor";
 
@@ -89,7 +90,7 @@ export class RTXDIPass extends RenderPass {
     }
 
     override getProperties(): Properties {
-        return new Properties({ options: this.options as Record<string, never> });
+        return new Properties({ options: serializeRTXDIOptions(parseRTXDIOptions(this.options as Record<string, unknown>)) as Record<string, never> });
     }
 
     /** Mirrors RTXDIPass::onMouseEvent -> RTXDI::onMouseEvent (pixel debug selection). */
@@ -102,7 +103,7 @@ export class RTXDIPass extends RenderPass {
      * recreates the RTXDI context (native setOptions re-creates its resources/programs).
      */
     override renderUI(ui: UIWidgets): void {
-        const o: RTXDIOptions = { ...kDefaultRTXDIOptions, ...this.options };
+        const o: RTXDIOptions = parseRTXDIOptions(this.options as Record<string, unknown>);
         const set = <K extends keyof RTXDIOptions>(key: K) => (v: RTXDIOptions[K]) => {
             this.options = { ...o, [key]: v };
             if (this.scene) {

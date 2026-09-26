@@ -58,7 +58,7 @@ export class Composite extends RenderPass {
     }
 
     override getProperties(): Properties {
-        return new Properties({ mode: CompositeMode[this.mode]!, scaleA: this.scaleA, scaleB: this.scaleB });
+        return new Properties({ mode: CompositeMode[this.mode]!, scaleA: this.scaleA, scaleB: this.scaleB, ...(this.outputFormat !== ResourceFormat.Unknown ? { outputFormat: ResourceFormat[this.outputFormat]! } : {}) });
     }
 
     /** Mirrors Composite::renderUI (mode is a shader define; the pass key rebuilds). */

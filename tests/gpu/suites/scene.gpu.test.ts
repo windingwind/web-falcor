@@ -10,12 +10,16 @@ import {
     ModifierFlags,
     MouseButton,
     MouseEventType,
+    Properties,
+    RenderGraph,
     ResourceBindFlags,
     Scene,
+    createPass,
     float2,
     float3,
     float4,
 } from "@web-falcor/falcor";
+import "@web-falcor/render-passes";
 import { gpuTest, expectEq, expectClose, expectArrayClose } from "../harness/registry.js";
 
 function makeTriangleScene(device: any): Scene {
@@ -120,4 +124,28 @@ gpuTest("Scene.cameraControllerInput", async ({ device }) => {
     const bb = scene.bounds;
     const p = cam.getPosition(), c = bb.center;
     expectClose(Math.hypot(p.x - c.x, p.y - c.y, p.z - c.z), 3.5 * bb.radius, 1e-4, "orbit distance");
+});
+
+gpuTest("VBufferRT.forceCullModeRayFlags", async ({ device }) => {
+    // The triangle winds counter-clockwise seen from +z: front-facing for DXR (Falcor's convention).
+    const count = async (props: Record<string, unknown>) => {
+        const scene = makeTriangleScene(device);
+        scene.camera.setPosition(new float3(0.3, 0.3, 3));
+        scene.camera.setTarget(new float3(0.3, 0.3, 0));
+        const graph = new RenderGraph(device, "V");
+        graph.addPass(createPass(device, "VBufferRT", new Properties(props as never)), "V");
+        graph.markOutput("V.vbuffer");
+        await graph.init();
+        graph.onResize(32, 32);
+        graph.setScene(scene);
+        graph.execute(device.renderContext);
+        const vb = new Uint32Array((await device.renderContext.readTextureSubresource(graph.getOutput("V.vbuffer")!)).buffer);
+        let hits = 0;
+        for (let i = 0; i < vb.length; i += 4) if (vb[i + 3] !== 0 || vb[i] !== 0) hits++;
+        return hits;
+    };
+    const none = await count({});
+    expectEq(none > 20, true, `triangle visible without culling (${none} px)`);
+    expectEq(await count({ forceCullMode: true, cull: "Back" }), none, "cull Back keeps the front face");
+    expectEq(await count({ forceCullMode: true, cull: "Front" }), 0, "cull Front removes it");
 });

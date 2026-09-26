@@ -9,7 +9,7 @@
  * Semantics: triangle geometry via the BVH; SDF grid instances via
  * SDFGridIntersector (NDSDF/SVO whole-grid; SBS/SVS over a per-primitive
  * AABB BVH — upstream intersection code, WebFalcor traversal).
- * RAY_FLAG_ACCEPT_FIRST_HIT honored via traceVisibilityRay;
+ * RAY_FLAG_ACCEPT_FIRST_HIT honored via traceVisibilityRay, the triangle face-culling flags per triangle;
  * instanceInclusionMask ignored (all scenes use 0xff so far -- divergence
  * recorded in the parity matrix).
  */
@@ -82,16 +82,17 @@ struct AlphaTestHitFilter : ITriangleHitFilter
 
 /** Software BVH traversal; returns closest triangle hit (or none). */
 bool traverseBvh(const Ray ray, const bool anyHit, const bool useAlphaTest,
-                 out uint hitInstance, out uint hitPrimitive, out float2 hitBarycentrics, out float hitT)
+                 out uint hitInstance, out uint hitPrimitive, out float2 hitBarycentrics, out float hitT, const uint rayFlags = RAY_FLAG_NONE)
 {
     AlphaTestHitFilter filter = { useAlphaTest };
-    return traverseBvhFiltered(ray, anyHit, filter, hitInstance, hitPrimitive, hitBarycentrics, hitT);
+    return traverseBvhFiltered(ray, anyHit, filter, hitInstance, hitPrimitive, hitBarycentrics, hitT, rayFlags);
 }
 
 /** Software BVH traversal with a caller-supplied candidate filter. */
 bool traverseBvhFiltered<F : ITriangleHitFilter>(const Ray ray, const bool anyHit, F filter,
-                 out uint hitInstance, out uint hitPrimitive, out float2 hitBarycentrics, out float hitT)
+                 out uint hitInstance, out uint hitPrimitive, out float2 hitBarycentrics, out float hitT, const uint rayFlags = RAY_FLAG_NONE)
 {
+    const uint cullFlags = rayFlags & (RAY_FLAG_CULL_BACK_FACING_TRIANGLES | RAY_FLAG_CULL_FRONT_FACING_TRIANGLES);
     hitInstance = 0;
     hitPrimitive = 0;
     hitBarycentrics = float2(0.f);
@@ -127,6 +128,13 @@ bool traverseBvhFiltered<F : ITriangleHitFilter>(const Ray ray, const bool anyHi
                     float2 uv;
                     if (intersectTriangle(ray.origin, ray.dir, ray.tMin, hitT, t0.xyz, t1.xyz, t2.xyz, t, uv))
                     {
+                        // DXR facing: counter-clockwise from the ray in BLAS space is front; t2.w bit 0 marks
+                        // instanced triangles whose transform flips the winding into world space.
+                        if (cullFlags != 0)
+                        {
+                            const bool frontFacing = (dot(t1.xyz, cross(ray.dir, t2.xyz)) > 0.f) != ((asuint(t2.w) & 1u) != 0);
+                            if (frontFacing ? (cullFlags & RAY_FLAG_CULL_FRONT_FACING_TRIANGLES) != 0 : (cullFlags & RAY_FLAG_CULL_BACK_FACING_TRIANGLES) != 0) continue;
+                        }
                         if (filter.accept(asuint(t0.w), asuint(t1.w), uv, t))
                         {
                             hitT = t;
@@ -479,7 +487,7 @@ struct SceneRayQuery<let UseAlphaTest : int> : ISceneRayQuery
         float t;
         HitInfo hit = {};
         hitT = 0.f;
-        if (traverseBvh(ray, false, UseAlphaTest != 0, instance, primitive, barycentrics, t))
+        if (traverseBvh(ray, false, UseAlphaTest != 0, instance, primitive, barycentrics, t, rayFlags))
         {
             TriangleHit triangleHit;
             triangleHit.instanceID.index = instance;
@@ -552,7 +560,7 @@ struct SceneRayQuery<let UseAlphaTest : int> : ISceneRayQuery
         uint instance, primitive;
         float2 barycentrics;
         float t;
-        if (traverseBvh(ray, true, UseAlphaTest != 0, instance, primitive, barycentrics, t)) return false;
+        if (traverseBvh(ray, true, UseAlphaTest != 0, instance, primitive, barycentrics, t, rayFlags)) return false;
 #if SCENE_SDF_GRID_COUNT > 0
         if (intersectSdfGridsAny(ray)) return false;
 #endif

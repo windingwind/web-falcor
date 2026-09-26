@@ -134,7 +134,7 @@ export class GBufferRaster extends RenderPass {
     override getProperties(): Properties {
         return new Properties({
             outputSize: IOSize[this.outputSize]!,
-            fixedOutputSize: this.fixedOutputSize,
+            ...(this.outputSize === IOSize.Fixed ? { fixedOutputSize: this.fixedOutputSize } : {}),
             samplePattern: this.samplePattern,
             sampleCount: this.sampleCount,
             useAlphaTest: this.useAlphaTest,

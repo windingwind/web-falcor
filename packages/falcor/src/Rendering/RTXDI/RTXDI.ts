@@ -87,6 +87,23 @@ export const kDefaultRTXDIOptions: RTXDIOptions = {
     enablePermutationSampling: false,
 };
 
+/** RTXDI::BiasCorrection names (options serialize them by name). */
+export const kRTXDIBiasCorrections = ["Off", "Basic", "Pairwise", "RayTraced"] as const;
+
+/** Options from a property dict: native's defaults for missing keys, enum names converted. */
+export function parseRTXDIOptions(raw: Record<string, unknown> | undefined): RTXDIOptions {
+    const o = { ...kDefaultRTXDIOptions, ...(raw ?? {}) } as RTXDIOptions & { biasCorrection: number | string };
+    if (typeof o.biasCorrection === "string") o.biasCorrection = Math.max(0, kRTXDIBiasCorrections.indexOf(o.biasCorrection as (typeof kRTXDIBiasCorrections)[number]));
+    return o as RTXDIOptions;
+}
+
+/** RTXDI::Options as native serializes it (every field, in declaration order, enums by name). */
+export function serializeRTXDIOptions(o: RTXDIOptions): Record<string, unknown> {
+    const out: Record<string, unknown> = {};
+    for (const k of Object.keys(kDefaultRTXDIOptions) as (keyof RTXDIOptions)[]) out[k] = k === "biasCorrection" ? kRTXDIBiasCorrections[o.biasCorrection] : o[k];
+    return out;
+}
+
 /** 32-bit Jenkins hash (rtxdi-sdk). */
 function jenkinsHash(a: number): number {
     a = (a + 0x7ed55d16 + ((a << 12) >>> 0)) >>> 0;
@@ -186,7 +203,7 @@ export class RTXDI {
         readonly scene: Scene,
         options: Partial<RTXDIOptions> = {},
     ) {
-        this.options = { ...kDefaultRTXDIOptions, ...options };
+        this.options = parseRTXDIOptions(options as Record<string, unknown>);
         this.pixelDebug = new PixelDebug(device);
     }
 

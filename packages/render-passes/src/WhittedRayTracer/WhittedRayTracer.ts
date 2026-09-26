@@ -49,7 +49,7 @@ export class WhittedRayTracer extends RenderPass {
     private frameCount = 0;
     private maxBounces = 3;
     private texLODMode = 0;
-    private rayConeMode = 1;
+    private rayConeMode = 0; // RayConeMode::Combo
     private rayConeFilterMode = 0;
     private rayDiffFilterMode = 0;
     private useRoughnessToVariance = false;
@@ -64,7 +64,7 @@ export class WhittedRayTracer extends RenderPass {
             return (typeof v === "string" ? table[v] : v) ?? fallback;
         };
         this.texLODMode = parse("texLODMode", kTexLODModes, 0);
-        this.rayConeMode = parse("rayConeMode", kRayConeModes, 1);
+        this.rayConeMode = parse("rayConeMode", kRayConeModes, 0);
         this.rayConeFilterMode = parse("rayConeFilterMode", kFilterModes, 0);
         this.rayDiffFilterMode = parse("rayDiffFilterMode", kFilterModes, 0);
         this.useRoughnessToVariance = props.get("useRoughnessToVariance", false);

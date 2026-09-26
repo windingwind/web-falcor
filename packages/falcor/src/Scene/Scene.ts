@@ -444,6 +444,13 @@ function f16Round(v: number): number {
     return float16ToFloat32(float32ToFloat16(v));
 }
 
+/** BvhTriangle flags bit 0: the transform mirrors, so DXR's object-space facing is the world winding reversed. */
+function windingFlipFlag(m: float4x4): number {
+    const d = m.data;
+    const det = d[0]! * (d[5]! * d[10]! - d[6]! * d[9]!) - d[1]! * (d[4]! * d[10]! - d[6]! * d[8]!) + d[2]! * (d[4]! * d[9]! - d[5]! * d[8]!);
+    return det < 0 ? 1 : 0;
+}
+
 export class Scene {
     /** Mirrors Scene's camera list; `camera` is the selected one (Scene::getCamera/selectCamera). */
     private cameraList: Camera[] = [new Camera()];
@@ -939,7 +946,9 @@ export class Scene {
         meshes.forEach((mesh, meshID) => {
             const m = mesh.transform ?? identity;
             // Pretransformed (identity) meshes use their positions as is: no per-triangle copies.
-            const world = m === identity || m.data.every((v, i) => v === identity.data[i]) ? (p: float3) => p : (p: float3) => transformPoint(m, p);
+            const isIdentity = m === identity || m.data.every((v, i) => v === identity.data[i]);
+            const world = isIdentity ? (p: float3) => p : (p: float3) => transformPoint(m, p);
+            const flags = isIdentity ? 0 : windingFlipFlag(m);
             const mat = materials[mesh.materialID];
             const displaced = mat?.basic.texDisplacement !== undefined;
             // Conservative displacement range along the normal: mapValue([0,1]).
@@ -957,7 +966,7 @@ export class Scene {
                     });
                     displacedEntries.push(((meshID & 0xff) << 24) | p);
                 } else {
-                    bvhTris.push({ v0, v1, v2, instanceIndex: meshID, primitiveIndex: p });
+                    bvhTris.push({ v0, v1, v2, instanceIndex: meshID, primitiveIndex: p, flags });
                 }
             }
         });
@@ -2034,6 +2043,7 @@ export class Scene {
         const bvhTris: BvhTriangle[] = [];
         meshes.forEach((mesh, meshID) => {
             const wp = worldPos[meshID]!;
+            const flags = windingFlipFlag(worldMats[meshID]!);
             for (let p = 0; p < mesh.indices.length / 3; p++) {
                 bvhTris.push({
                     v0: wp[mesh.indices[p * 3]!]!,
@@ -2041,6 +2051,7 @@ export class Scene {
                     v2: wp[mesh.indices[p * 3 + 2]!]!,
                     instanceIndex: meshID,
                     primitiveIndex: p,
+                    flags,
                 });
             }
         });
@@ -2146,6 +2157,11 @@ export class Scene {
     /** Mirrors Scene::hasGeometryType(Curve). */
     get hasCurves(): boolean {
         return this.curveDescs.length > 0;
+    }
+
+    /** Mirrors Scene::getMaterialCountByType. */
+    getMaterialCountByType(type: MaterialType): number {
+        return this.materialDescs.filter((m) => (m.merl ? MaterialType.MERL : m.rgl ? MaterialType.RGL : m.merlMix ? MaterialType.MERLMix : (m.header?.materialType ?? MaterialType.Standard)) === type).length;
     }
 
     /** Mirrors Scene::hasGeometryType. */

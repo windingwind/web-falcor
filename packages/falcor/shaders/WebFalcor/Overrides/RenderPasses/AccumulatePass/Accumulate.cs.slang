@@ -37,6 +37,10 @@ typedef int4 InputDataType;
 Texture2D<InputDataType> gCurFrame;
 // WTexture2D (write-only): RWTexture2D would emit read_write access, which WGSL
 // restricts to r32* formats.
+// The pass's outputFormat picks the storage format (float4 writes convert, as a D3D UAV store does).
+#ifdef _OUTPUT_STORAGE_FORMAT
+[format(_OUTPUT_STORAGE_FORMAT)]
+#endif
 WTexture2D<float4> gOutputFrame;
 
 // Accumulation state, linearized (index = y * gResolution.x + x).

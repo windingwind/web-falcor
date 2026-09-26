@@ -68,6 +68,8 @@ export class VBufferRaster extends RenderPass {
     private sampleCount = 16;
     private sampleGenerator: CPUSampleGenerator | null = null;
     private useAlphaTest = true;
+    /** GBufferBase::mAdjustShadingNormals: serialized; the V-buffer has no shading normals to adjust. */
+    private adjustShadingNormals = true;
     private samplePattern = "Center";
     /** Native GBufferBase forceCullMode/cull; web default without forcing is None (raster == software-RT coverage). */
     private forceCullMode = false;
@@ -80,6 +82,7 @@ export class VBufferRaster extends RenderPass {
         if (fixed) this.fixedOutputSize = Array.isArray(fixed) ? [fixed[0]!, fixed[1]!] : [fixed.x, fixed.y];
         this.sampleCount = props.get("sampleCount", 16);
         this.useAlphaTest = props.get("useAlphaTest", true);
+        this.adjustShadingNormals = props.get("adjustShadingNormals", true);
         this.samplePattern = props.get<string>("samplePattern", "Center");
         this.forceCullMode = props.get("forceCullMode", false);
         const cull = props.getOpt<string | number>("cull");
@@ -99,7 +102,17 @@ export class VBufferRaster extends RenderPass {
     }
 
     override getProperties(): Properties {
-        return new Properties({ outputSize: IOSize[this.outputSize]!, fixedOutputSize: this.fixedOutputSize, samplePattern: this.samplePattern, sampleCount: this.sampleCount, useAlphaTest: this.useAlphaTest, forceCullMode: this.forceCullMode, cull: CullMode[this.cullMode]! });
+        // GBufferBase::getProperties (VBufferRaster adds none).
+        return new Properties({
+            outputSize: IOSize[this.outputSize]!,
+            ...(this.outputSize === IOSize.Fixed ? { fixedOutputSize: this.fixedOutputSize } : {}),
+            samplePattern: this.samplePattern,
+            sampleCount: this.sampleCount,
+            useAlphaTest: this.useAlphaTest,
+            adjustShadingNormals: this.adjustShadingNormals,
+            forceCullMode: this.forceCullMode,
+            cull: CullMode[this.cullMode]!,
+        });
     }
 
     /** Mirrors GBufferBase::renderUI (alpha test is a define -> program rebuild; output size ⏳). */

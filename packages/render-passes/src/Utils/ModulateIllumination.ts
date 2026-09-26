@@ -13,6 +13,9 @@ import {
     RenderPassReflection,
     ResourceBindFlags,
     ResourceFormat,
+    IOSize,
+    calculateIOSize,
+    parseIOSize,
     registerRenderPass,
     type CompileData,
     type Device,
@@ -42,15 +45,22 @@ export class ModulateIllumination extends RenderPass {
     private use = new Map<string, boolean>();
     private pass: ComputePass | null = null;
     private passKey = "";
+    private outputSize = IOSize.Default;
+    private fixedOutputSize: [number, number] = [512, 512];
 
     constructor(device: Device, props: Properties) {
         super(device);
         for (const [, , flag] of kChannels) this.use.set(flag, props.get(flag, true));
+        this.outputSize = parseIOSize(props.getOpt("outputSize"));
+        const fixed = props.getOpt<number[] | { x: number; y: number }>("fixedOutputSize");
+        if (fixed) this.fixedOutputSize = Array.isArray(fixed) ? [fixed[0]!, fixed[1]!] : [fixed.x, fixed.y];
     }
 
     override getProperties(): Properties {
         const props = new Properties();
         for (const [, , flag] of kChannels) props.set(flag, this.use.get(flag)!);
+        props.set("outputSize", IOSize[this.outputSize]!);
+        if (this.outputSize === IOSize.Fixed) props.set("fixedOutputSize", this.fixedOutputSize);
         return props;
     }
 
@@ -60,6 +70,10 @@ export class ModulateIllumination extends RenderPass {
             const label = flag.slice(3).replace(/([a-z])([A-Z])/g, "$1 $2");
             ui.checkbox(label, this.use.get(flag)!, (v) => this.use.set(flag, v));
         }
+        ui.dropdown("Output size", ["Default", "Fixed", "Full", "Half", "Quarter", "Double"], IOSize[this.outputSize]!, (v) => {
+            this.outputSize = IOSize[v as keyof typeof IOSize];
+            this.requestRecompile();
+        });
     }
 
     override reflect(compileData: CompileData): RenderPassReflection {
@@ -67,7 +81,7 @@ export class ModulateIllumination extends RenderPass {
         for (const [name] of kChannels) {
             r.addInput(name, name).bindFlags(ResourceBindFlags.ShaderResource).flags(FieldFlags.Optional);
         }
-        const [w, h] = compileData.defaultTexDims;
+        const [w, h] = calculateIOSize(this.outputSize, this.fixedOutputSize, compileData.defaultTexDims);
         r.addOutput("output", "output")
             .bindFlags(ResourceBindFlags.UnorderedAccess)
             .format(ResourceFormat.RGBA32Float)
