@@ -70,4 +70,17 @@ describe("Clock", () => {
         c.time = 5.0;
         expect(c.frame).toBe(50);
     });
+    it("start/end time properties validate like Clock::setStartTime/setEndTime", () => {
+        const c = new Clock(() => 0);
+        c.startTime = 2;
+        c.endTime = 1; // before the start: rejected
+        expect([c.startTime, c.endTime]).toEqual([2, -1]);
+        c.endTime = 5;
+        c.startTime = 6; // after the end: rejected
+        expect([c.startTime, c.endTime]).toEqual([2, 5]);
+        c.startTime = -1; // <= 0 resets
+        c.exitTime = 3;
+        c.exitFrame = 7;
+        expect([c.startTime, c.exitTime, c.exitFrame, c.getExitTime(), c.getExitFrame()]).toEqual([0, 3, 7, 3, 7]);
+    });
 });

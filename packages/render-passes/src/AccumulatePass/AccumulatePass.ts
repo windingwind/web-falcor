@@ -43,7 +43,7 @@ export enum AccumulateOverflowMode {
 }
 
 export class AccumulatePass extends RenderPass {
-    private enabled = true;
+    private mEnabled = true;
     /** 0 = unlimited; otherwise frames beyond it follow overflowMode (native mMaxFrameCount). */
     private maxFrameCount = 0;
     private overflowMode = AccumulateOverflowMode.Stop;
@@ -66,7 +66,7 @@ export class AccumulatePass extends RenderPass {
     }
 
     override setProperties(props: Properties): void {
-        this.enabled = props.get("enabled", true);
+        this.mEnabled = props.get("enabled", true);
         this.outputSize = parseIOSize(props.getOpt("outputSize"));
         const fixed = props.getOpt<number[] | { x: number; y: number }>("fixedOutputSize");
         if (fixed) this.fixedOutputSize = Array.isArray(fixed) ? [fixed[0]!, fixed[1]!] : [fixed.x, fixed.y];
@@ -85,8 +85,19 @@ export class AccumulatePass extends RenderPass {
         if (overflow !== undefined) this.overflowMode = (typeof overflow === "string" ? AccumulateOverflowMode[overflow as keyof typeof AccumulateOverflowMode] : overflow) ?? this.overflowMode;
     }
 
+    /** Python `enabled` (AccumulatePass::isEnabled/setEnabled: a change resets accumulation). */
+    get enabled(): boolean {
+        return this.mEnabled;
+    }
+    set enabled(enabled: boolean) {
+        if (enabled !== this.mEnabled) {
+            this.mEnabled = enabled;
+            this.reset();
+        }
+    }
+
     override getProperties(): Properties {
-        return new Properties({ enabled: this.enabled, precisionMode: AccumulatePrecision[this.precision]!, autoReset: this.autoReset, outputSize: IOSize[this.outputSize]!, fixedOutputSize: this.fixedOutputSize, maxFrameCount: this.maxFrameCount, overflowMode: AccumulateOverflowMode[this.overflowMode]! });
+        return new Properties({ enabled: this.mEnabled, precisionMode: AccumulatePrecision[this.precision]!, autoReset: this.autoReset, outputSize: IOSize[this.outputSize]!, fixedOutputSize: this.fixedOutputSize, maxFrameCount: this.maxFrameCount, overflowMode: AccumulateOverflowMode[this.overflowMode]! });
     }
 
     reset(): void {
@@ -114,7 +125,7 @@ export class AccumulatePass extends RenderPass {
             this.fixedOutputSize = [this.fixedOutputSize[0], Math.round(v)];
             this.requestRecompile();
         });
-        ui.checkbox("Enabled", this.enabled, (v) => (this.enabled = v));
+        ui.checkbox("Enabled", this.mEnabled, (v) => (this.enabled = v));
         ui.button("Reset", () => this.reset());
         ui.checkbox("Auto Reset", this.autoReset, (v) => (this.autoReset = v));
         ui.dropdown("Precision", ["Single", "SingleCompensated"], AccumulatePrecision[this.precision]!, (v) => {
@@ -186,7 +197,7 @@ export class AccumulatePass extends RenderPass {
         const root = this.pass.getRootVar();
         root["PerFrameCB"]["gResolution"] = [w, h];
         root["PerFrameCB"]["gAccumCount"] = this.frameCount;
-        root["PerFrameCB"]["gAccumulate"] = this.enabled;
+        root["PerFrameCB"]["gAccumulate"] = this.mEnabled;
         // With a frame limit the kernel runs as a moving average: weight 1/(count+1) equals the running mean until
         // the count stops at the limit, then it becomes an exponential moving average (native semantics).
         root["PerFrameCB"]["gMovingAverageMode"] = limited ? 1 : 0;
@@ -196,7 +207,7 @@ export class AccumulatePass extends RenderPass {
         root["gLastFrameCorr"] = this.lastFrameCorr!;
 
         this.pass.execute(ctx, w, h);
-        if (this.enabled && (!limited || this.frameCount < this.maxFrameCount)) this.frameCount++;
+        if (this.mEnabled && (!limited || this.frameCount < this.maxFrameCount)) this.frameCount++;
     }
 }
 

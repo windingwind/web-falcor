@@ -46,6 +46,14 @@ export class TAA extends RenderPass {
         });
     }
 
+    /** Python properties (TAA's pybind11 binding). */
+    get sigma(): number {
+        return this.colorBoxSigma;
+    }
+    set sigma(v: number) {
+        this.colorBoxSigma = v;
+    }
+
     override getProperties(): Properties {
         return new Properties({ alpha: this.alpha, colorBoxSigma: this.colorBoxSigma, antiFlicker: this.antiFlicker });
     }

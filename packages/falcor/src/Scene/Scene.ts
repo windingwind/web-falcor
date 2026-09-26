@@ -658,7 +658,7 @@ export class Scene {
             sphereLightCount: lightsOf(LightType.Sphere),
             distantLightCount: lightsOf(LightType.Distant),
             lightsMemoryInBytes: size("lights"),
-            envMapMemoryInBytes: this.envMap?.texture.getTextureSizeInBytes() ?? 0,
+            envMapMemoryInBytes: this.mEnvMap?.texture.getTextureSizeInBytes() ?? 0,
             emissiveMemoryInBytes: size("emissiveTriangles", "emissiveFlux", "emissiveActiveTriangles", "emissiveTriToActive", "emissiveMeshData", "emissivePerMeshInstanceOffset"),
             gridVolumeCount: this.gridVolumes.length,
             gridVolumeMemoryInBytes: this.gridVolumes.length > 0 ? size("gridVolumesData") : 0,
@@ -788,7 +788,7 @@ export class Scene {
             );
         } else lines.push("  N/A");
         lines.push("", "Environment map:");
-        if (this.envMap) lines.push(`  Filename: ${this.envMap.path}`, `  Resolution: ${this.envMap.texture.width}x${this.envMap.texture.height}`, `  Texture memory: ${b(s.envMapMemoryInBytes)}`);
+        if (this.mEnvMap) lines.push(`  Filename: ${this.mEnvMap.path}`, `  Resolution: ${this.mEnvMap.texture.width}x${this.mEnvMap.texture.height}`, `  Texture memory: ${b(s.envMapMemoryInBytes)}`);
         else lines.push("  N/A");
         lines.push(
             "",
@@ -890,7 +890,7 @@ export class Scene {
     private displacedBvhOffset = 0;
     private displacedPrimOffset = 0;
     private hasDisplaced = false;
-    private envMap: EnvMap | null = null;
+    private mEnvMap: EnvMap | null = null;
     private hasEmissiveMaterials = false;
     private materialTypes = new Set<MaterialType>();
     private materialDescs: SceneMaterialDesc[] = [];
@@ -1411,14 +1411,14 @@ export class Scene {
     /** Mirrors Scene::setEnvMap; python's setEnvMap(path) (Scene::loadEnvMap) loads asynchronously. */
     setEnvMap(envMap: EnvMap | string | null): boolean | void {
         if (typeof envMap !== "string") {
-            this.envMap = envMap;
+            this.mEnvMap = envMap;
             this.bumpUpdates();
             return;
         }
         const path = envMap;
         this.pendingEnvMap = (async () => {
             const { EnvMap } = await import("./Lights/EnvMap.js");
-            this.envMap = await EnvMap.createFromUrl(this.device, await resolveAssetUrl(path, "", AssetCategory.Any));
+            this.mEnvMap = await EnvMap.createFromUrl(this.device, await resolveAssetUrl(path, "", AssetCategory.Any));
         })().catch((err) => Logger.warning(`Failed to load environment map from '${path}': ${err}`));
         return true;
     }
@@ -1443,7 +1443,7 @@ export class Scene {
             this.gridIndirectionTex,
             this.gridAtlasTex,
         ]);
-        for (const r of [this.sdfAtlasTexture, this.displacementTexture, this.sbsResources?.aabbs, this.sbsResources?.indirection, this.sbsResources?.bricks, this.svsResources?.voxels, this.svoResources?.svo, this.sdfBvhBuffers?.buf, this.envMap?.texture]) if (r) resources.add(r);
+        for (const r of [this.sdfAtlasTexture, this.displacementTexture, this.sbsResources?.aabbs, this.sbsResources?.indirection, this.sbsResources?.bricks, this.svsResources?.voxels, this.svoResources?.svo, this.sdfBvhBuffers?.buf, this.mEnvMap?.texture]) if (r) resources.add(r);
         for (const r of resources) r?.destroy();
         // Decoded source images live outside the JS heap: GC alone frees them too late.
         for (let i = 0; i < this.lcTextureManager.count; i++) this.lcTextureManager.getSource(i)?.bitmap?.close?.();
@@ -2133,7 +2133,14 @@ export class Scene {
     }
 
     getEnvMap(): EnvMap | null {
-        return this.envMap;
+        return this.mEnvMap;
+    }
+    /** Python `scene.envMap` (Scene::getEnvMap/setEnvMap). */
+    get envMap(): EnvMap | null {
+        return this.mEnvMap;
+    }
+    set envMap(envMap: EnvMap | null) {
+        this.setEnvMap(envMap);
     }
 
     /** Mirrors Scene::hasGeometryType(Curve). */
@@ -2293,12 +2300,12 @@ export class Scene {
 
     /** Mirrors Scene::useEnvBackground(). */
     get useEnvBackground(): boolean {
-        return this.envMap !== null;
+        return this.mEnvMap !== null;
     }
 
     /** Mirrors Scene::useEnvLight(). */
     get useEnvLight(): boolean {
-        return this.renderSettings.useEnvLight && this.envMap !== null && this.envMap.intensity > 0;
+        return this.renderSettings.useEnvLight && this.mEnvMap !== null && this.mEnvMap.intensity > 0;
     }
 
     /** Mirrors Scene::getSceneDefines(). */
@@ -2824,8 +2831,8 @@ export class Scene {
         }
 
         // Env map (dummy black texture + zeroed uniforms when absent).
-        if (this.envMap) {
-            this.envMap.bindShaderData(scene["envMap"] as ShaderVar);
+        if (this.mEnvMap) {
+            this.mEnvMap.bindShaderData(scene["envMap"] as ShaderVar);
         } else {
             scene["envMap"]["envMap"] = this.dummyTexture;
             scene["envMap"]["envSampler"] = this.sampler;

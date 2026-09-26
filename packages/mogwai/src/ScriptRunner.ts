@@ -66,6 +66,8 @@ export interface MogwaiRunResult {
     /** Renderer's active graph at the end of the script. */
     activeGraph: RenderGraph | null;
     scene: Scene | null;
+    /** Renderer's global clock (m.clock) after the script. */
+    clock: Clock;
 }
 
 /** Records and replays the Mogwai script at `scriptUrl` (served path, e.g. /Falcor/tests/...). */
@@ -91,7 +93,7 @@ export async function runMogwaiSource(device: Device, source: string, dirUrl: st
     host.frameCapture = new FrameCaptureExtension(device, () => host.active, (name) => host.graphs.find((g) => g.name === name) ?? null, () => clock.getFrame());
     host.frameCapture.download = opts.download ?? false;
     await replayMogwaiCommands(device, commands, host);
-    return { frameCapture: host.frameCapture, timingCapture: host.timingCapture as HeadlessTimingCapture, graphs: host.graphs, activeGraph: host.active, scene: host.scene };
+    return { frameCapture: host.frameCapture, timingCapture: host.timingCapture as HeadlessTimingCapture, graphs: host.graphs, activeGraph: host.active, scene: host.scene, clock: host.clock };
 }
 
 /** The script's local modules are fetched and it is recorded (see recordMogwaiScript). */

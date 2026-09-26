@@ -25,8 +25,12 @@ gpuTest("Mogwai.rendererGraphApi", async ({ device }) => {
         "m.removeGraph('A')",
         "assert m.getGraph('A') is None",
         "m.unloadScene()",
+        "m.addOptions({'mogwaiRendererApiTest': 5}); m.clearFilteredAttributes()",
+        "t.time = 2.5  # deprecated global clock",
+        "assert fc is not None and tc is not None",
     ].join("\n");
     const replay = await runMogwaiSource(device, script, "/Falcor/media/test_scenes", { download: false });
     expectEq(replay.graphs.map((g) => g.name).join(), "B", "removeGraph by name");
     expectEq(replay.scene, null, "unloadScene");
+    expectEq(replay.clock.getTime(), 2.5, "t is m.clock");
 });

@@ -30,11 +30,11 @@ export class Clock {
     private scale = 1;
     private now = 0;
     private delta = 0;
-    private startTime = 0;
-    private endTime = -1;
+    private mStartTime = 0;
+    private mEndTime = -1;
     /** Mirrors Clock's exit time/frame (0 = none): the app quits once reached. */
-    private exitTime = 0;
-    private exitFrame = 0;
+    private mExitTime = 0;
+    private mExitFrame = 0;
     private deferredTime: number | null = null;
     private deferredFrame: number | null = null;
     private lastRealTime: number;
@@ -45,8 +45,8 @@ export class Clock {
     }
 
     private clampTime(seconds: number): number {
-        const hi = this.endTime >= 0 ? this.endTime : Infinity;
-        return Math.min(Math.max(seconds, this.startTime), hi);
+        const hi = this.mEndTime >= 0 ? this.mEndTime : Infinity;
+        return Math.min(Math.max(seconds, this.mStartTime), hi);
     }
 
     private updateTimer(): number {
@@ -130,12 +130,32 @@ export class Clock {
         return this;
     }
 
-    setStartTime(t: number): void {
-        this.startTime = Math.max(0, t);
+    /** Mirrors Clock::setStartTime: <= 0 resets to 0; otherwise it must precede a set end time. */
+    setStartTime(time: number): boolean {
+        if (time <= 0) {
+            this.mStartTime = 0;
+            return true;
+        }
+        if (this.mEndTime < 0 || time < this.mEndTime) {
+            this.mStartTime = time;
+            return true;
+        }
+        return false;
+    }
+    getStartTime(): number {
+        return this.mStartTime;
     }
 
-    setEndTime(t: number): void {
-        this.endTime = t;
+    /** Mirrors Clock::setEndTime: < 0 disables the loop; otherwise it must follow a set start time. */
+    setEndTime(time: number): boolean {
+        if (time < 0 || this.mStartTime <= 0 || time > this.mStartTime) {
+            this.mEndTime = time;
+            return true;
+        }
+        return false;
+    }
+    getEndTime(): number {
+        return this.mEndTime;
     }
 
     pause(): this {
@@ -182,23 +202,23 @@ export class Clock {
 
     /** Mirrors Clock::setExitTime (seconds; 0 disables). */
     setExitTime(seconds: number): this {
-        this.exitTime = seconds;
+        this.mExitTime = seconds;
         return this;
     }
     getExitTime(): number {
-        return this.exitTime;
+        return this.mExitTime;
     }
     /** Mirrors Clock::setExitFrame (0 disables). */
     setExitFrame(frame: number): this {
-        this.exitFrame = frame;
+        this.mExitFrame = frame;
         return this;
     }
     getExitFrame(): number {
-        return this.exitFrame;
+        return this.mExitFrame;
     }
     /** Mirrors Clock::shouldExit. */
     shouldExit(): boolean {
-        return (this.exitTime > 0 && this.now >= this.exitTime) || (this.exitFrame > 0 && this.frames >= this.exitFrame);
+        return (this.mExitTime > 0 && this.now >= this.mExitTime) || (this.mExitFrame > 0 && this.frames >= this.mExitFrame);
     }
 
     /** Mirrors Clock::renderUI: time and scale, rewind/stop/play-pause (frame steps while paused), frame-rate simulation. */
@@ -225,8 +245,8 @@ export class Clock {
     getScript(variable: string): string {
         let s = ScriptWriter.makeSetProperty(variable, "time", 0);
         s += ScriptWriter.makeSetProperty(variable, "framerate", this.fps);
-        if (this.exitTime) s += ScriptWriter.makeSetProperty(variable, "exitTime", this.exitTime);
-        if (this.exitFrame) s += ScriptWriter.makeSetProperty(variable, "exitFrame", this.exitFrame);
+        if (this.mExitTime) s += ScriptWriter.makeSetProperty(variable, "exitTime", this.mExitTime);
+        if (this.mExitFrame) s += ScriptWriter.makeSetProperty(variable, "exitFrame", this.mExitFrame);
         s += "# If framerate is not zero, you can use the frame property to set the start frame\n";
         s += `# ${ScriptWriter.makeSetProperty(variable, "frame", 0)}`;
         if (this.paused) s += ScriptWriter.makeMemberFunc(variable, "pause");
@@ -257,5 +277,29 @@ export class Clock {
     }
     set timeScale(s: number) {
         this.setTimeScale(s);
+    }
+    get startTime(): number {
+        return this.mStartTime;
+    }
+    set startTime(t: number) {
+        this.setStartTime(t);
+    }
+    get endTime(): number {
+        return this.mEndTime;
+    }
+    set endTime(t: number) {
+        this.setEndTime(t);
+    }
+    get exitTime(): number {
+        return this.mExitTime;
+    }
+    set exitTime(t: number) {
+        this.setExitTime(t);
+    }
+    get exitFrame(): number {
+        return this.mExitFrame;
+    }
+    set exitFrame(f: number) {
+        this.setExitFrame(f);
     }
 }

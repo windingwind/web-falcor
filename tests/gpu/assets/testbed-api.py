@@ -1,5 +1,6 @@
 # Testbed python API (Falcor/Source/Falcor/Core/Testbed.cpp bindings): load_scene_from_string,
-# get_import_paths/dicts, load_render_graph, window, and the keyboard/mouse/resize callbacks.
+# get_import_paths/dicts, load_render_graph, window, the keyboard/mouse/resize callbacks and the module names
+# upstream scripts reference.
 import falcor
 
 testbed = falcor.Testbed(width=64, height=64, create_window=False)
@@ -10,6 +11,12 @@ sceneBuilder.addMeshInstance(sceneBuilder.addNode('q', Transform()), sceneBuilde
 assert testbed.get_import_paths() == ['<memory>'], testbed.get_import_paths()
 assert testbed.get_import_dicts() == [{}]
 assert testbed.window is None
+
+# Names upstream scripts (inv-rendering) use: flags, the Material alias's PARAM_COUNT, annotation classes.
+flags = falcor.SceneBuilderFlags.DontMergeMaterials | falcor.SceneBuilderFlags.RTDontMergeDynamic | falcor.SceneBuilderFlags.DontOptimizeMaterials
+assert int(flags) != 0
+assert falcor.Material is falcor.StandardMaterial and falcor.Material.PARAM_COUNT == 20 and issubclass(falcor.PBRTDiffuseMaterial, falcor.IMaterial)
+def annotated(scene: falcor.Scene, p: falcor.RenderPass, i: falcor.ObjectID): return i
 
 g = testbed.load_render_graph('/Falcor/tests/image_tests/renderpasses/graphs/ToneMapping.py')
 testbed.render_graph = g

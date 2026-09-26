@@ -160,6 +160,8 @@ export async function runGraphScript(device: Device, source: string, extras: Rec
         profiler: device.profilerHook?.pythonBindings((v) => pyodide!.toPy(v)) ?? null,
         settings,
         getSettings: () => settings,
+        // Renderer's own m.addOptions / addFilteredAttributes / clearOptions / clearFilteredAttributes.
+        ...settings,
         ...extras,
     };
     if (callbacks) defineCallbackProperties(mogwai, callbacks);
@@ -202,6 +204,9 @@ export function runConsoleCommand(
             globalSettings.addOptions(toJs(dict) as Record<string, never>);
             applyMediaSearchPaths();
         },
+        addFilteredAttributes: (dictOrList: unknown) => globalSettings.addFilteredAttributes(toJs(dictOrList) as Record<string, never>),
+        clearOptions: () => globalSettings.clearOptions(),
+        clearFilteredAttributes: () => globalSettings.clearFilteredAttributes(),
     };
     // Read through the context: a caller passing getters gets an `m` that stays live (script callbacks).
     const m = {
@@ -213,6 +218,7 @@ export function runConsoleCommand(
         profiler: (context.profiler ?? device.profilerHook)?.pythonBindings((v) => pyodide!.toPy(v)) ?? null,
         settings,
         getSettings: () => settings,
+        ...settings,
     };
     if (context.callbacks) defineCallbackProperties(m, context.callbacks);
     pyodide.globals.set("m", m);
@@ -234,6 +240,10 @@ export function runConsoleCommand(
  * (a JS object can't be used in `with`); everything else passes through to the JS object.
  */
 const kMogwaiShim = `
+# Native's deprecated globals: t (the clock), fc (Frame Capture), tc (Timing Capture).
+t = getattr(m, "clock", None)
+fc = getattr(m, "frameCapture", None)
+tc = getattr(m, "timingCapture", None)
 class _PyProfilerEvent:
     def __init__(self, p, name): self._p, self._n = p, name
     def __enter__(self): self._p.begin_event(self._n); return self
@@ -1008,6 +1018,7 @@ export function recordMogwaiScript(device: Device, source: string, files: Record
         profiler: device.profilerHook?.pythonBindings((v) => pyodide!.toPy(v)) ?? null,
         settings: recordedSettings,
         getSettings: () => recordedSettings,
+        ...recordedSettings,
     };
     // m.sceneUpdateCallback applies from its point in the script; m.keyCallback is for interactive hosts (the viewer).
     let sceneUpdate: MogwaiCallbacks["sceneUpdateCallback"] = null;

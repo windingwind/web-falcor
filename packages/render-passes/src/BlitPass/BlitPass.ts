@@ -8,6 +8,7 @@ import {
     RenderPass,
     RenderPassReflection,
     ResourceBindFlags,
+    RuntimeError,
     registerRenderPass,
     type CompileData,
     type Device,
@@ -16,7 +17,7 @@ import {
 } from "@web-falcor/falcor";
 
 export class BlitPass extends RenderPass {
-    private filter: GPUFilterMode = "linear";
+    private mFilter: GPUFilterMode = "linear";
 
     constructor(device: Device, props: Properties) {
         super(device);
@@ -24,16 +25,25 @@ export class BlitPass extends RenderPass {
     }
 
     override setProperties(props: Properties): void {
-        this.filter = props.get<string>("filter", "Linear") === "Point" ? "nearest" : "linear";
+        this.mFilter = props.get<string>("filter", "Linear") === "Point" ? "nearest" : "linear";
+    }
+
+    /** Python `filter`: enumToString/stringToEnum over TextureFilteringMode ("Point", "Linear"). */
+    get filter(): string {
+        return this.mFilter === "nearest" ? "Point" : "Linear";
+    }
+    set filter(value: string) {
+        if (value !== "Point" && value !== "Linear") throw new RuntimeError(`Invalid enum name '${value}'`);
+        this.mFilter = value === "Point" ? "nearest" : "linear";
     }
 
     override getProperties(): Properties {
-        return new Properties({ filter: this.filter === "nearest" ? "Point" : "Linear" });
+        return new Properties({ filter: this.mFilter === "nearest" ? "Point" : "Linear" });
     }
 
     /** Mirrors BlitPass::renderUI. */
     override renderUI(ui: UIWidgets): void {
-        ui.dropdown("Filter", ["Linear", "Point"], this.filter === "nearest" ? "Point" : "Linear", (v) => (this.filter = v === "Point" ? "nearest" : "linear"));
+        ui.dropdown("Filter", ["Linear", "Point"], this.mFilter === "nearest" ? "Point" : "Linear", (v) => (this.mFilter = v === "Point" ? "nearest" : "linear"));
     }
 
     override reflect(_compileData: CompileData): RenderPassReflection {
@@ -44,7 +54,7 @@ export class BlitPass extends RenderPass {
     }
 
     override execute(ctx: RenderContext, renderData: RenderData): void {
-        ctx.blit(renderData.getTexture("src")!, renderData.getTexture("dst")!, this.filter);
+        ctx.blit(renderData.getTexture("src")!, renderData.getTexture("dst")!, this.mFilter);
     }
 }
 

@@ -32,8 +32,8 @@ const kShaderFile = "RenderPasses/Utils/GaussianBlur/GaussianBlur.ps.slang";
 const f = Math.fround;
 
 export class GaussianBlur extends RenderPass {
-    private kernelWidth = 5;
-    private sigma = 2;
+    private mKernelWidth = 5;
+    private mSigma = 2;
     private ready = false;
     private horizontal: FullScreenPass | null = null;
     private vertical: FullScreenPass | null = null;
@@ -45,8 +45,8 @@ export class GaussianBlur extends RenderPass {
 
     constructor(device: Device, props: Properties) {
         super(device);
-        this.kernelWidth = props.get("kernelWidth", 5);
-        this.sigma = props.get("sigma", 2);
+        this.mKernelWidth = props.get("kernelWidth", 5);
+        this.mSigma = props.get("sigma", 2);
         this.sampler = device.createSampler({
             minFilter: TextureFilteringMode.Linear,
             magFilter: TextureFilteringMode.Linear,
@@ -57,8 +57,24 @@ export class GaussianBlur extends RenderPass {
         });
     }
 
+    /** Python properties (GaussianBlur::setKernelWidth/setSigma; native recompiles the graph, here the kernel rebuilds). */
+    get kernelWidth(): number {
+        return this.mKernelWidth;
+    }
+    set kernelWidth(kernelWidth: number) {
+        this.mKernelWidth = Math.round(kernelWidth) | 1; // odd width
+        if (this.horizontal) this.createPrograms();
+    }
+    get sigma(): number {
+        return this.mSigma;
+    }
+    set sigma(sigma: number) {
+        this.mSigma = sigma;
+        if (this.horizontal) this.createPrograms();
+    }
+
     override getProperties(): Properties {
-        return new Properties({ kernelWidth: this.kernelWidth, sigma: this.sigma });
+        return new Properties({ kernelWidth: this.mKernelWidth, sigma: this.mSigma });
     }
 
     override reflect(compileData: CompileData): RenderPassReflection {
@@ -84,7 +100,7 @@ export class GaussianBlur extends RenderPass {
     }
 
     private createPrograms(): void {
-        const defines: Record<string, string | number> = { _KERNEL_WIDTH: this.kernelWidth };
+        const defines: Record<string, string | number> = { _KERNEL_WIDTH: this.mKernelWidth };
         this.horizontal = FullScreenPass.create(this.device, { path: kShaderFile, defines: { ...defines, _HORIZONTAL_BLUR: 1 } });
         this.vertical = FullScreenPass.create(this.device, { path: kShaderFile, defines: { ...defines, _VERTICAL_BLUR: 1 } });
         this.updateKernel();
@@ -92,21 +108,15 @@ export class GaussianBlur extends RenderPass {
 
     /** Mirrors GaussianBlur::renderUI (setKernelWidth/setSigma rebuild the kernels; native recompiles the graph). */
     override renderUI(ui: UIWidgets): void {
-        ui.slider("Kernel Width", this.kernelWidth, 1, 15, 2, (v) => {
-            this.kernelWidth = Math.round(v) | 1; // odd width like native setKernelWidth
-            if (this.horizontal) this.createPrograms();
-        });
-        ui.slider("Sigma", this.sigma, 0.001, this.kernelWidth / 2, 0.001, (v) => {
-            this.sigma = v;
-            if (this.horizontal) this.createPrograms();
-        });
+        ui.slider("Kernel Width", this.mKernelWidth, 1, 15, 2, (v) => (this.kernelWidth = v));
+        ui.slider("Sigma", this.mSigma, 0.001, this.mKernelWidth / 2, 0.001, (v) => (this.sigma = v));
     }
 
     /** Mirrors GaussianBlur::updateKernel + getCoefficient with C float semantics. */
     private updateKernel(): void {
-        const center = Math.floor(this.kernelWidth / 2);
+        const center = Math.floor(this.mKernelWidth / 2);
         const coeff = (x: number): number => {
-            const sigmaSquared = f(this.sigma * this.sigma);
+            const sigmaSquared = f(this.mSigma * this.mSigma);
             const p = f(-f(x * x) / f(2 * sigmaSquared));
             const e = f(Math.exp(p));
             const a = f(f(2 * f(Math.PI)) * sigmaSquared);
@@ -118,14 +128,14 @@ export class GaussianBlur extends RenderPass {
             weights[i] = coeff(i);
             sum = f(sum + (i === 0 ? weights[i]! : f(2 * weights[i]!)));
         }
-        const data = new Float32Array(this.kernelWidth);
+        const data = new Float32Array(this.mKernelWidth);
         for (let i = 0; i <= center; i++) {
             const w = f(weights[i]! / sum);
             data[center + i] = w;
             data[center - i] = w;
         }
         this.weights = new Buffer(this.device, {
-            size: this.kernelWidth * 4,
+            size: this.mKernelWidth * 4,
             structSize: 4,
             bindFlags: ResourceBindFlags.ShaderResource,
             memoryType: MemoryType.DeviceLocal,

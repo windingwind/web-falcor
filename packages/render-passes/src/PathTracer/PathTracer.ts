@@ -116,6 +116,8 @@ export class PathTracer extends RenderPass {
     private traceDeltaReflectionPass: ComputePass | null = null;
     private traceDeltaTransmissionPass: ComputePass | null = null;
     private frameCount = 0;
+    /** The runtime PathTracerParams members native's Debugging UI and Python edit. */
+    private readonly params = { useFixedSeed: false, fixedSeed: 1 };
     private sampleGenerator: SampleGenerator;
     // Dummies for optional members that survive dead-code elimination
     // (viewDir/sampleCount/... are only live for other configurations).
@@ -168,6 +170,12 @@ export class PathTracer extends RenderPass {
             if (!props.has("maxTransmissionBounces")) this.maxTransmissionBounces = this.maxSurfaceBounces;
         } else {
             this.maxSurfaceBounces = Math.max(this.maxDiffuseBounces, this.maxSpecularBounces, this.maxTransmissionBounces);
+        }
+        // Native: a 'fixedSeed' property also turns useFixedSeed on.
+        const fixedSeed = props.getOpt<number>("fixedSeed");
+        if (fixedSeed !== undefined) {
+            this.params.fixedSeed = fixedSeed >>> 0;
+            this.params.useFixedSeed = true;
         }
         this.useBSDFSampling = props.get("useBSDFSampling", true);
         this.useRussianRoulette = props.get("useRussianRoulette", false);
@@ -286,6 +294,7 @@ export class PathTracer extends RenderPass {
             maxDiffuseBounces: this.maxDiffuseBounces,
             maxSpecularBounces: this.maxSpecularBounces,
             maxTransmissionBounces: this.maxTransmissionBounces,
+            ...(this.params.useFixedSeed ? { fixedSeed: this.params.fixedSeed } : {}),
             useBSDFSampling: this.useBSDFSampling,
             useRussianRoulette: this.useRussianRoulette,
             useNEE: this.useNEE,
@@ -299,6 +308,20 @@ export class PathTracer extends RenderPass {
             adjustShadingNormals: this.adjustShadingNormals,
             primaryLodMode: lodNames[this.primaryLodMode] ?? this.primaryLodMode,
         });
+    }
+
+    /** Python `useFixedSeed` / `fixedSeed` (PathTracer's pybind11 properties on mParams). */
+    get useFixedSeed(): boolean {
+        return this.params.useFixedSeed;
+    }
+    set useFixedSeed(v: boolean) {
+        this.params.useFixedSeed = !!v;
+    }
+    get fixedSeed(): number {
+        return this.params.fixedSeed;
+    }
+    set fixedSeed(v: number) {
+        this.params.fixedSeed = v >>> 0;
     }
 
     /** Static params are shader defines: drop the kernels so execute() rebuilds them (native mRecompile). */
@@ -343,7 +366,11 @@ export class PathTracer extends RenderPass {
         ui.checkbox("Alpha test", this.useAlphaTest, rebuild((v) => (this.useAlphaTest = v)));
         ui.checkbox("Adjust shading normals on secondary hits", this.adjustShadingNormals, rebuild((v) => (this.adjustShadingNormals = v)));
         ui.dropdown("Primary LOD Mode", ["Mip0", "RayDiffs"], this.primaryLodMode === 2 ? "RayDiffs" : "Mip0", rebuild((v: string) => (this.primaryLodMode = v === "RayDiffs" ? 2 : 0)));
-        this.pixelDebug.renderUI(ui.group("Debugging"), () => this.recreatePrograms());
+        const debugging = ui.group("Debugging");
+        debugging.checkbox("Use fixed seed", this.params.useFixedSeed, (v) => (this.params.useFixedSeed = v));
+        // Native's unbounded uint field is a 0..1000 integer slider here (UIWidgets has no var()).
+        if (this.params.useFixedSeed) debugging.slider("Seed", this.params.fixedSeed, 0, 1000, 1, (v) => (this.params.fixedSeed = Math.round(v) >>> 0));
+        this.pixelDebug.renderUI(debugging, () => this.recreatePrograms());
     }
 
     /** Mirrors PathTracer::onMouseEvent (pixel debug selection). */
@@ -406,14 +433,14 @@ export class PathTracer extends RenderPass {
     private bindPathTracerData(var_: ShaderVar, vbuffer: unknown, outputColor: unknown, frameDim: [number, number]): void {
         const tiles: [number, number] = [Math.ceil(frameDim[0] / kScreenTileDim), Math.ceil(frameDim[1] / kScreenTileDim)];
         const p = var_["params"] as ShaderVar;
-        p["useFixedSeed"] = 0;
-        p["fixedSeed"] = 1;
+        p["useFixedSeed"] = this.params.useFixedSeed ? 1 : 0;
+        p["fixedSeed"] = this.params.fixedSeed;
         p["lodBias"] = 0;
         p["specularRoughnessThreshold"] = 0.25;
         p["frameDim"] = frameDim;
         p["screenTiles"] = tiles;
         p["frameCount"] = this.frameCount;
-        p["seed"] = this.frameCount; // seed = useFixedSeed ? fixedSeed : frameCount
+        p["seed"] = this.params.useFixedSeed ? this.params.fixedSeed : this.frameCount;
         var_["vbuffer"] = vbuffer;
         var_["outputColor"] = outputColor;
 
@@ -742,14 +769,14 @@ export class PathTracer extends RenderPass {
             const root = this.resolvePass.getRootVar();
             const cb = root["CB"]!["gResolvePass"] as ShaderVar;
             const p = cb["params"] as ShaderVar;
-            p["useFixedSeed"] = 0;
-            p["fixedSeed"] = 1;
+            p["useFixedSeed"] = this.params.useFixedSeed ? 1 : 0;
+            p["fixedSeed"] = this.params.fixedSeed;
             p["lodBias"] = 0;
             p["specularRoughnessThreshold"] = 0.25;
             p["frameDim"] = frameDim;
             p["screenTiles"] = tiles;
             p["frameCount"] = this.frameCount;
-            p["seed"] = this.frameCount;
+            p["seed"] = this.params.useFixedSeed ? this.params.fixedSeed : this.frameCount;
             this.trySet(cb, "sampleGuideData", this.sampleGuideData ?? this.dummyBufferB!);
             this.trySet(cb, "sampleColor", this.sampleColor ?? this.dummyBufferA!);
             this.trySet(cb, "sampleCount", this.sampleCountInput ?? this.dummyTexUint!);

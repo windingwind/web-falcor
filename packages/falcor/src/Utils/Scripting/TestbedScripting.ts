@@ -33,7 +33,7 @@ import { RuntimeError } from "../../Core/Error.js";
 import { AssetCategory, AssetResolver } from "../../Core/AssetResolver.js";
 import { getPyodide, kPythonVectorTypes } from "./Scripting.js";
 import { Testbed, kTestbedFsRoot, type TestbedOptions } from "./Testbed.js";
-import { MaterialBridge } from "../../Scene/SceneBuilder.js";
+import { MaterialBridge, kSceneBuilderFlagsPython } from "../../Scene/SceneBuilder.js";
 import { MaterialType } from "../../Scene/Material/MaterialData.js";
 
 interface Pyodide {
@@ -215,6 +215,7 @@ function makeJsModule(device: Device, testbedOptions: TestbedOptions, fsRead: (p
         materialParamLayout: (type: number) => Object.fromEntries(getMaterialParamLayoutForType(type).map((e) => [e.pythonName, { offset: e.offset, size: e.size }])),
         /** MaterialType names by value (to_string(MaterialType)), Unknown..RGL. */
         materialTypeNames: ["Unknown", ...Object.keys(MaterialType).filter((k) => isNaN(Number(k)))],
+        sceneBuilderFlags: kSceneBuilderFlagsPython,
         /** Scene get_material_params: SerializedMaterialParams (kMaterialParamCount floats) per listed material ID. */
         getMaterialParams: async (t: Testbed, ids: Buffer, params: Buffer) => {
             const scene = t.scene!;
@@ -266,7 +267,8 @@ falcor = types.ModuleType("falcor")
 
 def _enum(name, members, flag):
     base = enum.IntFlag if flag else enum.IntEnum
-    return base(name, members)
+    # Python can't spell a member None: native binds it as None_.
+    return base(name, {("None_" if k == "None" else k): v for k, v in dict(members).items()})
 
 ResourceBindFlags = _enum("ResourceBindFlags", _BIND_FLAGS, True)
 ResourceFormat = _enum("ResourceFormat", _FORMATS, False)
@@ -665,7 +667,11 @@ class MaterialTextureSlot(enum.Enum):
     Displacement = "Displacement"
     Index = "Index"
 
-class Material:
+class IMaterial:
+    """Native's material base class (bound as IMaterial)."""
+    PARAM_COUNT = 20  # SerializedMaterialParams::kParamCount
+
+class _MaterialBase(IMaterial):
     _type = "Standard"
     def __init__(self, device=None, name=""):
         if isinstance(device, str): device, name = None, device
@@ -680,7 +686,7 @@ class Material:
     def __setattr__(self, k, v): setattr(object.__getattribute__(self, "_o"), k, _unwrap(v))
 
 def _material_class(name, type_name):
-    return type(name, (Material,), {"_type": type_name})
+    return type(name, (_MaterialBase,), {"_type": type_name})
 
 for _n, _t in [("StandardMaterial", "Standard"), ("ClothMaterial", "Cloth"), ("HairMaterial", "Hair"), ("PBRTDiffuseMaterial", "PBRTDiffuse"),
                ("PBRTDiffuseTransmissionMaterial", "PBRTDiffuseTransmission"), ("PBRTConductorMaterial", "PBRTConductor"), ("PBRTDielectricMaterial", "PBRTDielectric"),
@@ -688,13 +694,14 @@ for _n, _t in [("StandardMaterial", "Standard"), ("ClothMaterial", "Cloth"), ("H
     globals()[_n] = _material_class(_n, _t)
 
 MaterialType = enum.IntEnum("MaterialType", {n: i for i, n in enumerate(_js.materialTypeNames.to_py())})
+SceneBuilderFlags = enum.IntFlag("SceneBuilderFlags", dict(_js.sceneBuilderFlags.to_py()))
 
 def get_material_param_layout(type):
     """Mirrors get_material_param_layout: python name -> {"offset", "size"} (empty without a layout)."""
     return {k: dict(v) for k, v in _js.materialParamLayout(int(type)).to_py().items()}
 
-class IMaterial:
-    PARAM_COUNT = 20  # SerializedMaterialParams::kParamCount
+# Deprecated alias Material -> StandardMaterial, as natively.
+Material = StandardMaterial
 
 MATERIAL_PARAM_LAYOUTS = {name: get_material_param_layout(i) for i, name in enumerate(_js.materialTypeNames.to_py())}
 
@@ -715,6 +722,12 @@ class _Scene:
         run_sync(_js.setMeshVertices(self._t, int(mesh_id), to_js({k: v._o for k, v in buffers.items()}, dict_converter=__import__("js").Object.fromEntries)))
     def __getattr__(self, k): return getattr(object.__getattribute__(self, "_t").scene, k)
     def __setattr__(self, k, v): setattr(object.__getattribute__(self, "_t").scene, k, _unwrap(v))
+
+# Class names scripts use in annotations (native binds Scene, RenderPass and ObjectID = uint32).
+Scene = _Scene
+class RenderPass:
+    """Native RenderPass; graph passes are the bridge's pass objects."""
+ObjectID = int
 
 class Testbed:
     def __init__(self, width=1920, height=1080, create_window=False, device_type=DeviceType.Default, gpu=0, enable_debug_layers=False, enable_aftermath=False, title="Falcor Sample", show_fps=True, device=None):

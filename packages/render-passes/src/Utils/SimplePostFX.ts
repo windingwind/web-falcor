@@ -25,6 +25,7 @@ import {
     type Device,
     type RenderContext,
     type UIWidgets,
+    float3,
 } from "@web-falcor/falcor";
 
 const kShaderFile = "RenderPasses/SimplePostFX/SimplePostFX.cs.slang";
@@ -38,21 +39,21 @@ function toVec3(v: unknown, fallback: [number, number, number]): [number, number
 }
 
 export class SimplePostFX extends RenderPass {
-    private enabled = true;
-    private wipe = 0;
-    private bloomAmount = 0;
-    private starAmount = 0;
-    private starAngle = 0.1;
-    private vignetteAmount = 0;
-    private chromaticAberrationAmount = 0;
-    private barrelDistortAmount = 0;
-    private saturationCurve: [number, number, number] = [1, 1, 1];
-    private colorOffset: [number, number, number] = [0.5, 0.5, 0.5];
-    private colorScale: [number, number, number] = [0.5, 0.5, 0.5];
-    private colorPower: [number, number, number] = [0.5, 0.5, 0.5];
-    private colorOffsetScalar = 0;
-    private colorScaleScalar = 0;
-    private colorPowerScalar = 0;
+    private mEnabled = true;
+    private mWipe = 0;
+    private mBloomAmount = 0;
+    private mStarAmount = 0;
+    private mStarAngle = 0.1;
+    private mVignetteAmount = 0;
+    private mChromaticAberrationAmount = 0;
+    private mBarrelDistortAmount = 0;
+    private mSaturationCurve: [number, number, number] = [1, 1, 1];
+    private mColorOffset: [number, number, number] = [0.5, 0.5, 0.5];
+    private mColorScale: [number, number, number] = [0.5, 0.5, 0.5];
+    private mColorPower: [number, number, number] = [0.5, 0.5, 0.5];
+    private mColorOffsetScalar = 0;
+    private mColorScaleScalar = 0;
+    private mColorPowerScalar = 0;
     private outputSize = IOSize.Default;
     private fixedOutputSize: [number, number] = [512, 512];
 
@@ -65,21 +66,21 @@ export class SimplePostFX extends RenderPass {
 
     constructor(device: Device, props: Properties) {
         super(device);
-        this.enabled = props.get("enabled", true);
-        this.wipe = props.get("wipe", 0);
-        this.bloomAmount = props.get("bloomAmount", 0);
-        this.starAmount = props.get("starAmount", 0);
-        this.starAngle = props.get("starAngle", 0.1);
-        this.vignetteAmount = props.get("vignetteAmount", 0);
-        this.chromaticAberrationAmount = props.get("chromaticAberrationAmount", 0);
-        this.barrelDistortAmount = props.get("barrelDistortAmount", 0);
-        this.saturationCurve = toVec3(props.getOpt("saturationCurve"), [1, 1, 1]);
-        this.colorOffset = toVec3(props.getOpt("colorOffset"), [0.5, 0.5, 0.5]);
-        this.colorScale = toVec3(props.getOpt("colorScale"), [0.5, 0.5, 0.5]);
-        this.colorPower = toVec3(props.getOpt("colorPower"), [0.5, 0.5, 0.5]);
-        this.colorOffsetScalar = props.get("colorOffsetScalar", 0);
-        this.colorScaleScalar = props.get("colorScaleScalar", 0);
-        this.colorPowerScalar = props.get("colorPowerScalar", 0);
+        this.mEnabled = props.get("enabled", true);
+        this.mWipe = props.get("wipe", 0);
+        this.mBloomAmount = props.get("bloomAmount", 0);
+        this.mStarAmount = props.get("starAmount", 0);
+        this.mStarAngle = props.get("starAngle", 0.1);
+        this.mVignetteAmount = props.get("vignetteAmount", 0);
+        this.mChromaticAberrationAmount = props.get("chromaticAberrationAmount", 0);
+        this.mBarrelDistortAmount = props.get("barrelDistortAmount", 0);
+        this.mSaturationCurve = toVec3(props.getOpt("saturationCurve"), [1, 1, 1]);
+        this.mColorOffset = toVec3(props.getOpt("colorOffset"), [0.5, 0.5, 0.5]);
+        this.mColorScale = toVec3(props.getOpt("colorScale"), [0.5, 0.5, 0.5]);
+        this.mColorPower = toVec3(props.getOpt("colorPower"), [0.5, 0.5, 0.5]);
+        this.mColorOffsetScalar = props.get("colorOffsetScalar", 0);
+        this.mColorScaleScalar = props.get("colorScaleScalar", 0);
+        this.mColorPowerScalar = props.get("colorPowerScalar", 0);
         this.outputSize = parseIOSize(props.getOpt("outputSize"));
         const fixed = props.getOpt<number[]>("fixedOutputSize");
         if (fixed) this.fixedOutputSize = [fixed[0]!, fixed[1]!];
@@ -104,67 +105,159 @@ export class SimplePostFX extends RenderPass {
             this.fixedOutputSize = [this.fixedOutputSize[0], Math.round(v)];
             this.requestRecompile();
         });
-        ui.checkbox("Enable post fx", this.enabled, (v) => (this.enabled = v));
-        ui.slider("Wipe", this.wipe, 0, 1, 0.001, (v) => (this.wipe = v));
+        ui.checkbox("Enable post fx", this.mEnabled, (v) => (this.mEnabled = v));
+        ui.slider("Wipe", this.mWipe, 0, 1, 0.001, (v) => (this.mWipe = v));
         const lens = ui.group("Lens FX");
-        lens.slider("Bloom", this.bloomAmount, 0, 1, 0.001, (v) => (this.bloomAmount = v));
-        lens.slider("Bloom Star", this.starAmount, 0, 1, 0.001, (v) => (this.starAmount = v));
-        lens.slider("Star Angle", this.starAngle, 0, 1, 0.001, (v) => (this.starAngle = v));
-        lens.slider("Vignette", this.vignetteAmount, 0, 1, 0.001, (v) => (this.vignetteAmount = v));
-        lens.slider("Chromatic Aberration", this.chromaticAberrationAmount, 0, 1, 0.001, (v) => (this.chromaticAberrationAmount = v));
-        lens.slider("Barrel Distortion", this.barrelDistortAmount, 0, 1, 0.001, (v) => (this.barrelDistortAmount = v));
+        lens.slider("Bloom", this.mBloomAmount, 0, 1, 0.001, (v) => (this.mBloomAmount = v));
+        lens.slider("Bloom Star", this.mStarAmount, 0, 1, 0.001, (v) => (this.mStarAmount = v));
+        lens.slider("Star Angle", this.mStarAngle, 0, 1, 0.001, (v) => (this.mStarAngle = v));
+        lens.slider("Vignette", this.mVignetteAmount, 0, 1, 0.001, (v) => (this.mVignetteAmount = v));
+        lens.slider("Chromatic Aberration", this.mChromaticAberrationAmount, 0, 1, 0.001, (v) => (this.mChromaticAberrationAmount = v));
+        lens.slider("Barrel Distortion", this.mBarrelDistortAmount, 0, 1, 0.001, (v) => (this.mBarrelDistortAmount = v));
         lens.button("reset this group", () => {
-            this.bloomAmount = 0;
-            this.starAmount = 0;
-            this.starAngle = 0.1;
-            this.vignetteAmount = 0;
-            this.chromaticAberrationAmount = 0;
-            this.barrelDistortAmount = 0;
+            this.mBloomAmount = 0;
+            this.mStarAmount = 0;
+            this.mStarAngle = 0.1;
+            this.mVignetteAmount = 0;
+            this.mChromaticAberrationAmount = 0;
+            this.mBarrelDistortAmount = 0;
         });
         const sat = ui.group("Saturation");
         const satNames = ["Shadow Saturation", "Midtone Saturation", "Hilight Saturation"];
-        satNames.forEach((label, i) => sat.slider(label, this.saturationCurve[i]!, 0, 2, 0.001, (v) => (this.saturationCurve[i] = v)));
-        sat.button("reset this group", () => (this.saturationCurve = [1, 1, 1]));
+        satNames.forEach((label, i) => sat.slider(label, this.mSaturationCurve[i]!, 0, 2, 0.001, (v) => (this.mSaturationCurve[i] = v)));
+        sat.button("reset this group", () => (this.mSaturationCurve = [1, 1, 1]));
         const luma = ui.group("Offset/Power/Scale (luma)");
-        luma.slider("Luma Offset (Shadows)", this.colorOffsetScalar, -1, 1, 0.001, (v) => (this.colorOffsetScalar = v));
-        luma.slider("Luma Power (Midtones)", this.colorPowerScalar, -1, 1, 0.001, (v) => (this.colorPowerScalar = v));
-        luma.slider("Luma Scale (Hilights)", this.colorScaleScalar, -1, 1, 0.001, (v) => (this.colorScaleScalar = v));
+        luma.slider("Luma Offset (Shadows)", this.mColorOffsetScalar, -1, 1, 0.001, (v) => (this.mColorOffsetScalar = v));
+        luma.slider("Luma Power (Midtones)", this.mColorPowerScalar, -1, 1, 0.001, (v) => (this.mColorPowerScalar = v));
+        luma.slider("Luma Scale (Hilights)", this.mColorScaleScalar, -1, 1, 0.001, (v) => (this.mColorScaleScalar = v));
         luma.button("reset this group", () => {
-            this.colorOffsetScalar = 0;
-            this.colorPowerScalar = 0;
-            this.colorScaleScalar = 0;
+            this.mColorOffsetScalar = 0;
+            this.mColorPowerScalar = 0;
+            this.mColorScaleScalar = 0;
         });
         const color = ui.group("Offset/Power/Scale (color)");
         const rgb = (label: string, get: () => [number, number, number]) => {
             ["R", "G", "B"].forEach((c, i) => color.slider(`${label} ${c}`, get()[i]!, 0, 1, 0.001, (v) => (get()[i] = v)));
         };
-        rgb("Color Offset (Shadows)", () => this.colorOffset);
-        rgb("Color Power (Midtones)", () => this.colorPower);
-        rgb("Color Scale (Hilights)", () => this.colorScale);
+        rgb("Color Offset (Shadows)", () => this.mColorOffset);
+        rgb("Color Power (Midtones)", () => this.mColorPower);
+        rgb("Color Scale (Hilights)", () => this.mColorScale);
         color.button("reset this group", () => {
-            this.colorOffset = [0.5, 0.5, 0.5];
-            this.colorPower = [0.5, 0.5, 0.5];
-            this.colorScale = [0.5, 0.5, 0.5];
+            this.mColorOffset = [0.5, 0.5, 0.5];
+            this.mColorPower = [0.5, 0.5, 0.5];
+            this.mColorScale = [0.5, 0.5, 0.5];
         });
+    }
+
+    /** Python properties (SimplePostFX's plain getters/setters; the curves are float3). */
+    get enabled(): boolean {
+        return this.mEnabled;
+    }
+    set enabled(v: boolean) {
+        this.mEnabled = v;
+    }
+    get wipe(): number {
+        return this.mWipe;
+    }
+    set wipe(v: number) {
+        this.mWipe = v;
+    }
+    get bloomAmount(): number {
+        return this.mBloomAmount;
+    }
+    set bloomAmount(v: number) {
+        this.mBloomAmount = v;
+    }
+    get starAmount(): number {
+        return this.mStarAmount;
+    }
+    set starAmount(v: number) {
+        this.mStarAmount = v;
+    }
+    get starAngle(): number {
+        return this.mStarAngle;
+    }
+    set starAngle(v: number) {
+        this.mStarAngle = v;
+    }
+    get vignetteAmount(): number {
+        return this.mVignetteAmount;
+    }
+    set vignetteAmount(v: number) {
+        this.mVignetteAmount = v;
+    }
+    get chromaticAberrationAmount(): number {
+        return this.mChromaticAberrationAmount;
+    }
+    set chromaticAberrationAmount(v: number) {
+        this.mChromaticAberrationAmount = v;
+    }
+    get barrelDistortAmount(): number {
+        return this.mBarrelDistortAmount;
+    }
+    set barrelDistortAmount(v: number) {
+        this.mBarrelDistortAmount = v;
+    }
+    get colorOffsetScalar(): number {
+        return this.mColorOffsetScalar;
+    }
+    set colorOffsetScalar(v: number) {
+        this.mColorOffsetScalar = v;
+    }
+    get colorScaleScalar(): number {
+        return this.mColorScaleScalar;
+    }
+    set colorScaleScalar(v: number) {
+        this.mColorScaleScalar = v;
+    }
+    get colorPowerScalar(): number {
+        return this.mColorPowerScalar;
+    }
+    set colorPowerScalar(v: number) {
+        this.mColorPowerScalar = v;
+    }
+    get saturationCurve(): float3 {
+        return new float3(...this.mSaturationCurve);
+    }
+    set saturationCurve(v: unknown) {
+        this.mSaturationCurve = toVec3(v, this.mSaturationCurve);
+    }
+    get colorOffset(): float3 {
+        return new float3(...this.mColorOffset);
+    }
+    set colorOffset(v: unknown) {
+        this.mColorOffset = toVec3(v, this.mColorOffset);
+    }
+    get colorScale(): float3 {
+        return new float3(...this.mColorScale);
+    }
+    set colorScale(v: unknown) {
+        this.mColorScale = toVec3(v, this.mColorScale);
+    }
+    get colorPower(): float3 {
+        return new float3(...this.mColorPower);
+    }
+    set colorPower(v: unknown) {
+        this.mColorPower = toVec3(v, this.mColorPower);
     }
 
     override getProperties(): Properties {
         return new Properties({
-            enabled: this.enabled,
-            wipe: this.wipe,
-            bloomAmount: this.bloomAmount,
-            starAmount: this.starAmount,
-            starAngle: this.starAngle,
-            vignetteAmount: this.vignetteAmount,
-            chromaticAberrationAmount: this.chromaticAberrationAmount,
-            barrelDistortAmount: this.barrelDistortAmount,
-            saturationCurve: this.saturationCurve,
-            colorOffset: this.colorOffset,
-            colorScale: this.colorScale,
-            colorPower: this.colorPower,
-            colorOffsetScalar: this.colorOffsetScalar,
-            colorScaleScalar: this.colorScaleScalar,
-            colorPowerScalar: this.colorPowerScalar,
+            enabled: this.mEnabled,
+            wipe: this.mWipe,
+            bloomAmount: this.mBloomAmount,
+            starAmount: this.mStarAmount,
+            starAngle: this.mStarAngle,
+            vignetteAmount: this.mVignetteAmount,
+            chromaticAberrationAmount: this.mChromaticAberrationAmount,
+            barrelDistortAmount: this.mBarrelDistortAmount,
+            saturationCurve: this.mSaturationCurve,
+            colorOffset: this.mColorOffset,
+            colorScale: this.mColorScale,
+            colorPower: this.mColorPower,
+            colorOffsetScalar: this.mColorOffsetScalar,
+            colorScaleScalar: this.mColorScaleScalar,
+            colorPowerScalar: this.mColorPowerScalar,
         });
     }
 
@@ -183,28 +276,28 @@ export class SimplePostFX extends RenderPass {
         const src = renderData.getTexture("src")!;
         const dst = renderData.getTexture("dst")!;
 
-        if (this.enabled && (src.width !== dst.width || src.height !== dst.height)) {
+        if (this.mEnabled && (src.width !== dst.width || src.height !== dst.height)) {
             throw new Error("SimplePostFX I/O sizes don't match.");
         }
         const [width, height] = [src.width, src.height];
 
         const isDefault =
-            this.bloomAmount === 0 &&
-            this.chromaticAberrationAmount === 0 &&
-            this.barrelDistortAmount === 0 &&
-            this.saturationCurve.every((v) => v === 1) &&
-            this.colorOffset.every((v) => v === 0.5) &&
-            this.colorScale.every((v) => v === 0.5) &&
-            this.colorPower.every((v) => v === 0.5) &&
-            this.colorOffsetScalar === 0 &&
-            this.colorScaleScalar === 0 &&
-            this.colorPowerScalar === 0;
-        if (!this.enabled || this.wipe >= 1 || isDefault) {
+            this.mBloomAmount === 0 &&
+            this.mChromaticAberrationAmount === 0 &&
+            this.mBarrelDistortAmount === 0 &&
+            this.mSaturationCurve.every((v) => v === 1) &&
+            this.mColorOffset.every((v) => v === 0.5) &&
+            this.mColorScale.every((v) => v === 0.5) &&
+            this.mColorPower.every((v) => v === 0.5) &&
+            this.mColorOffsetScalar === 0 &&
+            this.mColorScaleScalar === 0 &&
+            this.mColorPowerScalar === 0;
+        if (!this.mEnabled || this.mWipe >= 1 || isDefault) {
             ctx.blit(src, dst);
             return;
         }
 
-        if (this.bloomAmount > 0) {
+        if (this.mBloomAmount > 0) {
             this.preparePyramids(width, height);
             {
                 const root = this.downsamplePass.getRootVar();
@@ -221,7 +314,7 @@ export class SimplePostFX extends RenderPass {
             }
             {
                 const root = this.upsamplePass.getRootVar();
-                root["PerFrameCB"]["gBloomAmount"] = this.bloomAmount;
+                root["PerFrameCB"]["gBloomAmount"] = this.mBloomAmount;
                 for (let level = kNumLevels - 1; level >= 0; level--) {
                     const res = [Math.max(1, width >> level), Math.max(1, height >> level)];
                     const invres = [1 / res[0]!, 1 / res[1]!];
@@ -230,9 +323,9 @@ export class SimplePostFX extends RenderPass {
                     root["PerFrameCB"]["gInvRes"] = invres;
                     root["PerFrameCB"]["gSrcRes"] = [bloomed.width, bloomed.height];
                     const wantStar = level === 1 || level === 2;
-                    root["PerFrameCB"]["gStar"] = wantStar ? this.starAmount : 0;
+                    root["PerFrameCB"]["gStar"] = wantStar ? this.mStarAmount : 0;
                     if (wantStar) {
-                        let ang = this.starAngle;
+                        let ang = this.mStarAngle;
                         root["PerFrameCB"]["gStarDir1"] = [Math.sin(ang) * invres[0]! * 2, Math.cos(ang) * invres[1]! * 2];
                         ang += Math.PI / 3;
                         root["PerFrameCB"]["gStarDir2"] = [Math.sin(ang) * invres[0]! * 2, Math.cos(ang) * invres[1]! * 2];
@@ -254,21 +347,21 @@ export class SimplePostFX extends RenderPass {
             root["PerFrameCB"]["gResolution"] = [width, height];
             root["PerFrameCB"]["gInvRes"] = [1 / width, 1 / height];
             root["PerFrameCB"]["gSrcRes"] = [width, height];
-            root["PerFrameCB"]["gVignetteAmount"] = this.vignetteAmount;
-            root["PerFrameCB"]["gChromaticAberrationAmount"] = this.chromaticAberrationAmount / 64;
-            const barrel = this.barrelDistortAmount * 0.125;
+            root["PerFrameCB"]["gVignetteAmount"] = this.mVignetteAmount;
+            root["PerFrameCB"]["gChromaticAberrationAmount"] = this.mChromaticAberrationAmount / 64;
+            const barrel = this.mBarrelDistortAmount * 0.125;
             root["PerFrameCB"]["gBarrelDistort"] = [1 / (1 + 4 * barrel), barrel];
-            const [sx, sy, sz] = this.saturationCurve;
+            const [sx, sy, sz] = this.mSaturationCurve;
             const cy = sy - sx;
             const cz = sz - sx;
             const A = 2 * cz - 4 * cy;
             root["PerFrameCB"]["gSaturationCurve"] = [A, cz - A, sx];
-            root["PerFrameCB"]["gColorOffset"] = this.colorOffset.map((v) => v + this.colorOffsetScalar - 0.5);
-            const scaleMult = Math.pow(2, 1 + 2 * this.colorScaleScalar);
-            root["PerFrameCB"]["gColorScale"] = this.colorScale.map((v) => v * scaleMult);
-            root["PerFrameCB"]["gColorPower"] = this.colorPower.map((v) => Math.pow(2, 3 * (0.5 - v - this.colorPowerScalar)));
-            root["PerFrameCB"]["gWipe"] = this.wipe * width;
-            root["gBloomed"] = this.bloomAmount > 0 ? this.upPyramid[0]! : src;
+            root["PerFrameCB"]["gColorOffset"] = this.mColorOffset.map((v) => v + this.mColorOffsetScalar - 0.5);
+            const scaleMult = Math.pow(2, 1 + 2 * this.mColorScaleScalar);
+            root["PerFrameCB"]["gColorScale"] = this.mColorScale.map((v) => v * scaleMult);
+            root["PerFrameCB"]["gColorPower"] = this.mColorPower.map((v) => Math.pow(2, 3 * (0.5 - v - this.mColorPowerScalar)));
+            root["PerFrameCB"]["gWipe"] = this.mWipe * width;
+            root["gBloomed"] = this.mBloomAmount > 0 ? this.upPyramid[0]! : src;
             root["gSrc"] = src;
             root["gDst"] = dst;
             this.postFXPass.execute(ctx, width, height);
