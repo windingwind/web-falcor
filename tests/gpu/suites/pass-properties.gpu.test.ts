@@ -33,6 +33,8 @@ gpuTest("PassProperties.matchNativeDictionaries", async ({ device }) => {
         const name = key.split("#")[0]!;
         const out: string[] = [];
         diff(key, createPass(device, name, new Properties(props)).getProperties().toJSON(), dict, out);
+        // useRealMonitorInfo: native under Xvfb reports no monitor, the browser its screen width.
+        if (props["useRealMonitorInfo"]) out.splice(0, out.length, ...out.filter((l) => !l.includes(".monitorWidthPixels:")));
         for (const line of out) console.error(`# ${line}`);
         e.check(out.length === 0, () => out.join("; "));
     }

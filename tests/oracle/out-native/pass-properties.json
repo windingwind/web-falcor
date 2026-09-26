@@ -102,7 +102,7 @@
  },
  "GBufferRaster": {
   "props": {},
-  "error": "GBufferRaster requires rasterizer ordered views (ROVs) support.\n\n/share/Projekte/npvs/neuralgi/web-falcor/Falcor/Source/RenderPasses/GBuffer/GBuffer/GBufferRaster.cpp:66 (GBufferRaster)\n\nStacktrace:\n 0# 0x00007f988c96f6fc (Falcor::throwException(fstd::source_location const&, std::basic_string_view<char, std::char_traits<char> >)) in /share/Projekte/npvs/neuralgi/web-falcor/Falcor/build/linux-gcc/bin/Release/libFalcor.so\n 1# 0x00007f985f0573bb () in /share/Projekte/npvs/neuralgi/web-falcor/Falcor/build/linux-gcc/bin/Release/plugins/GBuffer.so\n 2# 0x00007f985f05297d () in /share/Projekte/npvs/neuralgi/web-falcor/Falcor/build/linux-gcc/bin/Release/plugins/GBuffer.so\n 3# 0x00007f985f05271a () in /share/Projekte/npvs/neuralgi/web-falcor/Falcor/build/linux-gcc/bin/Release/plugins/GBuffer.so\n 4# 0x00007f988cac85c4 (Falcor::RenderPass::create(std::basic_string_view<char, std::char_traits<char> >, Falcor::ref<Falcor::Device>, Falcor::Properties const&, Falcor::PluginManager&)) in /share/Projekte/npvs/neuralgi/web-falcor/Falcor/build/linux-gcc/bin/Release/libFalcor.so\n 5# 0x00007f988caa27b5 () in /share/Projekte/npvs/neuralgi/web-falcor/Falcor/build/linux-gcc/bin/Release/libFalcor.so\n 6# 0x00007f988c95118d () in /share/Projekte/npvs/neuralgi/web-falcor/Falcor/build/linux-gcc/bin/Release/libFalcor.so\n 7# 0x00007f988c1cb7f6 () in /share/Projekte/npvs/neuralgi/web-falcor/Falcor/build/linux-gcc/bin/Release/libpython3.10.so.1.0\n 8# 0x00007f988c16bdb9 (_PyObject_MakeTpCall) in /share/Projekte/npvs/neuralgi/web-falcor/Falcor/build/linux-gcc/bin/Release/libpython3.10.so.1.0\n 9# 0x00007f988c10abca () in /share/Projekte/npvs/neuralgi/web-falcor/Falcor/build/linux-gcc/bin/Release/libpython3.10.so.1.0\n 10# 0x00007f988c10f739 (_PyEval_EvalFrameDefault) in /share/Projekte/npvs/neuralgi/web-falcor/Falcor/build/linux-gcc/bin/Release/libpython3.10.so.1.0\n 11# 0x00007f988c27bf83 (PyEval_EvalCode) in /share/Projekte/npvs/neuralgi/web-falcor/Falcor/build/linux-gcc/bin/Release/libpython3.10.so.1.0\n 12# 0x00007f988c2cb6c7 (PyRun_StringFlags) in /share/Projekte/npvs/neuralgi/web-falcor/Falcor/build/linux-gcc/bin/Release/libpython3.10.so.1.0\n 13# 0x00007f988ce2df38 (Falcor::Scripting::runScript(std::basic_string_view<char, std::char_traits<char> >, Falcor::Scripting::Context&, bool)) in /share/Projekte/npvs/neuralgi/web-falcor/Falcor/build/linux-gcc/bin/Release/libFalcor.so\n 14# 0x00007f988ce2e54c (Falcor::Scripting::runScriptFromFile(std::filesystem::path const&, Falcor::Scripting::Context&, bool)) in /share/Projekte/npvs/neuralgi/web-falcor/Falcor/build/linux-gcc/bin/Release/libFalcor.so\n 15# 0x00000000004324ea () in /share/Projekte/npvs/neuralgi/web-falcor/Falcor/build/linux-gcc/bin/Release/Mogwai\n 16# 0x0000000000433eb8 () in /share/Projekte/npvs/neuralgi/web-falcor/Falcor/build/linux-gcc/bin/Release/Mogwai\n 17# 0x00007f988c98303c (Falcor::SampleApp::runInternal()) in /share/Projekte/npvs/neuralgi/web-falcor/Falcor/build/linux-gcc/bin/Release/libFalcor.so\n 18# 0x00007f988c983070 (Falcor::SampleApp::run()) in /share/Projekte/npvs/neuralgi/web-falcor/Falcor/build/linux-gcc/bin/Release/libFalcor.so\n 19# 0x0000000000438a61 () in /share/Projekte/npvs/neuralgi/web-falcor/Falcor/build/linux-gcc/bin/Release/Mogwai\n 20# 0x00000000004160bc () in /share/Projekte/npvs/neuralgi/web-falcor/Falcor/build/linux-gcc/bin/Release/Mogwai\n 21# 0x00007f9883a2a60f () in /lib64/libc.so.6\n 22# 0x00007f9883a2a6bf (__libc_start_main) in /lib64/libc.so.6\n 23# 0x00000000004169d4 () in /share/Projekte/npvs/neuralgi/web-falcor/Falcor/build/linux-gcc/bin/Release/Mogwai\n 24# 0xffffffffffffffff () in [0xffffffffffffffff]\n"
+  "error": "GBufferRaster requires rasterizer ordered views (ROVs) support.\n\n/share/Projekte/npvs/neuralgi/web-falcor/Falcor/Source/RenderPasses/GBuffer/GBuffer/GBufferRaster.cpp:66 (GBufferRaster)\n\nStacktrace:\n 0# 0x00007f054ceeb6fc (Falcor::throwException(fstd::source_location const&, std::basic_string_view<char, std::char_traits<char> >)) in /share/Projekte/npvs/neuralgi/web-falcor/Falcor/build/linux-gcc/bin/Release/libFalcor.so\n 1# 0x00007f051c0b33bb () in /share/Projekte/npvs/neuralgi/web-falcor/Falcor/build/linux-gcc/bin/Release/plugins/GBuffer.so\n 2# 0x00007f051c0ae97d () in /share/Projekte/npvs/neuralgi/web-falcor/Falcor/build/linux-gcc/bin/Release/plugins/GBuffer.so\n 3# 0x00007f051c0ae71a () in /share/Projekte/npvs/neuralgi/web-falcor/Falcor/build/linux-gcc/bin/Release/plugins/GBuffer.so\n 4# 0x00007f054d0445c4 (Falcor::RenderPass::create(std::basic_string_view<char, std::char_traits<char> >, Falcor::ref<Falcor::Device>, Falcor::Properties const&, Falcor::PluginManager&)) in /share/Projekte/npvs/neuralgi/web-falcor/Falcor/build/linux-gcc/bin/Release/libFalcor.so\n 5# 0x00007f054d01e7b5 () in /share/Projekte/npvs/neuralgi/web-falcor/Falcor/build/linux-gcc/bin/Release/libFalcor.so\n 6# 0x00007f054cecd18d () in /share/Projekte/npvs/neuralgi/web-falcor/Falcor/build/linux-gcc/bin/Release/libFalcor.so\n 7# 0x00007f054c7477f6 () in /share/Projekte/npvs/neuralgi/web-falcor/Falcor/build/linux-gcc/bin/Release/libpython3.10.so.1.0\n 8# 0x00007f054c6e7db9 (_PyObject_MakeTpCall) in /share/Projekte/npvs/neuralgi/web-falcor/Falcor/build/linux-gcc/bin/Release/libpython3.10.so.1.0\n 9# 0x00007f054c686bca () in /share/Projekte/npvs/neuralgi/web-falcor/Falcor/build/linux-gcc/bin/Release/libpython3.10.so.1.0\n 10# 0x00007f054c68b739 (_PyEval_EvalFrameDefault) in /share/Projekte/npvs/neuralgi/web-falcor/Falcor/build/linux-gcc/bin/Release/libpython3.10.so.1.0\n 11# 0x00007f054c7f7f83 (PyEval_EvalCode) in /share/Projekte/npvs/neuralgi/web-falcor/Falcor/build/linux-gcc/bin/Release/libpython3.10.so.1.0\n 12# 0x00007f054c8476c7 (PyRun_StringFlags) in /share/Projekte/npvs/neuralgi/web-falcor/Falcor/build/linux-gcc/bin/Release/libpython3.10.so.1.0\n 13# 0x00007f054d3a9f38 (Falcor::Scripting::runScript(std::basic_string_view<char, std::char_traits<char> >, Falcor::Scripting::Context&, bool)) in /share/Projekte/npvs/neuralgi/web-falcor/Falcor/build/linux-gcc/bin/Release/libFalcor.so\n 14# 0x00007f054d3aa54c (Falcor::Scripting::runScriptFromFile(std::filesystem::path const&, Falcor::Scripting::Context&, bool)) in /share/Projekte/npvs/neuralgi/web-falcor/Falcor/build/linux-gcc/bin/Release/libFalcor.so\n 15# 0x00000000004324ea () in /share/Projekte/npvs/neuralgi/web-falcor/Falcor/build/linux-gcc/bin/Release/Mogwai\n 16# 0x0000000000433eb8 () in /share/Projekte/npvs/neuralgi/web-falcor/Falcor/build/linux-gcc/bin/Release/Mogwai\n 17# 0x00007f054ceff03c (Falcor::SampleApp::runInternal()) in /share/Projekte/npvs/neuralgi/web-falcor/Falcor/build/linux-gcc/bin/Release/libFalcor.so\n 18# 0x00007f054ceff070 (Falcor::SampleApp::run()) in /share/Projekte/npvs/neuralgi/web-falcor/Falcor/build/linux-gcc/bin/Release/libFalcor.so\n 19# 0x0000000000438a61 () in /share/Projekte/npvs/neuralgi/web-falcor/Falcor/build/linux-gcc/bin/Release/Mogwai\n 20# 0x00000000004160bc () in /share/Projekte/npvs/neuralgi/web-falcor/Falcor/build/linux-gcc/bin/Release/Mogwai\n 21# 0x00007f054402a60f () in /lib64/libc.so.6\n 22# 0x00007f054402a6bf (__libc_start_main) in /lib64/libc.so.6\n 23# 0x00000000004169d4 () in /share/Projekte/npvs/neuralgi/web-falcor/Falcor/build/linux-gcc/bin/Release/Mogwai\n 24# 0xffffffffffffffff () in [0xffffffffffffffff]\n"
  },
  "GBufferRT": {
   "props": {},
@@ -162,7 +162,7 @@
  },
  "NRD": {
   "props": {},
-  "error": "Failed to load plugin library from /share/Projekte/npvs/neuralgi/web-falcor/Falcor/build/linux-gcc/bin/Release/plugins/NRD.so. File not found.\n\n/share/Projekte/npvs/neuralgi/web-falcor/Falcor/Source/Falcor/Core/Plugin.cpp:66 (loadPlugin)\n\nStacktrace:\n 0# 0x00007f988c96f6fc (Falcor::throwException(fstd::source_location const&, std::basic_string_view<char, std::char_traits<char> >)) in /share/Projekte/npvs/neuralgi/web-falcor/Falcor/build/linux-gcc/bin/Release/libFalcor.so\n 1# 0x00007f988c975ce2 () in /share/Projekte/npvs/neuralgi/web-falcor/Falcor/build/linux-gcc/bin/Release/libFalcor.so\n 2# 0x00007f988c973965 (Falcor::PluginManager::loadPlugin(std::filesystem::path const&)) in /share/Projekte/npvs/neuralgi/web-falcor/Falcor/build/linux-gcc/bin/Release/libFalcor.so\n 3# 0x00007f988c973e93 (Falcor::PluginManager::loadPluginByName(std::basic_string_view<char, std::char_traits<char> >)) in /share/Projekte/npvs/neuralgi/web-falcor/Falcor/build/linux-gcc/bin/Release/libFalcor.so\n 4# 0x00007f988cac82d1 (Falcor::RenderPass::create(std::basic_string_view<char, std::char_traits<char> >, Falcor::ref<Falcor::Device>, Falcor::Properties const&, Falcor::PluginManager&)) in /share/Projekte/npvs/neuralgi/web-falcor/Falcor/build/linux-gcc/bin/Release/libFalcor.so\n 5# 0x00007f988caa27b5 () in /share/Projekte/npvs/neuralgi/web-falcor/Falcor/build/linux-gcc/bin/Release/libFalcor.so\n 6# 0x00007f988c95118d () in /share/Projekte/npvs/neuralgi/web-falcor/Falcor/build/linux-gcc/bin/Release/libFalcor.so\n 7# 0x00007f988c1cb7f6 () in /share/Projekte/npvs/neuralgi/web-falcor/Falcor/build/linux-gcc/bin/Release/libpython3.10.so.1.0\n 8# 0x00007f988c16bdb9 (_PyObject_MakeTpCall) in /share/Projekte/npvs/neuralgi/web-falcor/Falcor/build/linux-gcc/bin/Release/libpython3.10.so.1.0\n 9# 0x00007f988c10abca () in /share/Projekte/npvs/neuralgi/web-falcor/Falcor/build/linux-gcc/bin/Release/libpython3.10.so.1.0\n 10# 0x00007f988c10f739 (_PyEval_EvalFrameDefault) in /share/Projekte/npvs/neuralgi/web-falcor/Falcor/build/linux-gcc/bin/Release/libpython3.10.so.1.0\n 11# 0x00007f988c27bf83 (PyEval_EvalCode) in /share/Projekte/npvs/neuralgi/web-falcor/Falcor/build/linux-gcc/bin/Release/libpython3.10.so.1.0\n 12# 0x00007f988c2cb6c7 (PyRun_StringFlags) in /share/Projekte/npvs/neuralgi/web-falcor/Falcor/build/linux-gcc/bin/Release/libpython3.10.so.1.0\n 13# 0x00007f988ce2df38 (Falcor::Scripting::runScript(std::basic_string_view<char, std::char_traits<char> >, Falcor::Scripting::Context&, bool)) in /share/Projekte/npvs/neuralgi/web-falcor/Falcor/build/linux-gcc/bin/Release/libFalcor.so\n 14# 0x00007f988ce2e54c (Falcor::Scripting::runScriptFromFile(std::filesystem::path const&, Falcor::Scripting::Context&, bool)) in /share/Projekte/npvs/neuralgi/web-falcor/Falcor/build/linux-gcc/bin/Release/libFalcor.so\n 15# 0x00000000004324ea () in /share/Projekte/npvs/neuralgi/web-falcor/Falcor/build/linux-gcc/bin/Release/Mogwai\n 16# 0x0000000000433eb8 () in /share/Projekte/npvs/neuralgi/web-falcor/Falcor/build/linux-gcc/bin/Release/Mogwai\n 17# 0x00007f988c98303c (Falcor::SampleApp::runInternal()) in /share/Projekte/npvs/neuralgi/web-falcor/Falcor/build/linux-gcc/bin/Release/libFalcor.so\n 18# 0x00007f988c983070 (Falcor::SampleApp::run()) in /share/Projekte/npvs/neuralgi/web-falcor/Falcor/build/linux-gcc/bin/Release/libFalcor.so\n 19# 0x0000000000438a61 () in /share/Projekte/npvs/neuralgi/web-falcor/Falcor/build/linux-gcc/bin/Release/Mogwai\n 20# 0x00000000004160bc () in /share/Projekte/npvs/neuralgi/web-falcor/Falcor/build/linux-gcc/bin/Release/Mogwai\n 21# 0x00007f9883a2a60f () in /lib64/libc.so.6\n 22# 0x00007f9883a2a6bf (__libc_start_main) in /lib64/libc.so.6\n 23# 0x00000000004169d4 () in /share/Projekte/npvs/neuralgi/web-falcor/Falcor/build/linux-gcc/bin/Release/Mogwai\n 24# 0xffffffffffffffff () in [0xffffffffffffffff]\n"
+  "error": "Failed to load plugin library from /share/Projekte/npvs/neuralgi/web-falcor/Falcor/build/linux-gcc/bin/Release/plugins/NRD.so. File not found.\n\n/share/Projekte/npvs/neuralgi/web-falcor/Falcor/Source/Falcor/Core/Plugin.cpp:66 (loadPlugin)\n\nStacktrace:\n 0# 0x00007f054ceeb6fc (Falcor::throwException(fstd::source_location const&, std::basic_string_view<char, std::char_traits<char> >)) in /share/Projekte/npvs/neuralgi/web-falcor/Falcor/build/linux-gcc/bin/Release/libFalcor.so\n 1# 0x00007f054cef1ce2 () in /share/Projekte/npvs/neuralgi/web-falcor/Falcor/build/linux-gcc/bin/Release/libFalcor.so\n 2# 0x00007f054ceef965 (Falcor::PluginManager::loadPlugin(std::filesystem::path const&)) in /share/Projekte/npvs/neuralgi/web-falcor/Falcor/build/linux-gcc/bin/Release/libFalcor.so\n 3# 0x00007f054ceefe93 (Falcor::PluginManager::loadPluginByName(std::basic_string_view<char, std::char_traits<char> >)) in /share/Projekte/npvs/neuralgi/web-falcor/Falcor/build/linux-gcc/bin/Release/libFalcor.so\n 4# 0x00007f054d0442d1 (Falcor::RenderPass::create(std::basic_string_view<char, std::char_traits<char> >, Falcor::ref<Falcor::Device>, Falcor::Properties const&, Falcor::PluginManager&)) in /share/Projekte/npvs/neuralgi/web-falcor/Falcor/build/linux-gcc/bin/Release/libFalcor.so\n 5# 0x00007f054d01e7b5 () in /share/Projekte/npvs/neuralgi/web-falcor/Falcor/build/linux-gcc/bin/Release/libFalcor.so\n 6# 0x00007f054cecd18d () in /share/Projekte/npvs/neuralgi/web-falcor/Falcor/build/linux-gcc/bin/Release/libFalcor.so\n 7# 0x00007f054c7477f6 () in /share/Projekte/npvs/neuralgi/web-falcor/Falcor/build/linux-gcc/bin/Release/libpython3.10.so.1.0\n 8# 0x00007f054c6e7db9 (_PyObject_MakeTpCall) in /share/Projekte/npvs/neuralgi/web-falcor/Falcor/build/linux-gcc/bin/Release/libpython3.10.so.1.0\n 9# 0x00007f054c686bca () in /share/Projekte/npvs/neuralgi/web-falcor/Falcor/build/linux-gcc/bin/Release/libpython3.10.so.1.0\n 10# 0x00007f054c68b739 (_PyEval_EvalFrameDefault) in /share/Projekte/npvs/neuralgi/web-falcor/Falcor/build/linux-gcc/bin/Release/libpython3.10.so.1.0\n 11# 0x00007f054c7f7f83 (PyEval_EvalCode) in /share/Projekte/npvs/neuralgi/web-falcor/Falcor/build/linux-gcc/bin/Release/libpython3.10.so.1.0\n 12# 0x00007f054c8476c7 (PyRun_StringFlags) in /share/Projekte/npvs/neuralgi/web-falcor/Falcor/build/linux-gcc/bin/Release/libpython3.10.so.1.0\n 13# 0x00007f054d3a9f38 (Falcor::Scripting::runScript(std::basic_string_view<char, std::char_traits<char> >, Falcor::Scripting::Context&, bool)) in /share/Projekte/npvs/neuralgi/web-falcor/Falcor/build/linux-gcc/bin/Release/libFalcor.so\n 14# 0x00007f054d3aa54c (Falcor::Scripting::runScriptFromFile(std::filesystem::path const&, Falcor::Scripting::Context&, bool)) in /share/Projekte/npvs/neuralgi/web-falcor/Falcor/build/linux-gcc/bin/Release/libFalcor.so\n 15# 0x00000000004324ea () in /share/Projekte/npvs/neuralgi/web-falcor/Falcor/build/linux-gcc/bin/Release/Mogwai\n 16# 0x0000000000433eb8 () in /share/Projekte/npvs/neuralgi/web-falcor/Falcor/build/linux-gcc/bin/Release/Mogwai\n 17# 0x00007f054ceff03c (Falcor::SampleApp::runInternal()) in /share/Projekte/npvs/neuralgi/web-falcor/Falcor/build/linux-gcc/bin/Release/libFalcor.so\n 18# 0x00007f054ceff070 (Falcor::SampleApp::run()) in /share/Projekte/npvs/neuralgi/web-falcor/Falcor/build/linux-gcc/bin/Release/libFalcor.so\n 19# 0x0000000000438a61 () in /share/Projekte/npvs/neuralgi/web-falcor/Falcor/build/linux-gcc/bin/Release/Mogwai\n 20# 0x00000000004160bc () in /share/Projekte/npvs/neuralgi/web-falcor/Falcor/build/linux-gcc/bin/Release/Mogwai\n 21# 0x00007f054402a60f () in /lib64/libc.so.6\n 22# 0x00007f054402a6bf (__libc_start_main) in /lib64/libc.so.6\n 23# 0x00000000004169d4 () in /share/Projekte/npvs/neuralgi/web-falcor/Falcor/build/linux-gcc/bin/Release/Mogwai\n 24# 0xffffffffffffffff () in [0xffffffffffffffff]\n"
  },
  "OverlaySamplePass": {
   "props": {},
@@ -395,7 +395,7 @@
  },
  "VBufferRaster": {
   "props": {},
-  "error": "VBufferRaster requires rasterizer ordered views (ROVs) support.\n\n/share/Projekte/npvs/neuralgi/web-falcor/Falcor/Source/RenderPasses/GBuffer/VBuffer/VBufferRaster.cpp:59 (VBufferRaster)\n\nStacktrace:\n 0# 0x00007f988c96f6fc (Falcor::throwException(fstd::source_location const&, std::basic_string_view<char, std::char_traits<char> >)) in /share/Projekte/npvs/neuralgi/web-falcor/Falcor/build/linux-gcc/bin/Release/libFalcor.so\n 1# 0x00007f985f069e8f () in /share/Projekte/npvs/neuralgi/web-falcor/Falcor/build/linux-gcc/bin/Release/plugins/GBuffer.so\n 2# 0x00007f985f05283d () in /share/Projekte/npvs/neuralgi/web-falcor/Falcor/build/linux-gcc/bin/Release/plugins/GBuffer.so\n 3# 0x00007f985f05263a () in /share/Projekte/npvs/neuralgi/web-falcor/Falcor/build/linux-gcc/bin/Release/plugins/GBuffer.so\n 4# 0x00007f988cac85c4 (Falcor::RenderPass::create(std::basic_string_view<char, std::char_traits<char> >, Falcor::ref<Falcor::Device>, Falcor::Properties const&, Falcor::PluginManager&)) in /share/Projekte/npvs/neuralgi/web-falcor/Falcor/build/linux-gcc/bin/Release/libFalcor.so\n 5# 0x00007f988caa27b5 () in /share/Projekte/npvs/neuralgi/web-falcor/Falcor/build/linux-gcc/bin/Release/libFalcor.so\n 6# 0x00007f988c95118d () in /share/Projekte/npvs/neuralgi/web-falcor/Falcor/build/linux-gcc/bin/Release/libFalcor.so\n 7# 0x00007f988c1cb7f6 () in /share/Projekte/npvs/neuralgi/web-falcor/Falcor/build/linux-gcc/bin/Release/libpython3.10.so.1.0\n 8# 0x00007f988c16bdb9 (_PyObject_MakeTpCall) in /share/Projekte/npvs/neuralgi/web-falcor/Falcor/build/linux-gcc/bin/Release/libpython3.10.so.1.0\n 9# 0x00007f988c10abca () in /share/Projekte/npvs/neuralgi/web-falcor/Falcor/build/linux-gcc/bin/Release/libpython3.10.so.1.0\n 10# 0x00007f988c10f739 (_PyEval_EvalFrameDefault) in /share/Projekte/npvs/neuralgi/web-falcor/Falcor/build/linux-gcc/bin/Release/libpython3.10.so.1.0\n 11# 0x00007f988c27bf83 (PyEval_EvalCode) in /share/Projekte/npvs/neuralgi/web-falcor/Falcor/build/linux-gcc/bin/Release/libpython3.10.so.1.0\n 12# 0x00007f988c2cb6c7 (PyRun_StringFlags) in /share/Projekte/npvs/neuralgi/web-falcor/Falcor/build/linux-gcc/bin/Release/libpython3.10.so.1.0\n 13# 0x00007f988ce2df38 (Falcor::Scripting::runScript(std::basic_string_view<char, std::char_traits<char> >, Falcor::Scripting::Context&, bool)) in /share/Projekte/npvs/neuralgi/web-falcor/Falcor/build/linux-gcc/bin/Release/libFalcor.so\n 14# 0x00007f988ce2e54c (Falcor::Scripting::runScriptFromFile(std::filesystem::path const&, Falcor::Scripting::Context&, bool)) in /share/Projekte/npvs/neuralgi/web-falcor/Falcor/build/linux-gcc/bin/Release/libFalcor.so\n 15# 0x00000000004324ea () in /share/Projekte/npvs/neuralgi/web-falcor/Falcor/build/linux-gcc/bin/Release/Mogwai\n 16# 0x0000000000433eb8 () in /share/Projekte/npvs/neuralgi/web-falcor/Falcor/build/linux-gcc/bin/Release/Mogwai\n 17# 0x00007f988c98303c (Falcor::SampleApp::runInternal()) in /share/Projekte/npvs/neuralgi/web-falcor/Falcor/build/linux-gcc/bin/Release/libFalcor.so\n 18# 0x00007f988c983070 (Falcor::SampleApp::run()) in /share/Projekte/npvs/neuralgi/web-falcor/Falcor/build/linux-gcc/bin/Release/libFalcor.so\n 19# 0x0000000000438a61 () in /share/Projekte/npvs/neuralgi/web-falcor/Falcor/build/linux-gcc/bin/Release/Mogwai\n 20# 0x00000000004160bc () in /share/Projekte/npvs/neuralgi/web-falcor/Falcor/build/linux-gcc/bin/Release/Mogwai\n 21# 0x00007f9883a2a60f () in /lib64/libc.so.6\n 22# 0x00007f9883a2a6bf (__libc_start_main) in /lib64/libc.so.6\n 23# 0x00000000004169d4 () in /share/Projekte/npvs/neuralgi/web-falcor/Falcor/build/linux-gcc/bin/Release/Mogwai\n 24# 0xffffffffffffffff () in [0xffffffffffffffff]\n"
+  "error": "VBufferRaster requires rasterizer ordered views (ROVs) support.\n\n/share/Projekte/npvs/neuralgi/web-falcor/Falcor/Source/RenderPasses/GBuffer/VBuffer/VBufferRaster.cpp:59 (VBufferRaster)\n\nStacktrace:\n 0# 0x00007f054ceeb6fc (Falcor::throwException(fstd::source_location const&, std::basic_string_view<char, std::char_traits<char> >)) in /share/Projekte/npvs/neuralgi/web-falcor/Falcor/build/linux-gcc/bin/Release/libFalcor.so\n 1# 0x00007f051c0c5e8f () in /share/Projekte/npvs/neuralgi/web-falcor/Falcor/build/linux-gcc/bin/Release/plugins/GBuffer.so\n 2# 0x00007f051c0ae83d () in /share/Projekte/npvs/neuralgi/web-falcor/Falcor/build/linux-gcc/bin/Release/plugins/GBuffer.so\n 3# 0x00007f051c0ae63a () in /share/Projekte/npvs/neuralgi/web-falcor/Falcor/build/linux-gcc/bin/Release/plugins/GBuffer.so\n 4# 0x00007f054d0445c4 (Falcor::RenderPass::create(std::basic_string_view<char, std::char_traits<char> >, Falcor::ref<Falcor::Device>, Falcor::Properties const&, Falcor::PluginManager&)) in /share/Projekte/npvs/neuralgi/web-falcor/Falcor/build/linux-gcc/bin/Release/libFalcor.so\n 5# 0x00007f054d01e7b5 () in /share/Projekte/npvs/neuralgi/web-falcor/Falcor/build/linux-gcc/bin/Release/libFalcor.so\n 6# 0x00007f054cecd18d () in /share/Projekte/npvs/neuralgi/web-falcor/Falcor/build/linux-gcc/bin/Release/libFalcor.so\n 7# 0x00007f054c7477f6 () in /share/Projekte/npvs/neuralgi/web-falcor/Falcor/build/linux-gcc/bin/Release/libpython3.10.so.1.0\n 8# 0x00007f054c6e7db9 (_PyObject_MakeTpCall) in /share/Projekte/npvs/neuralgi/web-falcor/Falcor/build/linux-gcc/bin/Release/libpython3.10.so.1.0\n 9# 0x00007f054c686bca () in /share/Projekte/npvs/neuralgi/web-falcor/Falcor/build/linux-gcc/bin/Release/libpython3.10.so.1.0\n 10# 0x00007f054c68b739 (_PyEval_EvalFrameDefault) in /share/Projekte/npvs/neuralgi/web-falcor/Falcor/build/linux-gcc/bin/Release/libpython3.10.so.1.0\n 11# 0x00007f054c7f7f83 (PyEval_EvalCode) in /share/Projekte/npvs/neuralgi/web-falcor/Falcor/build/linux-gcc/bin/Release/libpython3.10.so.1.0\n 12# 0x00007f054c8476c7 (PyRun_StringFlags) in /share/Projekte/npvs/neuralgi/web-falcor/Falcor/build/linux-gcc/bin/Release/libpython3.10.so.1.0\n 13# 0x00007f054d3a9f38 (Falcor::Scripting::runScript(std::basic_string_view<char, std::char_traits<char> >, Falcor::Scripting::Context&, bool)) in /share/Projekte/npvs/neuralgi/web-falcor/Falcor/build/linux-gcc/bin/Release/libFalcor.so\n 14# 0x00007f054d3aa54c (Falcor::Scripting::runScriptFromFile(std::filesystem::path const&, Falcor::Scripting::Context&, bool)) in /share/Projekte/npvs/neuralgi/web-falcor/Falcor/build/linux-gcc/bin/Release/libFalcor.so\n 15# 0x00000000004324ea () in /share/Projekte/npvs/neuralgi/web-falcor/Falcor/build/linux-gcc/bin/Release/Mogwai\n 16# 0x0000000000433eb8 () in /share/Projekte/npvs/neuralgi/web-falcor/Falcor/build/linux-gcc/bin/Release/Mogwai\n 17# 0x00007f054ceff03c (Falcor::SampleApp::runInternal()) in /share/Projekte/npvs/neuralgi/web-falcor/Falcor/build/linux-gcc/bin/Release/libFalcor.so\n 18# 0x00007f054ceff070 (Falcor::SampleApp::run()) in /share/Projekte/npvs/neuralgi/web-falcor/Falcor/build/linux-gcc/bin/Release/libFalcor.so\n 19# 0x0000000000438a61 () in /share/Projekte/npvs/neuralgi/web-falcor/Falcor/build/linux-gcc/bin/Release/Mogwai\n 20# 0x00000000004160bc () in /share/Projekte/npvs/neuralgi/web-falcor/Falcor/build/linux-gcc/bin/Release/Mogwai\n 21# 0x00007f054402a60f () in /lib64/libc.so.6\n 22# 0x00007f054402a6bf (__libc_start_main) in /lib64/libc.so.6\n 23# 0x00000000004169d4 () in /share/Projekte/npvs/neuralgi/web-falcor/Falcor/build/linux-gcc/bin/Release/Mogwai\n 24# 0xffffffffffffffff () in [0xffffffffffffffff]\n"
  },
  "VBufferRT": {
   "props": {},
@@ -528,6 +528,734 @@
     32
    ],
    "colorFormat": "RGBA32F"
+  }
+ },
+ "AccumulatePass#perturbed": {
+  "props": {
+   "enabled": false,
+   "outputSize": "Default",
+   "autoReset": false,
+   "precisionMode": "Single",
+   "maxFrameCount": 1,
+   "overflowMode": "Stop"
+  },
+  "dict": {
+   "enabled": false,
+   "outputSize": "Default",
+   "autoReset": false,
+   "precisionMode": "Single",
+   "maxFrameCount": 1,
+   "overflowMode": "Stop"
+  }
+ },
+ "BlitPass#perturbed": {
+  "props": {
+   "filter": "Linear"
+  },
+  "dict": {
+   "filter": "Linear"
+  }
+ },
+ "BSDFOptimizer#perturbed": {
+  "props": {
+   "initMaterialID": 1,
+   "refMaterialID": 2
+  },
+  "dict": {
+   "initMaterialID": 1,
+   "refMaterialID": 2
+  }
+ },
+ "BSDFViewer#perturbed": {
+  "props": {
+   "materialID": 1,
+   "viewerMode": "Material",
+   "useEnvMap": false
+  },
+  "dict": {
+   "materialID": 1,
+   "viewerMode": "Material",
+   "useEnvMap": false
+  }
+ },
+ "ColorMapPass#perturbed": {
+  "props": {
+   "colorMap": "Jet",
+   "channel": 1,
+   "autoRange": false,
+   "minValue": 0.25,
+   "maxValue": 0.75
+  },
+  "dict": {
+   "colorMap": "Jet",
+   "channel": 1,
+   "autoRange": false,
+   "minValue": 0.25,
+   "maxValue": 0.75
+  }
+ },
+ "Composite#perturbed": {
+  "props": {
+   "mode": "Add",
+   "scaleA": 0.75,
+   "scaleB": 0.75,
+   "outputFormat": "RGBA32Float"
+  },
+  "dict": {
+   "mode": "Add",
+   "scaleA": 0.75,
+   "scaleB": 0.75,
+   "outputFormat": "RGBA32Float"
+  }
+ },
+ "CrossFade#perturbed": {
+  "props": {
+   "outputFormat": "RGBA32Float",
+   "enableAutoFade": false,
+   "waitFrameCount": 11,
+   "fadeFrameCount": 101,
+   "fadeFactor": 0.5
+  },
+  "dict": {
+   "outputFormat": "RGBA32Float",
+   "enableAutoFade": false,
+   "waitFrameCount": 11,
+   "fadeFrameCount": 101,
+   "fadeFactor": 0.5
+  }
+ },
+ "ErrorMeasurePass#perturbed": {
+  "props": {
+   "ReferenceImagePath": "",
+   "MeasurementsFilePath": "",
+   "IgnoreBackground": false,
+   "ComputeSquaredDifference": false,
+   "ComputeAverage": true,
+   "UseLoadedReference": true,
+   "ReportRunningError": false,
+   "RunningErrorSigma": 0.7475000023841858,
+   "SelectedOutputId": "Source"
+  },
+  "dict": {
+   "ReferenceImagePath": "",
+   "MeasurementsFilePath": "",
+   "IgnoreBackground": false,
+   "ComputeSquaredDifference": false,
+   "ComputeAverage": true,
+   "UseLoadedReference": true,
+   "ReportRunningError": false,
+   "RunningErrorSigma": 0.7475000023841858,
+   "SelectedOutputId": "Source"
+  }
+ },
+ "FLIPPass#perturbed": {
+  "props": {
+   "enabled": false,
+   "useMagma": false,
+   "clampInput": true,
+   "isHDR": true,
+   "toneMapper": "ACES",
+   "useCustomExposureParameters": true,
+   "startExposure": 0.25,
+   "stopExposure": 0.25,
+   "numExposures": 3,
+   "monitorWidthPixels": 3841,
+   "monitorWidthMeters": 0.5999999940395355,
+   "monitorDistanceMeters": 0.5999999940395355,
+   "computePooledFLIPValues": true,
+   "useRealMonitorInfo": true
+  },
+  "dict": {
+   "enabled": false,
+   "useMagma": false,
+   "clampInput": true,
+   "isHDR": true,
+   "toneMapper": "ACES",
+   "useCustomExposureParameters": true,
+   "startExposure": 0.25,
+   "stopExposure": 0.25,
+   "numExposures": 3,
+   "monitorWidthPixels": 3840,
+   "monitorWidthMeters": 0.699999988079071,
+   "monitorDistanceMeters": 0.699999988079071,
+   "computePooledFLIPValues": true,
+   "useRealMonitorInfo": true
+  }
+ },
+ "GaussianBlur#perturbed": {
+  "props": {
+   "kernelWidth": 6,
+   "sigma": 1.25
+  },
+  "dict": {
+   "kernelWidth": 6,
+   "sigma": 1.25
+  }
+ },
+ "GBufferRT#perturbed": {
+  "props": {
+   "outputSize": "Default",
+   "samplePattern": "Center",
+   "sampleCount": 17,
+   "useAlphaTest": false,
+   "adjustShadingNormals": false,
+   "forceCullMode": true,
+   "cull": "Back",
+   "texLOD": "Mip0",
+   "useTraceRayInline": true,
+   "useDOF": false
+  },
+  "dict": {
+   "outputSize": "Default",
+   "samplePattern": "Center",
+   "sampleCount": 17,
+   "useAlphaTest": false,
+   "adjustShadingNormals": false,
+   "forceCullMode": true,
+   "cull": "Back",
+   "texLOD": "Mip0",
+   "useTraceRayInline": true,
+   "useDOF": false
+  }
+ },
+ "ImageLoader#perturbed": {
+  "props": {
+   "outputSize": "Default",
+   "filename": "",
+   "mips": true,
+   "srgb": false,
+   "arrayIndex": 1,
+   "mipLevel": 1
+  },
+  "dict": {
+   "outputSize": "Default",
+   "filename": "",
+   "mips": true,
+   "srgb": false,
+   "arrayIndex": 1,
+   "mipLevel": 1
+  }
+ },
+ "InvalidPixelDetectionPass#perturbed": {
+  "props": {},
+  "dict": {}
+ },
+ "MinimalPathTracer#perturbed": {
+  "props": {
+   "maxBounces": 4,
+   "computeDirect": false,
+   "useImportanceSampling": false
+  },
+  "dict": {
+   "maxBounces": 4,
+   "computeDirect": false,
+   "useImportanceSampling": false
+  }
+ },
+ "ModulateIllumination#perturbed": {
+  "props": {
+   "useEmission": false,
+   "useDiffuseReflectance": false,
+   "useDiffuseRadiance": false,
+   "useSpecularReflectance": false,
+   "useSpecularRadiance": false,
+   "useDeltaReflectionEmission": false,
+   "useDeltaReflectionReflectance": false,
+   "useDeltaReflectionRadiance": false,
+   "useDeltaTransmissionEmission": false,
+   "useDeltaTransmissionReflectance": false,
+   "useDeltaTransmissionRadiance": false,
+   "useResidualRadiance": false,
+   "outputSize": "Default"
+  },
+  "dict": {
+   "useEmission": false,
+   "useDiffuseReflectance": false,
+   "useDiffuseRadiance": false,
+   "useSpecularReflectance": false,
+   "useSpecularRadiance": false,
+   "useDeltaReflectionEmission": false,
+   "useDeltaReflectionReflectance": false,
+   "useDeltaReflectionRadiance": false,
+   "useDeltaTransmissionEmission": false,
+   "useDeltaTransmissionReflectance": false,
+   "useDeltaTransmissionRadiance": false,
+   "useResidualRadiance": false,
+   "outputSize": "Default"
+  }
+ },
+ "OverlaySamplePass#perturbed": {
+  "props": {},
+  "dict": {}
+ },
+ "PathTracer#perturbed": {
+  "props": {
+   "samplesPerPixel": 2,
+   "maxSurfaceBounces": 11,
+   "maxDiffuseBounces": 4,
+   "maxSpecularBounces": 4,
+   "maxTransmissionBounces": 11,
+   "sampleGenerator": 1,
+   "useBSDFSampling": false,
+   "useRussianRoulette": true,
+   "useNEE": false,
+   "useMIS": false,
+   "misHeuristic": "Balance",
+   "misPowerExponent": 1.25,
+   "emissiveSampler": "LightBVH",
+   "lightBVHOptions": {
+    "buildOptions": {
+     "splitHeuristicSelection": "BinnedSAOH",
+     "maxTriangleCountPerLeaf": 11,
+     "binCount": 17,
+     "volumeEpsilon": 0.2505000000237487,
+     "splitAlongLargest": true,
+     "useVolumeOverSA": true,
+     "useLeafCreationCost": false,
+     "createLeavesASAP": false,
+     "allowRefitting": false,
+     "usePreintegration": false,
+     "useLightingCones": false
+    },
+    "useBoundingCone": false,
+    "useLightingCone": false,
+    "disableNodeFlux": true,
+    "useUniformTriangleSampling": false,
+    "solidAngleBoundMethod": "Sphere"
+   },
+   "useRTXDI": true,
+   "RTXDIOptions": {
+    "mode": "SpatiotemporalResampling",
+    "presampledTileCount": 129,
+    "presampledTileSize": 1025,
+    "storeCompactLightInfo": false,
+    "localLightCandidateCount": 25,
+    "infiniteLightCandidateCount": 9,
+    "envLightCandidateCount": 9,
+    "brdfCandidateCount": 2,
+    "brdfCutoff": 0.25,
+    "testCandidateVisibility": false,
+    "biasCorrection": "Basic",
+    "depthThreshold": 0.30000000074505806,
+    "normalThreshold": 0.5,
+    "samplingRadius": 15.25,
+    "spatialSampleCount": 2,
+    "spatialIterations": 6,
+    "maxHistoryLength": 21,
+    "boilingFilterStrength": 0.25,
+    "rayEpsilon": 0.2505000000237487,
+    "useEmissiveTextures": true,
+    "enableVisibilityShortcut": true,
+    "enablePermutationSampling": true
+   },
+   "useAlphaTest": false,
+   "adjustShadingNormals": true,
+   "maxNestedMaterials": 3,
+   "useLightsInDielectricVolumes": true,
+   "disableCaustics": true,
+   "specularRoughnessThreshold": 0.375,
+   "primaryLodMode": "Mip0",
+   "lodBias": 0.25,
+   "useNRDDemodulation": false,
+   "useSER": false,
+   "outputSize": "Default",
+   "colorFormat": "LogLuvHDR"
+  },
+  "dict": {
+   "samplesPerPixel": 2,
+   "maxSurfaceBounces": 11,
+   "maxDiffuseBounces": 4,
+   "maxSpecularBounces": 4,
+   "maxTransmissionBounces": 11,
+   "sampleGenerator": 1,
+   "useBSDFSampling": false,
+   "useRussianRoulette": true,
+   "useNEE": false,
+   "useMIS": false,
+   "misHeuristic": "Balance",
+   "misPowerExponent": 1.25,
+   "emissiveSampler": "LightBVH",
+   "lightBVHOptions": {
+    "buildOptions": {
+     "splitHeuristicSelection": "BinnedSAOH",
+     "maxTriangleCountPerLeaf": 11,
+     "binCount": 17,
+     "volumeEpsilon": 0.25049999356269836,
+     "splitAlongLargest": true,
+     "useVolumeOverSA": true,
+     "useLeafCreationCost": false,
+     "createLeavesASAP": false,
+     "allowRefitting": false,
+     "usePreintegration": false,
+     "useLightingCones": false
+    },
+    "useBoundingCone": false,
+    "useLightingCone": false,
+    "disableNodeFlux": true,
+    "useUniformTriangleSampling": false,
+    "solidAngleBoundMethod": "Sphere"
+   },
+   "useRTXDI": true,
+   "RTXDIOptions": {
+    "mode": "SpatiotemporalResampling",
+    "presampledTileCount": 129,
+    "presampledTileSize": 1025,
+    "storeCompactLightInfo": false,
+    "localLightCandidateCount": 25,
+    "infiniteLightCandidateCount": 9,
+    "envLightCandidateCount": 9,
+    "brdfCandidateCount": 2,
+    "brdfCutoff": 0.25,
+    "testCandidateVisibility": false,
+    "biasCorrection": "Basic",
+    "depthThreshold": 0.30000001192092896,
+    "normalThreshold": 0.5,
+    "samplingRadius": 15.25,
+    "spatialSampleCount": 2,
+    "spatialIterations": 6,
+    "maxHistoryLength": 21,
+    "boilingFilterStrength": 0.25,
+    "rayEpsilon": 0.25049999356269836,
+    "useEmissiveTextures": true,
+    "enableVisibilityShortcut": true,
+    "enablePermutationSampling": true
+   },
+   "useAlphaTest": false,
+   "adjustShadingNormals": true,
+   "maxNestedMaterials": 3,
+   "useLightsInDielectricVolumes": true,
+   "disableCaustics": true,
+   "specularRoughnessThreshold": 0.375,
+   "primaryLodMode": "Mip0",
+   "lodBias": 0.25,
+   "useNRDDemodulation": false,
+   "useSER": false,
+   "outputSize": "Default",
+   "colorFormat": "LogLuvHDR"
+  }
+ },
+ "PixelInspectorPass#perturbed": {
+  "props": {},
+  "dict": {}
+ },
+ "RenderPassTemplate#perturbed": {
+  "props": {},
+  "dict": {}
+ },
+ "RTXDIPass#perturbed": {
+  "props": {
+   "options": {
+    "mode": "SpatiotemporalResampling",
+    "presampledTileCount": 129,
+    "presampledTileSize": 1025,
+    "storeCompactLightInfo": false,
+    "localLightCandidateCount": 25,
+    "infiniteLightCandidateCount": 9,
+    "envLightCandidateCount": 9,
+    "brdfCandidateCount": 2,
+    "brdfCutoff": 0.25,
+    "testCandidateVisibility": false,
+    "biasCorrection": "Basic",
+    "depthThreshold": 0.30000000074505806,
+    "normalThreshold": 0.5,
+    "samplingRadius": 15.25,
+    "spatialSampleCount": 2,
+    "spatialIterations": 6,
+    "maxHistoryLength": 21,
+    "boilingFilterStrength": 0.25,
+    "rayEpsilon": 0.2505000000237487,
+    "useEmissiveTextures": true,
+    "enableVisibilityShortcut": true,
+    "enablePermutationSampling": true
+   }
+  },
+  "dict": {
+   "options": {
+    "mode": "SpatiotemporalResampling",
+    "presampledTileCount": 129,
+    "presampledTileSize": 1025,
+    "storeCompactLightInfo": false,
+    "localLightCandidateCount": 25,
+    "infiniteLightCandidateCount": 9,
+    "envLightCandidateCount": 9,
+    "brdfCandidateCount": 2,
+    "brdfCutoff": 0.25,
+    "testCandidateVisibility": false,
+    "biasCorrection": "Basic",
+    "depthThreshold": 0.30000001192092896,
+    "normalThreshold": 0.5,
+    "samplingRadius": 15.25,
+    "spatialSampleCount": 2,
+    "spatialIterations": 6,
+    "maxHistoryLength": 21,
+    "boilingFilterStrength": 0.25,
+    "rayEpsilon": 0.25049999356269836,
+    "useEmissiveTextures": true,
+    "enableVisibilityShortcut": true,
+    "enablePermutationSampling": true
+   }
+  }
+ },
+ "SceneDebugger#perturbed": {
+  "props": {
+   "mode": "FaceNormal",
+   "showVolumes": 2,
+   "useVBuffer": 1
+  },
+  "error": "Property 'useVBuffer' is not a boolean.\n\n/share/Projekte/npvs/neuralgi/web-falcor/Falcor/Source/Falcor/Utils/Properties.cpp:95 (valueFromJson<bool>)\n\nStacktrace:\n 0# 0x00007f054ceeb6fc (Falcor::throwException(fstd::source_location const&, std::basic_string_view<char, std::char_traits<char> >)) in /share/Projekte/npvs/neuralgi/web-falcor/Falcor/build/linux-gcc/bin/Release/libFalcor.so\n 1# 0x00007f054d3234cb () in /share/Projekte/npvs/neuralgi/web-falcor/Falcor/build/linux-gcc/bin/Release/libFalcor.so\n 2# 0x00007f054d32787c (bool Falcor::Properties::getInternal<bool>(std::basic_string_view<char, std::char_traits<char> >, bool&) const) in /share/Projekte/npvs/neuralgi/web-falcor/Falcor/build/linux-gcc/bin/Release/libFalcor.so\n 3# 0x00007f0517fb2730 () in /share/Projekte/npvs/neuralgi/web-falcor/Falcor/build/linux-gcc/bin/Release/plugins/SceneDebugger.so\n 4# 0x00007f0517fc291d () in /share/Projekte/npvs/neuralgi/web-falcor/Falcor/build/linux-gcc/bin/Release/plugins/SceneDebugger.so\n 5# 0x00007f0517fba6ba () in /share/Projekte/npvs/neuralgi/web-falcor/Falcor/build/linux-gcc/bin/Release/plugins/SceneDebugger.so\n 6# 0x00007f054d0445c4 (Falcor::RenderPass::create(std::basic_string_view<char, std::char_traits<char> >, Falcor::ref<Falcor::Device>, Falcor::Properties const&, Falcor::PluginManager&)) in /share/Projekte/npvs/neuralgi/web-falcor/Falcor/build/linux-gcc/bin/Release/libFalcor.so\n 7# 0x00007f054d01e7b5 () in /share/Projekte/npvs/neuralgi/web-falcor/Falcor/build/linux-gcc/bin/Release/libFalcor.so\n 8# 0x00007f054cecd18d () in /share/Projekte/npvs/neuralgi/web-falcor/Falcor/build/linux-gcc/bin/Release/libFalcor.so\n 9# 0x00007f054c7477f6 () in /share/Projekte/npvs/neuralgi/web-falcor/Falcor/build/linux-gcc/bin/Release/libpython3.10.so.1.0\n 10# 0x00007f054c6e7db9 (_PyObject_MakeTpCall) in /share/Projekte/npvs/neuralgi/web-falcor/Falcor/build/linux-gcc/bin/Release/libpython3.10.so.1.0\n 11# 0x00007f054c686bca () in /share/Projekte/npvs/neuralgi/web-falcor/Falcor/build/linux-gcc/bin/Release/libpython3.10.so.1.0\n 12# 0x00007f054c68b739 (_PyEval_EvalFrameDefault) in /share/Projekte/npvs/neuralgi/web-falcor/Falcor/build/linux-gcc/bin/Release/libpython3.10.so.1.0\n 13# 0x00007f054c7f7f83 (PyEval_EvalCode) in /share/Projekte/npvs/neuralgi/web-falcor/Falcor/build/linux-gcc/bin/Release/libpython3.10.so.1.0\n 14# 0x00007f054c8476c7 (PyRun_StringFlags) in /share/Projekte/npvs/neuralgi/web-falcor/Falcor/build/linux-gcc/bin/Release/libpython3.10.so.1.0\n 15# 0x00007f054d3a9f38 (Falcor::Scripting::runScript(std::basic_string_view<char, std::char_traits<char> >, Falcor::Scripting::Context&, bool)) in /share/Projekte/npvs/neuralgi/web-falcor/Falcor/build/linux-gcc/bin/Release/libFalcor.so\n 16# 0x00007f054d3aa54c (Falcor::Scripting::runScriptFromFile(std::filesystem::path const&, Falcor::Scripting::Context&, bool)) in /share/Projekte/npvs/neuralgi/web-falcor/Falcor/build/linux-gcc/bin/Release/libFalcor.so\n 17# 0x00000000004324ea () in /share/Projekte/npvs/neuralgi/web-falcor/Falcor/build/linux-gcc/bin/Release/Mogwai\n 18# 0x0000000000433eb8 () in /share/Projekte/npvs/neuralgi/web-falcor/Falcor/build/linux-gcc/bin/Release/Mogwai\n 19# 0x00007f054ceff03c (Falcor::SampleApp::runInternal()) in /share/Projekte/npvs/neuralgi/web-falcor/Falcor/build/linux-gcc/bin/Release/libFalcor.so\n 20# 0x00007f054ceff070 (Falcor::SampleApp::run()) in /share/Projekte/npvs/neuralgi/web-falcor/Falcor/build/linux-gcc/bin/Release/libFalcor.so\n 21# 0x0000000000438a61 () in /share/Projekte/npvs/neuralgi/web-falcor/Falcor/build/linux-gcc/bin/Release/Mogwai\n 22# 0x00000000004160bc () in /share/Projekte/npvs/neuralgi/web-falcor/Falcor/build/linux-gcc/bin/Release/Mogwai\n 23# 0x00007f054402a60f () in /lib64/libc.so.6\n 24# 0x00007f054402a6bf (__libc_start_main) in /lib64/libc.so.6\n 25# 0x00000000004169d4 () in /share/Projekte/npvs/neuralgi/web-falcor/Falcor/build/linux-gcc/bin/Release/Mogwai\n 26# 0xffffffffffffffff () in [0xffffffffffffffff]\n"
+ },
+ "SDFEditor#perturbed": {
+  "props": {},
+  "dict": {}
+ },
+ "SideBySidePass#perturbed": {
+  "props": {
+   "splitLocation": -0.25,
+   "showTextLabels": true,
+   "leftLabel": "Left side",
+   "rightLabel": "Right side"
+  },
+  "dict": {
+   "splitLocation": -0.25,
+   "showTextLabels": true,
+   "leftLabel": "Left side",
+   "rightLabel": "Right side"
+  }
+ },
+ "SimplePostFX#perturbed": {
+  "props": {
+   "enabled": false,
+   "outputSize": "Default",
+   "wipe": 0.25,
+   "bloomAmount": 0.25,
+   "starAmount": 0.25,
+   "starAngle": 0.30000000074505806,
+   "vignetteAmount": 0.25,
+   "chromaticAberrationAmount": 0.25,
+   "barrelDistortAmount": 0.25,
+   "saturationCurve": [
+    1.0,
+    1.0,
+    1.0
+   ],
+   "colorOffset": [
+    0.5,
+    0.5,
+    0.5
+   ],
+   "colorScale": [
+    0.5,
+    0.5,
+    0.5
+   ],
+   "colorPower": [
+    0.5,
+    0.5,
+    0.5
+   ],
+   "colorOffsetScalar": 0.25,
+   "colorScaleScalar": 0.25,
+   "colorPowerScalar": 0.25
+  },
+  "dict": {
+   "enabled": false,
+   "outputSize": "Default",
+   "wipe": 0.25,
+   "bloomAmount": 0.25,
+   "starAmount": 0.25,
+   "starAngle": 0.30000001192092896,
+   "vignetteAmount": 0.25,
+   "chromaticAberrationAmount": 0.25,
+   "barrelDistortAmount": 0.25,
+   "saturationCurve": [
+    1.0,
+    1.0,
+    1.0
+   ],
+   "colorOffset": [
+    0.5,
+    0.5,
+    0.5
+   ],
+   "colorScale": [
+    0.5,
+    0.5,
+    0.5
+   ],
+   "colorPower": [
+    0.5,
+    0.5,
+    0.5
+   ],
+   "colorOffsetScalar": 0.25,
+   "colorScaleScalar": 0.25,
+   "colorPowerScalar": 0.25
+  }
+ },
+ "SplitScreenPass#perturbed": {
+  "props": {
+   "splitLocation": -0.25,
+   "showTextLabels": true,
+   "leftLabel": "Left side",
+   "rightLabel": "Right side"
+  },
+  "dict": {
+   "splitLocation": -0.25,
+   "showTextLabels": true,
+   "leftLabel": "Left side",
+   "rightLabel": "Right side"
+  }
+ },
+ "SVGFPass#perturbed": {
+  "props": {
+   "Enabled": false,
+   "Iterations": 5,
+   "FeedbackTap": 2,
+   "VarianceEpsilon": 0.2500499999987369,
+   "PhiColor": 5.25,
+   "PhiNormal": 64.25,
+   "Alpha": 0.27500000037252903,
+   "MomentsAlpha": 0.3500000014901161
+  },
+  "dict": {
+   "Enabled": false,
+   "Iterations": 5,
+   "FeedbackTap": 2,
+   "VarianceEpsilon": 0.25005000829696655,
+   "PhiColor": 5.25,
+   "PhiNormal": 64.25,
+   "Alpha": 0.2750000059604645,
+   "MomentsAlpha": 0.3499999940395355
+  }
+ },
+ "TAA#perturbed": {
+  "props": {
+   "alpha": 0.30000000074505806,
+   "colorBoxSigma": 0.75,
+   "antiFlicker": false
+  },
+  "dict": {
+   "alpha": 0.30000001192092896,
+   "colorBoxSigma": 0.75,
+   "antiFlicker": false
+  }
+ },
+ "TestRtProgram#perturbed": {
+  "props": {
+   "mode": 1
+  },
+  "dict": {
+   "mode": 1
+  }
+ },
+ "ToneMapper#perturbed": {
+  "props": {
+   "outputSize": "Default",
+   "useSceneMetadata": false,
+   "exposureCompensation": 0.25,
+   "autoExposure": true,
+   "filmSpeed": 50.25,
+   "whiteBalance": true,
+   "whitePoint": 3250.25,
+   "operator": "Aces",
+   "clamp": false,
+   "whiteMaxLuminance": 0.75,
+   "whiteScale": 5.849999904632568,
+   "fNumber": 0.75,
+   "shutter": 0.75,
+   "exposureMode": "AperturePriority"
+  },
+  "dict": {
+   "outputSize": "Default",
+   "useSceneMetadata": false,
+   "exposureCompensation": 0.25,
+   "autoExposure": true,
+   "filmSpeed": 50.25,
+   "whiteBalance": true,
+   "whitePoint": 3250.25,
+   "operator": "Aces",
+   "clamp": false,
+   "whiteMaxLuminance": 0.75,
+   "whiteScale": 5.849999904632568,
+   "fNumber": 0.75,
+   "shutter": 0.75,
+   "exposureMode": "AperturePriority"
+  }
+ },
+ "VBufferRT#perturbed": {
+  "props": {
+   "outputSize": "Default",
+   "samplePattern": "Center",
+   "sampleCount": 17,
+   "useAlphaTest": false,
+   "adjustShadingNormals": false,
+   "forceCullMode": true,
+   "cull": "Back",
+   "useTraceRayInline": true,
+   "useDOF": false
+  },
+  "dict": {
+   "outputSize": "Default",
+   "samplePattern": "Center",
+   "sampleCount": 17,
+   "useAlphaTest": false,
+   "adjustShadingNormals": false,
+   "forceCullMode": true,
+   "cull": "Back",
+   "useTraceRayInline": true,
+   "useDOF": false
+  }
+ },
+ "WARDiffPathTracer#perturbed": {
+  "props": {
+   "samplesPerPixel": 2,
+   "maxBounces": 1,
+   "diffMode": "ForwardDiffDebug",
+   "diffVarName": "",
+   "sampleGenerator": 1,
+   "useBSDFSampling": false,
+   "useNEE": false,
+   "useMIS": false,
+   "useWAR": false,
+   "auxSampleCount": 17,
+   "Log10vMFConcentration": 2.75,
+   "Log10vMFConcentrationScreen": 2.75,
+   "boundaryTermBeta": 0.2549999998882413,
+   "useAntitheticSampling": false
+  },
+  "dict": {
+   "samplesPerPixel": 2,
+   "maxBounces": 1,
+   "diffMode": "ForwardDiffDebug",
+   "diffVarName": "",
+   "sampleGenerator": 1,
+   "useBSDFSampling": false,
+   "useNEE": false,
+   "useMIS": false,
+   "useWAR": false,
+   "auxSampleCount": 17,
+   "Log10vMFConcentration": 2.75,
+   "Log10vMFConcentrationScreen": 2.75,
+   "boundaryTermBeta": 0.2549999952316284,
+   "useAntitheticSampling": false
+  }
+ },
+ "WhittedRayTracer#perturbed": {
+  "props": {
+   "maxBounces": 4,
+   "texLODMode": "Mip0",
+   "rayConeMode": "Combo",
+   "rayConeFilterMode": "Isotropic",
+   "rayDiffFilterMode": "Isotropic",
+   "useRoughnessToVariance": true
+  },
+  "dict": {
+   "maxBounces": 4,
+   "texLODMode": "Mip0",
+   "rayConeMode": "Combo",
+   "rayConeFilterMode": "Isotropic",
+   "rayDiffFilterMode": "Isotropic",
+   "useRoughnessToVariance": true
   }
  }
 }

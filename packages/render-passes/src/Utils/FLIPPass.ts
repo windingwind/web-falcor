@@ -108,6 +108,10 @@ export class FLIPPass extends RenderPass {
         this.monitorDistanceMeters = props.get("monitorDistanceMeters", 0.7);
         this.computePooledFLIPValues = props.get("computePooledFLIPValues", false);
         this.useRealMonitorInfo = props.get("useRealMonitorInfo", false);
+        // Native quirk: the constructor resets the monitor defaults after parsing, so the dictionary's monitor values are dropped.
+        this.monitorWidthPixels = 3840;
+        this.monitorWidthMeters = 0.7;
+        this.monitorDistanceMeters = 0.7;
         // Native reads the first monitor's resolution and physical size; the browser only knows the pixels.
         if (this.useRealMonitorInfo && typeof screen !== "undefined" && screen.width > 0) this.monitorWidthPixels = Math.round(screen.width * (globalThis.devicePixelRatio ?? 1));
 

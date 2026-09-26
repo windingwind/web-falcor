@@ -21,6 +21,20 @@ for i, (name, props) in enumerate(cases):
         out[key] = {"props": plain(dict(props)), "dict": plain(dict(createPass(name, props).getDictionary()))}
     except Exception as e:
         out[key] = {"props": plain(dict(props)), "error": str(e)}
+# Every scalar changed (bools flipped, numbers shifted), re-parsed: checks that each key is read back.
+def perturb(v):
+    if isinstance(v, bool): return not v
+    if isinstance(v, int): return v + 1
+    if isinstance(v, float): return v * 0.5 + 0.25
+    if isinstance(v, dict): return {k: perturb(x) for k, x in v.items()}
+    return v
+for name, entry in list(out.items()):
+    if "#" in name or "dict" not in entry: continue
+    props = perturb(entry["dict"])
+    try:
+        out[name + "#perturbed"] = {"props": props, "dict": plain(dict(createPass(name, props).getDictionary()))}
+    except Exception as e:
+        out[name + "#perturbed"] = {"props": props, "error": str(e)}
 path = sys.argv[1] if len(sys.argv) > 1 else "pass-properties.json"
 with open(path, "w") as f: json.dump(out, f, indent=1)
 exit()
