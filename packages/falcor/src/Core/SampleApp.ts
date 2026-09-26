@@ -38,6 +38,8 @@ import { fetchShaderSources, initProgramSystem } from "./Program/ShaderSources.j
 import { getGlobalSettings } from "../Utils/Scripting/Scripting.js";
 import type { Settings } from "../Utils/Settings.js";
 import { Logger } from "../Utils/Logger.js";
+import { Profiler } from "./API/Profiler.js";
+import { ProfilerUI } from "../Utils/Timing/ProfilerUI.js";
 
 /** Mirrors HotReloadFlags. */
 export enum HotReloadFlags {
@@ -74,11 +76,13 @@ export interface SampleAppConfig {
 const kKeyboardShortcuts =
     "ESC - Quit\n" +
     "F2 - Show/hide UI\n" +
+    "F3 - Capture current camera location\n" +
     "F6 - Reload shaders\n" +
     "F12 - Capture screenshot\n" +
     "V - Toggle VSync\n" +
     "Pause|Space - Pause/resume the global timer\n" +
-    "Ctrl+Pause|Space - Pause/resume the renderer\n";
+    "Ctrl+Pause|Space - Pause/resume the renderer\n" +
+    "P - Enable/disable profiler\n";
 
 export abstract class SampleApp {
     private device: Device | null = null;
@@ -100,6 +104,8 @@ export abstract class SampleApp {
     private lastUiBuild = 0;
     private removeListeners: (() => void)[] = [];
     private readonly gamepad = new GamepadInput();
+    private profilerWindow: HTMLDivElement | null = null;
+    private profilerUI: ProfilerUI | null = null;
 
     constructor(config: SampleAppConfig = {}) {
         this.config = {
@@ -192,6 +198,14 @@ export abstract class SampleApp {
         if (!this.config.device) await initProgramSystem(device);
         this.textRenderer = new TextRenderer(device);
         await this.textRenderer.init();
+        // Native devices own a profiler, disabled until P.
+        if (!device.profilerHook) {
+            const profiler = new Profiler(device);
+            if (profiler.available) {
+                profiler.setEnabled(false);
+                device.enableProfiler(profiler);
+            }
+        }
         this.clock.setTimeScale(this.config.timeScale);
         if (this.config.pauseTime) this.clock.pause();
 
@@ -270,6 +284,7 @@ export abstract class SampleApp {
         if (this.rendererPaused && this.pausedRenderOutput) {
             ctx.blit(this.pausedRenderOutput, target.getColorTexture(0)!);
         } else {
+            device.profilerHook?.startEvent("onFrameRender");
             this.onFrameRender(ctx, target);
             if (this.rendererPaused) {
                 const src = target.getColorTexture(0)!;
@@ -278,8 +293,11 @@ export abstract class SampleApp {
             } else {
                 this.pausedRenderOutput = null;
             }
+            device.profilerHook?.endEvent("onFrameRender");
         }
+        device.profilerHook?.startEvent("renderUI");
         this.renderUI();
+        device.profilerHook?.endEvent("renderUI");
         device.profilerHook?.endFrame(ctx.getEncoder());
         if (this.captureScreenRequested) this.captureScreen(target.getColorTexture(0)!);
         if (this.context) presentToCanvas(device, target.getColorTexture(0)!, this.context.getCurrentTexture(), this.canvasFormat);
@@ -302,6 +320,7 @@ export abstract class SampleApp {
     }
 
     private renderUI(): void {
+        this.renderProfilerWindow();
         const container = this.config.uiContainer;
         if (!container) return;
         // The DOM panel is retained: rebuild it on changes, and twice a second for live
@@ -314,6 +333,37 @@ export abstract class SampleApp {
         container.replaceChildren();
         container.hidden = !this.showUI;
         if (this.showUI) this.onGuiRender(new DomWidgets(container, () => (this.uiDirty = true)));
+    }
+
+    /** SampleApp::renderUI's "Profiler" window (800x600 at 350,80) while the profiler is enabled. */
+    private renderProfilerWindow(): void {
+        const profiler = this.device?.profilerHook;
+        const canvas = this.config.canvas;
+        if (!profiler || !canvas || !this.context) return;
+        if (!profiler.isEnabled()) {
+            if (this.profilerWindow) this.profilerWindow.hidden = true;
+            return;
+        }
+        if (!this.profilerWindow) {
+            const win = document.createElement("div");
+            win.className = "profiler-window";
+            Object.assign(win.style, { position: "absolute", left: "350px", top: "80px", width: "800px", maxHeight: "600px", overflowY: "auto", zIndex: "1" });
+            const title = document.createElement("div");
+            title.className = "profiler-title";
+            title.textContent = "Profiler";
+            const close = document.createElement("button");
+            close.textContent = "x";
+            close.addEventListener("click", () => profiler.setEnabled(false));
+            title.append(close);
+            const body = document.createElement("div");
+            win.append(title, body);
+            (canvas.parentElement ?? document.body).append(win);
+            this.profilerWindow = win;
+            this.profilerUI = new ProfilerUI(profiler, body);
+            this.removeListeners.push(() => win.remove());
+        }
+        this.profilerWindow.hidden = false;
+        this.profilerUI!.render();
     }
 
     private captureScreen(texture: Texture): void {
@@ -339,6 +389,9 @@ export abstract class SampleApp {
             switch (keyEvent.key) {
                 case "F12":
                     this.captureScreenRequested = true;
+                    break;
+                case "P":
+                    this.device?.profilerHook?.setEnabled(!this.device.profilerHook.isEnabled());
                     break;
                 case "V":
                     this.vsyncOn = !this.vsyncOn;

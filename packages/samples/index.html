@@ -17,6 +17,18 @@
       #gui button { margin: 2px 4px 2px 0; font-family: monospace; font-size: 11px; }
       #picker { position: absolute; top: 8px; left: 8px; font-size: 12px; background: #2a2a2ad8; padding: 4px 6px; border-radius: 4px; }
       #picker a { color: #8cf; margin-right: 8px; }
+      .profiler-window { background: #2a2a2ad8; padding: 6px 8px; border-radius: 4px; font-size: 12px; }
+      .profiler-window[hidden] { display: none; }
+      .profiler-window .profiler-title { display: flex; justify-content: space-between; color: #8cf; margin-bottom: 4px; }
+      .profiler-window .profiler-options { display: flex; gap: 12px; align-items: center; margin-bottom: 6px; border-bottom: 1px solid #444; padding-bottom: 6px; }
+      .profiler-window button, .profiler-window select { font-family: monospace; font-size: 11px; }
+      .profiler-window table { border-collapse: collapse; width: 100%; }
+      .profiler-window th { text-align: left; font-weight: normal; color: #8cf; padding: 0 8px 5px 0; }
+      .profiler-window td { padding: 1px 8px 1px 0; white-space: nowrap; }
+      .profiler-window td.profiler-bar { width: 50px; }
+      .profiler-window td.profiler-bar div { height: 8px; background: #fff; }
+      .profiler-window .profiler-graph { display: block; margin-top: 6px; }
+      .profiler-window .profiler-tooltip { position: absolute; background: #111; padding: 2px 6px; border-radius: 3px; pointer-events: none; }
     </style>
   </head>
   <body>

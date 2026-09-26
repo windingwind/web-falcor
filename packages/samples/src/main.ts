@@ -39,5 +39,6 @@ if (testbedScript) {
     const Sample = kSamples[name];
     if (!Sample) throw new Error(`Unknown sample '${name}'`);
     const app = new Sample({ ...Sample.config, windowDesc: { ...Sample.config.windowDesc, width: undefined, height: undefined }, canvas, uiContainer: document.getElementById("gui")! });
+    (window as unknown as { sampleApp: unknown }).sampleApp = app; // test handle
     void app.run().then((code) => console.log(`${name} exited with ${code}`));
 }

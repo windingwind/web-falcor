@@ -84,8 +84,11 @@ export class HelloDXR extends SampleApp {
             this.scene.updateCamera(performance.now() / 1000);
             this.scene.runUpdateCallback(this.getGlobalClock().getTime());
             if (this.scene.isAnimated()) this.scene.animate(this.getGlobalClock().getTime());
-            if (this.rayTrace) this.renderRT(renderContext, targetFbo);
-            else this.renderRaster(renderContext, targetFbo);
+            // FALCOR_PROFILE scopes of renderRT / renderRaster.
+            const profiler = this.getDevice().profilerHook;
+            const render = this.rayTrace ? () => this.renderRT(renderContext, targetFbo) : () => this.renderRaster(renderContext, targetFbo);
+            if (profiler) profiler.scope(this.rayTrace ? "renderRT" : "renderRaster", render);
+            else render();
         }
         this.getTextRenderer().render(renderContext, this.getFrameRate().getMsg(), targetFbo, [20, 20]);
     }

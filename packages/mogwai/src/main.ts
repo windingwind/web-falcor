@@ -379,17 +379,6 @@ async function main() {
             return false;
         }
     };
-    // Renderer::onKeyEvent: m.keyCallback(pressed, key) sees presses/releases first; True consumes them.
-    const onScriptKey = (ev: KeyboardEvent) => {
-        const cb = state.callbacks.keyCallback;
-        if (!cb || ev.repeat || ev.target instanceof HTMLInputElement || ev.target instanceof HTMLTextAreaElement) return;
-        if (runRendererCallback("keyCallback", () => cb(ev.type === "keydown", nativeKeyCode(ev.code)))) {
-            ev.preventDefault();
-            ev.stopImmediatePropagation();
-        }
-    };
-    window.addEventListener("keydown", onScriptKey, true);
-    window.addEventListener("keyup", onScriptKey, true);
     state.frameCapture = new FrameCaptureExtension(device, () => state.graph, (name) => (state.graph?.name === name ? state.graph : null), () => state.clock.getFrame());
 
     // Initial content from URL params (?scene=/?graph=/?output=), or the default
@@ -470,52 +459,65 @@ async function main() {
         if (!timePanel.hidden && !timePanel.matches(":hover") && !timePanel.contains(document.activeElement)) renderTimePanel();
     }, 250);
     window.addEventListener("mogwai-graphchange", () => rebuildUI());
-    window.addEventListener("keydown", (ev) => {
-        if (ev.target instanceof HTMLInputElement || ev.target instanceof HTMLTextAreaElement) return;
-        if (ev.key === "p" || ev.key === "P") profilerPanel.hidden = !profilerPanel.hidden;
-        // Reload shaders in place. Native binds this to F5, which the browser
-        // owns, so the viewer uses F6 (docs §9).
+    // MogwaiSettings::keyboardEvent: F1 help, F7 overlay UI, F9 time panel, F10 the FPS line, N the next graph.
+    const settingsKey = (ev: KeyboardEvent): boolean => {
+        if (ev.ctrlKey || ev.shiftKey || ev.altKey) return false;
+        if (ev.key === "F1") {
+            const help = document.getElementById("help");
+            if (help) help.hidden = !help.hidden;
+        } else if (ev.key === "F7") overlayCanvas.hidden = !overlayCanvas.hidden;
+        else if (ev.key === "F9") {
+            timePanel.hidden = !timePanel.hidden;
+            renderTimePanel();
+        } else if (ev.key === "F10") status.hidden = !status.hidden;
+        else if (ev.key === "n" || ev.key === "N") selectNextGraph();
+        else return false;
+        ev.preventDefault();
+        return true;
+    };
+    // SampleApp::handleKeyboardEvent: Space/Pause the clock, Ctrl+Space the renderer, F2 all UI,
+    // F12 screen capture, P the profiler, F6 shader reload (native F5 is the browser's, docs §9), ` the console.
+    const appKey = (ev: KeyboardEvent): void => {
         const modified = ev.ctrlKey || ev.shiftKey || ev.altKey;
-        // F3 and modified C/F7 belong to Scene::onKeyEvent (via camControl).
-        if (ev.key === "F7" && !modified) {
-            ev.preventDefault();
-            overlayCanvas.hidden = !overlayCanvas.hidden;
-        }
-        if (ev.key === "F6") {
-            ev.preventDefault();
-            void reloadShaders(state.device).then(() => (state.frame = 0));
-        }
-        // SampleApp/MogwaiSettings hotkeys: Space/Pause the clock, Ctrl+Space the renderer, F1 help,
-        // F2 all UI, F10 the FPS line, F12 screen capture, ` the console.
         if ((ev.key === " " || ev.key === "Pause") && !ev.shiftKey && !ev.altKey) {
             ev.preventDefault();
             if (ev.ctrlKey) (document.getElementById("play") as HTMLButtonElement | null)?.click();
             else if (state.clock.isPaused()) state.clock.play();
             else state.clock.pause();
-        } else if (!modified && ev.key === "F1") {
-            ev.preventDefault();
-            const help = document.getElementById("help");
-            if (help) help.hidden = !help.hidden;
-        } else if (!modified && ev.key === "F2") {
+        } else if (modified) {
+            return;
+        } else if (ev.key === "p" || ev.key === "P") {
+            profilerPanel.hidden = !profilerPanel.hidden;
+        } else if (ev.key === "F2") {
             ev.preventDefault();
             document.body.classList.toggle("headless");
-        } else if (!modified && ev.key === "F9") {
+        } else if (ev.key === "F6") {
             ev.preventDefault();
-            timePanel.hidden = !timePanel.hidden;
-            renderTimePanel();
-        } else if (!modified && ev.key === "F10") {
-            ev.preventDefault();
-            status.hidden = !status.hidden;
-        } else if (!modified && ev.key === "F12") {
+            void reloadShaders(state.device).then(() => (state.frame = 0));
+        } else if (ev.key === "F12") {
             ev.preventDefault();
             (document.getElementById("capture") as HTMLButtonElement | null)?.click();
-        } else if (!modified && (ev.key === "n" || ev.key === "N")) {
-            selectNextGraph();
-        } else if (!modified && ev.key === "`") {
+        } else if (ev.key === "`") {
             ev.preventDefault();
             (document.getElementById("consoleToggle") as HTMLButtonElement | null)?.click();
         }
-    });
+    };
+    // Renderer::onKeyEvent then SampleApp: MogwaiSettings, the scene (camera, F3), m.keyCallback, the app's hotkeys
+    // (the graph's passes already saw the event in the capture phase).
+    const onViewerKey = (ev: KeyboardEvent) => {
+        if (ev.target instanceof HTMLInputElement || ev.target instanceof HTMLTextAreaElement) return;
+        const pressed = ev.type === "keydown";
+        if (pressed && settingsKey(ev)) return;
+        if (camControl.handleKey(ev)) return;
+        const cb = state.callbacks.keyCallback;
+        if (cb && !ev.repeat && runRendererCallback("keyCallback", () => cb(pressed, nativeKeyCode(ev.code)))) {
+            ev.preventDefault();
+            return;
+        }
+        if (pressed) appKey(ev);
+    };
+    window.addEventListener("keydown", onViewerKey);
+    window.addEventListener("keyup", onViewerKey);
     (window as unknown as { mogwaiProfiler: { profiler: Profiler; ui: ProfilerUI } }).mogwaiProfiler = { profiler, ui: profilerUI };
     const pixelZoom = wirePixelZoom();
     (window as unknown as { mogwaiPixelZoom: PixelZoom }).mogwaiPixelZoom = pixelZoom;

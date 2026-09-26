@@ -35,8 +35,6 @@ export class CameraController {
         window.addEventListener("mousemove", (e) => this.onMouse(e, MouseEventType.Move));
         canvas.addEventListener("wheel", this.onWheel, { passive: false });
         canvas.addEventListener("contextmenu", (e) => e.preventDefault());
-        window.addEventListener("keydown", this.onKey);
-        window.addEventListener("keyup", this.onKey);
     }
 
     getControllerType(): CameraControllerType {
@@ -74,12 +72,14 @@ export class CameraController {
         if (!scene?.cameraControlsEnabled) return;
         if (!scene.onMouseEvent(toMouseEvent(e, MouseEventType.Wheel, this.canvas))) this.dollyAccum += -Math.sign(e.deltaY) * scene.cameraSpeed * 0.5;
     };
-    private onKey = (e: KeyboardEvent) => {
-        if (this.isTypingTarget(e.target)) return;
+    /** Scene::onKeyEvent for a DOM key event; returns whether the scene consumed it. */
+    handleKey(e: KeyboardEvent): boolean {
+        if (this.isTypingTarget(e.target)) return false;
         const handled = this.getScene()?.onKeyEvent(toKeyboardEvent(e, e.type === "keydown" ? KeyboardEventType.KeyPressed : KeyboardEventType.KeyReleased)) ?? false;
         if (handled && e.type === "keydown" && /^F\d+$/.test(e.key)) e.preventDefault();
         if (handled && e.type === "keydown" && e.key === "F3") this.onViewpointAdded();
-    };
+        return handled;
+    }
 
     /** Mirrors Scene::onGamepadState. */
     onGamepadState(state: GamepadState): boolean {
