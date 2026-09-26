@@ -10,7 +10,7 @@
  */
 
 import { describe, expect, it } from "vitest";
-import { buildBvh, buildBvhParallel, buildBvhSubtree, bvhStackDepth, kBvhTraversalStackSize, refitBvh, refitBvhIndexed, refreshStitchedBvh, stitchBvhs, type BvhBuildResult, type BvhTriangle } from "../src/Scene/SoftwareRT/Bvh.js";
+import { buildBvh, buildBvhParallel, buildBvhSubtree, bvhStackDepth, kBvhTraversalStackSize, refitBvh, refitBvhIndexed, PackedBvhTriangleWriter, refreshStitchedBvh, stitchBvhs, type BvhBuildResult, type BvhTriangle } from "../src/Scene/SoftwareRT/Bvh.js";
 import { float3, sub3 } from "../src/Utils/Math/Vector.js";
 
 /** Median-split BVH written the obvious way: one entry list per node. */
@@ -309,5 +309,21 @@ describe("refitBvhIndexed", () => {
         const b = refitBvhIndexed(buildBvh(tris), verts, triVerts)!;
         expect(bytes(b.nodes)).toEqual(bytes(a.nodes));
         expect(bytes(b.tris)).toEqual(bytes(a.tris));
+    });
+});
+
+describe("PackedBvhTriangleWriter", () => {
+    it("builds byte-identical trees to BvhTriangle objects, serial and parallel", async () => {
+        const tris = makeTriangles(20000, 11).map((t, i) => ({ ...t, flags: i % 2 }));
+        const w = new PackedBvhTriangleWriter(tris.length);
+        for (const t of tris) w.add(t.v0.x, t.v0.y, t.v0.z, t.v1.x, t.v1.y, t.v1.z, t.v2.x, t.v2.y, t.v2.z, t.instanceIndex, t.primitiveIndex, t.flags);
+        const a = buildBvh(tris);
+        const b = buildBvh(w.result);
+        expect(bytes(b.nodes)).toEqual(bytes(a.nodes));
+        expect(bytes(b.tris)).toEqual(bytes(a.tris));
+        const run = async (input: Parameters<typeof buildBvhSubtree>[0]) => buildBvhSubtree(input);
+        const c = await buildBvhParallel(w.result, run);
+        expect(bytes(c.nodes)).toEqual(bytes(a.nodes));
+        expect(bytes(c.tris)).toEqual(bytes(a.tris));
     });
 });

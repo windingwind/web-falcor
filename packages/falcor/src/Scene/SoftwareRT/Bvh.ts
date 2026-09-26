@@ -437,10 +437,55 @@ export function buildBvhSubtree(input: BvhInput): BvhSubtree {
 }
 
 /** The empty-scene tree and the tris/order/area of a built tree. */
-function finishBvh(triangles: BvhTriangle[], tree: BvhSubtree): BvhBuildResult {
+function finishBvh(triangles: BvhTriangles, tree: BvhSubtree): BvhBuildResult {
     const tris = new Float32Array(tree.ordered.length * 12);
-    writeTris(tris, triangles, tree.ordered);
+    if (Array.isArray(triangles)) writeTris(tris, triangles, tree.ordered);
+    else for (let i = 0; i < tree.ordered.length; i++) tris.set(triangles.packed.subarray(tree.ordered[i]! * 12, tree.ordered[i]! * 12 + 12), i * 12);
     return { nodes: tree.nodes, tris, nodeCount: tree.nodeCount, order: tree.ordered, buildArea: totalArea(tree.nodes, tree.nodeCount) };
+}
+
+/**
+ * Triangles already in the builder's flat layout (see PackedBvhTriangleWriter): large scenes skip one object and
+ * three float3 per triangle. `packed` holds each input triangle's final 12-float row (v0, inst, e1, prim, e2, flags).
+ */
+export interface PackedBvhTriangles {
+    input: BvhInput;
+    packed: Float32Array;
+}
+export type BvhTriangles = BvhTriangle[] | PackedBvhTriangles;
+
+export function bvhTriangleCount(t: BvhTriangles): number {
+    return Array.isArray(t) ? t.length : t.input.n;
+}
+
+/** Fills PackedBvhTriangles exactly as bvhInput + writeTris compute them from BvhTriangle objects. */
+export class PackedBvhTriangleWriter {
+    readonly result: PackedBvhTriangles;
+    private readonly u32: Uint32Array;
+    private count = 0;
+    constructor(n: number) {
+        this.result = { input: { n, bmin: new Float32Array(n * 3), bmax: new Float32Array(n * 3), cent: new Float64Array(n * 3) }, packed: new Float32Array(n * 12) };
+        this.u32 = new Uint32Array(this.result.packed.buffer);
+    }
+    /** Appends a triangle from float64 world positions (a = v0, b = v1, c = v2). */
+    add(ax: number, ay: number, az: number, bx: number, by: number, bz: number, cx: number, cy: number, cz: number, instance: number, primitive: number, flags: number): void {
+        const i = this.count++;
+        const { bmin, bmax, cent } = this.result.input;
+        const p = this.result.packed;
+        const coords = [ax, bx, cx, ay, by, cy, az, bz, cz];
+        for (let c = 0; c < 3; c++) {
+            const [a, b, d] = [coords[c * 3]!, coords[c * 3 + 1]!, coords[c * 3 + 2]!];
+            const lo = Math.min(a, b, d);
+            const hi = Math.max(a, b, d);
+            bmin[i * 3 + c] = lo;
+            bmax[i * 3 + c] = hi;
+            cent[i * 3 + c] = (lo + hi) / 2;
+        }
+        const o = i * 12;
+        p[o] = ax; p[o + 1] = ay; p[o + 2] = az; this.u32[o + 3] = instance;
+        p[o + 4] = bx - ax; p[o + 5] = by - ay; p[o + 6] = bz - az; this.u32[o + 7] = primitive;
+        p[o + 8] = cx - ax; p[o + 9] = cy - ay; p[o + 10] = cz - az; this.u32[o + 11] = flags;
+    }
 }
 
 // Geometry-less scenes: an all-zero root is a degenerate INTERIOR node
@@ -515,9 +560,9 @@ export function refreshStitchedBvh(st: BvhBuildResult, a: BvhBuildResult, b: Bvh
     return { nodes: [base, b.nodeCount * 8], tris: [a.tris.length, b.tris.length] };
 }
 
-export function buildBvh(triangles: BvhTriangle[]): BvhBuildResult {
-    if (triangles.length === 0) return emptyBvh();
-    return finishBvh(triangles, buildBvhSubtree(bvhInput(triangles)));
+export function buildBvh(triangles: BvhTriangles): BvhBuildResult {
+    if (bvhTriangleCount(triangles) === 0) return emptyBvh();
+    return finishBvh(triangles, buildBvhSubtree(Array.isArray(triangles) ? bvhInput(triangles) : triangles.input));
 }
 
 /**
@@ -526,10 +571,10 @@ export function buildBvh(triangles: BvhTriangle[]): BvhBuildResult {
  * their current order, and the subtrees are stitched in DFS order, so the result is
  * byte-identical to buildBvh.
  */
-export async function buildBvhParallel(triangles: BvhTriangle[], run: (input: BvhInput) => Promise<BvhSubtree>, depth = 3): Promise<BvhBuildResult> {
-    const n = triangles.length;
+export async function buildBvhParallel(triangles: BvhTriangles, run: (input: BvhInput) => Promise<BvhSubtree>, depth = 3): Promise<BvhBuildResult> {
+    const n = bvhTriangleCount(triangles);
     if (n === 0) return emptyBvh();
-    const input = bvhInput(triangles);
+    const input = Array.isArray(triangles) ? bvhInput(triangles) : triangles.input;
     const { bmin, bmax, cent } = input;
     const { sortRange, index } = makeBuilder(input, true);
 

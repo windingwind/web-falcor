@@ -19,9 +19,9 @@ import { Camera } from "./Camera/Camera.js";
 import { FirstPersonCameraController, OrbiterCameraController, SixDoFCameraController, UpDirection, toControllerKeyEvent, toControllerMouseEvent, type CameraController } from "./Camera/CameraController.js";
 import { KeyboardEventType, ModifierFlags, type GamepadEvent, type GamepadState, type KeyboardEvent, type MouseEvent } from "../Utils/UI/InputTypes.js";
 import { float4x4, transpose, inverse } from "../Utils/Math/Matrix.js";
-import { buildBvh, buildBvhParallel, buildAabbBvh, refitBvh, refitBvhIndexed, refreshStitchedBvh, stitchBvhs, bvhStackDepth, kBvhTraversalStackSize, type BvhBuildResult, type BvhTriangle } from "./SoftwareRT/Bvh.js";
+import { buildBvh, buildBvhParallel, buildAabbBvh, bvhTriangleCount, PackedBvhTriangleWriter, refitBvh, refitBvhIndexed, refreshStitchedBvh, stitchBvhs, bvhStackDepth, kBvhTraversalStackSize, type BvhBuildResult, type BvhTriangle } from "./SoftwareRT/Bvh.js";
 import { WorkerPool } from "../Utils/Threading/WorkerPool.js";
-import { packLights, LightType, SceneLight, type AnalyticLight } from "./SceneData.js";
+import { packLights, LightType, PackedVertex, SceneLight, type AnalyticLight } from "./SceneData.js";
 import { TextureManager, kMaxTextureBuckets } from "./Material/TextureManager.js";
 import type { EnvMap } from "./Lights/EnvMap.js";
 import { buildLightCollection } from "./Lights/LightCollection.js";
@@ -951,38 +951,56 @@ export class Scene {
 
     /** The BVH's world-space triangles; displaced meshes are excluded (they intersect via their own AABB region). */
     static collectBvhGeometry(meshes: SceneMeshDesc[], materials: SceneMaterialDesc[]) {
-        const bvhTris: BvhTriangle[] = [];
         const displacedAabbs: { min: [number, number, number]; max: [number, number, number] }[] = [];
         const displacedEntries: number[] = [];
         const identity = float4x4.identity();
+        const isDisplaced = (mesh: SceneMeshDesc) => materials[mesh.materialID]?.basic.texDisplacement !== undefined;
+        // Flat builder input (no per-triangle objects): the triangle count sizes it up front.
+        let count = 0;
+        for (const mesh of meshes) if (!isDisplaced(mesh)) count += mesh.indices.length / 3;
+        const writer = new PackedBvhTriangleWriter(count);
         meshes.forEach((mesh, meshID) => {
             const m = mesh.transform ?? identity;
-            // Pretransformed (identity) meshes use their positions as is: no per-triangle copies.
+            // Pretransformed (identity) meshes use their positions as is.
             const isIdentity = m === identity || m.data.every((v, i) => v === identity.data[i]);
-            const world = isIdentity ? (p: float3) => p : (p: float3) => transformPoint(m, p);
             const flags = isIdentity ? 0 : windingFlipFlag(m);
+            // World positions in float64, as transformPoint computes them (packed stores read without allocating).
+            const n = mesh.vertices.length;
+            const world = new Float64Array(n * 3);
+            const d = m.data;
+            for (let i = 0; i < n; i++) {
+                const v = mesh.vertices[i]!;
+                let x: number, y: number, z: number;
+                if (v instanceof PackedVertex) [x, y, z] = [v.data[v.offset]!, v.data[v.offset + 1]!, v.data[v.offset + 2]!];
+                else ({ x, y, z } = v.position);
+                if (isIdentity) [world[i * 3], world[i * 3 + 1], world[i * 3 + 2]] = [x, y, z];
+                else {
+                    world[i * 3] = d[0]! * x + d[1]! * y + d[2]! * z + d[3]! * 1;
+                    world[i * 3 + 1] = d[4]! * x + d[5]! * y + d[6]! * z + d[7]! * 1;
+                    world[i * 3 + 2] = d[8]! * x + d[9]! * y + d[10]! * z + d[11]! * 1;
+                }
+            }
+            const displaced = isDisplaced(mesh);
             const mat = materials[mesh.materialID];
-            const displaced = mat?.basic.texDisplacement !== undefined;
             // Conservative displacement range along the normal: mapValue([0,1]).
             const scaleD = mat?.basic.displacementScale ?? 0;
             const biasD = mat?.basic.displacementOffset ?? 0;
             const margin = Math.max(Math.abs(biasD), Math.abs(scaleD + biasD)) + 1e-3;
             for (let p = 0; p < mesh.indices.length / 3; p++) {
-                const v0 = world(mesh.vertices[mesh.indices[p * 3]!]!.position);
-                const v1 = world(mesh.vertices[mesh.indices[p * 3 + 1]!]!.position);
-                const v2 = world(mesh.vertices[mesh.indices[p * 3 + 2]!]!.position);
+                const [a, b, c] = [mesh.indices[p * 3]! * 3, mesh.indices[p * 3 + 1]! * 3, mesh.indices[p * 3 + 2]! * 3];
                 if (displaced) {
+                    const axis = (k: number) => [world[a + k]!, world[b + k]!, world[c + k]!];
                     displacedAabbs.push({
-                        min: [Math.min(v0.x, v1.x, v2.x) - margin, Math.min(v0.y, v1.y, v2.y) - margin, Math.min(v0.z, v1.z, v2.z) - margin],
-                        max: [Math.max(v0.x, v1.x, v2.x) + margin, Math.max(v0.y, v1.y, v2.y) + margin, Math.max(v0.z, v1.z, v2.z) + margin],
+                        min: [Math.min(...axis(0)) - margin, Math.min(...axis(1)) - margin, Math.min(...axis(2)) - margin],
+                        max: [Math.max(...axis(0)) + margin, Math.max(...axis(1)) + margin, Math.max(...axis(2)) + margin],
                     });
                     displacedEntries.push(((meshID & 0xff) << 24) | p);
                 } else {
-                    bvhTris.push({ v0, v1, v2, instanceIndex: meshID, primitiveIndex: p, flags });
+                    writer.add(world[a]!, world[a + 1]!, world[a + 2]!, world[b]!, world[b + 1]!, world[b + 2]!, world[c]!, world[c + 1]!, world[c + 2]!, meshID, p, flags);
                 }
             }
         });
-        return { bvhTris, displacedAabbs, displacedEntries };
+        return { bvhTris: writer.result, displacedAabbs, displacedEntries };
     }
 
     /**
@@ -995,7 +1013,7 @@ export class Scene {
         const geometry = Scene.collectBvhGeometry(meshes, materials);
         const pool = WorkerPool.get();
         const bvh =
-            geometry.bvhTris.length >= 100_000 && pool.threadCount > 1
+            bvhTriangleCount(geometry.bvhTris) >= 100_000 && pool.threadCount > 1
                 ? await buildBvhParallel(geometry.bvhTris, (input) => pool.run("buildBvhSubtree", input, [input.bmin.buffer, input.bmax.buffer, input.cent.buffer]))
                 : undefined;
         const withBvh = [...args] as ConstructorParameters<typeof Scene>;
@@ -1159,11 +1177,11 @@ export class Scene {
         const { bvhTris, displacedAabbs, displacedEntries } = prebuilt?.geometry ?? Scene.collectBvhGeometry(meshes, materials);
         const bvh = prebuilt?.bvh ?? buildBvh(bvhTris);
         // Deeper trees would silently drop subtrees in the shaders' fixed-size traversal stack.
-        const stackDepth = bvhTris.length > 0 ? bvhStackDepth(bvh.nodes) : 0;
+        const stackDepth = bvhTriangleCount(bvhTris) > 0 ? bvhStackDepth(bvh.nodes) : 0;
         if (stackDepth > kBvhTraversalStackSize) Logger.warning(`Scene BVH needs a traversal stack of ${stackDepth} (> ${kBvhTraversalStackSize}); rays may miss geometry.`);
 
         // Whole-scene AABB = BVH root node bounds (nodes[0] = [min.xyz, _][max.xyz, _]).
-        if (bvhTris.length > 0) {
+        if (bvhTriangleCount(bvhTris) > 0) {
             this.worldBounds = {
                 min: [bvh.nodes[0]!, bvh.nodes[1]!, bvh.nodes[2]!],
                 max: [bvh.nodes[4]!, bvh.nodes[5]!, bvh.nodes[6]!],
@@ -1628,7 +1646,7 @@ export class Scene {
         this.invalidateAnimation();
         const { bvhTris, displacedAabbs, displacedEntries } = Scene.collectBvhGeometry(this.lcMeshes, this.materialDescs);
         const bvh = buildBvh(bvhTris);
-        if (bvhTris.length > 0) this.worldBounds = { min: [bvh.nodes[0]!, bvh.nodes[1]!, bvh.nodes[2]!], max: [bvh.nodes[4]!, bvh.nodes[5]!, bvh.nodes[6]!] };
+        if (bvhTriangleCount(bvhTris) > 0) this.worldBounds = { min: [bvh.nodes[0]!, bvh.nodes[1]!, bvh.nodes[2]!], max: [bvh.nodes[4]!, bvh.nodes[5]!, bvh.nodes[6]!] };
         const curve = this.curveBvhBytes ?? new Float32Array(0);
         const displaced = buildDisplacedBvh(displacedAabbs, displacedEntries);
         const merged = new Float32Array(bvh.nodes.length + bvh.tris.length + curve.length + displaced.data.length);

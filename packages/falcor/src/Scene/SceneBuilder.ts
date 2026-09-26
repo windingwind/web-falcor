@@ -32,6 +32,7 @@ import { float2, float3, float4 } from "../Utils/Math/Vector.js";
 import { float4x4, inverse, transpose, matrixFromTranslation, matrixFromScaling, mulMat } from "../Utils/Math/Matrix.js";
 import { RuntimeError } from "../Core/Error.js";
 import { AssetCategory, AssetResolver, fetchDirectoryListing, isAbsoluteUrl, normalizeUrl, resolveAssetUrl } from "../Core/AssetResolver.js";
+import { TimeReport } from "../Utils/Timing/TimeReport.js";
 import { Logger } from "../Utils/Logger.js";
 
 /** The python prelude wraps bridge objects in a setattr guard; JS entry
@@ -1671,6 +1672,7 @@ export class SceneBuilderBridge {
     }
 
     async resolve(device: Device, baseUrl: string): Promise<Scene> {
+        const timeReport = new TimeReport();
         this.importedCameras = [];
         await loadMikkTSpace();
         const textureManager = new TextureManager();
@@ -2043,6 +2045,7 @@ export class SceneBuilderBridge {
             sdfGrids.push({ grid: built.grid, materialID: built.materialID, transform: this.nodes[inst.nodeID]! });
         }
 
+        timeReport.measure("Importing assets");
         // SceneBuilder::addMesh: MikkTSpace tangents and the vertex merge, once per shared vertex array.
         this.generateMeshTangents(meshes);
         applyTextureTransforms(meshes, texTransforms);
@@ -2073,6 +2076,7 @@ export class SceneBuilderBridge {
             animatedCamera = this.importedCameras.length + scriptedCamera;
             cameraNodeID = builderNodeIDs.get(this._cameras[scriptedCamera]!.nodeID!);
         }
+        timeReport.measure("Post processing geometry");
         // MaterialSystem::optimizeMaterials: constant textures become uniform material values.
         if (!this.hasFlag(SceneBuilderFlags.DontOptimizeMaterials)) {
             await textureManager.prepareAnalyses(undefined, device);
@@ -2084,6 +2088,7 @@ export class SceneBuilderBridge {
             for (const m of [...meshes, ...curves, ...sdfGrids]) m.materialID = idMap[m.materialID]!;
             for (const b of builtSdfGrids) b.materialID = idMap[b.materialID]!;
         }
+        timeReport.measure("Optimizing materials");
         // SceneBuilder::createMeshGroups + sortMeshes: mesh (and instance) IDs follow native's mesh groups.
         if (!this.hasFlag(SceneBuilderFlags.DontOptimizeGraph)) {
             const animatableNodes = [...lights.map((l) => l.nodeID), cameraNodeID].filter((n): n is number => n !== undefined);
@@ -2091,6 +2096,7 @@ export class SceneBuilderBridge {
         }
         pretransformStaticMeshes(meshes, nodes, animations);
         meshes = sortMeshesLikeNative(meshes, materials);
+        timeReport.measure("Sorting meshes");
         const scene = await Scene.create(device, meshes, materials, lights, textureManager, sdfGrids, nodes, animations, cameraNodeID, weightTracks, curves);
         for (const c of this.customPrimitives) scene.addCustomPrimitive(c.userID, c.aabb);
         scene.importPaths.push(...importPaths);
@@ -2205,6 +2211,9 @@ export class SceneBuilderBridge {
         }
         // Scene::finalize animates to t = 0 and initializeCameras poses animated cameras from their nodes.
         scene.animate(0);
+        // SceneBuilder::getScene's TimeReport (web phases; the BVH build is part of "Creating resources").
+        timeReport.measure("Creating resources");
+        timeReport.printToLog();
         return scene;
     }
 }
