@@ -69,11 +69,16 @@ export function copyVertex(v: StaticVertex, overrides: Partial<StaticVertex> = {
 
 /** Octahedral snorm2x16 encode (Utils/Math/PackedFormats.slang encodeNormal2x16). */
 export function encodeNormal2x16(n: float3): number {
+    return encodeNormalXYZ(n.x, n.y, n.z);
+}
+
+/** encodeNormal2x16 from components (no vector allocation). */
+export function encodeNormalXYZ(nx: number, ny: number, nz: number): number {
     // Inputs round to f32 first (native holds f32 vertices; keeps the packed
     // output identical whether values arrive as f64 imports or cached f32).
-    const x = Math.fround(n.x);
-    const y = Math.fround(n.y);
-    const z = Math.fround(n.z);
+    const x = Math.fround(nx);
+    const y = Math.fround(ny);
+    const z = Math.fround(nz);
     const l1 = Math.abs(x) + Math.abs(y) + Math.abs(z) || 1;
     let ox = x / l1;
     let oy = y / l1;
@@ -99,26 +104,35 @@ export const kPackedStaticVertexSize = 48;
 export function packStaticVertices(vertices: StaticVertex[]): ArrayBuffer {
     const buffer = new ArrayBuffer(vertices.length * kPackedStaticVertexSize);
     const dv = new DataView(buffer);
+    // One read per attribute (packed stores directly): the getters allocate a vector per access.
+    const a = new Float64Array(kPackedVertexFloats);
     for (let i = 0; i < vertices.length; i++) {
         const v = vertices[i]!;
+        if (v instanceof PackedVertex) for (let k = 0; k < kPackedVertexFloats; k++) a[k] = v.data[v.offset + k]!;
+        else {
+            const [p, n, t, uv] = [v.position, v.normal, v.tangent, v.texCrd];
+            a[0] = p.x; a[1] = p.y; a[2] = p.z; a[3] = n.x; a[4] = n.y; a[5] = n.z;
+            a[6] = t.x; a[7] = t.y; a[8] = t.z; a[9] = t.w; a[10] = uv.x; a[11] = uv.y;
+        }
         const base = i * kPackedStaticVertexSize;
-        dv.setFloat32(base + 0, v.position.x, true);
-        dv.setFloat32(base + 4, v.position.y, true);
-        dv.setFloat32(base + 8, v.position.z, true);
+        dv.setFloat32(base + 0, a[0]!, true);
+        dv.setFloat32(base + 4, a[1]!, true);
+        dv.setFloat32(base + 8, a[2]!, true);
 
-        const nx = f32tof16(v.normal.x);
-        const ny = f32tof16(v.normal.y);
-        const nz = f32tof16(v.normal.z);
-        let packedTangentSign = Math.fround(v.tangent.w);
-        if ((v.curveRadius ?? 0) > 0) packedTangentSign *= Math.fround(v.curveRadius!);
+        const nx = f32tof16(a[3]!);
+        const ny = f32tof16(a[4]!);
+        const nz = f32tof16(a[5]!);
+        let packedTangentSign = Math.fround(a[9]!);
+        const curveRadius = (v as StaticVertex).curveRadius ?? 0;
+        if (curveRadius > 0) packedTangentSign *= Math.fround(curveRadius);
         const tw = f32tof16(packedTangentSign);
 
         dv.setUint32(base + 16, ((ny << 16) | nx) >>> 0, true);
         dv.setUint32(base + 20, ((tw << 16) | nz) >>> 0, true);
-        dv.setUint32(base + 24, encodeNormal2x16(new float3(v.tangent.x, v.tangent.y, v.tangent.z)) >>> 0, true);
+        dv.setUint32(base + 24, encodeNormalXYZ(a[6]!, a[7]!, a[8]!) >>> 0, true);
 
-        dv.setFloat32(base + 32, v.texCrd.x, true);
-        dv.setFloat32(base + 36, v.texCrd.y, true);
+        dv.setFloat32(base + 32, a[10]!, true);
+        dv.setFloat32(base + 36, a[11]!, true);
     }
     return buffer;
 }
