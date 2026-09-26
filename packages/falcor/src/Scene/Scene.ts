@@ -2015,6 +2015,9 @@ export class Scene {
         // Animatable camera/lights: rederive their pose from the node globals
         // (glTF cameras/lights aim down local -Z; up is local +Y).
         if (this.hasAnimatedCameraOrLights) this.updateAnimatedCameraAndLights(globals);
+        // Only the camera/lights animate (EmeraldSquare, BistroInterior): geometry, matrices and the BVH stay as built.
+        this.hasDynamicGeometry ??= this.computeHasDynamicGeometry();
+        if (!this.hasDynamicGeometry) return true;
 
         // Per mesh: current world matrix + world-space vertex positions. Skinned
         // meshes deform to world space on the CPU (identity world matrix, skinned
@@ -2316,6 +2319,22 @@ export class Scene {
     updateVersion = 0;
     private lastAnimateTime = NaN;
     private lastAnimateKey = "";
+    private hasDynamicGeometry: boolean | undefined;
+
+    /** Whether any mesh or curve deforms or rides an animated node (else animate() only re-poses camera/lights). */
+    private computeHasDynamicGeometry(): boolean {
+        const anim = this.animData!;
+        const animated = new Set(anim.channels.map((c) => c.nodeID));
+        for (const w of anim.weightTracks ?? []) animated.add(w.nodeID);
+        const underAnimated = (n: number | undefined) => {
+            for (; n !== undefined && n >= 0; n = anim.nodes[n]?.parent) if (animated.has(n)) return true;
+            return false;
+        };
+        return (
+            this.sourceMeshes!.some((m) => m.skin || m.morph || m.vertexCache || m.polytubeCache || underAnimated(m.nodeID)) ||
+            this.sceneCurves.some((c) => c.vertexCache)
+        );
+    }
     private prevAnimateKey = "";
 
     /** Forces the next animate() to re-pose the scene (animation data or enabled state changed). */
