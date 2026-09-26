@@ -740,8 +740,13 @@ export function extractUsdMeshes(text: string): Map<string, UsdaSubdivMesh> {
             }
             const normals = attrMultiline(b, ["primvars:normals"]) ?? attrMultiline(b, ["normals"]);
             if (normals) {
-                const fallback = attrMultiline(b, ["primvars:normals"]) ? "constant" : "vertex";
-                mesh.normals = { values: num(normals.value), interpolation: normals.metadata.match(/interpolation\s*=\s*"(\w+)"/)?.[1] ?? fallback };
+                const primvar = attrMultiline(b, ["primvars:normals"]) !== undefined;
+                const fallback = primvar ? "constant" : "vertex";
+                let values = num(normals.value);
+                // An indexed primvar is flattened through its :indices (ComputeFlattened), as st is.
+                const indices = primvar ? attrMultiline(b, ["primvars:normals:indices"]) : undefined;
+                if (indices !== undefined) values = num(indices.value).flatMap((i) => [values[i * 3]!, values[i * 3 + 1]!, values[i * 3 + 2]!]);
+                mesh.normals = { values, interpolation: normals.metadata.match(/interpolation\s*=\s*"(\w+)"/)?.[1] ?? fallback };
             } else if (mesh.normalsSamples) {
                 const meta = b.match(/normals\.timeSamples[^]*?\}\s*\(([^)]*)\)/)?.[1] ?? "";
                 mesh.normals = { values: mesh.normalsSamples[0]!.value, interpolation: meta.match(/interpolation\s*=\s*"(\w+)"/)?.[1] ?? "vertex" };

@@ -640,6 +640,17 @@ export class UsdImporter {
                     for (const child of node.children ?? []) walk(child, world, usdWorld, instanced, ownNode);
                     return;
                 }
+                // Face-varying or uniform normals, or an st tinyusdz's render mesh dropped: triangulate per
+                // corner from the layer (native's triangulate), and let the builder merge identical corners.
+                const perPointUvs = mesh.texcoords && mesh.texcoords.length === (mesh.points.length / 3) * 2;
+                if (usdaMesh && !instanced && (["faceVarying", "uniform"].includes(usdaMesh.normals?.interpolation ?? "") || (usdaMesh.st && !perPointUvs))) {
+                    const materialID = getOrAddMaterial(mesh.materialId, bindings.get(node.absPath!), node.absPath);
+                    const corners = triangulateUsdMesh(usdaMesh, usdaMesh.points, usdaMesh.normals?.values);
+                    const vertices = cornerVertices(corners, texCoordTransforms[materialID]!);
+                    meshes.push({ vertices, indices: Uint32Array.from(vertices.keys()), materialID, transform: world.clone(), nodeID: meshNodeID(), tangentSpace: corners.uvs ? "generate" : "noTexCrds" });
+                    for (const child of node.children ?? []) walk(child, world, usdWorld, instanced, ownNode);
+                    return;
+                }
                 let positions: Float32Array = mesh.points;
                 let indices: Uint32Array = new Uint32Array(mesh.faceVertexIndices);
                 let normals = mesh.normals && mesh.normals.length === positions.length && usdaMesh?.hasNormals !== false ? mesh.normals : null;
