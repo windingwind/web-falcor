@@ -282,6 +282,8 @@ export interface BasicMaterialDesc {
     texSpecular?: number;
     texEmissive?: number;
     texNormalMap?: number;
+    /** Material::detectNormalMapType of the bound normal map (default RGB when one is set). */
+    normalMapType?: NormalMapType;
     texTransmission?: number;
     /** StandardMaterial only: how `specular` is interpreted. */
     shadingModel?: ShadingModel;
@@ -305,10 +307,9 @@ export function packBasicMaterialBlob(header: MaterialHeaderDesc, mat: BasicMate
 
     // Payload starts at byte 16 (BasicMaterialData layout).
     let off = 16;
-    // flags: bit 0 shading model (MetalRough=0), bits 1-2 normal map type
-    // (None=0, RGB=1 - standard 8-bit normal maps; native detects RG/BC5,
-    // which the web texture pipeline does not produce).
-    dv.setUint32(off, ((mat.shadingModel ?? ShadingModel.MetalRough) & 0x1) | (mat.texNormalMap !== undefined ? 1 << 1 : 0), true); off += 4;
+    // flags: bit 0 shading model (MetalRough=0), bits 1-2 normal map type.
+    const normalMapType = mat.normalMapType ?? (mat.texNormalMap !== undefined ? NormalMapType.RGB : NormalMapType.None);
+    dv.setUint32(off, ((mat.shadingModel ?? ShadingModel.MetalRough) & 0x1) | ((normalMapType & 0x3) << 1), true); off += 4;
     dv.setFloat32(off, mat.emissiveFactor ?? 1, true); off += 4;
 
     const bc = mat.baseColor ?? new float4(1, 1, 1, 1);

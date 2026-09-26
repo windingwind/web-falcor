@@ -214,7 +214,7 @@ float3 getPrimaryRayDir(uint2 launchIndex, uint2 launchDim, const Camera camera)
 bool traceShadowRay(float3 origin, float3 dir, float distance)
 {
     // WebFalcor: shadow ray via software BVH visibility query.
-    SceneRayQuery<0> query;
+    SceneRayQuery<1> query; // native anyHit shaders alpha-test
     const Ray ray = Ray(origin, dir, 0.f, distance);
     return query.traceVisibilityRay(ray, RAY_FLAG_ACCEPT_FIRST_HIT_AND_END_SEARCH, 0xff);
 }
@@ -226,7 +226,7 @@ bool traceShadowRay(float3 origin, float3 dir, float distance)
 void traceScatterRay(inout ScatterRayData rayData)
 {
     // WebFalcor: closest-hit via software BVH; miss logic inlined from scatterMiss.
-    SceneRayQuery<0> query;
+    SceneRayQuery<1> query; // native anyHit shaders alpha-test
     const Ray ray = Ray(rayData.origin, rayData.direction, 0.f, kRayTMax);
     float hitT;
     const HitInfo hit = query.traceRay(ray, hitT, RAY_FLAG_NONE, 0xff);

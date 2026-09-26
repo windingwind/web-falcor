@@ -42,7 +42,7 @@ import {
     type MeshDescData,
     type StaticVertex,
 } from "./SceneData.js";
-import { packBasicMaterialBlob, packMERLMaterialBlob, packMERLMixMaterialBlob, packRGLMaterialBlob, writeDiffuseSpecularData, kDiffuseSpecularDataSize, AlphaMode, MaterialType, ShadingModel, TextureHandleMode, type BasicMaterialDesc, type MaterialHeaderDesc } from "./Material/MaterialData.js";
+import { packBasicMaterialBlob, packMERLMaterialBlob, packMERLMixMaterialBlob, packRGLMaterialBlob, writeDiffuseSpecularData, kDiffuseSpecularDataSize, AlphaMode, MaterialType, ShadingModel, TextureHandleMode, NormalMapType, type BasicMaterialDesc, type MaterialHeaderDesc } from "./Material/MaterialData.js";
 import { kMERLAlbedoLUTSize, type MERLBRDF, type MERLMixData } from "./Material/MERLFile.js";
 import { kRGLAlbedoLUTSize, type RGLMeasurement } from "./Material/RGLFile.js";
 import type { LightProfile } from "./Lights/LightProfile.js";
@@ -1349,6 +1349,8 @@ export class Scene {
         });
         const materialBuffer = new Uint8Array(Math.max(bufferSize, 16));
         for (const r of regions) materialBuffer.set(new Uint8Array(r.data.buffer, r.data.byteOffset, r.data.byteLength), r.at);
+        // Material textures in per-format/size arrays (docs §6.2); packing reads their final formats.
+        this.buildMaterialTextures(textureManager);
         const blobBytes = new Uint8Array(materials.length * 128);
         materials.forEach((m, i) => {
             this.materialTypes.add(
@@ -1367,8 +1369,6 @@ export class Scene {
         }
         make("gridVolumeDummy", new Uint32Array(64), 256); // GridVolumeData-sized dummy (2x float4x4 + params)
 
-        // Material textures in per-format/size arrays (docs §6.2).
-        this.buildMaterialTextures(textureManager);
         this.dummyTexture = this.device.createTexture2D(1, 1, ResourceFormat.RGBA32Float, 1, 1, new Float32Array([0, 0, 0, 0]));
         // Standalone displacement texture (v1: one displaced material per scene).
         const dispHandle = materials.map((m) => m.basic.texDisplacement).find((h) => h !== undefined);
@@ -1729,6 +1729,18 @@ export class Scene {
     private emissiveMaterialIDs = new Set<number>();
 
     /** Packs one material blob; the alpha mode follows native updateAlphaMode unless given explicitly. */
+    /** Material::detectNormalMapType: 2-channel formats (BC5) are RG, 3/4 channels RGB, others unsupported. */
+    private normalMapTypeOf(handle: number | undefined): NormalMapType {
+        if (handle === undefined || ((handle >>> 29) & 0x3) !== TextureHandleMode.Texture) return NormalMapType.None;
+        const format = this.lcTextureManager.getGpuFormat(handle & 0x1fffffff);
+        if (format === undefined) return NormalMapType.RGB;
+        const channels = getFormatChannelCount(format);
+        if (channels === 2) return NormalMapType.RG;
+        if (channels >= 3) return NormalMapType.RGB;
+        Logger.warning(`Unsupported normal map format: ${ResourceFormat[format]}`);
+        return NormalMapType.None;
+    }
+
     private packMaterial(m: SceneMaterialDesc, index: number): Uint8Array {
         const header: MaterialHeaderDesc = { materialType: MaterialType.Standard, ...m.header };
         if (m.merl) {
@@ -1745,6 +1757,7 @@ export class Scene {
                 indexMapOffset: o.indexMap,
                 albedoLUTOffset: o.lut,
                 texNormalMap: m.merlMix.texNormalMap,
+                normalMapType: this.normalMapTypeOf(m.merlMix.texNormalMap),
             });
         }
         if (m.rgl) {
@@ -1762,7 +1775,7 @@ export class Scene {
         if (header.alphaMode === undefined) header.alphaMode = this.deriveAlphaMode(header, m.basic);
         if (header.deltaSpecular === undefined) header.deltaSpecular = isDeltaSpecularStandard(header, m.basic);
         header.doubleSided = isEffectivelyDoubleSided(header, m.basic);
-        return packBasicMaterialBlob(header, m.basic);
+        return packBasicMaterialBlob(header, { ...m.basic, normalMapType: this.normalMapTypeOf(m.basic.texNormalMap) });
     }
 
     /**

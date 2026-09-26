@@ -64,6 +64,14 @@ export interface TextureBucket {
 export class TextureManager {
     private sources: TextureSource[] = [];
     private analyses = new Map<number, TextureAnalysis>();
+    /** Each texture's format in the built arrays (BC data, or the decoded image past the binding budget). */
+    private gpuFormats = new Map<number, ResourceFormat>();
+
+    /** The texture's format as bound after build(), else its source format. */
+    getGpuFormat(textureID: number): ResourceFormat | undefined {
+        const src = this.sources[textureID];
+        return this.gpuFormats.get(textureID) ?? (src ? (src.compressed?.format ?? (src.srgb ? ResourceFormat.RGBA8UnormSrgb : ResourceFormat.RGBA8Unorm)) : undefined);
+    }
 
     /** Registers a texture; returns its textureID (array layer). */
     addTexture(source: TextureSource): number {
@@ -334,6 +342,7 @@ export class TextureManager {
                 bindFlags: b.compressed ? ResourceBindFlags.ShaderResource : ResourceBindFlags.ShaderResource | ResourceBindFlags.RenderTarget,
                 name: `TextureManager::materialTextures${bucketIndex}`,
             });
+            b.members.forEach((id) => this.gpuFormats.set(id, b.format));
             b.members.forEach((id, layer) => {
                 const src = this.sources[id]!;
                 if (b.compressed) {
