@@ -61,6 +61,11 @@ Scenes land under `Falcor/media/<Scene>/`, which the dev server serves at
 `/Falcor/media/…`. The Mogwai viewer loads `test_scenes/cornell_box.pyscene` by
 default.
 
+![The Mogwai viewer in the browser: render-graph editor, pass properties and the settings panel over the Cornell box](docs/assets/mogwai-ui.png)
+
+*The Mogwai viewer on the default Cornell box — the render-graph editor (top left), the selected
+pass's properties, and Mogwai's settings panel (right), all editable live.*
+
 Single-file assets that no scene bundle ships — compressed OpenVDB volumes,
 measured BRDF data — come from a second catalog:
 
