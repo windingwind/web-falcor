@@ -3,7 +3,8 @@
  * configuration; the Python dicts in graph scripts land here).
  */
 
-export type PropertyValue = boolean | number | string | number[] | PropertyValue[] | { [key: string]: PropertyValue };
+/** Python ints beyond 2^53 (u64/i64 extremes) are kept exact as bigint. */
+export type PropertyValue = boolean | number | bigint | string | number[] | PropertyValue[] | { [key: string]: PropertyValue };
 
 export class Properties {
     private values = new Map<string, PropertyValue>();

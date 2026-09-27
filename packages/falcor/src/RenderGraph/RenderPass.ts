@@ -11,6 +11,7 @@ import { Buffer } from "../Core/API/Buffer.js";
 import type { Resource } from "../Core/API/Resource.js";
 import type { ResourceFormat } from "../Core/API/Formats.js";
 import { Properties } from "../Utils/Properties.js";
+import { PluginManager } from "../Core/Plugin.js";
 import { RenderPassReflection } from "./RenderPassReflection.js";
 import type { Scene } from "../Scene/Scene.js";
 import type { UIWidgets } from "./UIWidgets.js";
@@ -136,19 +137,21 @@ export abstract class RenderPass {
 
 export type RenderPassFactory = (device: Device, props: Properties) => RenderPass;
 
-const registry = new Map<string, RenderPassFactory>();
+/** RenderPass's plugin info (native RenderPass::PluginInfo). */
+export interface RenderPassInfo {
+    desc: string;
+}
 
-/** Mirrors the plugin registration done in each pass's registerPlugin(). */
-export function registerRenderPass(type: string, factory: RenderPassFactory): void {
-    registry.set(type, factory);
+/** Mirrors the plugin registration done in each pass's registerPlugin(): a RenderPass class in the PluginManager. */
+export function registerRenderPass(type: string, factory: RenderPassFactory, info: RenderPassInfo = { desc: "" }): void {
+    PluginManager.instance().registerClass(RenderPass, type, info, factory);
 }
 
 /** Mirrors createPass() from the scripting API. */
 export function createPass(device: Device, type: string, props: Properties | Record<string, unknown> = {}): RenderPass {
-    const factory = registry.get(type);
-    if (!factory) throw new RuntimeError(`Unknown render pass type '${type}'. Registered: ${[...registry.keys()].join(", ")}`);
     const properties = props instanceof Properties ? props : new Properties(props as Record<string, never>);
-    const pass = factory(device, properties);
+    const pass = PluginManager.instance().createClass<RenderPassFactory>(RenderPass, type, device, properties);
+    if (!pass) throw new RuntimeError(`Unknown render pass type '${type}'. Registered: ${getRegisteredRenderPasses().join(", ")}`);
     pass.name = type;
     pass.type = type;
     pass.creationProps = properties;
@@ -170,16 +173,16 @@ export async function loadRenderPassLibrary(url: string): Promise<string[]> {
  */
 export async function loadPluginLibrary(url: string): Promise<{ renderPasses: string[]; importers: string[] }> {
     const { registerImporter, getRegisteredImporterExtensions } = await import("../Scene/Importer/ImporterRegistry.js");
-    const [passesBefore, importersBefore] = [new Set(registry.keys()), new Set(getRegisteredImporterExtensions())];
+    const [passesBefore, importersBefore] = [new Set(getRegisteredRenderPasses()), new Set(getRegisteredImporterExtensions())];
     // Plugins may import the package or use this hook (blob:/data: modules can't resolve bare specifiers).
     (globalThis as { webFalcorPlugins?: unknown }).webFalcorPlugins = { registerRenderPass, registerImporter };
     await import(/* @vite-ignore */ url);
     return {
-        renderPasses: [...registry.keys()].filter((type) => !passesBefore.has(type)),
+        renderPasses: getRegisteredRenderPasses().filter((type) => !passesBefore.has(type)),
         importers: getRegisteredImporterExtensions().filter((ext) => !importersBefore.has(ext)),
     };
 }
 
 export function getRegisteredRenderPasses(): string[] {
-    return [...registry.keys()];
+    return PluginManager.instance().getInfos(RenderPass).map(([type]) => type);
 }

@@ -13,7 +13,7 @@ import { RenderGraph } from "../../RenderGraph/RenderGraph.js";
 import { Settings } from "../Settings.js";
 import { buildSceneFromCache, encodeTextureSources, loadSceneCache, sceneCacheKey, snapshotCameras, snapshotGridVolumes, storeSceneCache } from "../../Scene/SceneCache.js";
 import { createPass, type RenderPass } from "../../RenderGraph/RenderPass.js";
-import { Properties } from "../Properties.js";
+import { Properties, type PropertyValue } from "../Properties.js";
 import { RuntimeError } from "../../Core/Error.js";
 import { AssetResolver, fetchDirectoryListing, kPythonFsRoots, withScriptSearchPath } from "../../Core/AssetResolver.js";
 import { AnimationBridge, CameraBridge, GridVolumeBridge, LightBridge, MaterialBridge, SceneBuilderBridge, SceneBuilderFlags, SDFGridBridge, TransformBridge, TriangleMesh, kSceneBuilderFlagsPython, makeTransform } from "../../Scene/SceneBuilder.js";
@@ -139,6 +139,29 @@ function toJs(value: unknown): unknown {
 }
 
 /** Renderer's python callbacks (m.sceneUpdateCallback / m.keyCallback), kept across scripts and console commands. */
+/** Properties(pybind11::dict): a Python dict's items (ints past 2^53 stay exact, as BigInt). */
+export function propertiesFromPython(dict: unknown): Properties {
+    return new Properties((toJs(dict) as Record<string, PropertyValue> | undefined) ?? {});
+}
+
+/** Properties::toPython. */
+export function propertiesToPython(props: Properties): unknown {
+    return pyodide!.toPy(props.toJSON());
+}
+
+/** The Settings script binding (native Settings' pybind11 methods); `onOptions` runs after addOptions. */
+export function settingsBinding(settings: Settings, onOptions?: () => void) {
+    return {
+        addOptions: (dict: unknown) => {
+            settings.addOptions(toJs(dict) as Record<string, never>);
+            onOptions?.();
+        },
+        addFilteredAttributes: (dictOrList: unknown) => settings.addFilteredAttributes(toJs(dictOrList) as Record<string, never>),
+        clearOptions: () => settings.clearOptions(),
+        clearFilteredAttributes: () => settings.clearFilteredAttributes(),
+    };
+}
+
 export interface MogwaiCallbacks {
     /** Called as (scene, time) each frame before the scene update. */
     sceneUpdateCallback: ((scene: Scene | null, time: number) => void) | null;
@@ -165,7 +188,7 @@ export async function runGraphScript(device: Device, source: string, extras: Rec
     const falcorModule = {
         RenderGraph: (name: string) => new RenderGraph(device, name),
         createPass: (type: string, props?: unknown) =>
-            createPass(device, type, new Properties((toJs(props) as Record<string, never>) ?? {})),
+            createPass(device, type, propertiesFromPython(props)),
         // Output-channel marker flags (markOutput's optional second argument).
         TextureChannelFlags: { Red: 1, Green: 2, Blue: 4, Alpha: 8, RGB: 7, RGBA: 15 },
         // Vector factories for pass properties (e.g. SimplePostFX saturationCurve).
@@ -179,16 +202,10 @@ export async function runGraphScript(device: Device, source: string, extras: Rec
     pyodide.registerJsModule("falcor", falcorModule);
 
     // Mirrors the native Settings script binding (m.settings / m.getSettings()).
-    const settings = {
-        addOptions: (dict: unknown) => {
-            globalSettings.addOptions(toJs(dict) as Record<string, never>);
-            applyMediaSearchPaths();
-            for (const g of graphs) for (const { pass } of g.getPasses()) pass.onOptionsChange(globalSettings.getOptions());
-        },
-        addFilteredAttributes: (dictOrList: unknown) => globalSettings.addFilteredAttributes(toJs(dictOrList) as Record<string, never>),
-        clearOptions: () => globalSettings.clearOptions(),
-        clearFilteredAttributes: () => globalSettings.clearFilteredAttributes(),
-    };
+    const settings = settingsBinding(globalSettings, () => {
+        applyMediaSearchPaths();
+        for (const g of graphs) for (const { pass } of g.getPasses()) pass.onOptionsChange(globalSettings.getOptions());
+    });
     const mogwai = {
         addGraph: (graph: RenderGraph) => {
             graphs.push(graph);
@@ -234,22 +251,14 @@ export function runConsoleCommand(
     if (!pyodide) throw new RuntimeError("Call initScripting() first");
     const lines: string[] = [];
     pyodide.registerJsModule("falcor", {
-        createPass: (type: string, props?: unknown) => createPass(device, type, new Properties((toJs(props) as Record<string, never>) ?? {})),
+        createPass: (type: string, props?: unknown) => createPass(device, type, propertiesFromPython(props)),
         float2: (x = 0, y = 0) => new float2(x, y),
         float3: (x = 0, y = 0, z = 0) => new float3(x, y, z),
         float4: (x = 0, y = 0, z = 0, w = 0) => new float4(x, y, z, w),
         SceneBuilderFlags: kSceneBuilderFlagsPython,
         ...AssetResolver.pythonBindings,
     });
-    const settings = {
-        addOptions: (dict: unknown) => {
-            globalSettings.addOptions(toJs(dict) as Record<string, never>);
-            applyMediaSearchPaths();
-        },
-        addFilteredAttributes: (dictOrList: unknown) => globalSettings.addFilteredAttributes(toJs(dictOrList) as Record<string, never>),
-        clearOptions: () => globalSettings.clearOptions(),
-        clearFilteredAttributes: () => globalSettings.clearFilteredAttributes(),
-    };
+    const settings = settingsBinding(globalSettings, applyMediaSearchPaths);
     // Read through the context: a caller passing getters gets an `m` that stays live (script callbacks).
     const m = {
         get scene() { return context.scene; },
@@ -955,8 +964,8 @@ export function recordMogwaiScript(device: Device, source: string, files: Record
     const makePass = (pass: RenderPass) =>
         new Proxy(pass, {
             get(target, key, receiver) {
-                if (key === "getDictionary") return () => pyodide!.toPy(target.getProperties().toJSON());
-                if (key === "properties") return pyodide!.toPy(target.getProperties().toJSON());
+                if (key === "getDictionary") return () => propertiesToPython(target.getProperties());
+                if (key === "properties") return propertiesToPython(target.getProperties());
                 if (key === "set_properties")
                     return (dict: unknown) => void commands.push({ op: "call", target, method: "setProperties", args: [new Properties(conv(dict) as Record<string, never>)] });
                 const value = Reflect.get(target, key, receiver);
@@ -1006,15 +1015,10 @@ export function recordMogwaiScript(device: Device, source: string, files: Record
             apply: (_t, _this, args: unknown[]) => void commands.push({ op: "call", target, method: path, args: args.map(deref) }),
         });
 
-    const recordedSettings = {
-        addOptions: (dict: unknown) => globalSettings.addOptions(toJs(dict) as Record<string, never>),
-        addFilteredAttributes: (dictOrList: unknown) => globalSettings.addFilteredAttributes(toJs(dictOrList) as Record<string, never>),
-        clearOptions: () => globalSettings.clearOptions(),
-        clearFilteredAttributes: () => globalSettings.clearFilteredAttributes(),
-    };
+    const recordedSettings = settingsBinding(globalSettings);
     pyodide.registerJsModule("_falcor_js", {
         RenderGraph: makeGraph,
-        createPass: (type: string, props?: unknown) => createPass(device, type, new Properties((toJs(props) as Record<string, never>) ?? {})),
+        createPass: (type: string, props?: unknown) => createPass(device, type, propertiesFromPython(props)),
         TextureChannelFlags: { Red: 1, Green: 2, Blue: 4, Alpha: 8, RGB: 7, RGBA: 15 },
         float2: (x = 0, y = 0) => new float2(x, y),
         float3: (x = 0, y = 0, z = 0) => new float3(x, y, z),

@@ -26,12 +26,11 @@ import { ShaderType } from "../../Core/Program/SlangCompiler.js";
 import type { Program, ShaderModuleDesc } from "../../Core/Program/Program.js";
 import { RenderGraph } from "../../RenderGraph/RenderGraph.js";
 import { createPass } from "../../RenderGraph/RenderPass.js";
-import { Properties } from "../Properties.js";
 import { Logger } from "../Logger.js";
 import { getMaterialParamLayoutForType, kMaterialParamCount, serializeMaterialParams, deserializeMaterialParams } from "../../Scene/Material/MaterialParamLayout.js";
 import { RuntimeError } from "../../Core/Error.js";
 import { AssetCategory, AssetResolver } from "../../Core/AssetResolver.js";
-import { getPyodide, kPythonVectorTypes } from "./Scripting.js";
+import { getPyodide, kPythonVectorTypes, propertiesFromPython } from "./Scripting.js";
 import { Testbed, kTestbedFsRoot, type TestbedOptions } from "./Testbed.js";
 import { MaterialBridge, kSceneBuilderFlagsPython } from "../../Scene/SceneBuilder.js";
 import { MaterialType } from "../../Scene/Material/MaterialData.js";
@@ -188,7 +187,7 @@ function makeJsModule(device: Device, testbedOptions: TestbedOptions, fsRead: (p
             return info ? [info.description || info.device || info.architecture || "", info.vendor ?? ""].join("|") : "|";
         },
         limits: () => [device.gpuDevice.limits.maxComputeWorkgroupsPerDimension, device.gpuDevice.limits.maxSamplersPerShaderStage],
-        createPass: (type: string, props: unknown) => createPass(device, String(type), new Properties((toJs(props) as Record<string, never>) ?? {})),
+        createPass: (type: string, props: unknown) => createPass(device, String(type), propertiesFromPython(props)),
         /** A file for load_render_graph: served relative to the media directory when the FS doesn't have it. */
         fetchText: async (path: string) => {
             const url = path.startsWith("/") ? path : await AssetResolver.getDefaultResolver().resolvePath(path, AssetCategory.Any);
@@ -196,7 +195,7 @@ function makeJsModule(device: Device, testbedOptions: TestbedOptions, fsRead: (p
             if (!res.ok) throw new RuntimeError(`Can't find render graph file '${path}'`);
             return res.text();
         },
-        graphCreatePass: (g: RenderGraph, name: string, type: string, props: unknown) => g.addPass(createPass(device, type, new Properties((toJs(props) as Record<string, never>) ?? {})), name),
+        graphCreatePass: (g: RenderGraph, name: string, type: string, props: unknown) => g.addPass(createPass(device, type, propertiesFromPython(props)), name),
         setLogVerbosity: (level: number) => (Logger.level = level),
         /** A material of `type` (MaterialType name) for Scene.replaceMaterial, e.g. PBRTDiffuse. */
         createMaterial: (type: string, name: string) => {

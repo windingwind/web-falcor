@@ -7,23 +7,40 @@
 
 import type { GltfImporter } from "./GltfImporter.js";
 import type { TextureManager } from "../Material/TextureManager.js";
+import { PluginManager } from "../../Core/Plugin.js";
 
 export type ImporterResult = Awaited<ReturnType<typeof GltfImporter.parseToDescs>>;
 export type ImporterPlugin = (bytes: Uint8Array, url: string, textureManager: TextureManager, options: { assumeLinearSpaceTextures?: boolean; useOriginalTangentSpace?: boolean }) => Promise<ImporterResult>;
 
-const importers = new Map<string, ImporterPlugin>();
-
-/** Registers `importer` for file extensions (without the dot, case-insensitive); a later registration wins. */
-export function registerImporter(extensions: string[], importer: ImporterPlugin): void {
-    for (const ext of extensions) importers.set(ext.toLowerCase().replace(/^\./, ""), importer);
+/** The Importer plugin base class's key and info (native Importer::PluginInfo: desc, extensions). */
+export const Importer = { name: "Importer" };
+export interface ImporterInfo {
+    desc: string;
+    extensions: string[];
 }
+
+/**
+ * Registers `importer` for file extensions (without the dot, case-insensitive) as an Importer class in the
+ * PluginManager (type defaults to e.g. "TriImporter"); for an extension, the latest registration wins.
+ */
+export function registerImporter(extensions: string[], importer: ImporterPlugin, type?: string, desc = ""): void {
+    const exts = extensions.map((e) => e.toLowerCase().replace(/^\./, ""));
+    const name = type ?? `${exts[0]!.charAt(0).toUpperCase()}${exts[0]!.slice(1)}Importer`;
+    // create() returns the importer, as native's create returns an Importer instance.
+    PluginManager.instance().registerClass(Importer, name, { desc, extensions: exts }, () => importer);
+    order = [name, ...order.filter((n) => n !== name)];
+}
+let order: string[] = [];
 
 /** The plugin importer for `path`'s extension, if one is registered. */
 export function getRegisteredImporter(path: string): ImporterPlugin | undefined {
     const clean = path.split(/[?#]/)[0]!;
-    return importers.get(clean.slice(clean.lastIndexOf(".") + 1).toLowerCase());
+    const ext = clean.slice(clean.lastIndexOf(".") + 1).toLowerCase();
+    const infos = new Map(PluginManager.instance().getInfos<ImporterInfo>(Importer));
+    const type = order.find((n) => infos.get(n)?.extensions.includes(ext));
+    return type ? (PluginManager.instance().createClass<() => ImporterPlugin>(Importer, type) ?? undefined) : undefined;
 }
 
 export function getRegisteredImporterExtensions(): string[] {
-    return [...importers.keys()];
+    return [...new Set(PluginManager.instance().getInfos<ImporterInfo>(Importer).flatMap(([, info]) => info.extensions))];
 }
