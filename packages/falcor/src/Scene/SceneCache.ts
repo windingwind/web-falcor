@@ -30,6 +30,7 @@ type RecipeMeta = Omit<SDFGridRecipe, "ops"> & {
 import type { SceneSDFGridDesc } from "./Scene.js";
 import { GridVolume, type GridSlot } from "./Volume/GridVolume.js";
 import { Grid } from "./Volume/Grid.js";
+import { Logger } from "../Utils/Logger.js";
 import type { BvhBuildResult } from "./SoftwareRT/Bvh.js";
 import { WorkerPool } from "../Utils/Threading/WorkerPool.js";
 
@@ -524,16 +525,24 @@ async function decodeTextureSources(textures: CachedTexture[]): Promise<TextureM
 
 const kCachePrefix = "webfalcor-scene-";
 
+/** Cache writes still in flight: loads and clears wait for them. */
+let pendingStores: Promise<void> = Promise.resolve();
+
+/** Serializes now (the scene's arrays may change later) and writes in the background; the load needn't wait. */
 export async function storeSceneCache(key: string, cached: CacheableScene): Promise<void> {
-    const dir = await navigator.storage.getDirectory();
-    const file = await dir.getFileHandle(`${kCachePrefix}${key}.bin`, { create: true });
-    const writable = await file.createWritable();
-    const bytes = serializeScene(cached);
-    await writable.write(bytes.slice().buffer as ArrayBuffer);
-    await writable.close();
+    const bytes = serializeScene(cached) as Uint8Array<ArrayBuffer>;
+    const write = async () => {
+        const dir = await navigator.storage.getDirectory();
+        const file = await dir.getFileHandle(`${kCachePrefix}${key}.bin`, { create: true });
+        const writable = await file.createWritable();
+        await writable.write(bytes);
+        await writable.close();
+    };
+    pendingStores = pendingStores.then(write).catch((e: unknown) => Logger.warning(`SceneCache: storing '${key}' failed: ${String(e)}`));
 }
 
 export async function loadSceneCache(key: string): Promise<CacheableScene | null> {
+    await pendingStores;
     try {
         const dir = await navigator.storage.getDirectory();
         const file = await dir.getFileHandle(`${kCachePrefix}${key}.bin`);
@@ -545,6 +554,7 @@ export async function loadSceneCache(key: string): Promise<CacheableScene | null
 }
 
 export async function clearSceneCache(): Promise<void> {
+    await pendingStores;
     const dir = await navigator.storage.getDirectory();
     const names: string[] = [];
     for await (const name of (dir as unknown as { keys(): AsyncIterable<string> }).keys()) {
