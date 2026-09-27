@@ -18,6 +18,8 @@
     "shaders": "node packages/slang-compiler/bin/compile-shaders.js",
     "shaders:list": "node packages/slang-compiler/bin/repo-shader-list.js",
     "new:pass": "node scripts/new-pass.mjs",
+    "py2js": "vite-node scripts/py2js.ts --",
+    "py2js:corpus": "vite-node scripts/py2js.ts -- Falcor/scripts/BSDFViewer.py Falcor/scripts/MinimalPathTracer.py Falcor/scripts/PathTracer.py Falcor/scripts/PathTracerNRD.py Falcor/scripts/RTXDI.py Falcor/scripts/SceneDebugger.py Falcor/scripts/WARDiffPathTracer.py Falcor/media/test_scenes tests/oracle/assets Falcor/tests/image_tests --out tests/gpu/generated/py2js --check",
     "build:web": "node scripts/build-web.mjs",
     "build:packages": "node scripts/build-packages.mjs",
     "dev": "npm run dev --workspace=@web-falcor/mogwai",

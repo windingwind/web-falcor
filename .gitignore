@@ -18,6 +18,8 @@ packages/falcor/shaders/generated/*
 .vite/
 .DS_Store
 tests/gpu/out/
+# Python scripts converted to JS for the py2js equivalence tests (npm run py2js)
+tests/gpu/generated/
 
 # Out-of-tree render pass plugins (npm run new:pass -- X --plugin); each belongs in its own repo
 /plugins/

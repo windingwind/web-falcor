@@ -6,7 +6,7 @@
 
 import { FrameCaptureExtension, captureOutput } from "./FrameCapture.js";
 import { recordMogwaiSource, replayMogwaiCommands, type MogwaiHost } from "./ScriptRunner.js";
-import { AssetCategory, AssetResolver, assetUrl, setAssetBase, isAbsoluteUrl, kProjectMediaUrl, Clock, Device, Logger, LogLevel, SceneBuilderFlags, getGlobalSettings, Profiler, ProfilerUI, VideoRecorder, ProgramManager, RenderGraph, ResourceFormat, Bitmap, BitmapExportFlags, createPass, loadPluginLibrary, initScripting, initSlang, runConsoleCommand, runSceneScript, DomWidgets, nativeKeyCode, GamepadInput, GamepadEventType, GamepadButton, type MogwaiCallbacks, runPbrtScene, runMitsubaScene, presentToCanvas, OverlayDrawList, type Scene } from "@web-falcor/falcor";
+import { AssetCategory, AssetResolver, assetUrl, setAssetBase, isAbsoluteUrl, convertPythonSource, runConsoleCommandJs, isJsScript, isJsSceneScript, recordMogwaiModule, runSceneModule, type MogwaiCommand, kProjectMediaUrl, Clock, Device, Logger, LogLevel, SceneBuilderFlags, getGlobalSettings, Profiler, ProfilerUI, VideoRecorder, ProgramManager, RenderGraph, ResourceFormat, Bitmap, BitmapExportFlags, createPass, loadPluginLibrary, initScripting, initSlang, runConsoleCommand, runSceneScript, DomWidgets, nativeKeyCode, GamepadInput, GamepadEventType, GamepadButton, type MogwaiCallbacks, runPbrtScene, runMitsubaScene, presentToCanvas, OverlayDrawList, type Scene } from "@web-falcor/falcor";
 import "@web-falcor/render-passes";
 import { CameraController, kCameraControllerTypes, kUpDirectionNames } from "./CameraController.js";
 import { buildUIPanel } from "./UIPanel.js";
@@ -73,7 +73,8 @@ class TimingCapture {
 }
 
 async function loadGraph(state: ViewerState, url: string): Promise<void> {
-    await runScriptSource(state, await (await fetch(url)).text(), url.slice(0, url.lastIndexOf("/")), url.split(/[?#]/)[0]!.slice(url.lastIndexOf("/") + 1));
+    if (isJsScript(url)) await runScriptCommands(state, await recordMogwaiModule(state.device, url));
+    else await runScriptSource(state, await (await fetch(url)).text(), url.slice(0, url.lastIndexOf("/")), url.split(/[?#]/)[0]!.slice(url.lastIndexOf("/") + 1));
 }
 
 /** The viewer's built-in graph (native starts without one): a script's graphs replace it. */
@@ -84,7 +85,11 @@ let builtInGraph: RenderGraph | null = null;
  * resizeFrameBuffer, renderFrame, captures, callbacks), recorded and replayed onto the viewer's state.
  */
 async function runScriptSource(state: ViewerState, source: string, dirUrl: string, fileName?: string): Promise<void> {
-    const commands = await recordMogwaiSource(state.device, source, dirUrl, fileName);
+    await runScriptCommands(state, await recordMogwaiSource(state.device, source, dirUrl, fileName));
+}
+
+/** Replays a recorded script (Python or JS) onto the viewer's state. */
+async function runScriptCommands(state: ViewerState, commands: MogwaiCommand[]): Promise<void> {
     if (builtInGraph && state.graphs.includes(builtInGraph)) {
         state.graphs.splice(state.graphs.indexOf(builtInGraph), 1);
         if (state.graph === builtInGraph) state.graph = null;
@@ -146,7 +151,9 @@ async function createScene(state: ViewerState, url: string, baseUrl: string, fla
     const lower = url.toLowerCase().split(/[?#]/)[0]!;
     if (rebuildSceneCache) flags = (flags ?? SceneBuilderFlags.Default) | SceneBuilderFlags.RebuildCache;
     rebuildSceneCache = false;
-    const scene = lower.endsWith(".pbrt")
+    const scene = isJsScript(lower)
+        ? await runSceneModule(state.device, url, { cache: true, path: url, flags, baseUrl }) // JS scene module (*.scene.js)
+        : lower.endsWith(".pbrt")
         ? await runPbrtScene(state.device, await (await fetch(url)).text(), baseUrl, { flags })
         : lower.endsWith(".xml") // Mitsuba scenes are the only .xml we load
           ? await runMitsubaScene(state.device, await (await fetch(url)).text(), baseUrl)
@@ -436,6 +443,7 @@ async function main() {
         }, state.device.programManager);
 
     wireControls(state, rebuildUI);
+    wireScriptLanguage();
     wireConsole(state, resetAccum, rebuildUI, profiler);
     wireMouseForwarding(state);
     wireGraphEditor(state, rebuildUI, resetAccum);
@@ -627,18 +635,41 @@ function wireConsole(state: ViewerState, resetAccum: () => void, rebuildUI: () =
             histIdx = history.length;
             input.value = "";
             append(`>>> ${src}`, "in");
-            try {
-                const out = runConsoleCommand(state.device, src, { scene: state.scene, graph: state.graph, clock: state.clock, timingCapture: state.timingCapture, frameCapture: state.frameCapture, profiler, callbacks: state.callbacks });
-                if (out) append(out);
-            } catch (e) {
-                append(String(e), "err");
-            }
-            // Edits likely changed scene/pass state: restart accumulation, refresh panels.
-            resetAccum();
-            refreshOutputs(state);
-            rebuildUI();
+            const context = { scene: state.scene, graph: state.graph, clock: state.clock, timingCapture: state.timingCapture, frameCapture: state.frameCapture, profiler, callbacks: state.callbacks };
+            void (async () => {
+                try {
+                    const out = scriptLanguage() === "js" ? await runConsoleCommandJs(state.device, src, context) : runConsoleCommand(state.device, src, context);
+                    if (out) append(out);
+                } catch (e) {
+                    append(String(e), "err");
+                }
+                // Edits likely changed scene/pass state: restart accumulation, refresh panels.
+                resetAccum();
+                refreshOutputs(state);
+                rebuildUI();
+            })();
         }
     });
+}
+
+/** The toolbar's script language: the console's, and what Save Config / Save graph write. */
+function scriptLanguage(): "py" | "js" {
+    const sel = document.getElementById("scriptLang") as HTMLSelectElement | null;
+    return sel?.value === "js" ? "js" : "py";
+}
+
+function wireScriptLanguage(): void {
+    const sel = document.getElementById("scriptLang") as HTMLSelectElement | null;
+    if (!sel) return;
+    sel.value = localStorage.getItem("webfalcor.scriptLang") === "js" ? "js" : "py";
+    sel.addEventListener("change", () => localStorage.setItem("webfalcor.scriptLang", sel.value));
+}
+
+/** A generated Python script (Save Config, the graph export) as the equivalent JS script (PyToJs.ts). */
+function toJsScript(python: string, fileName: string): string {
+    const { code, warnings } = convertPythonSource(python, { kind: "script", fileName });
+    for (const w of warnings) Logger.warning(`py2js: ${w}`);
+    return code;
 }
 
 /** Canvas click (without drag) selects the pixel on picking-capable passes
@@ -782,6 +813,10 @@ function wireGraphEditor(state: ViewerState, rebuildUI: () => void, resetAccum: 
     if (!panel || !toggle) return;
     const editor = new GraphEditor(panel, {
         defaultTexDims: () => [canvas.width, canvas.height],
+        exportGraph: (graph) => {
+            const python = graph.exportScript();
+            return scriptLanguage() === "js" ? { text: toJsScript(python, `${graph.name}.py`), extension: "js", label: "JS" } : { text: python, extension: "py", label: "python" };
+        },
         onGraphChanged: () => {
             state.graphError = null;
             if (state.graph) {
@@ -834,6 +869,12 @@ function wireControls(state: ViewerState, rebuildUI: () => void): void {
         const ext = file.name.slice(file.name.lastIndexOf(".") + 1).toLowerCase();
         void (async () => {
             if (ext === "py") await runScriptSource(state, await file.text(), location.pathname.replace(/\/[^/]*$/, ""), file.name);
+            else if (isJsScript(file.name)) {
+                // A JS module runs from a blob URL: *.scene.js loads as a scene, other JS as a Mogwai script.
+                const url = URL.createObjectURL(file);
+                if (isJsSceneScript(file.name)) installScene(state, await runSceneModule(state.device, url, { baseUrl: kProjectMediaUrl, path: file.name }), null);
+                else await runScriptCommands(state, await recordMogwaiModule(state.device, url));
+            }
             else if (ext === "pyscene") installScene(state, await runSceneScript(state.device, await file.text(), kProjectMediaUrl, { path: file.name }), null);
             else if (ext === "pbrt") installScene(state, await runPbrtScene(state.device, await file.text(), kProjectMediaUrl), null);
             else if (["fbx", "gltf", "glb", "obj", "usd", "usda", "usdc", "usdz", "dae", "3ds", "ply", "blend"].includes(ext)) {
@@ -851,7 +892,7 @@ function wireControls(state: ViewerState, rebuildUI: () => void): void {
     open?.addEventListener("keydown", (ev) => {
         if (ev.key !== "Enter" || !open.value.trim()) return;
         const path = open.value.trim();
-        const isScript = /\.py$/i.test(path.split(/[?#]/)[0]!);
+        const isScript = /\.py$/i.test(path.split(/[?#]/)[0]!) || (isJsScript(path) && !isJsSceneScript(path));
         status.textContent = `loading ${path}…`;
         void (async () => {
             const url = await resolveAssetUrl(path);
@@ -866,7 +907,7 @@ function wireControls(state: ViewerState, rebuildUI: () => void): void {
     window.addEventListener("keydown", (ev) => {
         if (ev.ctrlKey && ev.key.toLowerCase() === "o" && open) {
             ev.preventDefault(); // the browser's own file dialog
-            open.placeholder = ev.shiftKey ? "scene path" : "script path (.py)";
+            open.placeholder = ev.shiftKey ? "scene path" : "script path (.py or .js)";
             open.focus();
         }
     });
@@ -894,10 +935,12 @@ function wireControls(state: ViewerState, rebuildUI: () => void): void {
     });
     // Mirrors Mogwai's File > Save Config: the viewer state as a replayable Mogwai script.
     ($("saveConfig") as HTMLButtonElement | null)?.addEventListener("click", () => {
-        const script = saveConfig({ graphs: state.graphs, scene: state.scene, scenePath: state.scenePath, width: canvas.width, height: canvas.height, showUI: true, clock: state.clock, frameCapture: state.frameCapture });
+        const python = saveConfig({ graphs: state.graphs, scene: state.scene, scenePath: state.scenePath, width: canvas.width, height: canvas.height, showUI: true, clock: state.clock, frameCapture: state.frameCapture });
+        const js = scriptLanguage() === "js";
+        const script = js ? toJsScript(python, "MogwaiConfig.py") : python;
         const a = document.createElement("a");
-        a.href = URL.createObjectURL(new Blob([script], { type: "text/x-python" }));
-        a.download = "MogwaiConfig.py";
+        a.href = URL.createObjectURL(new Blob([script], { type: js ? "text/javascript" : "text/x-python" }));
+        a.download = js ? "MogwaiConfig.js" : "MogwaiConfig.py";
         a.click();
         URL.revokeObjectURL(a.href);
     });

@@ -17,7 +17,7 @@ export function passFiles(name, mode) {
     const files = [
         [`${name}.ts`, passTs(name, plugin)],
         [`${name}.cs.slang`, passSlang(name)],
-        [`${name}.py`, graphPy(name)],
+        [`${name}.graph.js`, graphJs(name)],
     ];
     if (plugin) files.push(["README.md", readme(name, mode)], ["package.json", packageJson(name, mode)], ["vite.config.js", viteConfig(name)]);
     if (mode === "standalone") files.push(["tsconfig.json", tsconfig()], [".gitignore", "node_modules/\ndist/\n"]);
@@ -119,29 +119,25 @@ void main(uint3 dispatchThreadId: SV_DispatchThreadID)
 `;
 }
 
-function graphPy(name) {
-    return `from falcor import *
-
-# Path tracer -> ToneMapper -> ${name}; open in Mogwai with ?script=<this file>.
-def render_graph_${name}():
-    g = RenderGraph("${name}")
-    g.addPass(createPass("VBufferRT", {'samplePattern': 'Stratified', 'sampleCount': 16}), "VBufferRT")
-    g.addPass(createPass("PathTracer", {'samplesPerPixel': 1}), "PathTracer")
-    g.addPass(createPass("AccumulatePass", {'enabled': True, 'precisionMode': 'Single'}), "AccumulatePass")
-    g.addPass(createPass("ToneMapper", {'autoExposure': False, 'exposureCompensation': 0.0}), "ToneMapper")
-    g.addPass(createPass("${name}", {'scale': 1.0}), "${name}")
-    g.addEdge("VBufferRT.vbuffer", "PathTracer.vbuffer")
-    g.addEdge("VBufferRT.viewW", "PathTracer.viewW")
-    g.addEdge("VBufferRT.mvec", "PathTracer.mvec")
-    g.addEdge("PathTracer.color", "AccumulatePass.input")
-    g.addEdge("AccumulatePass.output", "ToneMapper.src")
-    g.addEdge("ToneMapper.dst", "${name}.src")
-    g.markOutput("${name}.dst")
-    return g
-
-${name} = render_graph_${name}()
-try: m.addGraph(${name})
-except NameError: None
+function graphJs(name) {
+    return `// Path tracer -> ToneMapper -> ${name}; open in Mogwai with ?script=<this file>.
+// A JS render-graph script: its context has what Python's \`from falcor import *\` gives (plus \`m\`).
+export default function ({ m, RenderGraph, createPass }) {
+    const g = RenderGraph("${name}");
+    g.addPass(createPass("VBufferRT", { samplePattern: "Stratified", sampleCount: 16 }), "VBufferRT");
+    g.addPass(createPass("PathTracer", { samplesPerPixel: 1 }), "PathTracer");
+    g.addPass(createPass("AccumulatePass", { enabled: true, precisionMode: "Single" }), "AccumulatePass");
+    g.addPass(createPass("ToneMapper", { autoExposure: false, exposureCompensation: 0 }), "ToneMapper");
+    g.addPass(createPass("${name}", { scale: 1 }), "${name}");
+    g.addEdge("VBufferRT.vbuffer", "PathTracer.vbuffer");
+    g.addEdge("VBufferRT.viewW", "PathTracer.viewW");
+    g.addEdge("VBufferRT.mvec", "PathTracer.mvec");
+    g.addEdge("PathTracer.color", "AccumulatePass.input");
+    g.addEdge("AccumulatePass.output", "ToneMapper.src");
+    g.addEdge("ToneMapper.dst", "${name}.src");
+    g.markOutput("${name}.dst");
+    m.addGraph(g);
+}
 `;
 }
 
@@ -151,9 +147,9 @@ function packageJson(name, mode) {
         version: "0.1.0",
         type: "module",
         description: `${name}: a web-falcor render pass plugin`,
-        files: ["dist", "*.py", "README.md"],
+        files: ["dist", "*.graph.js", "README.md"],
         // Read by `web-falcor dev` to open the viewer on this plugin.
-        webFalcor: { scene: "test_scenes/cornell_box.pyscene", plugin: `${name}.ts`, script: `${name}.py` },
+        webFalcor: { scene: "test_scenes/cornell_box.pyscene", plugin: `${name}.ts`, script: `${name}.graph.js` },
         scripts: mode === "standalone" ? { dev: "web-falcor dev", build: "vite build", typecheck: "tsc --noEmit" } : { build: "vite build" },
         peerDependencies: { "@web-falcor/falcor": "*" },
     };
@@ -223,7 +219,7 @@ npm run dev
 \`\`\`
 
 Then open
-<http://localhost:5173/?scene=test_scenes/cornell_box.pyscene&script=/plugins/${name}/${name}.py&plugin=/plugins/${name}/${name}.ts>.`;
+<http://localhost:5173/?scene=test_scenes/cornell_box.pyscene&script=/plugins/${name}/${name}.graph.js&plugin=/plugins/${name}/${name}.ts>.`;
     return `# ${name}
 
 A [web-falcor](https://github.com/windingwind/web-falcor) render pass plugin.
@@ -234,14 +230,14 @@ ${develop}
 
 ## Share
 
-\`npm run build\` writes \`dist/${name}.js\`. Host it and \`${name}.py\` anywhere that allows CORS (e.g. GitHub Pages),
+\`npm run build\` writes \`dist/${name}.js\`. Host it and \`${name}.graph.js\` anywhere that allows CORS (e.g. GitHub Pages),
 then open the online viewer with both URLs:
 
 \`\`\`text
-https://windingwind.github.io/web-falcor/?plugin=<url of ${name}.js>&script=<url of ${name}.py>
+https://windingwind.github.io/web-falcor/?plugin=<url of ${name}.js>&script=<url of ${name}.graph.js>
 \`\`\`
 
 To use the pass in your own graph, load the plugin with \`?plugin=\` and create it with
-\`createPass("${name}", {'scale': 1.0})\`.
+\`createPass("${name}", { scale: 1 })\`.
 `;
 }

@@ -81,6 +81,7 @@
       <button id="play">Pause</button>
       <button id="capture">Capture</button>
       <button id="saveConfig" title="Save the graph, scene, camera and clock as a Mogwai script">Save Config</button>
+      <label title="The console's language, and what Save Config / Save graph write">script <select id="scriptLang"><option value="py">Python</option><option value="js">JS</option></select></label>
       <button id="record">Record</button>
       <label title="Load Script / Load Scene (Ctrl+O / Ctrl+Shift+O): a media path or URL; .py loads as a script, anything else as a scene. Recent entries are suggested.">open <input id="openPath" list="recentList" placeholder="scene or script path" size="28" /></label>
       <datalist id="recentList"></datalist>
@@ -96,7 +97,7 @@
     <div id="graphEditor" hidden></div>
     <div id="console" hidden>
       <div id="consoleLog"></div>
-      <input id="consoleInput" placeholder="python — m.scene / m.activeGraph / m.settings; Enter to run" />
+      <input id="consoleInput" placeholder="m.scene / m.activeGraph / m.settings; Enter to run (the toolbar's script language)" />
     </div>
     <div id="passes"></div>
     <div id="profiler" hidden></div>

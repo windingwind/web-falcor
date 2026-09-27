@@ -235,6 +235,36 @@ export async function runGraphScript(device: Device, source: string, extras: Rec
     return graphs;
 }
 
+/** The live viewer state a console command (or a script callback) sees. */
+export interface ConsoleContext {
+    scene: Scene | null;
+    graph: RenderGraph | null;
+    clock?: unknown;
+    timingCapture?: unknown;
+    frameCapture?: unknown;
+    profiler?: import("../../Core/API/Profiler.js").Profiler | null;
+    callbacks?: MogwaiCallbacks;
+}
+
+/** The console's `m`, bound to the LIVE viewer state (shared by the Python and JS consoles). */
+export function createConsoleMogwai(device: Device, context: ConsoleContext, profilerToScript: (v: unknown) => unknown = (v) => v): Record<string, unknown> {
+    const settings = settingsBinding(globalSettings, applyMediaSearchPaths);
+    // Read through the context: a caller passing getters gets an `m` that stays live (script callbacks).
+    const m: Record<string, unknown> = {
+        get scene() { return context.scene; },
+        get activeGraph() { return context.graph; },
+        get clock() { return context.clock; },
+        get timingCapture() { return context.timingCapture; },
+        get frameCapture() { return context.frameCapture; },
+        profiler: (context.profiler ?? device.profilerHook)?.pythonBindings(profilerToScript) ?? null,
+        settings,
+        getSettings: () => settings,
+        ...settings,
+    };
+    if (context.callbacks) defineCallbackProperties(m, context.callbacks);
+    return m;
+}
+
 /**
  * Interactive python console (mirrors Mogwai's console): runs a snippet with
  * `m` bound to the LIVE viewer state — `m.scene` is the real Scene (edits via
@@ -246,7 +276,7 @@ export async function runGraphScript(device: Device, source: string, extras: Rec
 export function runConsoleCommand(
     device: Device,
     source: string,
-    context: { scene: Scene | null; graph: RenderGraph | null; clock?: unknown; timingCapture?: unknown; frameCapture?: unknown; profiler?: import("../../Core/API/Profiler.js").Profiler | null; callbacks?: MogwaiCallbacks },
+    context: ConsoleContext,
 ): string {
     if (!pyodide) throw new RuntimeError("Call initScripting() first");
     const lines: string[] = [];
@@ -258,21 +288,7 @@ export function runConsoleCommand(
         SceneBuilderFlags: kSceneBuilderFlagsPython,
         ...AssetResolver.pythonBindings,
     });
-    const settings = settingsBinding(globalSettings, applyMediaSearchPaths);
-    // Read through the context: a caller passing getters gets an `m` that stays live (script callbacks).
-    const m = {
-        get scene() { return context.scene; },
-        get activeGraph() { return context.graph; },
-        get clock() { return context.clock; },
-        get timingCapture() { return context.timingCapture; },
-        get frameCapture() { return context.frameCapture; },
-        profiler: (context.profiler ?? device.profilerHook)?.pythonBindings((v) => pyodide!.toPy(v)) ?? null,
-        settings,
-        getSettings: () => settings,
-        ...settings,
-    };
-    if (context.callbacks) defineCallbackProperties(m, context.callbacks);
-    pyodide.globals.set("m", m);
+    pyodide.globals.set("m", createConsoleMogwai(device, context, (v) => pyodide!.toPy(v)));
     const py = pyodide as unknown as { setStdout(opts: { batched: (s: string) => void }): void; runPython(src: string): unknown };
     py.setStdout({ batched: (s) => lines.push(s) });
     try {
@@ -286,11 +302,26 @@ export function runConsoleCommand(
     return lines.join("\n");
 }
 
+/** Enums of old render scripts (before Falcor's options became strings): `X.Value` evaluates to "Value". */
+export const kLegacyEnumNames = (
+    "CompositeMode ToneMapOp ExposureMode SceneDebuggerMode TexLODMode RayConeMode RayFootprintFilterMode ColorFormat " +
+    "MISHeuristic SchedulingMode EmissiveLightSamplerType OptixDenoiserModel NRDMethod SamplePattern FLIPToneMapperType " +
+    "OutputId DLSSProfile DLSSMotionVectorScale ColorMap BSDFViewerMode AccumulatePrecision AccumulateOverflowMode " +
+    "TransformNormalPassOp AdaptiveSamplerMode AdaptiveSamplerAnimMode AdaptiveSamplerClampMode DenoiserModel " +
+    "ExportPassFormat ExportPassOp ExportPassFreq IOSize SamplerFilter AddressMode ComparisonFunc SplitHeuristic " +
+    "SolidAngleBoundMethod RTXDIMode RTXDIBiasCorrection TransmittanceEstimator DistanceSampler ResourceFormat"
+).split(" ");
+/** Options structs of old render scripts: `X(a=1)` is the dict {a: 1}. */
+export const kLegacyStructNames = (
+    "SplitSampleGeneratorOptions EmissiveUniformSamplerOptions LightBVHBuilderOptions LightBVHSamplerOptions RTXDIOptions " +
+    "GridVolumeSamplerOptions ScreenSpaceReSTIROptions PathTracerParams"
+).split(" ");
+
 /**
  * Wraps the script's `m` so `m.profiler.event(name)` is native's ProfilerEvent context manager
  * (a JS object can't be used in `with`); everything else passes through to the JS object.
  */
-const kMogwaiShim = `
+export const kMogwaiShim = `
 # Native's deprecated globals: t (the clock), fc (Frame Capture), tc (Timing Capture).
 t = getattr(m, "clock", None)
 fc = getattr(m, "frameCapture", None)
@@ -317,12 +348,7 @@ class _LegacyEnum(type):
     def __getattr__(cls, k):
         if k.startswith('__'): raise AttributeError(k)
         return k
-for _n in ('CompositeMode ToneMapOp ExposureMode SceneDebuggerMode TexLODMode RayConeMode RayFootprintFilterMode ColorFormat '
-           'MISHeuristic SchedulingMode EmissiveLightSamplerType OptixDenoiserModel NRDMethod SamplePattern FLIPToneMapperType '
-           'OutputId DLSSProfile DLSSMotionVectorScale ColorMap BSDFViewerMode AccumulatePrecision AccumulateOverflowMode '
-           'TransformNormalPassOp AdaptiveSamplerMode AdaptiveSamplerAnimMode AdaptiveSamplerClampMode DenoiserModel '
-           'ExportPassFormat ExportPassOp ExportPassFreq IOSize SamplerFilter AddressMode ComparisonFunc SplitHeuristic '
-           'SolidAngleBoundMethod RTXDIMode RTXDIBiasCorrection TransmittanceEstimator DistanceSampler ResourceFormat').split():
+for _n in '${kLegacyEnumNames.join(" ")}'.split():
     if _n not in globals(): globals()[_n] = _LegacyEnum(_n, (), {})
 if 'CullMode' not in globals():
     class CullMode:
@@ -330,8 +356,7 @@ if 'CullMode' not in globals():
         CullFront = 'Front'
         CullBack = 'Back'
 def _legacy_struct(**kwargs): return dict(kwargs)
-for _n in ('SplitSampleGeneratorOptions EmissiveUniformSamplerOptions LightBVHBuilderOptions LightBVHSamplerOptions RTXDIOptions '
-           'GridVolumeSamplerOptions ScreenSpaceReSTIROptions PathTracerParams').split():
+for _n in '${kLegacyStructNames.join(" ")}'.split():
     if _n not in globals(): globals()[_n] = _legacy_struct
 `;
 
@@ -383,7 +408,7 @@ for _n in (2, 3, 4):
 
 /** Python prelude adapting pythonic pyscene API (kwargs, class-style ctors)
  *  to the JS SceneBuilder bridge. */
-const kScenePrelude = `
+export const kScenePrelude = `
 import sys
 sys.modules.pop('webfalcor_scene', None)  # registerJsModule per call; defeat import caching
 from webfalcor_scene import (sceneBuilder, SceneBuilderFlags, _TriangleMesh,
@@ -653,33 +678,17 @@ export interface SceneScriptOptions {
 
 export async function runSceneScript(device: Device, source: string, baseUrl: string, options?: SceneScriptOptions): Promise<Scene> {
     if (!pyodide) throw new RuntimeError("Call initScripting() first");
-    sceneLoadedFromCache = false;
-    const scene = await withScriptSearchPath(baseUrl, () => runSceneScriptInternal(device, source, baseUrl, options));
-    if (options?.path) scene.importPaths.unshift(options.path);
-    return scene;
+    return runSceneScriptInternal(device, source, baseUrl, options);
 }
 
-async function runSceneScriptInternal(device: Device, source: string, baseUrl: string, options?: SceneScriptOptions): Promise<Scene> {
-    if (!pyodide) throw new RuntimeError("Call initScripting() first");
-    // Earlier scenes may be destroyed by now; Python cycles still pointing at their data go first.
-    pyodide.runPython("import gc\ngc.collect()");
-    const flags = (options?.flags ?? SceneBuilderFlags.Default) as number;
-    const useCache = options?.cache || (flags & SceneBuilderFlags.UseCache) !== 0 || (flags & SceneBuilderFlags.RebuildCache) !== 0;
-    const rebuildCache = (flags & SceneBuilderFlags.RebuildCache) !== 0;
-    let cacheKey: string | null = null;
-    if (useCache) {
-        // Native keys the cache on the build flags too (cache/rebuild bits excluded).
-        cacheKey = await sceneCacheKey(`${source}\n#flags=${flags & ~(SceneBuilderFlags.UseCache | SceneBuilderFlags.RebuildCache)}`);
-        const cached = rebuildCache ? null : await loadSceneCache(cacheKey);
-        if (cached) {
-            sceneLoadedFromCache = true;
-            return await buildSceneFromCache(device, cached);
-        }
-    }
-    const builder = new SceneBuilderBridge(flags);
+type VecLike = { x: number; y: number; z: number };
 
-    type VecLike = { x: number; y: number; z: number };
-    const sceneModule = {
+/**
+ * The scene bridge's factories for `builder`: the Python scene prelude imports these (as webfalcor_scene), and the
+ * JS scene API (JsScripting.ts) wraps the same ones, so both languages build scenes through one implementation.
+ */
+export function createSceneBridgeModule(builder: SceneBuilderBridge) {
+    return {
         sceneBuilder: builder as SceneBuilderBridge | null,
         // Pyodide calls JS classes without `new`; vectors live python-side (prelude).
         _TriangleMesh: {
@@ -766,6 +775,54 @@ async function runSceneScriptInternal(device: Device, source: string, baseUrl: s
         SceneBuilderFlags: kSceneBuilderFlagsPython,
         ...AssetResolver.pythonBindings,
     };
+}
+
+/**
+ * Builds a scene from a scene script in any language: a scene-cache hit (keyed on `source` and the flags), or a
+ * fresh builder that `populate` fills, then resolved (and cached). The Python and JS scene loaders share it.
+ */
+export async function buildSceneFromScript(
+    device: Device,
+    source: string,
+    baseUrl: string,
+    options: SceneScriptOptions | undefined,
+    populate: (builder: SceneBuilderBridge) => Promise<void> | void,
+): Promise<Scene> {
+    sceneLoadedFromCache = false;
+    const scene = await withScriptSearchPath(baseUrl, async () => {
+        const flags = (options?.flags ?? SceneBuilderFlags.Default) as number;
+        const useCache = options?.cache || (flags & SceneBuilderFlags.UseCache) !== 0 || (flags & SceneBuilderFlags.RebuildCache) !== 0;
+        const rebuildCache = (flags & SceneBuilderFlags.RebuildCache) !== 0;
+        let cacheKey: string | null = null;
+        if (useCache) {
+            // Native keys the cache on the build flags too (cache/rebuild bits excluded).
+            cacheKey = await sceneCacheKey(`${source}\n#flags=${flags & ~(SceneBuilderFlags.UseCache | SceneBuilderFlags.RebuildCache)}`);
+            const cached = rebuildCache ? null : await loadSceneCache(cacheKey);
+            if (cached) {
+                sceneLoadedFromCache = true;
+                return await buildSceneFromCache(device, cached);
+            }
+        }
+        const builder = new SceneBuilderBridge(flags);
+        await populate(builder);
+        return resolveSceneScript(device, builder, baseUrl, cacheKey);
+    });
+    if (options?.path) scene.importPaths.unshift(options.path);
+    return scene;
+}
+
+async function runSceneScriptInternal(device: Device, source: string, baseUrl: string, options?: SceneScriptOptions): Promise<Scene> {
+    if (!pyodide) throw new RuntimeError("Call initScripting() first");
+    // Earlier scenes may be destroyed by now; Python cycles still pointing at their data go first.
+    pyodide.runPython("import gc\ngc.collect()");
+    return buildSceneFromScript(device, source, baseUrl, options, (builder) => populatePythonScene(builder, source, baseUrl));
+}
+
+/** Runs a .pyscene against `builder` (the Python half of runSceneScript). */
+async function populatePythonScene(builder: SceneBuilderBridge, source: string, baseUrl: string): Promise<void> {
+    if (!pyodide) throw new RuntimeError("Call initScripting() first");
+
+    const sceneModule = createSceneBridgeModule(builder) as ReturnType<typeof createSceneBridgeModule> & { sceneBuilder: SceneBuilderBridge | null };
     pyodide.registerJsModule("webfalcor_scene", sceneModule);
 
     // Native runs scene scripts as files: define __file__ and provide their local imports.
@@ -804,7 +861,6 @@ sys.modules["falcor"] = _scene_falcor
     pyodide.unregisterJsModule("webfalcor_scene");
     // Pyodide keeps the module object alive past unregisterJsModule: detach the builder from it.
     sceneModule.sceneBuilder = null;
-    return resolveSceneScript(device, builder, baseUrl, cacheKey);
 }
 
 /**
@@ -843,7 +899,7 @@ async function resolveSceneScript(device: Device, builder: SceneBuilderBridge, b
     }
     builder.lastSceneArgs = null;
     // Python cycles from the script (JS proxies into the builder) are otherwise collected much later.
-    pyodide!.runPython("import gc\ngc.collect()");
+    pyodide?.runPython("import gc\ngc.collect()");
     return scene;
 }
 
@@ -953,19 +1009,40 @@ export type MogwaiCommand =
  * (path -> source) are written to Pyodide's file system under /mogwai, `cwd`
  * becomes the working directory and first sys.path entry.
  */
-export function recordMogwaiScript(device: Device, source: string, files: Record<string, string>, cwd: string, fileName = "script.py"): MogwaiCommand[] {
-    if (!pyodide) throw new RuntimeError("Call initScripting() first");
+/** Deep copy of plain data (objects, arrays); anything else (graphs, passes, vectors, callbacks) as is. */
+function snapshotPlain(v: unknown): unknown {
+    if (Array.isArray(v)) return v.map(snapshotPlain);
+    if (v !== null && typeof v === "object" && Object.getPrototypeOf(v) === Object.prototype) return Object.fromEntries(Object.entries(v).map(([k, x]) => [k, snapshotPlain(x)]));
+    return v;
+}
+
+/** How a script language sees the recorder's values (Python: dicts via Pyodide; JS: plain objects). */
+export interface MogwaiRecorderBindings {
+    /** A pass's properties as the script sees them (`pass.properties`, `getDictionary()`). */
+    propertiesToScript: (props: Properties) => unknown;
+    /** Profiler results (dicts) as the script sees them. */
+    profilerToScript: (v: unknown) => unknown;
+    /** m.script(path): runs another script with the same m. */
+    runScript: (path: string) => unknown;
+}
+
+/**
+ * The recording `m` and `falcor` objects behind recordMogwaiScript, shared by the Python and JS script runners:
+ * both languages drive the same objects, so a script records the same commands in either.
+ */
+export function createMogwaiRecorder(device: Device, bindings: MogwaiRecorderBindings): { commands: MogwaiCommand[]; falcor: Record<string, unknown>; m: Record<string, unknown> } {
     const commands: MogwaiCommand[] = [];
     const added = new WeakSet<RenderGraph>();
     const targets = new WeakMap<object, RenderGraph>();
-    const conv = (v: unknown) => toJs(v);
+    // Recorded values are copies, as at call time: a JS script may mutate a dict it already passed.
+    const conv = (v: unknown) => snapshotPlain(toJs(v));
 
     // Passes fetched from a graph: property reads run now, set_properties is recorded.
     const makePass = (pass: RenderPass) =>
         new Proxy(pass, {
             get(target, key, receiver) {
-                if (key === "getDictionary") return () => propertiesToPython(target.getProperties());
-                if (key === "properties") return propertiesToPython(target.getProperties());
+                if (key === "getDictionary") return () => bindings.propertiesToScript(target.getProperties());
+                if (key === "properties") return bindings.propertiesToScript(target.getProperties());
                 if (key === "set_properties")
                     return (dict: unknown) => void commands.push({ op: "call", target, method: "setProperties", args: [new Properties(conv(dict) as Record<string, never>)] });
                 const value = Reflect.get(target, key, receiver);
@@ -1016,7 +1093,7 @@ export function recordMogwaiScript(device: Device, source: string, files: Record
         });
 
     const recordedSettings = settingsBinding(globalSettings);
-    pyodide.registerJsModule("_falcor_js", {
+    const falcor: Record<string, unknown> = {
         RenderGraph: makeGraph,
         createPass: (type: string, props?: unknown) => createPass(device, type, propertiesFromPython(props)),
         TextureChannelFlags: { Red: 1, Green: 2, Blue: 4, Alpha: 8, RGB: 7, RGBA: 15 },
@@ -1025,17 +1102,12 @@ export function recordMogwaiScript(device: Device, source: string, files: Record
         float4: (x = 0, y = 0, z = 0, w = 0) => new float4(x, y, z, w),
         SceneBuilderFlags: kSceneBuilderFlagsPython,
         ...AssetResolver.pythonBindings,
-    });
-    // A real module object: scripts probe it (e.g. `"IMAGE_TEST_RUN_ONLY" in falcor.__dict__`).
-    pyodide.runPython(
-        // registerJsModule doesn't replace an imported module: drop the previous run's first.
-        `import sys, types\nsys.modules.pop("_falcor_js", None)\nimport _falcor_js\n_falcor = types.ModuleType("falcor")\nfor _k in dir(_falcor_js):\n    if not _k.startswith("__"): setattr(_falcor, _k, getattr(_falcor_js, _k))\nsys.modules["falcor"] = _falcor`,
-    );
+    };
     // Graphs in m (Renderer::mGraphs order), for getGraph / removeGraph(name) / activeGraph.
     const graphList: RenderGraph[] = [];
     let activeRec: RenderGraph | undefined;
     const byName = (g: RenderGraph | string) => (typeof g === "string" ? graphList.find((x) => x.name === g) : (targets.get(g) ?? g));
-    const recordedM = {
+    const recordedM: Record<string, unknown> = {
         addGraph: (g: RenderGraph) => {
             const graph = targets.get(g) ?? g;
             added.add(graph);
@@ -1056,14 +1128,16 @@ export function recordMogwaiScript(device: Device, source: string, files: Record
             commands.push({ op: "setActiveGraph", graph });
         },
         /** Mirrors Mogwai's m.script(path): runs another script with the same m. */
-        script: (path: string) => void pyodide!.runPython(`exec(compile(open(${JSON.stringify(String(path))}).read(), ${JSON.stringify(String(path))}, "exec"), globals())`),
+        script: (path: string) => bindings.runScript(String(path)),
         /** Mirrors Renderer::getGraph (None when no graph has that name: JS undefined, not null). */
         getGraph: (name: string) => graphList.find((x) => x.name === String(name)),
         get activeGraph() {
             return activeRec;
         },
         unloadScene: () => void commands.push({ op: "unloadScene" }),
-        loadScene: (path: string, flags?: number) => void commands.push({ op: "loadScene", path: String(path), flags: Number(flags ?? 0) }),
+        // Python's m.loadScene(path, buildFlags=...) arrives with its keyword arguments as a trailing object.
+        loadScene: (path: string, flags?: number | { buildFlags?: number }) =>
+            void commands.push({ op: "loadScene", path: String(path), flags: Number((typeof flags === "object" && flags !== null ? flags.buildFlags : flags) ?? 0) }),
         // Mirrors Renderer::removeGraph: a graph or its name.
         removeGraph: (g: RenderGraph | string) => {
             const graph = byName(g);
@@ -1086,7 +1160,7 @@ export function recordMogwaiScript(device: Device, source: string, files: Record
         scene: recorder("scene"),
         ui: false,
         // Profiler reads/events take effect at record time (the profiler isn't replayed).
-        profiler: device.profilerHook?.pythonBindings((v) => pyodide!.toPy(v)) ?? null,
+        profiler: device.profilerHook?.pythonBindings(bindings.profilerToScript) ?? null,
         settings: recordedSettings,
         getSettings: () => recordedSettings,
         ...recordedSettings,
@@ -1102,6 +1176,22 @@ export function recordMogwaiScript(device: Device, source: string, files: Record
         get: () => keyCallback ?? undefined,
         set: (f) => void commands.push({ op: "setKeyCallback", callback: (keyCallback = f ?? null) }),
     });
+    return { commands, falcor, m: recordedM };
+}
+
+export function recordMogwaiScript(device: Device, source: string, files: Record<string, string>, cwd: string, fileName = "script.py"): MogwaiCommand[] {
+    if (!pyodide) throw new RuntimeError("Call initScripting() first");
+    const { commands, falcor, m: recordedM } = createMogwaiRecorder(device, {
+        propertiesToScript: propertiesToPython,
+        profilerToScript: (v) => pyodide!.toPy(v),
+        runScript: (path) => void pyodide!.runPython(`exec(compile(open(${JSON.stringify(path)}).read(), ${JSON.stringify(path)}, "exec"), globals())`),
+    });
+    pyodide.registerJsModule("_falcor_js", falcor);
+    // A real module object: scripts probe it (e.g. `"IMAGE_TEST_RUN_ONLY" in falcor.__dict__`).
+    pyodide.runPython(
+        // registerJsModule doesn't replace an imported module: drop the previous run's first.
+        `import sys, types\nsys.modules.pop("_falcor_js", None)\nimport _falcor_js\n_falcor = types.ModuleType("falcor")\nfor _k in dir(_falcor_js):\n    if not _k.startswith("__"): setattr(_falcor, _k, getattr(_falcor_js, _k))\nsys.modules["falcor"] = _falcor`,
+    );
     pyodide.globals.set("m", recordedM);
 
     writePythonFiles(files);

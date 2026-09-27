@@ -119,10 +119,12 @@ WebCodecs, TimingCapture → JSON) is a straightforward port.
 Falcor embeds Python (pybind11): render-graph scripts, Mogwai console, `Testbed`
 notebooks. Browser reality: no CPython. Design:
 
-1. **Primary 🔶**: a TypeScript scripting API that is *shape-identical* to the Python
-   one (`createPass("ToneMapper", {autoExposure: false})`, `g.addEdge(...)`,
-   `m.addGraph(...)`) — Falcor's own graph `.py` files are ~declarative Python that
-   maps 1:1 onto this.
+1. **JS scripts ✅**: scene and render-graph scripts as ES modules whose default export
+   gets the names Python scripts get (`sceneBuilder` or `m`, `createPass`,
+   `StandardMaterial`, …), so every `.pyscene`/`.py` has a line-for-line JS form, and
+   `py2js` converts them (Python's parser in Pyodide). Both languages drive the same
+   bridges; the `Py2Js` GPU suite checks identical scenes, graphs and recorded Mogwai
+   sessions across Falcor's corpus. See [scripting.md](scripting.md).
 2. **Graph-script compatibility ✅**: a small parser executes upstream, unmodified
    render-graph `.py` files (the subset actually used by all 40+ graph files in
    `tests/image_tests/renderpasses/graphs/`) so existing content Just Works.

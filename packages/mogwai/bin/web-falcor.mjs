@@ -6,6 +6,7 @@
  *   web-falcor new <Name>        scaffold a plugin project in ./<name>/ (a compute pass, its shader and a graph)
  *   web-falcor dev [--port 5173] develop the plugin in the current project against the prebuilt viewer
  *   web-falcor assets <dir>      copy the runtime assets for @web-falcor/falcor apps into <dir>
+ *   web-falcor py2js <file-or-dir>... [--out <dir>] [--root <dir>] [--check]   convert Python scripts to JS
  *
  * `--plugins` is served at /plugins/ (load one with ?plugin=/plugins/<Name>/<Name>.js), `--media` replaces the demo scenes.
  */
@@ -24,8 +25,20 @@ const option = (name, fallback) => {
     return i >= 0 ? argv[i + 1] : fallback;
 };
 if (argv.includes("-h") || argv.includes("--help")) {
-    console.log("usage: web-falcor [--port 5173] [--plugins <dir>] [--media <dir>] [--site <dir>]\n       web-falcor new <Name>\n       web-falcor dev [--port 5173]\n       web-falcor assets <dir>");
+    console.log("usage: web-falcor [--port 5173] [--plugins <dir>] [--media <dir>] [--site <dir>]\n       web-falcor new <Name>\n       web-falcor dev [--port 5173]\n       web-falcor assets <dir>\n       web-falcor py2js <file-or-dir>... [--out <dir>] [--root <dir>] [--check]");
     process.exit(0);
+}
+if (argv[0] === "py2js") {
+    // The converter (transpiled PyToJs.ts) and the viewer's own Pyodide parse and convert.
+    const args = (await import("../lib/py2js.mjs")).parseArgs(argv.slice(1));
+    if (!args.inputs.length) {
+        console.error("usage: web-falcor py2js <file-or-dir>... [--out <dir>] [--root <dir>] [--check]");
+        process.exit(1);
+    }
+    const core = await import("../lib/pytojs-core.mjs");
+    const { convertFiles } = await import("../lib/py2js.mjs");
+    const warnings = await convertFiles({ ...args, core, pyodideDir: join(kSiteDir, "node_modules/pyodide") });
+    process.exit(args.check && warnings ? 1 : 0);
 }
 if (argv[0] === "assets") {
     if (!argv[1]) {

@@ -116,6 +116,10 @@ mkdirSync(outRoot, { recursive: true });
     const dir = join(outRoot, "mogwai");
     node(["scripts/build-web.mjs", "--base", "/", "--out", join(dir, "dist"), "--no-media"]);
     for (const d of ["bin", "lib"]) cpSync(join(repoRoot, "packages/mogwai", d), join(dir, d), { recursive: true });
+    // The Python-to-JS converter for `web-falcor py2js` (PyToJs.ts has no imports: it transpiles alone).
+    const ts = (await import("typescript")).default;
+    const core = ts.transpileModule(readFileSync(join(repoRoot, "packages/falcor/src/Utils/Scripting/PyToJs.ts"), "utf8"), { compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 } });
+    writeFileSync(join(dir, "lib/pytojs-core.mjs"), core.outputText);
     stage(
         "mogwai",
         {

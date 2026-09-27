@@ -11,8 +11,11 @@ import {
     Clock,
     ResourceFormat,
     fetchLocalPythonModules,
+    isJsScript,
+    recordMogwaiModule,
     recordMogwaiScript,
     runPbrtScene,
+    runSceneModule,
     runSceneScript,
     type Device,
     type MogwaiCommand,
@@ -70,14 +73,25 @@ export interface MogwaiRunResult {
     clock: Clock;
 }
 
-/** Records and replays the Mogwai script at `scriptUrl` (served path, e.g. /Falcor/tests/...). */
+/** Records and replays the Mogwai script at `scriptUrl` (served path, e.g. /Falcor/tests/...): a .py or a JS module. */
 export async function runMogwaiScript(device: Device, scriptUrl: string, opts: { download?: boolean } = {}): Promise<MogwaiRunResult> {
-    return runMogwaiSource(device, await (await fetch(scriptUrl)).text(), scriptUrl.slice(0, scriptUrl.lastIndexOf("/")), { ...opts, fileName: scriptUrl.slice(scriptUrl.lastIndexOf("/") + 1) });
+    return replayRecorded(device, await recordMogwaiUrl(device, scriptUrl), opts);
 }
 
 /** Records and replays a Mogwai script's `source`, with local imports resolved against `dirUrl`. */
 export async function runMogwaiSource(device: Device, source: string, dirUrl: string, opts: { download?: boolean; fileName?: string } = {}): Promise<MogwaiRunResult> {
-    const commands = await recordMogwaiSource(device, source, dirUrl, opts.fileName);
+    return replayRecorded(device, await recordMogwaiSource(device, source, dirUrl, opts.fileName), opts);
+}
+
+/** Records the Mogwai script at `url`: JS modules through recordMogwaiModule, Python through recordMogwaiScript. */
+export async function recordMogwaiUrl(device: Device, url: string): Promise<MogwaiCommand[]> {
+    if (isJsScript(url)) return recordMogwaiModule(device, url);
+    const res = await fetch(url);
+    if (!res.ok) throw new Error(`${url}: HTTP ${res.status}`);
+    return recordMogwaiSource(device, await res.text(), url.slice(0, url.lastIndexOf("/")), url.split(/[?#]/)[0]!.slice(url.lastIndexOf("/") + 1));
+}
+
+async function replayRecorded(device: Device, commands: MogwaiCommand[], opts: { download?: boolean }): Promise<MogwaiRunResult> {
     const clock = new Clock();
     const host: MogwaiHost = {
         graphs: [],
@@ -124,10 +138,11 @@ export interface MogwaiHost {
     onResize?(width: number, height: number): void;
 }
 
-/** Mogwai::loadScene: pyscenes run, pbrt parses, everything else goes through the importers. */
+/** Mogwai::loadScene: pyscenes and JS scene modules run, pbrt parses, everything else goes through the importers. */
 async function loadSceneDefault(device: Device, url: string, baseUrl: string, flags: number): Promise<Scene> {
     const lower = url.toLowerCase().split(/[?#]/)[0]!;
     const options = { flags };
+    if (isJsScript(lower)) return runSceneModule(device, url, { ...options, baseUrl });
     return lower.endsWith(".pyscene")
         ? runSceneScript(device, await (await fetch(url)).text(), baseUrl, { ...options, path: url })
         : lower.endsWith(".pbrt")

@@ -64,7 +64,7 @@ if (!plugin) {
 }
 
 const dir = "/" + relative(repoRoot, outDir).replaceAll("\\", "/");
-const url = `http://localhost:5173/?scene=test_scenes/cornell_box.pyscene&script=${dir}/${name}.py${plugin ? `&plugin=${dir}/${name}.ts` : ""}`;
+const url = `http://localhost:5173/?scene=test_scenes/cornell_box.pyscene&script=${dir}/${name}.graph.js${plugin ? `&plugin=${dir}/${name}.ts` : ""}`;
 console.log(`Created ${plugin ? "plugin" : "in-tree"} pass ${name}:\n${written.map((f) => `  ${f}`).join("\n")}`);
 console.log(`\nNext:\n  npm run dev\n  open ${url}`);
 if (plugin) console.log(`\nplugins/ is gitignored: publish ${name} from its own repo (cd ${relative(repoRoot, outDir)} && git init).`);

@@ -25,6 +25,7 @@ the files**, so every `§N` cross-reference in the text resolves via the map bel
 | §10–§11 | [roadmap.md](roadmap.md) | Roadmap (M0–M8) · resolved design questions |
 | — | [extending.md](extending.md) | Adding passes (`npm run new:pass`), plugins (`?plugin=`), core changes and shader overrides |
 | — | [npm.md](npm.md) | The npm packages, the prebuilt viewer, the Vite plugin for runtime assets, and releasing |
+| — | [scripting.md](scripting.md) | Scene and render-graph scripts in JS or Python, the JS script API, the `py2js` converter, and how equivalence is checked |
 
 ## Status markers
 

@@ -47,23 +47,23 @@ the prebuilt viewer with the plugin loaded ([npm.md](npm.md#write-a-plugin)). Th
 this repo.
 
 Either command writes three files: a working compute pass (`MyPass.ts`), its
-shader (`MyPass.cs.slang`), and a Mogwai graph script (`MyPass.py`) that runs the
+shader (`MyPass.cs.slang`), and a Mogwai graph script (`MyPass.graph.js`) that runs the
 path tracer and feeds the result through your pass. It then prints a URL that opens
 the graph in the viewer:
 
 ```sh
 npm run dev
 # plugin:
-http://localhost:5173/?scene=test_scenes/cornell_box.pyscene&script=/plugins/MyPass/MyPass.py&plugin=/plugins/MyPass/MyPass.ts
+http://localhost:5173/?scene=test_scenes/cornell_box.pyscene&script=/plugins/MyPass/MyPass.graph.js&plugin=/plugins/MyPass/MyPass.ts
 # in-tree:
-http://localhost:5173/?scene=test_scenes/cornell_box.pyscene&script=/packages/render-passes/src/MyPass/MyPass.py
+http://localhost:5173/?scene=test_scenes/cornell_box.pyscene&script=/packages/render-passes/src/MyPass/MyPass.graph.js
 ```
 
 A plugin also gets a `README.md` that tells its users how to install it.
 
 The template pass multiplies its input by a `scale` property. That property is
-exposed as a slider in the pass UI and can be set from Python
-(`createPass("MyPass", {'scale': 0.5})`). Replace the body of `execute()` and the
+exposed as a slider in the pass UI and can be set from a graph script
+(`createPass("MyPass", { scale: 0.5 })`, or `{'scale': 0.5}` in Python). Replace the body of `execute()` and the
 shader with your own code. After editing an in-tree pass's shader, press **F6** in
 the viewer to recompile without reloading the page. A plugin's shader is compiled
 from the text loaded with the module, so reload the page instead.
@@ -110,7 +110,7 @@ Host that file anywhere that serves JavaScript with CORS allowed (GitHub Pages, 
 and anyone can try it without installing anything:
 
 ```text
-https://windingwind.github.io/web-falcor/?plugin=https://<you>.github.io/my-pass/MyPass.js&script=https://<you>.github.io/my-pass/MyPass.py
+https://windingwind.github.io/web-falcor/?plugin=https://<you>.github.io/my-pass/MyPass.js&script=https://<you>.github.io/my-pass/MyPass.graph.js
 ```
 
 Locally, `npx @web-falcor/mogwai --plugins ./plugins` serves the same build at `/plugins/`.

@@ -1050,7 +1050,11 @@ export class SDFGridBridge {
  */
 export function deindexMesh(mesh: SceneMeshDesc): SceneMeshDesc {
     const n = mesh.indices.length;
-    const vertices = Array.from(mesh.indices, (i) => ({ ...mesh.vertices[i]! }));
+    // Copies keep the prototype: imported vertices are packed views ({ data, offset } with position/normal getters).
+    const vertices = Array.from(mesh.indices, (i) => {
+        const v = mesh.vertices[i]!;
+        return Object.assign(Object.create(Object.getPrototypeOf(v) as object) as StaticVertex, v);
+    });
     const expand = (data: Float32Array | Uint32Array, lanes: number) => {
         const out = new (data.constructor as Float32ArrayConstructor | Uint32ArrayConstructor)(n * lanes);
         for (let v = 0; v < n; v++) out.set(data.subarray(mesh.indices[v]! * lanes, mesh.indices[v]! * lanes + lanes), v * lanes);

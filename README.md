@@ -54,7 +54,7 @@ The new project contains:
 | --- | --- |
 | `MyPass.ts` | the render pass (a compute pass that scales its input); edit its inputs, outputs and `execute()` |
 | `MyPass.cs.slang` | its Slang shader |
-| `MyPass.py` | a render graph that runs the path tracer and feeds its image through `MyPass`; `npm run dev` opens it |
+| `MyPass.graph.js` | a render graph that runs the path tracer and feeds its image through `MyPass`; `npm run dev` opens it |
 
 Edit the pass or the shader and reload the page to see the change. To use the pass elsewhere:
 
@@ -66,6 +66,10 @@ Edit the pass or the shader and reload the page to see the change. To use the pa
 If your work needs no change to web-falcor itself, **release it this way, from your own repo**, rather than
 forking web-falcor. Host the built `.js` anywhere that allows CORS and anyone can run it in the
 [online demo](https://windingwind.github.io/web-falcor/) with `?plugin=<its URL>`.
+
+**Scenes and render graphs in JS or Python.** Falcor's `.pyscene` and `.py` scripts run unmodified, and every one
+has a native JS equivalent (`*.scene.js`, `*.js`); `npx @web-falcor/mogwai py2js <files>` converts them. See
+[docs/scripting.md](docs/scripting.md).
 
 **Build your own app** on the library:
 

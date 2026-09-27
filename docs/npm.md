@@ -22,7 +22,8 @@ npx @web-falcor/mogwai --plugins ./plugins   # serve plugins at /plugins/
 ```
 
 The viewer takes the same URL parameters as the dev server: `?scene=` (a path under `/Falcor/media/`),
-`?script=` (a render-graph `.py`) and `?plugin=` (a plugin module, repeatable).
+`?script=` (a render-graph script, `.py` or `.js`; see [scripting.md](scripting.md)) and `?plugin=` (a plugin module,
+repeatable).
 
 ## Write a plugin
 

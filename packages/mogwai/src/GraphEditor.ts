@@ -12,6 +12,8 @@ export interface GraphEditorHooks {
     defaultTexDims: () => [number, number];
     /** Called when the selected pass's UI changes a property (viewer: restart accumulation). */
     onPassPropertiesChanged?: () => void;
+    /** The graph as a script in the viewer's script language (default: the Python export). */
+    exportGraph?: (graph: RenderGraph) => { text: string; extension: string; label: string };
 }
 
 type Edge = RenderGraphEdge;
@@ -73,13 +75,14 @@ export class GraphEditor {
             }
         };
         const saveBtn = doc.createElement("button");
-        saveBtn.textContent = "Save graph .py";
-        saveBtn.title = "Download the graph as an upstream-style python script (RenderGraphExporter)";
+        saveBtn.textContent = "Save graph";
+        saveBtn.title = "Download the graph as a render-graph script (RenderGraphExporter), in the viewer's script language";
         saveBtn.onclick = () => {
             if (!this.graph) return;
+            const out = hooks.exportGraph?.(this.graph) ?? { text: this.graph.exportScript(), extension: "py", label: "python" };
             const a = doc.createElement("a");
-            a.href = URL.createObjectURL(new Blob([this.graph.exportScript()], { type: "text/x-python" }));
-            a.download = `${this.graph.name.replace(/\W+/g, "_") || "graph"}.py`;
+            a.href = URL.createObjectURL(new Blob([out.text], { type: out.extension === "js" ? "text/javascript" : "text/x-python" }));
+            a.download = `${this.graph.name.replace(/\W+/g, "_") || "graph"}.${out.extension}`;
             a.click();
             URL.revokeObjectURL(a.href);
         };
