@@ -46,31 +46,44 @@ function integrateEmissiveTexture(
     const off = [Math.floor(uMin), Math.floor(vMin)];
     const px = uv.map((c) => [(c[0] - off[0]!) * w, (c[1] - off[1]!) * h]);
 
-    const clipArea = (tx: number, ty: number): number => {
-        // Sutherland-Hodgman: clip the triangle against the texel square.
-        let poly = px.map((p) => [p[0]!, p[1]!]);
-        const clipEdge = (inside: (p: number[]) => boolean, intersect: (a: number[], b: number[]) => number[]) => {
-            const out: number[][] = [];
-            for (let i = 0; i < poly.length; i++) {
-                const a = poly[i]!;
-                const b = poly[(i + 1) % poly.length]!;
-                const ain = inside(a);
-                const bin = inside(b);
-                if (ain) out.push(a);
-                if (ain !== bin) out.push(intersect(a, b));
+    // Sutherland-Hodgman against the texel square, ping-ponging two fixed buffers (a triangle clips to <= 7 vertices).
+    const bufA = new Float64Array(16);
+    const bufB = new Float64Array(16);
+    // side: 0 x >= c, 1 x <= c, 2 y >= c, 3 y <= c; returns the output vertex count.
+    const clipEdge = (src: Float64Array, n: number, dst: Float64Array, side: number, c: number): number => {
+        const axis = side >> 1;
+        let m = 0;
+        for (let i = 0; i < n; i++) {
+            const j = i + 1 === n ? 0 : i + 1;
+            const ax = src[i * 2]!, ay = src[i * 2 + 1]!, bx = src[j * 2]!, by = src[j * 2 + 1]!;
+            const av = axis === 0 ? ax : ay;
+            const bv = axis === 0 ? bx : by;
+            const ain = side & 1 ? av <= c : av >= c;
+            const bin = side & 1 ? bv <= c : bv >= c;
+            if (ain) {
+                dst[m * 2] = ax;
+                dst[m * 2 + 1] = ay;
+                m++;
             }
-            poly = out;
-        };
-        const lerpAt = (a: number[], b: number[], t: number) => [a[0]! + (b[0]! - a[0]!) * t, a[1]! + (b[1]! - a[1]!) * t];
-        clipEdge((p) => p[0]! >= tx, (a, b) => lerpAt(a, b, (tx - a[0]!) / (b[0]! - a[0]!)));
-        clipEdge((p) => p[0]! <= tx + 1, (a, b) => lerpAt(a, b, (tx + 1 - a[0]!) / (b[0]! - a[0]!)));
-        clipEdge((p) => p[1]! >= ty, (a, b) => lerpAt(a, b, (ty - a[1]!) / (b[1]! - a[1]!)));
-        clipEdge((p) => p[1]! <= ty + 1, (a, b) => lerpAt(a, b, (ty + 1 - a[1]!) / (b[1]! - a[1]!)));
+            if (ain !== bin) {
+                const t = axis === 0 ? (c - ax) / (bx - ax) : (c - ay) / (by - ay);
+                dst[m * 2] = ax + (bx - ax) * t;
+                dst[m * 2 + 1] = ay + (by - ay) * t;
+                m++;
+            }
+        }
+        return m;
+    };
+    const clipArea = (tx: number, ty: number): number => {
+        for (let i = 0; i < 3; i++) [bufA[i * 2], bufA[i * 2 + 1]] = [px[i]![0]!, px[i]![1]!];
+        let n = clipEdge(bufA, 3, bufB, 0, tx);
+        n = clipEdge(bufB, n, bufA, 1, tx + 1);
+        n = clipEdge(bufA, n, bufB, 2, ty);
+        n = clipEdge(bufB, n, bufA, 3, ty + 1);
         let area = 0;
-        for (let i = 0; i < poly.length; i++) {
-            const a = poly[i]!;
-            const b = poly[(i + 1) % poly.length]!;
-            area += a[0]! * b[1]! - b[0]! * a[1]!;
+        for (let i = 0; i < n; i++) {
+            const j = i + 1 === n ? 0 : i + 1;
+            area += bufA[i * 2]! * bufA[j * 2 + 1]! - bufA[j * 2]! * bufA[i * 2 + 1]!;
         }
         return Math.abs(area) * 0.5;
     };
@@ -96,10 +109,11 @@ function integrateEmissiveTexture(
         for (let tx = x0; tx < x1; tx++) {
             const a = clipArea(tx, ty);
             if (a <= 0) continue;
-            const t = texel(tx, ty);
-            sr += a * t[0];
-            sg += a * t[1];
-            sb += a * t[2];
+            // Wrap addressing, as texel().
+            const i = ((((ty % h) + h) % h) * w + (((tx % w) + w) % w)) * 3;
+            sr += a * tex.rgb[i]!;
+            sg += a * tex.rgb[i + 1]!;
+            sb += a * tex.rgb[i + 2]!;
             sw += a;
         }
     }
