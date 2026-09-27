@@ -7,6 +7,7 @@
  */
 
 import { RuntimeError } from "../../Core/Error.js";
+import { assetUrl } from "../../Core/AssetBase.js";
 
 /** Minimal shape of the emscripten decoder module we use. */
 interface DracoModule {
@@ -49,14 +50,14 @@ export function getDracoDecoderModule(): Promise<DracoModule> {
         if (!g.DracoDecoderModule) {
             await new Promise<void>((resolve, reject) => {
                 const script = document.createElement("script");
-                script.src = "/node_modules/draco3d/draco_decoder_nodejs.js";
+                script.src = assetUrl("/node_modules/draco3d/draco_decoder_nodejs.js");
                 script.onload = () => resolve();
                 script.onerror = () => reject(new RuntimeError("DracoDecoder: failed to load draco3d"));
                 document.head.appendChild(script);
             });
         }
         if (!g.DracoDecoderModule) throw new RuntimeError("DracoDecoder: draco3d did not register its module factory");
-        return g.DracoDecoderModule({ locateFile: (file: string) => `/node_modules/draco3d/${file}` });
+        return g.DracoDecoderModule({ locateFile: (file: string) => assetUrl(`/node_modules/draco3d/${file}`) });
     })();
     return modulePromise;
 }

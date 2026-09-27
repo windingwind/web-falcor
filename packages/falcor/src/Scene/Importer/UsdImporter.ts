@@ -21,6 +21,7 @@ import { loadOpenSubdiv, tessellateUsdMesh, type TessellatedMesh } from "./Subdi
 import { refinedCorners, triangulateUsdMesh, type CornerMesh } from "./UsdTriangulate.js";
 import { extractUsdCamerasAndLights, extractUsdPreviewSurfaceValues, type UsdPreviewSurfaceValues, remapReferencedPaths, usdaReferencingPrims, extractUsdDisplayColors, extractUsdMaterialBindings, extractUsdMaterialTextures, extractUsdPointInstancers, extractUsdMeshes, extractUsdSkeletons, extractUsdXformAnimations, sampleAt, usdRenderSettings, usdTimeCodesPerSecond, usdaStageInfo, usdChannelIndex, usdStageRootTransform, usdTexCoordTransform, type UsdaCamera, type UsdaDomeLight, type UsdaSkeleton, type UsdaSubdivMesh, type UsdaTextureInput, type UsdaXformAnimation } from "./UsdaScene.js";
 import type { AnalyticLight } from "../SceneData.js";
+import { assetUrl } from "../../Core/AssetBase.js";
 
 interface UsdNode {
     primName: string;
@@ -85,7 +86,7 @@ interface TinyUsdzModule {
 let modulePromise: Promise<TinyUsdzModule> | null = null;
 
 /** Loads the tinyusdz wasm module (served from node_modules, like pyodide). */
-function loadTinyUsdz(baseUrl = "/node_modules/tinyusdz"): Promise<TinyUsdzModule> {
+function loadTinyUsdz(baseUrl = assetUrl("/node_modules/tinyusdz")): Promise<TinyUsdzModule> {
     modulePromise ??= import(/* @vite-ignore */ `${baseUrl}/tinyusdz.js`).then(
         (m: { default: () => Promise<TinyUsdzModule> }) => m.default(),
     );

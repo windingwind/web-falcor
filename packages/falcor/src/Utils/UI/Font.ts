@@ -18,8 +18,8 @@ const kCharCount = kLastChar - kFirstChar + 1;
 const kHeaderSize = 28; // FontFileHeader (packed)
 const kCharDataSize = 17; // FontCharData (packed)
 
-/** Default font location (mirrors getRuntimeDirectory()/data/framework/fonts). */
-export const kDefaultFontUrl = "/Falcor/data/framework/fonts/dejavu-sans-mono-14";
+import { kDefaultFontUrl } from "../../Core/AssetBase.js";
+export { kDefaultFontUrl };
 
 export interface CharTexCrdDesc {
     /** Top-left texel of the glyph in the atlas. */

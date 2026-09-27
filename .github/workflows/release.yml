@@ -1,0 +1,70 @@
+name: Release
+
+# Publishes @web-falcor/falcor, /render-passes and /mogwai (scripts/build-packages.mjs) when a vX.Y.Z tag is
+# pushed, through npm trusted publishing (OIDC, no token): each package on npmjs.com must list this repo and
+# release.yml as its trusted publisher. The tag must match the packages' version.
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write # npm trusted publishing (OIDC); provenance is attached automatically
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    env:
+      PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: 1
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          registry-url: https://registry.npmjs.org
+
+      - run: npm ci
+
+      # Trusted publishing needs npm >= 11.5.1; Node 22 ships npm 10.
+      - run: npm install -g npm@^11.5.1
+
+      - name: Check the tag matches the version
+        if: startsWith(github.ref, 'refs/tags/')
+        run: test "v$(node -p "require('./package.json').version")" = "${GITHUB_REF_NAME}"
+
+      - name: Cache slang-wasm
+        uses: actions/cache@v4
+        with:
+          path: tools/slang-wasm
+          key: slang-wasm-2026.12.2
+
+      - name: Fetch shaders, compilers and Pyodide packages (no Falcor clone)
+        run: node scripts/setup-web.mjs
+
+      - name: Cache Falcor test_scenes media
+        uses: actions/cache@v4
+        with:
+          path: Falcor/media/test_scenes
+          key: falcor-media-test_scenes-7acdf8b0
+
+      - name: Fetch test_scenes media bundle
+        run: |
+          sudo apt-get update && sudo apt-get install -y p7zip-full
+          node scripts/download-scenes.mjs test_scenes
+
+      - run: npm run typecheck
+      - run: npm test
+
+      - name: Stage the packages
+        run: node scripts/build-packages.mjs
+
+      # Dependencies first: render-passes needs falcor on the registry.
+      - name: Publish
+        run: |
+          for p in falcor render-passes mogwai; do
+            npm publish "out/npm/$p" --access public
+          done

@@ -7,6 +7,9 @@ targeting 1:1 feature parity where the web platform allows. **See the [design do
 for the framework design, the Falcor→web module mapping, and the feature parity matrix
 (including features that are impossible in the browser and why).
 
+**Try it in the browser: [windingwind.github.io/web-falcor](https://windingwind.github.io/web-falcor/)** (needs WebGPU:
+Chrome or Edge), or run the viewer locally with `npx @web-falcor/mogwai`.
+
 ![Amazon Lumberyard Bistro path-traced in the browser with web-falcor on WebGPU](docs/assets/teaser-bistro.jpg)
 
 *Amazon Lumberyard Bistro (interior), path-traced with web-falcor on WebGPU — full material system,
@@ -22,7 +25,16 @@ emissive lighting, and software ray tracing, cross-validated against native Falc
 - `Falcor/` — upstream shader sources (+ native oracle for tests); fetched, not committed
 - `tools/` — Slang toolchains; fetched, not committed
 
-## Quick start (use the library / run the app)
+## Use it from npm
+
+```sh
+npx @web-falcor/mogwai                                        # the prebuilt viewer, no checkout needed
+npm install @web-falcor/falcor @web-falcor/render-passes @web-falcor/mogwai   # build your own app
+```
+
+See [docs/npm.md](docs/npm.md) for the Vite plugin that supplies the runtime assets, and a minimal app.
+
+## Quick start (develop in this repo)
 
 The runtime compiles Slang→WGSL in the browser, so it needs the upstream Falcor
 shader **sources** and the slang-wasm compiler. `setup:web` fetches both from
@@ -115,6 +127,23 @@ prints install hints if one is missing.
 To load a pbrt scene in the viewer, point it at the `.pbrt` file, e.g.
 `Falcor/media/cornell-box/scene-v4.pbrt`. Mitsuba 3 scenes load the same way
 from their `.xml` file; the viewer dispatches on the extension.
+
+## Adding a render pass
+
+```sh
+npm run new:pass -- MyPass --plugin   # plugin in plugins/MyPass/, your own repo, loaded with ?plugin=
+npm run new:pass -- MyPass            # in-tree pass under packages/render-passes/src/
+```
+
+Each command writes a working compute pass, its Slang shader and a Mogwai graph
+script, then prints the URL that opens them in the viewer.
+
+**If your work needs no core change, release it as a plugin from your own repo**
+rather than forking web-falcor. `npm run build` in the plugin folder produces one
+`.js` file; host it anywhere and people can run it in the online demo with
+`?plugin=<its URL>`, with no install. In-tree passes are for ports of upstream
+Falcor passes. See [docs/extending.md](docs/extending.md) for which route to take,
+and for core changes and shader overrides.
 
 ## Full setup (develop + run the GPU/oracle tests)
 

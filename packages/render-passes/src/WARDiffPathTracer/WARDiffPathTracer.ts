@@ -30,6 +30,7 @@ import {
     type RenderContext,
     type ShaderVar,
     type UIWidgets,
+    assetUrl,
 } from "@web-falcor/falcor";
 
 const kShaderFile = "RenderPasses/WARDiffPathTracer/WARDiffPathTracer.rt.slang";
@@ -243,7 +244,7 @@ export class WARDiffPathTracer extends RenderPass {
     run_backward = 1;
 
     override async initAsync(): Promise<void> {
-        await this.device.programManager.loadSlangRuntime(kAutodiffSlang);
+        await this.device.programManager.loadSlangRuntime(assetUrl(kAutodiffSlang));
     }
 
     override execute(ctx: RenderContext, renderData: RenderData): void {
@@ -257,7 +258,7 @@ export class WARDiffPathTracer extends RenderPass {
         if (!this.scene) return;
         // The backward modes compile with the pinned pre-refactor Slang (see kAutodiffSlang).
         const backward = this.diffMode === DiffMode.BackwardDiff || this.diffMode === DiffMode.BackwardDiffDebug;
-        if (!this.pass) this.pass = ComputePass.create(this.device, { path: kShaderFile, defines: this.getDefines(), slangRuntime: backward ? kAutodiffSlang : undefined });
+        if (!this.pass) this.pass = ComputePass.create(this.device, { path: kShaderFile, defines: this.getDefines(), slangRuntime: backward ? assetUrl(kAutodiffSlang) : undefined });
 
         const root = this.pass.getRootVar();
         this.scene.bindShaderData(root);

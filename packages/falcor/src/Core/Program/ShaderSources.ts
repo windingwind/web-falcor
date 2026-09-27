@@ -8,6 +8,7 @@ import type { Device } from "../API/Device.js";
 import { ProgramManager } from "./Program.js";
 import { initSlang } from "./SlangCompiler.js";
 import { Logger } from "../../Utils/Logger.js";
+import { assetUrl } from "../AssetBase.js";
 
 interface ShaderFileList {
     falcorFiles: string[];
@@ -19,7 +20,7 @@ interface ShaderFileList {
 }
 
 /** Path -> source for every listed shader (fetched with bounded concurrency). */
-export async function fetchShaderSources(listUrl = "/packages/falcor/shaders/generated/shader-file-list.json"): Promise<Map<string, string>> {
+export async function fetchShaderSources(listUrl = assetUrl("/packages/falcor/shaders/generated/shader-file-list.json")): Promise<Map<string, string>> {
     const list = (await (await fetch(listUrl)).json()) as ShaderFileList;
     const jobs: { url: string; key: string }[] = [
         ...list.falcorFiles.map((f) => ({ url: `/Falcor/Source/Falcor/${f}`, key: f })),
@@ -31,6 +32,7 @@ export async function fetchShaderSources(listUrl = "/packages/falcor/shaders/gen
     ];
     const sources = new Map<string, string>();
     const missing: string[] = [];
+    for (const job of jobs) job.url = assetUrl(job.url);
     let next = 0;
     const worker = async () => {
         while (next < jobs.length) {
@@ -46,7 +48,7 @@ export async function fetchShaderSources(listUrl = "/packages/falcor/shaders/gen
 }
 
 /** Initializes slang-wasm and gives the device a ProgramManager over the shader tree. */
-export async function initProgramSystem(device: Device, slangUrl = "/tools/slang-wasm/slang-wasm.js"): Promise<void> {
+export async function initProgramSystem(device: Device, slangUrl = assetUrl("/tools/slang-wasm/slang-wasm.js")): Promise<void> {
     const sources = await fetchShaderSources();
     await initSlang(slangUrl);
     device.setProgramManager(new ProgramManager(device, (p) => sources.get(p), [...sources.keys()]));

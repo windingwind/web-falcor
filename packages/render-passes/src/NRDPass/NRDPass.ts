@@ -47,7 +47,9 @@ import {
     type Scene,
     type ShaderVar,
     type UIWidgets,
+    assetUrl,
 } from "@web-falcor/falcor";
+import { patchNRDShader } from "./NRDShaderPatch.js";
 
 /** Mirrors NRDPass::DenoisingMethod. */
 export enum DenoisingMethod {
@@ -187,6 +189,26 @@ interface Pipeline {
     readCopies: Map<string, string>;
 }
 
+/** NRD's shader tree, fetched once for all NRDPass instances. */
+let nrdShaderFiles: Promise<Record<string, string>> | null = null;
+
+async function fetchNRDShaderFiles(): Promise<Record<string, string>> {
+    const res = await fetch(assetUrl(kShaderFileList));
+    if (!res.ok) throw new Error(`NRDPass: ${kShaderFileList} missing (run node scripts/setup-web.mjs)`);
+    // `patch`: an unpatched upstream file (bundled builds), patched here under its NRD repo path.
+    const list = (await res.json()) as { path: string; url: string; patch?: string }[];
+    const files: Record<string, string> = {};
+    await Promise.all(
+        list.map(async ({ path, url, patch }) => {
+            const file = await fetch(assetUrl(url));
+            if (!file.ok) throw new Error(`NRDPass: ${url} (${file.status})`);
+            const text = await file.text();
+            files[path] = patch ? patchNRDShader(patch, text) : text;
+        }),
+    );
+    return files;
+}
+
 export class NRDPass extends RenderPass {
     private enabled = true;
     private method = DenoisingMethod.RelaxDiffuseSpecular;
@@ -251,11 +273,12 @@ export class NRDPass extends RenderPass {
             this.pendingSettings = [];
         }
         if (!this.shadersRegistered) {
-            const res = await fetch(kShaderFileList);
-            if (!res.ok) throw new Error(`NRDPass: ${kShaderFileList} missing (run node scripts/setup-web.mjs)`);
-            const list = (await res.json()) as { path: string; url: string }[];
-            const files: Record<string, string> = {};
-            await Promise.all(list.map(async ({ path, url }) => (files[path] = await (await fetch(url)).text())));
+            // A failed fetch is retried by the next pass instead of staying cached.
+            nrdShaderFiles ??= fetchNRDShaderFiles().catch((e: unknown) => {
+                nrdShaderFiles = null;
+                throw e;
+            });
+            const files = await nrdShaderFiles;
             this.device.programManager.addShaderFiles(files);
             this.shadersRegistered = true;
         }

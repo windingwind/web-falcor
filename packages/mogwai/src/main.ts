@@ -1,3 +1,4 @@
+/// <reference types="vite/client" />
 /**
  * Mogwai (web) — the interactive viewer: load a render-graph .py + .pyscene,
  * execute the graph each frame, present the marked output to the canvas.
@@ -5,7 +6,7 @@
 
 import { FrameCaptureExtension, captureOutput } from "./FrameCapture.js";
 import { recordMogwaiSource, replayMogwaiCommands, type MogwaiHost } from "./ScriptRunner.js";
-import { AssetCategory, AssetResolver, isAbsoluteUrl, kProjectMediaUrl, Clock, Device, Logger, LogLevel, SceneBuilderFlags, getGlobalSettings, Profiler, ProfilerUI, VideoRecorder, ProgramManager, RenderGraph, ResourceFormat, Bitmap, BitmapExportFlags, createPass, initScripting, initSlang, runConsoleCommand, runSceneScript, DomWidgets, nativeKeyCode, GamepadInput, GamepadEventType, GamepadButton, type MogwaiCallbacks, runPbrtScene, runMitsubaScene, presentToCanvas, OverlayDrawList, type Scene } from "@web-falcor/falcor";
+import { AssetCategory, AssetResolver, assetUrl, setAssetBase, isAbsoluteUrl, kProjectMediaUrl, Clock, Device, Logger, LogLevel, SceneBuilderFlags, getGlobalSettings, Profiler, ProfilerUI, VideoRecorder, ProgramManager, RenderGraph, ResourceFormat, Bitmap, BitmapExportFlags, createPass, loadPluginLibrary, initScripting, initSlang, runConsoleCommand, runSceneScript, DomWidgets, nativeKeyCode, GamepadInput, GamepadEventType, GamepadButton, type MogwaiCallbacks, runPbrtScene, runMitsubaScene, presentToCanvas, OverlayDrawList, type Scene } from "@web-falcor/falcor";
 import "@web-falcor/render-passes";
 import { CameraController, kCameraControllerTypes, kUpDirectionNames } from "./CameraController.js";
 import { buildUIPanel } from "./UIPanel.js";
@@ -193,7 +194,7 @@ function buildDefaultGraph(device: Device, width: number, height: number, scene:
  */
 async function initProgramSystem(device: Device): Promise<void> {
     const sources = await fetchShaderSources();
-    await initSlang("/tools/slang-wasm/slang-wasm.js");
+    await initSlang(assetUrl("/tools/slang-wasm/slang-wasm.js"));
     device.setProgramManager(new ProgramManager(device, (p) => sources.get(p), [...sources.keys()]));
 }
 
@@ -210,7 +211,7 @@ async function reloadShaders(device: Device): Promise<void> {
 
 /** Fetches the Falcor shader tree into a path -> source map. */
 async function fetchShaderSources(): Promise<Map<string, string>> {
-    const list = (await (await fetch("/packages/falcor/shaders/generated/shader-file-list.json")).json()) as {
+    const list = (await (await fetch(assetUrl("/packages/falcor/shaders/generated/shader-file-list.json"))).json()) as {
         falcorFiles: string[];
         renderPassFiles: string[];
         localFiles: string[];
@@ -226,6 +227,7 @@ async function fetchShaderSources(): Promise<Map<string, string>> {
         ...list.localFiles.map((f) => ({ url: `/packages/falcor/shaders/${f}`, key: f })),
         ...(list.externalFiles ?? []).map(({ path, url }) => ({ url, key: path })),
     ];
+    for (const job of jobs) job.url = assetUrl(job.url);
     // Bounded concurrency: firing all ~400 fetches at once spikes renderer memory
     // enough to tear the WebGPU context down; a worker pool keeps it flat.
     const CONCURRENCY = 24;
@@ -255,11 +257,16 @@ async function resolveAssetUrl(value: string): Promise<string> {
 }
 
 /**
- * Loads initial content from URL params (`?graph=`/`?script=`, `?scene=`, `?output=`),
+ * Loads initial content from URL params (`?plugin=`, `?graph=`/`?script=`, `?scene=`, `?output=`),
  * falling back to the cornell-box path tracer when none are given.
  */
 async function loadInitialContent(state: ViewerState, device: Device): Promise<void> {
     const params = new URLSearchParams(location.search);
+    // Plugin modules (repeatable) register their passes/importers before any graph or scene needs them.
+    for (const plugin of params.getAll("plugin")) {
+        const { renderPasses, importers } = await loadPluginLibrary(new URL(plugin, location.href).href);
+        Logger.info(`Loaded plugin ${plugin}: passes [${renderPasses.join(", ")}], importers [${importers.join(", ")}]`);
+    }
     const sceneParam = params.get("scene");
     const graphParam = params.get("graph") ?? params.get("script");
     const outputParam = params.get("output");
@@ -274,7 +281,7 @@ async function loadInitialContent(state: ViewerState, device: Device): Promise<v
         addRecent("scripts", graphParam);
     } else if (!sceneParam) {
         // No URL content: default cornell box + the GPU-oracle-verified graph.
-        await loadScene(state, "/Falcor/media/test_scenes/cornell_box.pyscene", "/Falcor/media/test_scenes");
+        await loadScene(state, `${kProjectMediaUrl}/test_scenes/cornell_box.pyscene`, `${kProjectMediaUrl}/test_scenes`);
         state.graph = builtInGraph = buildDefaultGraph(device, canvas.width, canvas.height, state.scene!);
         state.graphs = [state.graph];
         state.output = state.graph.getOutputNames()[0] ?? null;
@@ -355,6 +362,8 @@ function refreshRecentList(): void {
 }
 
 async function main() {
+    // Vite's `base`: "/" on the dev server, the site path in a static build.
+    setAssetBase(import.meta.env.BASE_URL);
     // Before the device exists, so verbosity also covers device creation (as the native flags do).
     const { deferred } = await applyCommandLineParams();
     const device = await Device.create();
@@ -366,7 +375,7 @@ async function main() {
     context.configure({ device: device.gpuDevice, format });
 
     await initProgramSystem(device);
-    await initScripting("/node_modules/pyodide");
+    await initScripting(assetUrl("/node_modules/pyodide"));
 
     const state: ViewerState = { device, context, format, graph: null, graphs: [], scene: null, output: null, frame: 0, playing: true, clock: new Clock(), timingCapture: new TimingCapture(), frameCapture: null, animateScene: true, graphError: null, scenePath: null, callbacks: { sceneUpdateCallback: null, keyCallback: null } };
     /** A failing python callback is logged and dropped (it would otherwise fail every frame). */

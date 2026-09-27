@@ -8,6 +8,7 @@
 import { readdirSync, writeFileSync, mkdirSync } from "node:fs";
 import { join, relative, resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
+import { webPassShaderEntries } from "./repo-shader-list.js";
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../../..");
 const falcorRoot = join(repoRoot, "Falcor/Source/Falcor");
@@ -46,6 +47,8 @@ const externalFiles = [
         url: `/Falcor/external/packman/rtxdi/rtxdi-sdk/include/rtxdi/${f}`,
         upstream: `${RTXDI_RAW}/${f}`,
     })),
+    // Shaders beside the in-tree passes (packages/render-passes/src); no upstream copy.
+    ...webPassShaderEntries(),
 ];
 
 // Codepoint-sorted so the manifest is stable across filesystems (it is tracked like a lockfile).

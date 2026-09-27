@@ -19,6 +19,12 @@ packages/falcor/shaders/generated/*
 .DS_Store
 tests/gpu/out/
 
+# Out-of-tree render pass plugins (npm run new:pass -- X --plugin); each belongs in its own repo
+/plugins/
+
+# Staged npm packages (npm run build:packages)
+/out/
+
 # Local scratch dir for throwaway tests / browser-verify tooling
 /scratch/
 __pycache__/

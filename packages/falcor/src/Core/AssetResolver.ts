@@ -22,8 +22,8 @@ export enum SearchPathPriority {
     Last,
 }
 
-/** Web analog of getProjectDirectory()/"media": the served Falcor media tree. */
-export const kProjectMediaUrl = "/Falcor/media";
+import { kProjectMediaUrl } from "./AssetBase.js";
+export { kProjectMediaUrl };
 
 export type ExistsProbe = (url: string) => Promise<boolean>;
 /** Lists a directory's regular files (names), or null if it doesn't exist or listings are unavailable. */

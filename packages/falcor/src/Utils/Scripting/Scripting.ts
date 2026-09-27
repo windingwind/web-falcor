@@ -52,8 +52,8 @@ interface PyodideApi {
 
 let pyodide: PyodideApi | null = null;
 
-/** Where scripts/setup-web.mjs puts the pinned Pyodide packages. */
-export const kPyodidePackagesUrl = "/tools/pyodide-packages/";
+import { kPyodidePackagesUrl } from "../../Core/AssetBase.js";
+export { kPyodidePackagesUrl };
 
 /** Loads Pyodide (idempotent). indexURL points at the pyodide distribution. */
 export async function initScripting(indexURL: string): Promise<void> {

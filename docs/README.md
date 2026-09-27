@@ -23,6 +23,8 @@ the files**, so every `§N` cross-reference in the text resolves via the map bel
 | §7 | [testing.md](testing.md) | Testing strategy · verified oracle results (web vs native DXR) · upstream image-test graph pass-rate |
 | §8–§9 | [parity-matrix.md](parity-matrix.md) | Feature parity matrix (platform/core, all 29 render-pass directories / 38 pass classes, scene & materials, ecosystem) · known behavioral divergences |
 | §10–§11 | [roadmap.md](roadmap.md) | Roadmap (M0–M8) · resolved design questions |
+| — | [extending.md](extending.md) | Adding passes (`npm run new:pass`), plugins (`?plugin=`), core changes and shader overrides |
+| — | [npm.md](npm.md) | The npm packages, the prebuilt viewer, the Vite plugin for runtime assets, and releasing |
 
 ## Status markers
 

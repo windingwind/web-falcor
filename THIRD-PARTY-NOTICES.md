@@ -52,3 +52,28 @@ committed to or redistributed by this repository:
 
 - NanoVDB `PNanoVDB.h` from [OpenVDB v9.1.0](https://github.com/AcademySoftwareFoundation/openvdb/tree/v9.1.0) — MPL-2.0
 - [RTXDI SDK v1.3.0](https://github.com/NVIDIAGameWorks/RTXDI/tree/v1.3.0) `rtxdi-sdk/include/rtxdi/` headers — NVIDIA RTX SDKs license (link above)
+
+---
+
+## Prebuilt viewer and npm packages
+
+The GitHub Pages demo and the `@web-falcor/*` npm packages (built by
+`scripts/build-web.mjs` and `scripts/build-packages.mjs`) redistribute the
+following, unmodified, under their own licences. The licence texts are in
+[`licenses/`](licenses/), which ships with both.
+
+| Component | Version | Licence | Source |
+|---|---|---|---|
+| Falcor shader sources and test scenes | `eb540f67` | BSD-3-Clause (above) | https://github.com/NVIDIAGameWorks/Falcor |
+| slang-wasm (the Slang compiler) | 2026.18.2, 2026.5.2 | Apache-2.0 WITH LLVM-exception | https://github.com/shader-slang/slang |
+| Pyodide | 314.0.2 | MPL-2.0 | https://github.com/pyodide/pyodide |
+| numpy, Pillow (Pyodide wheels) | per `pyodide-lock.json` | BSD-3-Clause, MIT-CMU (texts inside each wheel) | https://github.com/pyodide/pyodide |
+| Draco decoder | 1.5.7 | Apache-2.0 | https://github.com/google/draco |
+| TinyUSDZ | 0.9.1 | Apache-2.0 and MIT (`node_modules/tinyusdz/LICENSE`) | https://github.com/lighttransport/tinyusdz |
+| Assimp, OpenSubdiv, MikkTSpace, NRD (compiled to wasm) | see `packages/falcor/wasm/` | licence files beside each module | see the licence files |
+
+The NRD and RTXDI **shader sources** and the NanoVDB header are not
+redistributed. The prebuilt viewer fetches them at runtime from the vendors'
+repositories (the URLs above, at the same pinned versions) and applies
+web-falcor's WGSL patches to NRD's shaders in the browser
+(`packages/render-passes/src/NRDPass/NRDShaderPatch.js`).

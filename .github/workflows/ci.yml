@@ -68,3 +68,9 @@ jobs:
 
       - name: Unit tests
         run: npm test
+
+      # The Pages site and the npm packages (published by release.yml) must keep building.
+      - name: Build the site and stage the npm packages
+        run: |
+          node scripts/build-web.mjs --out out/site
+          node scripts/build-packages.mjs

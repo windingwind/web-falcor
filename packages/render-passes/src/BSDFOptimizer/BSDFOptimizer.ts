@@ -35,6 +35,7 @@ import {
     type Scene,
     type ShaderVar,
     type UIWidgets,
+    assetUrl,
 } from "@web-falcor/falcor";
 
 const kOptimizerPass = "RenderPasses/BSDFOptimizer/BSDFOptimizer.cs.slang";
@@ -142,7 +143,7 @@ export class BSDFOptimizer extends RenderPass {
     }
 
     override async initAsync(): Promise<void> {
-        await this.device.programManager.loadSlangRuntime(kAutodiffSlang);
+        await this.device.programManager.loadSlangRuntime(assetUrl(kAutodiffSlang));
     }
 
     // --- Python surface (native registerBindings) ---
@@ -217,7 +218,7 @@ export class BSDFOptimizer extends RenderPass {
         this.optimizerPass ??= ComputePass.create(this.device, {
             path: kOptimizerPass,
             defines: this.scene.getSceneDefines().addAll(this.sampleGenerator.getDefines()),
-            slangRuntime: kAutodiffSlang,
+            slangRuntime: assetUrl(kAutodiffSlang),
         });
         this.sceneGradients.clearGrads(ctx, GradientType.Material);
         const root = this.optimizerPass.getRootVar();

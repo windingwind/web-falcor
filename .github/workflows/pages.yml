@@ -1,0 +1,70 @@
+name: Pages
+
+# Deploys the Mogwai demo (scripts/build-web.mjs) to GitHub Pages: the viewer, the runtime assets and the
+# BSD-licensed test scenes. Enable it once under Settings -> Pages -> Source: GitHub Actions.
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    env:
+      PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: 1
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      - name: Cache slang-wasm
+        uses: actions/cache@v4
+        with:
+          path: tools/slang-wasm
+          key: slang-wasm-2026.12.2
+
+      - name: Fetch shaders, compilers and Pyodide packages (no Falcor clone)
+        run: node scripts/setup-web.mjs
+
+      - name: Cache Falcor test_scenes media
+        uses: actions/cache@v4
+        with:
+          path: Falcor/media/test_scenes
+          key: falcor-media-test_scenes-7acdf8b0
+
+      - name: Fetch test_scenes media bundle
+        run: |
+          sudo apt-get update && sudo apt-get install -y p7zip-full
+          node scripts/download-scenes.mjs test_scenes
+
+      - name: Build the site
+        run: node scripts/build-web.mjs --base "/${{ github.event.repository.name }}/" --out _site
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4
