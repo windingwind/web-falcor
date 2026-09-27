@@ -24,6 +24,27 @@ npx @web-falcor/mogwai --plugins ./plugins   # serve plugins at /plugins/
 The viewer takes the same URL parameters as the dev server: `?scene=` (a path under `/Falcor/media/`),
 `?script=` (a render-graph `.py`) and `?plugin=` (a plugin module, repeatable).
 
+## Write a plugin
+
+A plugin adds render passes (or scene importers) to the viewer without a web-falcor checkout:
+
+```sh
+npx @web-falcor/mogwai new MyPass   # scaffolds ./my-pass/: a compute pass, its shader, a graph script
+cd my-pass
+npm install
+npm run dev                         # the prebuilt viewer with the plugin loaded, on the Cornell box
+```
+
+Edit `MyPass.ts` and `MyPass.cs.slang` and reload the page. `npm run typecheck` checks the pass against
+`@web-falcor/falcor`'s types. `npm run build` writes `dist/MyPass.js`. Any viewer loads it with `?plugin=<its URL>`,
+including the online demo and `npx @web-falcor/mogwai --plugins <dir>`.
+
+`web-falcor dev` runs Vite over the project and serves the prebuilt viewer beside it. The plugin's
+`@web-falcor/falcor` and `@web-falcor/render-passes` imports resolve to the viewer's own modules, as in a built
+viewer. This keeps a second copy of the library out of the page; with one, the passes would register where the
+viewer never looks. The `webFalcor` field of the plugin's `package.json` sets the scene, plugin and graph script that
+`dev` opens.
+
 ## Build an app on the library
 
 ```sh

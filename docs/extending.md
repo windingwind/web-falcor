@@ -37,9 +37,14 @@ Most research work is a new render pass, so start with the scaffold below.
 ## Scaffold a pass
 
 ```sh
-npm run new:pass -- MyPass --plugin   # plugin, under plugins/MyPass/ (the default choice)
+npx @web-falcor/mogwai new MyPass     # plugin in its own project, no checkout needed (see npm.md)
+npm run new:pass -- MyPass --plugin   # plugin, under plugins/MyPass/ of this checkout
 npm run new:pass -- MyPass            # in-tree, under packages/render-passes/src/MyPass/
 ```
+
+The first command is all a plugin author needs: it uses the published packages, and `npm run dev` there serves
+the prebuilt viewer with the plugin loaded ([npm.md](npm.md#write-a-plugin)). The other two are for work inside
+this repo.
 
 Either command writes three files: a working compute pass (`MyPass.ts`), its
 shader (`MyPass.cs.slang`), and a Mogwai graph script (`MyPass.py`) that runs the

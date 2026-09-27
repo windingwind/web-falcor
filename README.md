@@ -136,8 +136,9 @@ from their `.xml` file; the viewer dispatches on the extension.
 ## Adding a render pass
 
 ```sh
-npm run new:pass -- MyPass --plugin   # plugin in plugins/MyPass/, your own repo, loaded with ?plugin=
-npm run new:pass -- MyPass            # in-tree pass under packages/render-passes/src/
+npx @web-falcor/mogwai new MyPass     # a plugin project of its own; then npm install && npm run dev
+npm run new:pass -- MyPass --plugin   # a plugin in plugins/MyPass/ of this checkout
+npm run new:pass -- MyPass            # an in-tree pass under packages/render-passes/src/
 ```
 
 Each command writes a working compute pass, its Slang shader and a Mogwai graph

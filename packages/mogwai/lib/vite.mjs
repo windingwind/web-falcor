@@ -35,3 +35,30 @@ export function webFalcor({ path = "web-falcor/" } = {}) {
         },
     };
 }
+
+// Where the prebuilt viewer serves its own copies of the packages (dist/plugin-api/, see its import map).
+const kPluginApi = { "@web-falcor/falcor": "/plugin-api/web-falcor.js", "@web-falcor/render-passes": "/plugin-api/web-falcor-render-passes.js" };
+
+/**
+ * Vite plugin for developing a plugin against the prebuilt viewer (`web-falcor dev`): the viewer is served at /,
+ * and the plugin's @web-falcor/* imports resolve to the viewer's own modules, so its passes land in the viewer's registry.
+ */
+export function webFalcorViewer() {
+    return {
+        name: "web-falcor:viewer",
+        enforce: "pre",
+        config: () => ({ optimizeDeps: { noDiscovery: true, include: [], exclude: Object.keys(kPluginApi) } }),
+        resolveId(id) {
+            return kPluginApi[id] ? { id: kPluginApi[id], external: true } : null;
+        },
+        configureServer(server) {
+            // The viewer's files, served raw ahead of Vite; anything else (the plugin's sources) goes to Vite.
+            server.middlewares.use((req, res, next) => {
+                const url = new URL(req.url ?? "/", "http://localhost").pathname;
+                const file = fileUnder(kSiteDir, url.slice(1));
+                if (file) sendFile(req, res, file);
+                else next();
+            });
+        },
+    };
+}

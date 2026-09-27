@@ -9,6 +9,12 @@ npx @web-falcor/mogwai --plugins ./plugins  # also serves ./plugins at /plugins/
 npx @web-falcor/mogwai --media ./media      # serves your scenes at /Falcor/media/
 ```
 
+Write a plugin without a web-falcor checkout:
+
+```sh
+npx @web-falcor/mogwai new MyPass && cd my-pass && npm install && npm run dev
+```
+
 - Open a scene with `?scene=<path under /Falcor/media/>` and a render graph with `?script=<url of a .py graph>`.
 - Load a prebuilt plugin with `?plugin=<url of its .js>`; the parameter can be repeated.
 - `npx @web-falcor/mogwai assets <dir>` copies the runtime assets (shaders, the Slang compiler, Pyodide) that apps

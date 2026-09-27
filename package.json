@@ -1,6 +1,6 @@
 {
   "name": "web-falcor",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "private": true,
   "description": "WebGPU/WebGL reimplementation of NVIDIA Falcor",
   "type": "module",
