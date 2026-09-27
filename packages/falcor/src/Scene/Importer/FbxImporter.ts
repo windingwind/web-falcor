@@ -19,7 +19,7 @@ import { RuntimeError } from "../../Core/Error.js";
 import { MaterialType, ShadingModel, packTextureHandle, TextureHandleMode } from "../Material/MaterialData.js";
 import { getTextureSlotSrgb } from "../Material/TextureSlots.js";
 import { WorkerPool } from "../../Utils/Threading/WorkerPool.js";
-import { ddsCompressedPayload } from "./DDSLoader.js";
+import { ddsAnalysisLevel, ddsCompressedPayload } from "./DDSLoader.js";
 import type { SceneMaterialDesc, SceneMeshDesc } from "../Scene.js";
 import { KeyframeAnimation } from "../Animation/KeyframeAnimation.js";
 import { quatf } from "../../Utils/Math/Quaternion.js";
@@ -409,8 +409,9 @@ export class FbxImporter {
                     // The GPU gets the full-resolution BC chain; the capped decode serves CPU analysis.
                     compressed = ddsCompressedPayload(buffer, srgb);
                     ddsBytes = new Uint8Array(buffer);
-                    const copy = buffer.slice(0);
-                    const { width, height, rgba } = await WorkerPool.get().run("decodeDDS", { buffer: copy, srgb, maxDim: 512 }, [copy]);
+                    const level = ddsAnalysisLevel(buffer, srgb, 512);
+                    level.data = level.data.slice();
+                    const { width, height, rgba } = await WorkerPool.get().run("decodeDDSLevel", { level }, [level.data.buffer]);
                     // ImageData holds raw RGBA already — no colour-space/premultiply
                     // decode step applies, so createImageBitmap needs no options.
                     const imageData = new ImageData(new Uint8ClampedArray(rgba), width, height);

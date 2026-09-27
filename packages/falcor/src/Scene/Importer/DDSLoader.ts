@@ -327,6 +327,19 @@ function decodeLevelToRGBA(data: Uint8Array, format: ResourceFormat, w: number, 
  * texture-heavy scenes), decodes it and returns { width, height, rgba }.
  */
 export function decodeDDSToRGBA(buffer: ArrayBuffer, srgb: boolean, maxDim = 512): { width: number; height: number; rgba: Uint8Array } {
+    return decodeDDSLevel(ddsAnalysisLevel(buffer, srgb, maxDim));
+}
+
+/** The mip decodeDDSToRGBA decodes (its data views `buffer`). */
+export interface DDSLevel { data: Uint8Array; format: ResourceFormat; width: number; height: number }
+
+/** Decodes one mip picked by ddsAnalysisLevel to RGBA8. */
+export function decodeDDSLevel(level: DDSLevel): { width: number; height: number; rgba: Uint8Array } {
+    return { width: level.width, height: level.height, rgba: decodeLevelToRGBA(level.data, level.format, level.width, level.height) };
+}
+
+/** The finest mip whose largest dimension is <= maxDim (else the smallest, or the base without mips). */
+export function ddsAnalysisLevel(buffer: ArrayBuffer, srgb: boolean, maxDim = 512): DDSLevel {
     const img = parseDDS(buffer, srgb);
     // levels[0] is the base (largest); pick the finest that fits maxDim.
     let level = img.levels[0]!;
@@ -341,7 +354,7 @@ export function decodeDDSToRGBA(buffer: ArrayBuffer, srgb: boolean, maxDim = 512
     if (Math.max(level.width, level.height) > maxDim && img.levels.length > 1) {
         level = img.levels[img.levels.length - 1]!;
     }
-    return { width: level.width, height: level.height, rgba: decodeLevelToRGBA(level.data, img.format, level.width, level.height) };
+    return { data: level.data, format: img.format, width: level.width, height: level.height };
 }
 
 /**

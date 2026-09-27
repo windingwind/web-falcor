@@ -3,7 +3,7 @@
  * structured-cloneable values; the pool transfers the returned `transfer` buffers.
  */
 
-import { decodeDDSToRGBA } from "../../Scene/Importer/DDSLoader.js";
+import { decodeDDSLevel, type DDSLevel } from "../../Scene/Importer/DDSLoader.js";
 import { decodeTGA } from "../Image/TGADecoder.js";
 import { decodeHdr } from "../Image/HDRDecoder.js";
 import { decodeExr } from "../Image/EXRDecoder.js";
@@ -18,10 +18,10 @@ export interface TaskResult<T> {
 }
 
 export const kTasks = {
-    /** decodeDDSToRGBA (the capped CPU decode for texture analysis). */
-    decodeDDS(args: { buffer: ArrayBuffer; srgb: boolean; maxDim: number }): TaskResult<{ width: number; height: number; rgba: Uint8Array }> {
-        const image = decodeDDSToRGBA(args.buffer, args.srgb, args.maxDim);
-        return { value: image, transfer: [image.rgba.buffer] };
+    /** decodeDDSLevel (the capped CPU decode for texture analysis): only that mip travels to the worker. */
+    decodeDDSLevel(args: { level: DDSLevel }): TaskResult<{ width: number; height: number; rgba: Uint8Array }> {
+        const image = decodeDDSLevel(args.level);
+        return { value: image, transfer: [image.rgba.buffer as ArrayBuffer] };
     },
     /** decodeTGA. */
     decodeTGA(args: { buffer: ArrayBuffer }): TaskResult<ReturnType<typeof decodeTGA>> {

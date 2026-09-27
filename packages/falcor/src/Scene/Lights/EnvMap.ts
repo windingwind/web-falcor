@@ -111,9 +111,13 @@ export class EnvMap {
         if (!res.ok) throw new RuntimeError(`Failed to fetch env map '${url}' (${res.status})`);
         const bytes = new Uint8Array(await res.arrayBuffer());
         const isExr = url.toLowerCase().endsWith(".exr");
+        return { image: await EnvMap.decodeOnPool(bytes, isExr), bytes, isExr, path: url };
+    }
+
+    /** decodeImage on the worker pool. */
+    static decodeOnPool(bytes: Uint8Array, isExr: boolean): Promise<{ width: number; height: number; data: Float32Array }> {
         const copy = bytes.slice();
-        const image = await WorkerPool.get().run("decodeEnvImage", { bytes: copy, isExr }, [copy.buffer]);
-        return { image, bytes, isExr, path: url };
+        return WorkerPool.get().run("decodeEnvImage", { bytes: copy, isExr }, [copy.buffer]);
     }
 
     static createFromDecoded(device: Device, decoded: Awaited<ReturnType<typeof EnvMap.fetchAndDecode>>, options: EnvMapLoadOptions = {}): EnvMap {

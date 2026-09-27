@@ -18,7 +18,7 @@ import { quatf } from "../Utils/Math/Quaternion.js";
 import { Scene, type SceneMeshDesc, type SceneMaterialDesc, type SceneCurveDesc, type SceneMetadata } from "./Scene.js";
 import { TextureManager, type TextureSource } from "./Material/TextureManager.js";
 import { EnvMap } from "./Lights/EnvMap.js";
-import { createPackedVertices, kPackedVertexFloats, type AnalyticLight, type StaticVertex } from "./SceneData.js";
+import { createPackedVertices, kPackedVertexFloats, PackedVertex, type AnalyticLight, type StaticVertex } from "./SceneData.js";
 import { KeyframeAnimation } from "./Animation/KeyframeAnimation.js";
 import type { AnimationChannel, MorphDesc, SceneNode, SkinDesc, WeightTrack } from "./Animation/SceneAnimation.js";
 import { buildSDFGridFromRecipe, type SDFGridRecipe } from "./SDFs/SDFGridRecipe.js";
@@ -31,9 +31,10 @@ import type { SceneSDFGridDesc } from "./Scene.js";
 import { GridVolume, type GridSlot } from "./Volume/GridVolume.js";
 import { Grid } from "./Volume/Grid.js";
 import type { BvhBuildResult } from "./SoftwareRT/Bvh.js";
+import { WorkerPool } from "../Utils/Threading/WorkerPool.js";
 
 const kMagic = 0x43534657; // 'WFSC'
-const kVersion = 8; // v4: + animation, skin/morph, SDF recipes, grid volumes; v5: camera list; v6: DDS textures, metadata; v7: keyframe animations; v8: triangle BVH
+const kVersion = 9; // v4: + animation, skin/morph, SDF recipes, grid volumes; v5: camera list; v6: DDS textures, metadata; v7: keyframe animations; v8: triangle BVH; v9: packed vertices
 const kFloatsPerVertex = 13; // pos3 + normal3 + tangent4 + texCrd2 + curveRadius
 
 export interface SceneCameraPose {
@@ -147,6 +148,8 @@ interface MeshMeta {
     nodeID?: number;
     transform?: { __m4: number[] };
     vertexCount: number;
+    /** 13-float vertices (with radii) instead of the packed 12. */
+    curveRadius?: boolean;
     indexCount: number;
     skin?: { boneNodeIDs: number[]; inverseBind: unknown; count: number };
     morph?: { nodeID: number; baseWeights: number[]; targets: { posCount: number; normalCount: number }[] };
@@ -182,11 +185,7 @@ function decodeKeyframes(nodeID: number, m: NonNullable<TrackMeta["keyframes"]>)
 function wordBlobs(cached: CacheableScene): (Float32Array | Uint32Array)[] {
     const blobs: (Float32Array | Uint32Array)[] = [];
     for (const m of cached.meshes) {
-        const verts = new Float32Array(m.vertices.length * kFloatsPerVertex);
-        m.vertices.forEach((v, i) => {
-            verts.set([v.position.x, v.position.y, v.position.z, v.normal.x, v.normal.y, v.normal.z, v.tangent.x, v.tangent.y, v.tangent.z, v.tangent.w, v.texCrd.x, v.texCrd.y, v.curveRadius ?? 0], i * kFloatsPerVertex);
-        });
-        blobs.push(verts, m.indices);
+        blobs.push(encodeVertices(m.vertices), m.indices);
         if (m.skin) blobs.push(m.skin.boneIDs, m.skin.weights);
         if (m.morph) for (const t of m.morph.targets) blobs.push(t.position, t.normal ?? new Float32Array(0));
     }
@@ -198,6 +197,28 @@ function wordBlobs(cached: CacheableScene): (Float32Array | Uint32Array)[] {
     for (const r of cached.sdfGrids.recipes) for (const op of r.ops) if (op.kind === "values") blobs.push(op.values);
     if (cached.bvh) blobs.push(cached.bvh.nodes, cached.bvh.tris, cached.bvh.order);
     return blobs;
+}
+
+/** Whether any vertex carries a curve radius (then all store the 13-float layout). */
+function hasCurveRadius(vertices: StaticVertex[]): boolean {
+    return vertices.some((v) => (v.curveRadius ?? 0) !== 0);
+}
+
+/** A mesh's vertices: the packed 12-float layout, or 13 floats with the curve radius. */
+function encodeVertices(vertices: StaticVertex[]): Float32Array {
+    const radius = hasCurveRadius(vertices);
+    const stride = radius ? kFloatsPerVertex : kPackedVertexFloats;
+    const out = new Float32Array(vertices.length * stride);
+    vertices.forEach((v, i) => {
+        const o = i * stride;
+        if (v instanceof PackedVertex) {
+            for (let k = 0; k < kPackedVertexFloats; k++) out[o + k] = v.data[v.offset + k]!;
+            return;
+        }
+        out.set([v.position.x, v.position.y, v.position.z, v.normal.x, v.normal.y, v.normal.z, v.tangent.x, v.tangent.y, v.tangent.z, v.tangent.w, v.texCrd.x, v.texCrd.y], o);
+        if (radius) out[o + 12] = v.curveRadius ?? 0;
+    });
+    return out;
 }
 
 /** Byte-granular payload (compressed images, env map, NanoVDB buffers), in file order. */
@@ -214,6 +235,7 @@ export function serializeScene(cached: CacheableScene): Uint8Array {
         nodeID: m.nodeID,
         transform: m.transform ? { __m4: Array.from(m.transform.data) } : undefined,
         vertexCount: m.vertices.length,
+        curveRadius: hasCurveRadius(m.vertices) || undefined,
         indexCount: m.indices.length,
         skin: m.skin ? { boneNodeIDs: m.skin.boneNodeIDs, inverseBind: encodeValue(m.skin.inverseBind), count: m.skin.boneIDs.length } : undefined,
         morph: m.morph
@@ -322,7 +344,7 @@ export function deserializeScene(bytes: Uint8Array): CacheableScene {
     const words = Math.floor(bytes.byteLength / 4);
     const f32 = new Float32Array(bytes.buffer, bytes.byteOffset, words);
     const u32 = new Uint32Array(bytes.buffer, bytes.byteOffset, words);
-    const takeF32 = (count: number): Float32Array => {
+    const takeF32 = (count: number): Float32Array<ArrayBuffer> => {
         const a = new Float32Array(f32.subarray(off / 4, off / 4 + count));
         off += count * 4;
         return a;
@@ -340,17 +362,11 @@ export function deserializeScene(bytes: Uint8Array): CacheableScene {
     const mat4 = (m?: { __m4: number[] }) => (m ? new float4x4(new Float32Array(m.__m4)) : undefined);
 
     const meshes: SceneMeshDesc[] = header.meshes.map((meta) => {
-        const verts = takeF32(meta.vertexCount * kFloatsPerVertex);
-        let hasCurveRadius = false;
-        for (let v = 0; v < meta.vertexCount && !hasCurveRadius; v++) hasCurveRadius = verts[v * kFloatsPerVertex + 12] !== 0;
         // Packed vertices keep large cached scenes within the JS heap; curve-tessellated meshes (radii) stay plain.
         let vertices: StaticVertex[] = [];
-        if (!hasCurveRadius) {
-            const data = new Float32Array(meta.vertexCount * kPackedVertexFloats);
-            for (let v = 0; v < meta.vertexCount; v++) data.set(verts.subarray(v * kFloatsPerVertex, v * kFloatsPerVertex + kPackedVertexFloats), v * kPackedVertexFloats);
-            vertices = createPackedVertices(meta.vertexCount, data);
-        }
-        for (let v = 0; hasCurveRadius && v < meta.vertexCount; v++) {
+        if (!meta.curveRadius) vertices = createPackedVertices(meta.vertexCount, takeF32(meta.vertexCount * kPackedVertexFloats));
+        const verts = meta.curveRadius ? takeF32(meta.vertexCount * kFloatsPerVertex) : new Float32Array(0);
+        for (let v = 0; meta.curveRadius && v < meta.vertexCount; v++) {
             const fi = v * kFloatsPerVertex;
             vertices.push({
                 position: new float3(verts[fi]!, verts[fi + 1]!, verts[fi + 2]!),
@@ -479,21 +495,30 @@ export async function encodeTextureSources(textureManager: TextureManager): Prom
 }
 
 async function decodeTextureSources(textures: CachedTexture[]): Promise<TextureManager> {
+    const { ddsAnalysisLevel, ddsCompressedPayload } = await import("./Importer/DDSLoader.js");
+    const pool = WorkerPool.get();
+    // Decoded concurrently (DDS on the worker pool), then added in cache order (texture IDs).
+    const sources = await Promise.all(
+        textures.map(async (t): Promise<TextureSource> => {
+            if (t.dds) {
+                // DDS: the BC chain for the GPU and the capped decode for CPU analysis, as on import.
+                // takeBytes gives each texture its own buffer: the compressed levels view it (no copy).
+                const own = t.png.byteOffset === 0 && t.png.byteLength === t.png.buffer.byteLength;
+                const buffer = (own ? t.png.buffer : t.png.slice().buffer) as ArrayBuffer;
+                const compressed = ddsCompressedPayload(buffer, t.srgb);
+                const level = ddsAnalysisLevel(buffer, t.srgb, 512);
+                level.data = level.data.slice();
+                const { width, height, rgba } = await pool.run("decodeDDSLevel", { level }, [level.data.buffer]);
+                const bitmap = await createImageBitmap(new ImageData(new Uint8ClampedArray(rgba), width, height), { premultiplyAlpha: "none" });
+                return { bitmap, srgb: t.srgb, bytes: t.png, compressed, dds: true } as TextureSource;
+            }
+            // Same decode options as the pyscene import path (parity-critical).
+            const bitmap = await createImageBitmap(new Blob([t.png.slice().buffer as ArrayBuffer]), { colorSpaceConversion: "none", premultiplyAlpha: "none" });
+            return { bitmap, srgb: t.srgb, bytes: t.png } as TextureSource;
+        }),
+    );
     const tm = new TextureManager();
-    for (const t of textures) {
-        if (t.dds) {
-            // DDS: the BC chain for the GPU and the capped decode for CPU analysis, as on import.
-            const { ddsCompressedPayload, decodeDDSToRGBA } = await import("./Importer/DDSLoader.js");
-            const buffer = t.png.slice().buffer as ArrayBuffer;
-            const { width, height, rgba } = decodeDDSToRGBA(buffer, t.srgb, 512);
-            const bitmap = await createImageBitmap(new ImageData(new Uint8ClampedArray(rgba), width, height), { premultiplyAlpha: "none" });
-            tm.addTexture({ bitmap, srgb: t.srgb, bytes: t.png, compressed: ddsCompressedPayload(buffer, t.srgb), dds: true });
-            continue;
-        }
-        // Same decode options as the pyscene import path (parity-critical).
-        const bitmap = await createImageBitmap(new Blob([t.png.slice().buffer as ArrayBuffer]), { colorSpaceConversion: "none", premultiplyAlpha: "none" });
-        tm.addTexture({ bitmap, srgb: t.srgb, bytes: t.png } as TextureSource);
-    }
+    for (const s of sources) tm.addTexture(s);
     return tm;
 }
 
@@ -530,6 +555,9 @@ export async function clearSceneCache(): Promise<void> {
 
 /** Rebuilds a Scene from cached data (the fast-reload path). */
 export async function buildSceneFromCache(device: Device, cached: CacheableScene): Promise<Scene> {
+    // The env map decodes on the pool while the textures and the scene build.
+    const envImage = cached.envMap && EnvMap.decodeOnPool(cached.envMap.bytes, cached.envMap.isExr);
+    envImage?.catch(() => {});
     const textureManager = await decodeTextureSources(cached.textures);
     // SDF grids are rebuilt from their recipes (deterministic generators), shared across instances.
     const builtGrids = cached.sdfGrids.recipes.map(buildSDFGridFromRecipe);
@@ -548,7 +576,8 @@ export async function buildSceneFromCache(device: Device, cached: CacheableScene
     }
     scene.finalizeGridVolumes();
     if (cached.envMap) {
-        const env = EnvMap.createFromBytes(device, cached.envMap.bytes, cached.envMap.isExr, { equalAreaOctahedral: cached.envMap.equalAreaOctahedral });
+        const decoded = { image: await envImage!, bytes: cached.envMap.bytes, isExr: cached.envMap.isExr, path: "" };
+        const env = EnvMap.createFromDecoded(device, decoded, { equalAreaOctahedral: cached.envMap.equalAreaOctahedral });
         env.intensity = cached.envMap.intensity;
         env.tint = cached.envMap.tint;
         env.setRotation(cached.envMap.rotationDeg);
