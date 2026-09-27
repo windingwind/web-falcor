@@ -7,7 +7,8 @@ import type { ComputeContext } from "../API/ComputeContext.js";
 import { DefineList } from "../Program/DefineList.js";
 import { ShaderType } from "../Program/SlangCompiler.js";
 import { ParameterBlock, makeRootVar, type ShaderVar } from "../Program/ParameterBlock.js";
-import type { ProgramReflection } from "../Program/ProgramReflection.js";
+import type { ProgramReflection, WgslBinding } from "../Program/ProgramReflection.js";
+import { RuntimeError } from "../Error.js";
 import type { Program, ProgramVersion, EntryPointKernel, ShaderModuleDesc, TypeConformance } from "../Program/Program.js";
 
 export interface ComputePassDesc {
@@ -30,6 +31,7 @@ export class ComputePass {
     private vars: ParameterBlock;
     private root: ShaderVar;
     private readonly entry: string;
+    private readonly label: string;
 
     /** Mirrors ComputePass::create. */
     static create(device: Device, desc: ComputePassDesc): ComputePass {
@@ -44,6 +46,7 @@ export class ComputePass {
         const entry = desc.csEntry ?? "main";
         this.program = device.programManager.createProgram({ path: desc.path, modules: desc.modules, typeConformances: desc.typeConformances, entryPoints: [{ name: entry, type: ShaderType.Compute }], slangRuntime: desc.slangRuntime }, defines);
         this.entry = entry;
+        this.label = `${desc.path ?? desc.modules?.[0]?.name ?? "ComputePass"}:${entry}`;
         ({ version: this.version, kernel: this.kernel, vars: this.vars, root: this.root, pipeline: this.pipeline } = this.build());
     }
 
@@ -51,6 +54,7 @@ export class ComputePass {
     private build() {
         const version = this.program.getActiveVersion();
         const kernel = version.getKernel(this.entry);
+        checkBindingLimits(this.label, kernel.bindings, this.device.limits);
         const vars = new ParameterBlock(this.device, version.reflection, kernel.bindings);
         const groupIndices = vars.getGroupIndices();
         const maxGroup = groupIndices.length ? Math.max(...groupIndices) : -1;
@@ -58,8 +62,10 @@ export class ComputePass {
         for (let g = 0; g <= maxGroup; g++) {
             layouts.push(vars.getBindGroupLayout(g) ?? this.device.gpuDevice.createBindGroupLayout({ entries: [] }));
         }
+        // Labels name the shader in WebGPU validation errors (e.g. a binding count over the adapter's limit).
         const pipeline = this.device.gpuDevice.createComputePipeline({
-            layout: this.device.gpuDevice.createPipelineLayout({ bindGroupLayouts: layouts }),
+            label: this.label,
+            layout: this.device.gpuDevice.createPipelineLayout({ label: this.label, bindGroupLayouts: layouts }),
             compute: { module: kernel.module, entryPoint: kernel.name },
         });
         return { version, kernel, vars, root: makeRootVar(vars), pipeline };
@@ -87,7 +93,7 @@ export class ComputePass {
         const maxGroup = groupIndices.length ? Math.max(...groupIndices) : -1;
         const layouts: GPUBindGroupLayout[] = [];
         for (let g = 0; g <= maxGroup; g++) layouts.push(this.vars.getBindGroupLayout(g) ?? gpu.createBindGroupLayout({ entries: [] }));
-        this.pipeline = gpu.createComputePipeline({ layout: gpu.createPipelineLayout({ bindGroupLayouts: layouts }), compute: { module, entryPoint: this.kernel.name } });
+        this.pipeline = gpu.createComputePipeline({ label: this.label, layout: gpu.createPipelineLayout({ label: this.label, bindGroupLayouts: layouts }), compute: { module, entryPoint: this.kernel.name } });
     }
 
     /** Mirrors ComputePass::getRootVar. */
@@ -124,5 +130,21 @@ export class ComputePass {
         for (const { index, group } of bindGroups) pass.setBindGroup(index, group);
         pass.dispatchWorkgroups(...groups);
         pass.end();
+    }
+}
+
+/** Throws a readable error when a kernel binds more resources per stage than the GPU allows (WebGPU only reports it later, unlabeled). */
+function checkBindingLimits(label: string, bindings: readonly WgslBinding[], limits: GPUSupportedLimits): void {
+    const count = (pred: (e: GPUBindGroupLayoutEntry) => boolean) => bindings.filter((b) => pred(b.layoutEntry)).length;
+    const checks: [string, number, keyof GPUSupportedLimits][] = [
+        ["storage buffers", count((e) => e.buffer?.type === "storage" || e.buffer?.type === "read-only-storage"), "maxStorageBuffersPerShaderStage"],
+        ["storage textures", count((e) => !!e.storageTexture), "maxStorageTexturesPerShaderStage"],
+        ["sampled textures", count((e) => !!e.texture), "maxSampledTexturesPerShaderStage"],
+        ["samplers", count((e) => !!e.sampler), "maxSamplersPerShaderStage"],
+        ["uniform buffers", count((e) => e.buffer?.type === "uniform" || (!!e.buffer && e.buffer.type === undefined)), "maxUniformBuffersPerShaderStage"],
+    ];
+    for (const [what, n, limit] of checks) {
+        const max = limits[limit] as number;
+        if (n > max) throw new RuntimeError(`${label} binds ${n} ${what}, but this GPU allows ${max} per shader stage (${limit}).`);
     }
 }

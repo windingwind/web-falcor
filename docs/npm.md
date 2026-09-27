@@ -8,7 +8,10 @@ web-falcor is published as three packages:
 | `@web-falcor/render-passes` | Falcor's render passes; importing it registers them | use `PathTracer`, `GBufferRT`, `NRD`, … in your graphs |
 | `@web-falcor/mogwai` | the prebuilt Mogwai viewer, its runtime assets, the `web-falcor` CLI and a Vite plugin | run the viewer without a checkout, or supply the assets to your app |
 
-Everything needs a browser with WebGPU (Chrome or Edge; Safari and Firefox where WebGPU is enabled).
+Everything needs a browser with WebGPU and at least 16 storage buffers per shader stage
+(`maxStorageBuffersPerShaderStage`). Safari, and Chrome or Edge on Windows and Linux, usually have that. Chrome and
+Edge on macOS allow 10, too few for the path tracer; passes that need more stop with an error naming the pass and
+the limit (see the [README](../README.md)). On a Mac, use Safari.
 
 ## Run the viewer
 

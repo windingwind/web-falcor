@@ -7,8 +7,13 @@ targeting 1:1 feature parity where the web platform allows. **See the [design do
 for the framework design, the Falcor→web module mapping, and the feature parity matrix
 (including features that are impossible in the browser and why).
 
-**Try it in the browser: [windingwind.github.io/web-falcor](https://windingwind.github.io/web-falcor/)** (needs WebGPU:
-Chrome or Edge), or run the viewer locally with `npx @web-falcor/mogwai`.
+**Try it in the browser: [windingwind.github.io/web-falcor](https://windingwind.github.io/web-falcor/)**, or run the viewer
+locally with `npx @web-falcor/mogwai`.
+
+> **Browser requirements:** WebGPU with at least 16 storage buffers per shader stage
+> (`maxStorageBuffersPerShaderStage`, see [webgpureport.org](https://webgpureport.org)). Safari, and Chrome or Edge on
+> Windows and Linux, usually meet it. Chrome and Edge on macOS currently allow 10, too few for the path tracer and
+> the G-buffer passes; they stop with an error naming the pass and the limit. Use Safari on a Mac.
 
 ![Amazon Lumberyard Bistro path-traced in the browser with web-falcor on WebGPU](docs/assets/teaser-bistro.jpg)
 
