@@ -42,7 +42,8 @@ jobs:
         uses: actions/cache@v4
         with:
           path: tools/slang-wasm
-          key: slang-wasm-2026.12.2
+          # setup-web.mjs pins the Slang version (and skips the download when the files exist).
+          key: slang-wasm-${{ hashFiles('scripts/setup-web.mjs') }}
 
       - name: Fetch shaders + slang-wasm (no Falcor clone)
         run: node scripts/setup-web.mjs
@@ -58,8 +59,11 @@ jobs:
       - name: Cache Falcor test_scenes media
         uses: actions/cache@v4
         with:
-          path: Falcor/media/test_scenes
-          key: falcor-media-test_scenes-7acdf8b0
+          # LICENSE.md sits beside test_scenes; the site build ships it with the scenes.
+          path: |
+            Falcor/media/test_scenes
+            Falcor/media/LICENSE.md
+          key: falcor-media-test_scenes-license-7acdf8b0
 
       - name: Fetch test_scenes media bundle
         run: |

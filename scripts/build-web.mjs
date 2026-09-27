@@ -31,7 +31,7 @@ const kExcludedMediaRe = new RegExp(`\\b(${kExcludedMediaDirs.join("|")})[/\\\\]
 const src = (p) => join(repoRoot, p);
 const dst = (p) => join(outDir, p);
 function copy(from, to = from) {
-    if (!existsSync(src(from))) throw new Error(`missing ${from} (run npm run setup:web)`);
+    if (!existsSync(src(from))) throw new Error(`missing ${from} (${from.startsWith("Falcor/media/") ? "run npm run download:scenes -- test_scenes" : "run npm run setup:web"})`);
     mkdirSync(dirname(dst(to)), { recursive: true });
     cpSync(src(from), dst(to), { recursive: true, dereference: true });
 }
