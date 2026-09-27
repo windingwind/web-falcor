@@ -21,29 +21,51 @@ locally with `npx @web-falcor/mogwai`.
 emissive lighting, and software ray tracing, cross-validated against native Falcor's DXR output
 (see the [parity matrix](docs/parity-matrix.md) and [oracle results](docs/testing.md)).*
 
-## Layout
+## Quick start (npm, recommended)
 
-- `packages/falcor/` — core library, mirrors `Falcor/Source/Falcor`
-- `packages/render-passes/` — render pass plugins, mirrors `Falcor/Source/RenderPasses`
-- `packages/mogwai/` — browser application, mirrors `Falcor/Source/Mogwai`
-- `packages/slang-compiler/` — build-time Slang→WGSL+reflection driver
-- `Falcor/` — upstream shader sources (+ native oracle for tests); fetched, not committed
-- `tools/` — Slang toolchains; fetched, not committed
+The published packages need no checkout, no Falcor clone and no build step. Node 18+ and a WebGPU browser are enough.
 
-## Use it from npm
+**Run the viewer** (Falcor's Mogwai, prebuilt):
 
 ```sh
-npx @web-falcor/mogwai                                        # the prebuilt viewer, no checkout needed
-npm install @web-falcor/falcor @web-falcor/render-passes @web-falcor/mogwai   # build your own app
+npx @web-falcor/mogwai                        # http://localhost:5173/, with the Cornell box
+npx @web-falcor/mogwai --media ./my-scenes    # serve your own scenes at /Falcor/media/
 ```
 
-See [docs/npm.md](docs/npm.md) for the Vite plugin that supplies the runtime assets, and a minimal app.
+![The Mogwai viewer in the browser: render-graph editor, pass properties and the settings panel over the Cornell box](docs/assets/mogwai-ui.png)
 
-## Quick start (develop in this repo)
+*The Mogwai viewer on the default Cornell box — the render-graph editor (top left), the selected
+pass's properties, and Mogwai's settings panel (right), all editable live.*
 
-The runtime compiles Slang→WGSL in the browser, so it needs the upstream Falcor
-shader **sources** and the slang-wasm compiler. `setup:web` fetches both from
-GitHub at pinned versions — **no Falcor clone and no native build required**:
+**Write a render pass** as a plugin in a project of its own:
+
+```sh
+npx @web-falcor/mogwai new MyPass   # a working compute pass, its Slang shader and a graph script
+cd my-pass
+npm install
+npm run dev                         # the viewer with your pass loaded; edit, then reload
+npm run build                       # dist/MyPass.js, runs in any viewer via ?plugin=<its URL>
+```
+
+If your work needs no change to web-falcor itself, **release it this way, from your own repo**, rather than
+forking web-falcor. Host the built `.js` anywhere that allows CORS and anyone can run it in the
+[online demo](https://windingwind.github.io/web-falcor/) with `?plugin=<its URL>`.
+
+**Build your own app** on the library:
+
+```sh
+npm install @web-falcor/falcor @web-falcor/render-passes @web-falcor/mogwai
+```
+
+[docs/npm.md](docs/npm.md) has a minimal app, the Vite plugin that supplies the runtime assets (shaders, the Slang
+compiler, Pyodide), and the details of `web-falcor dev`.
+
+## Working from source
+
+Use a checkout to change web-falcor itself (core features, fixes, ports of upstream Falcor passes), or to run
+the test suites. The runtime compiles Slang→WGSL in the browser, so it needs the upstream Falcor shader
+**sources** and the slang-wasm compiler. `setup:web` fetches both from GitHub at pinned versions, with **no
+Falcor clone and no native build**:
 
 ```sh
 npm install
@@ -59,6 +81,17 @@ RTXDI GitHub repos at the versions Falcor pins (byte-identical to its packman
 packages); the RTXDI headers are under NVIDIA's RTX SDKs license (see
 [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md)). Media/test scenes are not
 fetched — see below.
+
+### Adding a pass in the checkout
+
+```sh
+npm run new:pass -- MyPass            # an in-tree pass under packages/render-passes/src/
+npm run new:pass -- MyPass --plugin   # a plugin in plugins/MyPass/, loaded by the dev server
+```
+
+In-tree passes are for ports of upstream Falcor passes and passes every user should get; everything else is
+better as a plugin (see above). [docs/extending.md](docs/extending.md) explains which route to take, and covers
+core changes and shader overrides.
 
 ### Example scenes
 
@@ -77,11 +110,6 @@ npm run download:scenes -- --all        # everything, incl. the big ORCA scenes
 Scenes land under `Falcor/media/<Scene>/`, which the dev server serves at
 `/Falcor/media/…`. The Mogwai viewer loads `test_scenes/cornell_box.pyscene` by
 default.
-
-![The Mogwai viewer in the browser: render-graph editor, pass properties and the settings panel over the Cornell box](docs/assets/mogwai-ui.png)
-
-*The Mogwai viewer on the default Cornell box — the render-graph editor (top left), the selected
-pass's properties, and Mogwai's settings panel (right), all editable live.*
 
 Single-file assets that no scene bundle ships — compressed OpenVDB volumes,
 measured BRDF data — come from a second catalog:
@@ -133,28 +161,10 @@ To load a pbrt scene in the viewer, point it at the `.pbrt` file, e.g.
 `Falcor/media/cornell-box/scene-v4.pbrt`. Mitsuba 3 scenes load the same way
 from their `.xml` file; the viewer dispatches on the extension.
 
-## Adding a render pass
-
-```sh
-npx @web-falcor/mogwai new MyPass     # a plugin project of its own; then npm install && npm run dev
-npm run new:pass -- MyPass --plugin   # a plugin in plugins/MyPass/ of this checkout
-npm run new:pass -- MyPass            # an in-tree pass under packages/render-passes/src/
-```
-
-Each command writes a working compute pass, its Slang shader and a Mogwai graph
-script, then prints the URL that opens them in the viewer.
-
-**If your work needs no core change, release it as a plugin from your own repo**
-rather than forking web-falcor. `npm run build` in the plugin folder produces one
-`.js` file; host it anywhere and people can run it in the online demo with
-`?plugin=<its URL>`, with no install. In-tree passes are for ports of upstream
-Falcor passes. See [docs/extending.md](docs/extending.md) for which route to take,
-and for core changes and shader overrides.
-
 ## Full setup (develop + run the GPU/oracle tests)
 
 The GPU image tests diff against **native Falcor** captures, which need the
-upstream clone built and its media tree. In addition to the quick start:
+upstream clone built and its media tree. In addition to the setup above:
 
 ```sh
 # Upstream Falcor clone + media + packman SDK deps, then the native oracle build
@@ -174,9 +184,18 @@ npm run test:gpu    # GPU image tests vs native oracles — needs hardware WebGP
                     # (Vulkan under xvfb) and the full setup above. Local only.
 ```
 
-CI ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)) runs the quick-start
+CI ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)) runs the from-source
 setup path plus `typecheck` + `npm test` on every push and PR — so the badge
 above also verifies that the no-clone setup keeps working.
+
+## Layout
+
+- `packages/falcor/` — core library, mirrors `Falcor/Source/Falcor`
+- `packages/render-passes/` — render pass plugins, mirrors `Falcor/Source/RenderPasses`
+- `packages/mogwai/` — browser application, mirrors `Falcor/Source/Mogwai`
+- `packages/slang-compiler/` — build-time Slang→WGSL+reflection driver
+- `Falcor/` — upstream shader sources (+ native oracle for tests); fetched, not committed
+- `tools/` — Slang toolchains; fetched, not committed
 
 ## License
 

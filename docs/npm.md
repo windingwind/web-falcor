@@ -128,7 +128,7 @@ workspace itself keeps resolving the TypeScript sources. `.github/workflows/rele
 
 ```sh
 npm version 0.2.0 --workspaces --include-workspace-root --no-git-tag-version
-git commit -am "chore: release 0.2.0"
+git add -A && git commit -m "chore: release 0.2.0"   # -A: a plain -am would skip new files
 git tag v0.2.0
 git push && git push origin v0.2.0
 ```
