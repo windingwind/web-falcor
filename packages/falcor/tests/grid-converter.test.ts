@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { buildNanoVDBGrid, buildSphereGrid, parseOpenVDBFloatGrid } from "../src/Scene/Volume/VDBLoader.js";
 import { NanoVDBAccessor } from "../src/Scene/Volume/NanoVDBAccessor.js";
@@ -64,8 +64,10 @@ describe("GridConverter", () => {
         }
     }, 120000);
 
-    it("bricks torus.vdb", () => {
-        const file = readFileSync(new URL("../../../Falcor/media/openvdb/torus.vdb", import.meta.url));
+    // Needs the media tree (full setup, or `npm run download:assets -- openvdb`).
+    const torus = new URL("../../../Falcor/media/openvdb/torus.vdb", import.meta.url);
+    it.skipIf(!existsSync(torus))("bricks torus.vdb", () => {
+        const file = readFileSync(torus);
         const buffer = buildNanoVDBGrid(parseOpenVDBFloatGrid(file.buffer.slice(file.byteOffset, file.byteOffset + file.byteLength), "ls_torus"), "ls_torus");
         const t0 = performance.now();
         const b = convertNanoVDBToBricks(buffer);

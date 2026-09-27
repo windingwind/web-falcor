@@ -6,7 +6,9 @@ stay valid.
 
 ## 7. Testing strategy
 
-1. **Unit tests (vitest, Node)**: math, reflection layout, graph compilation — CPU-only.
+1. **Unit tests (vitest, Node)**: math, reflection layout, graph compilation — CPU-only. Tests that read the
+   Falcor media tree skip when it is absent (the quick start); JenkinsHash_PerfectHashCPU is off by default
+   as natively (`RUN_PERFECT_HASH_TESTS=1`, 81 s).
 2. **GPU unit tests**: FalcorTest's GPU-unit-test pattern (dispatch kernel → readback →
    assert) ported; run in headless Chromium (`--headless=new --enable-unsafe-webgpu`)
    via Playwright on this host's RTX 5090. Falcor's `Testbed`-style tests map directly.
@@ -23,7 +25,7 @@ stay valid.
 All comparisons render the identical scene/camera/seed natively (Mogwai
 `--headless`, hardware Vulkan RT) and on web (WebGPU compute + software BVH),
 then diff per-pixel (mean |Δ| over RGB; "bad" = pixels with any channel off by
-more than 0.05). Suite: `npm run test:gpu` (102 GPU tests + 40 unit green as of M8).
+more than 0.05). Suite: `npm run test:gpu` (476 GPU tests green, 122 opt-in or skipped, as of 2026-09-27; `npm test`: 419 unit tests).
 
 | Oracle | Web pass under test | mean abs Δ | bad px (of 65536) |
 |---|---|---|---|
@@ -108,7 +110,7 @@ verified-vs-native or has a specific, documented blocker:
   TAA, SVGF, GridVolumes (NanoVDB), FBX import (Arcade), NDSDF + SBS SDF grids,
   and the small-pass suite (ToneMapping, Composite, CrossFade, GaussianBlur,
   ColorMap, SideBySide, SplitScreen, ModulateIllumination, SimplePostFX, FLIP,
-  Whitted). **102 GPU + 40 unit tests green.**
+  Whitted). **476 GPU + 419 unit tests green (2026-09-27).**
 - **Verified behaviourally** (native NRDPass is D3D12-only): NRDPass. `nrd.gpu.test.ts` runs PathTracerNRD.py's graph without DLSS: denoised output is 25–30× closer (MSE) to a 256-frame reference than the raw frame, and motion vectors are still for a static camera.
 - **Verified by finite differences** (native can't build it on this machine): BSDFOptimizer (`bsdf-optimizer.gpu.test.ts`). Its autodiff gradients match central differences to ≤ 8.3e-3 relative for three material types, and optimization reduces the loss 2600× to 10⁵×.
 - **Compiler-pinned**: WARDiffPathTracerTranslationBwd compiles with slang-wasm 2026.5.2. Slang 2026.7's autodiff refactor (#9808) segfaults transposing its nested fwd_diff; bisected over release builds, 2026.5.2 is the last good one. It is verified vs native like the forward graphs.

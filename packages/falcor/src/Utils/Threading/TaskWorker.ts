@@ -22,3 +22,6 @@ self.onmessage = async (e: MessageEvent<Request>) => {
         (self as unknown as Worker).postMessage({ id, error: String((err as Error)?.message ?? err) });
     }
 };
+
+// The pool holds tasks until this arrives (a worker script that fails to load never sends it).
+(self as unknown as Worker).postMessage({ ready: true });
