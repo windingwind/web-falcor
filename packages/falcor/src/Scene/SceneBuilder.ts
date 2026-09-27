@@ -811,9 +811,9 @@ function sortMeshesLikeNative(meshes: SceneMeshDesc[], materials: SceneMaterialD
 
 /**
  * SceneBuilder::pretransformStaticMeshes: static, non-instanced meshes move to world space (in native's
- * f32 arithmetic) with an identity transform; a handedness-flipping transform flips their winding.
+ * f32 arithmetic) with an identity transform; a handedness-flipping transform flips their winding. Exported for tests.
  */
-function pretransformStaticMeshes(meshes: SceneMeshDesc[], nodes: SceneNode[], animations: AnimationChannel[]): void {
+export function pretransformStaticMeshes(meshes: SceneMeshDesc[], nodes: SceneNode[], animations: AnimationChannel[]): void {
     const animatedNodes = new Set(animations.map((c) => c.nodeID));
     const isNodeAnimated = (n: number | undefined) => {
         for (; n !== undefined && n >= 0; n = nodes[n]?.parent) if (animatedNodes.has(n)) return true;
@@ -844,20 +844,34 @@ function pretransformStaticMeshes(meshes: SceneMeshDesc[], nodes: SceneNode[], a
         const [c0, c1, c2] = [0, 1, 2].map((c) => [a[c]!, a[4 + c]!, a[8 + c]!]);
         const det = c0![0]! * (c1![1]! * c2![2]! - c2![1]! * c1![2]!) - c1![0]! * (c0![1]! * c2![2]! - c2![1]! * c0![2]!) + c2![0]! * (c0![1]! * c1![2]! - c1![1]! * c0![2]!);
         if (det < 0) m.indices = flipWinding(m.indices);
+        const row = (M: number[], r: number, x: number, y: number, z: number, w: number) => f(f(f(f(M[r * 4]! * x) + f(M[r * 4 + 1]! * y)) + f(M[r * 4 + 2]! * z)) + f(M[r * 4 + 3]! * w));
+        // Writes normalize(M * (x, y, z, 0)) at d[o..o+2] (the same f32 steps as normalize).
+        const putDir = (M: number[], x: number, y: number, z: number, d: Float32Array, o: number) => {
+            const [vx, vy, vz] = [row(M, 0, x, y, z, 0), row(M, 1, x, y, z, 0), row(M, 2, x, y, z, 0)];
+            const len = f(Math.sqrt(f(f(f(vx * vx) + f(vy * vy)) + f(vz * vz))));
+            const inv = len > 0 ? f(1 / len) : 0;
+            [d[o], d[o + 1], d[o + 2]] = [f(vx * inv), f(vy * inv), f(vz * inv)];
+        };
         // In place (the array is this mesh's alone): a second copy would double the peak for large scenes.
         m.vertices.forEach((v, i) => {
+            if (v instanceof PackedVertex) {
+                // Straight into the packed store (position 0-2, normal 3-5, tangent 6-8; tangent.w stays).
+                const [d, o] = [v.data, v.offset];
+                const [x, y, z] = [d[o]!, d[o + 1]!, d[o + 2]!];
+                [d[o], d[o + 1], d[o + 2]] = [row(a, 0, x, y, z, 1), row(a, 1, x, y, z, 1), row(a, 2, x, y, z, 1)];
+                putDir(it, d[o + 3]!, d[o + 4]!, d[o + 5]!, d, o + 3);
+                putDir(a, d[o + 6]!, d[o + 7]!, d[o + 8]!, d, o + 6);
+                return;
+            }
             const [p, n, t] = [v.position, v.normal, v.tangent];
             const [px, py, pz] = mul3(a, p.x, p.y, p.z, 1);
             const position = new float3(px!, py!, pz!);
             const normal = normalize(mul3(it, n.x, n.y, n.z, 0));
             const tangent = ((d) => new float4(d.x, d.y, d.z, t.w))(normalize(mul3(a, t.x, t.y, t.z, 0)));
-            // Packed vertices belong to this array's store; plain ones may be shared, so they're replaced.
-            if (v instanceof PackedVertex) Object.assign(v, { position, normal, tangent });
-            else {
-                const out = copyVertex(v, { position, normal, tangent });
-                if (v.curveRadius !== undefined) out.curveRadius = length(mul3(a, v.curveRadius, 0, 0, 0));
-                m.vertices[i] = out;
-            }
+            // Plain vertices may be shared, so they're replaced.
+            const out = copyVertex(v, { position, normal, tangent });
+            if (v.curveRadius !== undefined) out.curveRadius = length(mul3(a, v.curveRadius, 0, 0, 0));
+            m.vertices[i] = out;
         });
     }
 }
