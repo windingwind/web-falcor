@@ -23,7 +23,8 @@ emissive lighting, and software ray tracing, cross-validated against native Falc
 
 ## Quick start (npm, recommended)
 
-The published packages need no checkout, no Falcor clone and no build step. Node 18+ and a WebGPU browser are enough.
+Everything here runs from npm, in **any directory of your own**: you don't need to clone this repository, Falcor,
+or build anything. Node 18+ and a WebGPU browser are enough.
 
 **Run the viewer** (Falcor's Mogwai, prebuilt):
 
@@ -37,15 +38,30 @@ npx @web-falcor/mogwai --media ./my-scenes    # serve your own scenes at /Falcor
 *The Mogwai viewer on the default Cornell box — the render-graph editor (top left), the selected
 pass's properties, and Mogwai's settings panel (right), all editable live.*
 
-**Write a render pass** as a plugin in a project of its own:
+**Write a render pass** as a plugin. Start from an empty directory, outside this repository:
 
 ```sh
-npx @web-falcor/mogwai new MyPass   # a working compute pass, its Slang shader and a graph script
+mkdir my-work && cd my-work
+npx @web-falcor/mogwai new MyPass   # creates ./my-pass/, a new project for the pass
 cd my-pass
 npm install
-npm run dev                         # the viewer with your pass loaded; edit, then reload
-npm run build                       # dist/MyPass.js, runs in any viewer via ?plugin=<its URL>
+npm run dev                         # prints a URL: the viewer with your pass loaded
 ```
+
+The new project contains:
+
+| File | What it is |
+| --- | --- |
+| `MyPass.ts` | the render pass (a compute pass that scales its input); edit its inputs, outputs and `execute()` |
+| `MyPass.cs.slang` | its Slang shader |
+| `MyPass.py` | a render graph that runs the path tracer and feeds its image through `MyPass`; `npm run dev` opens it |
+
+Edit the pass or the shader and reload the page to see the change. To use the pass elsewhere:
+
+- **in the viewer's graph editor:** open **Graph** and pick `MyPass` from the pass list;
+- **in your own graph script:** `createPass("MyPass", {'scale': 0.5})`, like any Falcor pass;
+- **anywhere else:** `npm run build` writes `dist/MyPass.js`. Any web-falcor viewer loads it with
+  `?plugin=<its URL>`, including the online demo and `npx @web-falcor/mogwai --plugins <dir>`.
 
 If your work needs no change to web-falcor itself, **release it this way, from your own repo**, rather than
 forking web-falcor. Host the built `.js` anywhere that allows CORS and anyone can run it in the
