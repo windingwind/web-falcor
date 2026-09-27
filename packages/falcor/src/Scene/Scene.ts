@@ -1015,21 +1015,31 @@ export class Scene {
 
     /** Scene.create that also returns the triangle BVH (for the scene cache), or reuses a cached one. */
     static async createWithBvh(cachedBvh: BvhBuildResult | undefined, ...args: ConstructorParameters<typeof Scene>): Promise<{ scene: Scene; bvh: BvhBuildResult }> {
-        const [, meshes, materials = []] = args;
+        const [, meshes, materials = [], , , , nodes = [], animations = [], , weightTracks = [], curves = []] = args;
         Scene.roundVertices(meshes);
         const withBvh = [...args] as ConstructorParameters<typeof Scene>;
+        const dynamic = Scene.dynamicMeshesOf(meshes, nodes, animations, weightTracks, curves);
+        if (dynamic) {
+            // Scenes with dynamic geometry get animate()'s tree: static geometry (cached as is) and the dynamic
+            // meshes (bind pose until animate() poses them) under one root.
+            const globals = evaluateGlobals({ nodes, channels: animations, start: 0, duration: 0, weightTracks }, 0);
+            const identity = float4x4.identity();
+            const staticBvh = cachedBvh ?? (await Scene.buildBvhOnPool(Scene.collectPosedTriangles(meshes, (i) => !dynamic[i], (m) => (m.nodeID !== undefined && globals[m.nodeID]) || m.transform || identity)));
+            const dynamicBvh = await Scene.buildBvhOnPool(Scene.collectPosedTriangles(meshes, (i) => dynamic[i]!, (m) => m.transform ?? identity));
+            const bvh = staticBvh.order.length === 0 ? dynamicBvh : stitchBvhs(staticBvh, dynamicBvh);
+            withBvh[11] = { geometry: Scene.collectBvhGeometry(meshes, materials, true), bvh };
+            const scene = new Scene(...withBvh);
+            scene.staticBvh = staticBvh;
+            return { scene, bvh: staticBvh };
+        }
         if (cachedBvh) {
             withBvh[11] = { bvh: cachedBvh };
-            const scene = new Scene(...withBvh);
-            await scene.prebuildStaticBvh();
-            return { scene, bvh: cachedBvh };
+            return { scene: new Scene(...withBvh), bvh: cachedBvh };
         }
         const geometry = Scene.collectBvhGeometry(meshes, materials);
         const bvh = await Scene.buildBvhOnPool(geometry.bvhTris);
         withBvh[11] = { geometry, bvh };
-        const scene = new Scene(...withBvh);
-        await scene.prebuildStaticBvh();
-        return { scene, bvh };
+        return { scene: new Scene(...withBvh), bvh };
     }
 
     /** buildBvh, on the worker pool for large inputs (byte-identical tree). */
@@ -1045,25 +1055,16 @@ export class Scene {
         );
     }
 
-    /**
-     * The first animate()'s static-geometry BVH, built ahead on the worker pool: static nodes pose the same at any
-     * time, and the packed input matches animate()'s triangle objects (transformPoint in float64, winding flags).
-     */
-    private async prebuildStaticBvh(): Promise<void> {
-        if (!this.animData || !this.sourceMeshes || this.staticBvh) return;
-        this.dynamicMeshes ??= this.computeDynamicMeshes();
-        const dynamicMeshes = this.dynamicMeshes;
-        if (!dynamicMeshes.some((d) => d) && !this.sceneCurves.some((c) => c.vertexCache)) return;
-        const meshes = this.sourceMeshes;
-        const globals = evaluateGlobals(this.animData, 0);
+    /** animate()'s BVH input for the meshes `include` picks, posed by `matrixOf` (transformPoint in float64, winding flags). */
+    private static collectPosedTriangles(meshes: SceneMeshDesc[], include: (meshID: number) => boolean, matrixOf: (mesh: SceneMeshDesc) => float4x4): PackedBvhTriangles {
         let count = 0;
         meshes.forEach((mesh, meshID) => {
-            if (!dynamicMeshes[meshID]) count += mesh.indices.length / 3;
+            if (include(meshID)) count += mesh.indices.length / 3;
         });
         const writer = new PackedBvhTriangleWriter(count);
         meshes.forEach((mesh, meshID) => {
-            if (dynamicMeshes[meshID]) return;
-            const m = mesh.nodeID !== undefined && globals[mesh.nodeID] ? globals[mesh.nodeID]! : (mesh.transform ?? float4x4.identity());
+            if (!include(meshID)) return;
+            const m = matrixOf(mesh);
             const flags = windingFlipFlag(m);
             const d = m.data;
             const world = new Float64Array(mesh.vertices.length * 3);
@@ -1081,7 +1082,7 @@ export class Scene {
                 writer.add(world[a]!, world[a + 1]!, world[a + 2]!, world[b]!, world[b + 1]!, world[b + 2]!, world[c]!, world[c + 1]!, world[c + 2]!, meshID, p, flags);
             }
         });
-        this.staticBvh = await Scene.buildBvhOnPool(writer.result);
+        return writer.result;
     }
 
     constructor(
@@ -1284,7 +1285,7 @@ export class Scene {
         }
         // A scene animates if it has keyframe channels, morph-weight tracks, or
         // morph meshes (weights may be static-but-nonzero) — all rebuild per frame.
-        const hasAnimation = ((animations.length > 0 || weightTracks.length > 0 || meshes.some((m) => m.morph)) && nodes.length > 0) || meshes.some((m) => m.vertexCache || m.polytubeCache) || curves.some((c) => c.vertexCache);
+        const hasAnimation = Scene.hasAnimationOf(meshes, nodes, animations, weightTracks, curves);
         if (hasAnimation) {
             // Animated scenes rebuild the BVH every frame; over-allocate to the
             // worst-case size (≤2N nodes + N tris) so animate() setBlobs in place —
@@ -2499,13 +2500,29 @@ export class Scene {
     /** Per mesh: whether it deforms or rides an animated node (else animate() leaves it as built). */
     private computeDynamicMeshes(): boolean[] {
         const anim = this.animData!;
-        const animated = new Set(anim.channels.map((c) => c.nodeID));
-        for (const w of anim.weightTracks ?? []) animated.add(w.nodeID);
+        return Scene.meshDynamics(this.sourceMeshes!, anim.nodes, anim.channels, anim.weightTracks ?? []);
+    }
+
+    private static hasAnimationOf(meshes: SceneMeshDesc[], nodes: SceneNode[], animations: AnimationChannel[], weightTracks: WeightTrack[], curves: SceneCurveDesc[]): boolean {
+        return ((animations.length > 0 || weightTracks.length > 0 || meshes.some((m) => m.morph)) && nodes.length > 0) || meshes.some((m) => m.vertexCache || m.polytubeCache) || curves.some((c) => c.vertexCache);
+    }
+
+    /** Per mesh: whether animate() poses it per frame (skinned, morphed, cached, or under an animated node). */
+    private static meshDynamics(meshes: SceneMeshDesc[], nodes: SceneNode[], animations: AnimationChannel[], weightTracks: WeightTrack[]): boolean[] {
+        const animated = new Set(animations.map((c) => c.nodeID));
+        for (const w of weightTracks) animated.add(w.nodeID);
         const underAnimated = (n: number | undefined) => {
-            for (; n !== undefined && n >= 0; n = anim.nodes[n]?.parent) if (animated.has(n)) return true;
+            for (; n !== undefined && n >= 0; n = nodes[n]?.parent) if (animated.has(n)) return true;
             return false;
         };
-        return this.sourceMeshes!.map((m) => !!(m.skin || m.morph || m.vertexCache || m.polytubeCache || underAnimated(m.nodeID)));
+        return meshes.map((m) => !!(m.skin || m.morph || m.vertexCache || m.polytubeCache || underAnimated(m.nodeID)));
+    }
+
+    /** meshDynamics for a scene with dynamic geometry (animate() rebuilds its BVH), else null. */
+    private static dynamicMeshesOf(meshes: SceneMeshDesc[], nodes: SceneNode[], animations: AnimationChannel[], weightTracks: WeightTrack[], curves: SceneCurveDesc[]): boolean[] | null {
+        if (!Scene.hasAnimationOf(meshes, nodes, animations, weightTracks, curves)) return null;
+        const dynamic = Scene.meshDynamics(meshes, nodes, animations, weightTracks);
+        return dynamic.some((d) => d) || curves.some((c) => c.vertexCache) ? dynamic : null;
     }
     private prevAnimateKey = "";
 

@@ -34,7 +34,7 @@ import type { BvhBuildResult } from "./SoftwareRT/Bvh.js";
 import { WorkerPool } from "../Utils/Threading/WorkerPool.js";
 
 const kMagic = 0x43534657; // 'WFSC'
-const kVersion = 9; // v4: + animation, skin/morph, SDF recipes, grid volumes; v5: camera list; v6: DDS textures, metadata; v7: keyframe animations; v8: triangle BVH; v9: packed vertices
+const kVersion = 10; // v4: + animation, skin/morph, SDF recipes, grid volumes; v5: camera list; v6: DDS textures, metadata; v7: keyframe animations; v8: triangle BVH; v9: packed vertices; v10: static BVH of animated scenes
 const kFloatsPerVertex = 13; // pos3 + normal3 + tangent4 + texCrd2 + curveRadius
 
 export interface SceneCameraPose {
@@ -79,7 +79,7 @@ export interface CacheableScene {
     gridVolumes: CachedGridVolume[];
     /** SceneBuilder::addCustomPrimitive entries (user ID + AABB). */
     customPrimitives?: { userID: number; aabb: { min: [number, number, number]; max: [number, number, number] } }[];
-    /** The built triangle BVH (v8): cached loads skip the build. */
+    /** The built triangle BVH (v8), the static-geometry one for dynamic scenes (v10): cached loads skip the build. */
     bvh?: BvhBuildResult;
 }
 
