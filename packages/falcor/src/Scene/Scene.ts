@@ -19,7 +19,7 @@ import { Camera } from "./Camera/Camera.js";
 import { FirstPersonCameraController, OrbiterCameraController, SixDoFCameraController, UpDirection, toControllerKeyEvent, toControllerMouseEvent, type CameraController } from "./Camera/CameraController.js";
 import { KeyboardEventType, ModifierFlags, type GamepadEvent, type GamepadState, type KeyboardEvent, type MouseEvent } from "../Utils/UI/InputTypes.js";
 import { float4x4, transpose, inverse } from "../Utils/Math/Matrix.js";
-import { buildBvh, buildBvhParallel, buildAabbBvh, bvhTriangleCount, PackedBvhTriangleWriter, refitBvh, refitBvhIndexed, refreshStitchedBvh, stitchBvhs, bvhStackDepth, kBvhTraversalStackSize, type BvhBuildResult, type BvhTriangle } from "./SoftwareRT/Bvh.js";
+import { buildBvh, buildBvhParallel, buildAabbBvh, bvhTriangleCount, PackedBvhTriangleWriter, type PackedBvhTriangles, refitBvh, refitBvhIndexed, refreshStitchedBvh, stitchBvhs, bvhStackDepth, kBvhTraversalStackSize, type BvhBuildResult, type BvhTriangle } from "./SoftwareRT/Bvh.js";
 import { WorkerPool } from "../Utils/Threading/WorkerPool.js";
 import { packLights, LightType, PackedVertex, SceneLight, type AnalyticLight } from "./SceneData.js";
 import { TextureManager, kMaxTextureBuckets } from "./Material/TextureManager.js";
@@ -1020,22 +1020,68 @@ export class Scene {
         const withBvh = [...args] as ConstructorParameters<typeof Scene>;
         if (cachedBvh) {
             withBvh[11] = { bvh: cachedBvh };
-            return { scene: new Scene(...withBvh), bvh: cachedBvh };
+            const scene = new Scene(...withBvh);
+            await scene.prebuildStaticBvh();
+            return { scene, bvh: cachedBvh };
         }
         const geometry = Scene.collectBvhGeometry(meshes, materials);
-        const pool = WorkerPool.get();
-        const bvh =
-            bvhTriangleCount(geometry.bvhTris) >= 100_000 && pool.threadCount > 1
-                ? await buildBvhParallel(
-                      geometry.bvhTris,
-                      (input) => pool.run("buildBvhSubtree", input, [input.bmin.buffer, input.bmax.buffer, input.cent.buffer]),
-                      5, // 32 subtree jobs keep the pool busy; the splits above them run in parallel too
-                      (input, depth) => pool.run("splitTopLevels", { input, depth }, [input.bmin.buffer, input.bmax.buffer, input.cent.buffer]),
-                      (keys) => pool.run("stableSortKeys", { keys }, [keys.buffer]),
-                  )
-                : buildBvh(geometry.bvhTris);
+        const bvh = await Scene.buildBvhOnPool(geometry.bvhTris);
         withBvh[11] = { geometry, bvh };
-        return { scene: new Scene(...withBvh), bvh };
+        const scene = new Scene(...withBvh);
+        await scene.prebuildStaticBvh();
+        return { scene, bvh };
+    }
+
+    /** buildBvh, on the worker pool for large inputs (byte-identical tree). */
+    private static async buildBvhOnPool(tris: PackedBvhTriangles): Promise<BvhBuildResult> {
+        const pool = WorkerPool.get();
+        if (bvhTriangleCount(tris) < 100_000 || pool.threadCount <= 1) return buildBvh(tris);
+        return buildBvhParallel(
+            tris,
+            (input) => pool.run("buildBvhSubtree", input, [input.bmin.buffer, input.bmax.buffer, input.cent.buffer]),
+            5, // 32 subtree jobs keep the pool busy; the splits above them run in parallel too
+            (input, depth) => pool.run("splitTopLevels", { input, depth }, [input.bmin.buffer, input.bmax.buffer, input.cent.buffer]),
+            (keys) => pool.run("stableSortKeys", { keys }, [keys.buffer]),
+        );
+    }
+
+    /**
+     * The first animate()'s static-geometry BVH, built ahead on the worker pool: static nodes pose the same at any
+     * time, and the packed input matches animate()'s triangle objects (transformPoint in float64, winding flags).
+     */
+    private async prebuildStaticBvh(): Promise<void> {
+        if (!this.animData || !this.sourceMeshes || this.staticBvh) return;
+        this.dynamicMeshes ??= this.computeDynamicMeshes();
+        const dynamicMeshes = this.dynamicMeshes;
+        if (!dynamicMeshes.some((d) => d) && !this.sceneCurves.some((c) => c.vertexCache)) return;
+        const meshes = this.sourceMeshes;
+        const globals = evaluateGlobals(this.animData, 0);
+        let count = 0;
+        meshes.forEach((mesh, meshID) => {
+            if (!dynamicMeshes[meshID]) count += mesh.indices.length / 3;
+        });
+        const writer = new PackedBvhTriangleWriter(count);
+        meshes.forEach((mesh, meshID) => {
+            if (dynamicMeshes[meshID]) return;
+            const m = mesh.nodeID !== undefined && globals[mesh.nodeID] ? globals[mesh.nodeID]! : (mesh.transform ?? float4x4.identity());
+            const flags = windingFlipFlag(m);
+            const d = m.data;
+            const world = new Float64Array(mesh.vertices.length * 3);
+            mesh.vertices.forEach((v, i) => {
+                let x: number, y: number, z: number;
+                if (v instanceof PackedVertex) [x, y, z] = [v.data[v.offset]!, v.data[v.offset + 1]!, v.data[v.offset + 2]!];
+                else ({ x, y, z } = v.position);
+                world[i * 3] = d[0]! * x + d[1]! * y + d[2]! * z + d[3]! * 1;
+                world[i * 3 + 1] = d[4]! * x + d[5]! * y + d[6]! * z + d[7]! * 1;
+                world[i * 3 + 2] = d[8]! * x + d[9]! * y + d[10]! * z + d[11]! * 1;
+            });
+            const idx = mesh.indices;
+            for (let p = 0; p < idx.length / 3; p++) {
+                const [a, b, c] = [idx[p * 3]! * 3, idx[p * 3 + 1]! * 3, idx[p * 3 + 2]! * 3];
+                writer.add(world[a]!, world[a + 1]!, world[a + 2]!, world[b]!, world[b + 1]!, world[b + 2]!, world[c]!, world[c + 1]!, world[c + 2]!, meshID, p, flags);
+            }
+        });
+        this.staticBvh = await Scene.buildBvhOnPool(writer.result);
     }
 
     constructor(

@@ -105,6 +105,25 @@ if (process.env.CPU_PROFILE) {
         }
         const top = [...self].sort((a, b) => b[1] - a[1]).slice(0, 20);
         console.error(`[cpu] ${m[1]}: ${top.map(([k, v]) => `\n  ${(v / 1000).toFixed(0)}ms ${k}`).join("")}`);
+        // CPU_PROFILE_CALLERS=<function name>: that function's self time by caller chain.
+        const target = process.env.CPU_PROFILE_CALLERS;
+        if (target) {
+            const parent = new Map();
+            for (const n of profile.nodes) for (const c of n.children ?? []) parent.set(c, n.id);
+            const chains = new Map();
+            for (const id of profile.samples) {
+                if (byId.get(id).callFrame.functionName !== target) continue;
+                const chain = [];
+                for (let p = parent.get(id); p !== undefined && chain.length < 5; p = parent.get(p)) {
+                    const f = byId.get(p).callFrame;
+                    chain.push(`${f.functionName || "(anon)"}:${f.lineNumber + 1}`);
+                }
+                const key = chain.join(" < ");
+                chains.set(key, (chains.get(key) ?? 0) + dt);
+            }
+            const topChains = [...chains].sort((a, b) => b[1] - a[1]).slice(0, 8);
+            console.error(`[cpu] ${target} callers: ${topChains.map(([k, v]) => `\n  ${(v / 1000).toFixed(0)}ms ${k}`).join("")}`);
+        }
     });
 }
 // HEAP_SAMPLING=1: sampled live allocations; a test logging "#HEAPPROFILE <label>" gets the top allocation sites printed.
