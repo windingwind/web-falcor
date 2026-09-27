@@ -3,7 +3,8 @@
  *
  * Diff vs upstream: WGSL has no binding arrays, so every grid's NanoVDB data shares one buffer
  * (gScene.gridData); a Grid carries the byte offset of its NanoVDB grid in it (baseAddress),
- * which replaces the null grid handle upstream starts every traversal from.
+ * which replaces the null grid handle upstream starts every traversal from. The grids' bricks likewise stack
+ * along z in shared textures (brickZ/atlasZ).
  */
 #define PNANOVDB_HLSL
 #include "nanovdb/PNanoVDB.h"
@@ -26,6 +27,9 @@ struct Grid
     Texture3D<float> atlasTex;
     // WebFalcor: byte offset of this grid in the shared buffer.
     uint baseAddress;
+    // WebFalcor: z offsets of this grid's bricks and atlas in the shared textures.
+    uint brickZ;
+    uint atlasZ;
 
     pnanovdb_grid_handle_t gridHandle()
     {
@@ -176,10 +180,10 @@ struct Grid
     */
     float lookupIndexTex(const int3 index)
     {
-        const int3 brick = index >> 3;
+        const int3 brick = (index >> 3) + int3(0, 0, brickZ);
         const float2 range = rangeTex[brick];
         const uint3 ptr = indirectionTex[brick].xyz;
-        return atlasTex[(ptr.xyz << 3) + (index & 7)].x * (range.x - range.y) + range.y;
+        return atlasTex[(ptr.xyz << 3) + (index & 7) + int3(0, 0, atlasZ)].x * (range.x - range.y) + range.y;
     }
 
     /** Lookup the local majorant of the grid on a given mipmap level.
@@ -189,7 +193,7 @@ struct Grid
     float lookupIndexLocalMajorantTex(int3 index, const int mip)
     {
         index >>= (3 + mip);
-        return rangeTex.Load(int4(index, mip)).x;
+        return rangeTex.Load(int4(index + int3(0, 0, brickZ >> mip), mip)).x;
     }
 
     /** Lookup the grid using tri-linear sampling.

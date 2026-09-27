@@ -8,6 +8,7 @@
 import type { Device } from "../../Core/API/Device.js";
 import { RuntimeError } from "../../Core/Error.js";
 import { parseOpenVDBFloatGrid, buildNanoVDBGrid, extractGridFromNVDB } from "./VDBLoader.js";
+import { convertNanoVDBToBricks, type BrickedGridData } from "./GridConverter.js";
 
 export class Grid {
     private view: DataView;
@@ -29,6 +30,19 @@ export class Grid {
             return new Grid(device, extractGridFromNVDB(data, gridname));
         }
         return new Grid(device, buildNanoVDBGrid(parseOpenVDBFloatGrid(data, gridname), gridname));
+    }
+
+    private bricks: BrickedGridData | undefined;
+
+    /** Mirrors Grid's BrickedGrid (NanoVDBConverterBC4, made at creation natively; here on first use). */
+    get brickedGrid(): BrickedGridData {
+        return (this.bricks ??= convertNanoVDBToBricks(this.gridBuffer, 4));
+    }
+
+    /** Mirrors Grid::getGridSizeInBytes: the NanoVDB buffer plus the brick textures (packed sizes). */
+    getGridSizeInBytes(): number {
+        const b = this.brickedGrid;
+        return this.gridBuffer.byteLength + b.rangeMips.reduce((n, m) => n + m.byteLength, 0) + b.indirection.byteLength + b.atlas.byteLength;
     }
 
     private get rootOffset(): number {

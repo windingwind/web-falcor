@@ -50,6 +50,7 @@ import type { RenderContext } from "../Core/API/RenderContext.js";
 import { assert, RuntimeError } from "../Core/Error.js";
 import { formatByteSize } from "../Utils/StringUtils.js";
 import { Logger } from "../Utils/Logger.js";
+import { decodeBC4Volume } from "./Volume/GridConverter.js";
 import { SceneMaterial } from "./Material/SceneMaterial.js";
 import { AABB } from "../Utils/Math/AABB.js";
 import { Rectangle } from "../Utils/Math/Rectangle.js";
@@ -680,7 +681,7 @@ export class Scene {
             gridVolumeMemoryInBytes: this.gridVolumes.length > 0 ? size("gridVolumesData") : 0,
             gridCount: grids.length,
             gridVoxelCount: grids.reduce((n, g) => n + g.voxelCount, 0),
-            gridMemoryInBytes: grids.reduce((n, g) => n + g.gridBuffer.byteLength, 0),
+            gridMemoryInBytes: grids.reduce((n, g) => n + g.getGridSizeInBytes(), 0),
         };
     }
 
@@ -2969,6 +2970,7 @@ export class Scene {
             const dataBuf = new Buffer(this.device, { size, structSize: 4, bindFlags: storage, memoryType: MemoryType.DeviceLocal, name: "Scene::gridData" });
             dataBuf.setBlob(gridData);
             this.buffers["gridData"] = dataBuf;
+            this.uploadBrickedGrids(grids, new Uint32Array(info));
             const infoBuf = new Buffer(this.device, { size: info.byteLength, structSize: 48, bindFlags: storage, memoryType: MemoryType.DeviceLocal, name: "Scene::gridInfos" });
             infoBuf.setBlob(new Uint8Array(info));
             this.buffers["gridInfos"] = infoBuf;
@@ -2976,6 +2978,77 @@ export class Scene {
             this.grid0Stats = { minIndex: g.minIndex, minValue: g.minValue, maxIndex: g.maxIndex, maxValue: g.maxValue };
         }
         this.gridCount = grids.length;
+    }
+
+    /**
+     * Uploads every grid's BrickedGrid (Grid::setShaderData binds its range/indirection/atlas textures). WGSL has
+     * no arrays of textures, so the grids stack along z in shared textures and GridInfo holds each one's z offsets.
+     */
+    private uploadBrickedGrids(grids: import("./Volume/Grid.js").Grid[], infoU: Uint32Array): void {
+        const bricks = grids.map((g) => g.brickedGrid);
+        const maxDim = this.device.gpuDevice.limits.maxTextureDimension3D;
+        let [rw, rh, rd, aw, ah, ad] = [8, 8, 0, 8, 8, 0];
+        const zOffsets: ([number, number] | null)[] = bricks.map((b, i) => {
+            const [lx, ly, lz] = b.leafDim;
+            const [ax, ay, az] = b.atlasSize;
+            if (Math.max(lx, ly, rd + lz, ax, ay, ad + az) > maxDim) {
+                Logger.warning(`Grid ${i}'s bricks exceed the 3D texture limit (${maxDim}); its brick lookups read grid 0.`);
+                return null;
+            }
+            const at: [number, number] = [rd, ad];
+            [rw, rh, rd, aw, ah, ad] = [Math.max(rw, lx), Math.max(rh, ly), rd + lz, Math.max(aw, ax), Math.max(ah, ay), ad + az];
+            infoU[i * 12 + 9] = at[0];
+            infoU[i * 12 + 10] = at[1];
+            return at;
+        });
+        rd = Math.max(rd, 8);
+        ad = Math.max(ad, 8);
+        for (const t of [this.gridRangeTex, this.gridIndirectionTex, this.gridAtlasTex]) t.destroy();
+
+        // Range (4 mips) and indirection: each grid's rows copied into its z range.
+        const place = (dst: Uint32Array, dims: number[], src: Uint32Array, srcDims: number[], z0: number) => {
+            const [w, h, sx, sy, sz] = [dims[0]!, dims[1]!, srcDims[0]!, srcDims[1]!, srcDims[2]!];
+            for (let z = 0; z < sz; z++) for (let y = 0; y < sy; y++) dst.set(src.subarray((z * sy + y) * sx, (z * sy + y + 1) * sx), ((z0 + z) * h + y) * w);
+        };
+        this.gridRangeTex = this.device.createTexture3D(rw, rh, rd, ResourceFormat.RG16Float, 4);
+        for (let mip = 0; mip < 4; mip++) {
+            const dims = [rw >> mip, rh >> mip, rd >> mip];
+            const data = new Uint32Array(dims[0]! * dims[1]! * dims[2]!);
+            bricks.forEach((b, i) => zOffsets[i] && place(data, dims, b.rangeMips[mip]!, b.leafDim.map((v) => v >> mip), zOffsets[i]![0] >> mip));
+            this.gridRangeTex.setSubresourceBlob(mip, 0, data);
+        }
+        this.gridIndirectionTex = this.device.createTexture3D(rw, rh, rd, ResourceFormat.RGBA8Uint, 1);
+        const ind = new Uint32Array(rw * rh * rd);
+        bricks.forEach((b, i) => zOffsets[i] && place(ind, [rw, rh], b.indirection, b.leafDim, zOffsets[i]![0]));
+        this.gridIndirectionTex.setSubresourceBlob(0, 0, ind);
+
+        // The atlas stays BC4 where the adapter has BC 3D textures; otherwise it is decoded to R32Float.
+        const bc4 = this.device.gpuDevice.features.has("texture-compression-bc-sliced-3d" as GPUFeatureName);
+        if (bc4) {
+            // Rows of 4x4 blocks (8 bytes each) per z slice.
+            const atlas = new Uint8Array((aw / 4) * (ah / 4) * ad * 8);
+            bricks.forEach((b, i) => {
+                if (!zOffsets[i]) return;
+                const [ax, ay, az] = b.atlasSize;
+                for (let z = 0; z < az; z++)
+                    for (let by = 0; by < ay / 4; by++) {
+                        const src = ((z * ay) / 4 + by) * (ax / 4) * 8;
+                        atlas.set(b.atlas.subarray(src, src + (ax / 4) * 8), (((zOffsets[i]![1] + z) * ah) / 4 + by) * (aw / 4) * 8);
+                    }
+            });
+            this.gridAtlasTex = this.device.createTexture3D(aw, ah, ad, ResourceFormat.BC4Unorm, 1);
+            this.gridAtlasTex.setSubresourceBlob(0, 0, atlas);
+        } else {
+            const atlas = new Float32Array(aw * ah * ad);
+            bricks.forEach((b, i) => {
+                if (!zOffsets[i]) return;
+                const [ax, ay, az] = b.atlasSize;
+                const texels = decodeBC4Volume(b.atlas, ax, ay, az);
+                for (let z = 0; z < az; z++) for (let y = 0; y < ay; y++) atlas.set(texels.subarray((z * ay + y) * ax, (z * ay + y + 1) * ax), ((zOffsets[i]![1] + z) * ah + y) * aw);
+            });
+            this.gridAtlasTex = this.device.createTexture3D(aw, ah, ad, ResourceFormat.R32Float, 1);
+            this.gridAtlasTex.setSubresourceBlob(0, 0, atlas);
+        }
     }
 
     /**

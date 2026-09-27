@@ -72,6 +72,7 @@ export class Device {
             "timestamp-query",
             "shader-f16",
             "texture-compression-bc",
+            "texture-compression-bc-sliced-3d" as GPUFeatureName, // BC4 3D brick atlases (Grid), as natively
             "float32-filterable",
             "float32-blendable", // alpha-blended overlays (TextRenderer) onto float targets
             "indirect-first-instance",

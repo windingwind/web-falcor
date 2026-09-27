@@ -70,8 +70,8 @@ struct GridInfo
     int3 maxIndex;
     float maxValue;
     uint baseAddress;
-    uint _pad0;
-    uint _pad1;
+    uint brickZ; // z offset of this grid's bricks in the shared range/indirection textures
+    uint atlasZ; // z offset of its atlas in the shared atlas texture
     uint _pad2;
 };
 
@@ -177,7 +177,7 @@ struct Scene
     uint gridVolumeCount;
     StructuredBuffer<GridVolume> gridVolumes;
     // WebFalcor: every grid's NanoVDB data shares one buffer (no binding arrays); gridInfos holds
-    // each grid's stats and byte offset, and the brick textures are shared placeholders.
+    // each grid's stats, byte offset and brick z offsets (the grids' bricks stack along z in shared textures).
     StructuredBuffer<uint> gridData;
     StructuredBuffer<GridInfo> gridInfos;
     Texture3D<float2> gridRangeTex;
@@ -327,6 +327,8 @@ struct Scene
         grid.maxIndex = info.maxIndex;
         grid.maxValue = info.maxValue;
         grid.baseAddress = info.baseAddress;
+        grid.brickZ = info.brickZ;
+        grid.atlasZ = info.atlasZ;
         grid.buf = gridData;
         grid.rangeTex = gridRangeTex;
         grid.indirectionTex = gridIndirectionTex;
