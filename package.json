@@ -22,6 +22,7 @@
     "py2js:corpus": "vite-node scripts/py2js.ts -- Falcor/scripts/BSDFViewer.py Falcor/scripts/MinimalPathTracer.py Falcor/scripts/PathTracer.py Falcor/scripts/PathTracerNRD.py Falcor/scripts/RTXDI.py Falcor/scripts/SceneDebugger.py Falcor/scripts/WARDiffPathTracer.py Falcor/media/test_scenes tests/oracle/assets Falcor/tests/image_tests --out tests/gpu/generated/py2js --check",
     "build:web": "node scripts/build-web.mjs",
     "build:packages": "node scripts/build-packages.mjs",
+    "release": "node scripts/release.mjs",
     "dev": "npm run dev --workspace=@web-falcor/mogwai",
     "test": "npm run test --workspaces --if-present",
     "test:gpu": "xvfb-run -a node tests/gpu/harness/run.mjs",

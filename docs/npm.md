@@ -125,14 +125,17 @@ that uses these passes therefore needs access to `raw.githubusercontent.com`. Se
 The packages are built from the workspace by `npm run build:packages`, which stages them in `out/npm/`. The
 workspace itself keeps resolving the TypeScript sources. `.github/workflows/release.yml` publishes all three when a
 `vX.Y.Z` tag is pushed. The tag must match the `version` in the root `package.json` and in every
-`packages/*/package.json`, which are bumped together:
+`packages/*/package.json`, which are bumped together. `npm run release` does all of it from a clean `main`:
 
 ```sh
-npm version 0.2.0 --workspaces --include-workspace-root --no-git-tag-version
-git add -A && git commit -m "chore: release 0.2.0"   # -A: a plain -am would skip new files
-git tag v0.2.0
-git push && git push origin v0.2.0
+npm run release -- patch            # or minor, major, or an explicit 0.2.0
+npm run release -- 0.2.0 --no-push  # commit and tag locally; push when ready
+npm run release -- 0.2.0 --retag    # reuse a tag whose release failed before publishing
 ```
+
+It bumps every package, commits only the version files as `chore: release X.Y.Z`, tags `vX.Y.Z` and pushes both.
+The tag starts the workflow. It refuses a tag that already exists, unless `--retag` is given and npm doesn't have that
+version yet.
 
 The workflow publishes through npm's trusted publishing (OIDC), so there is no token to store. Each package lists
 this repo's `release.yml` as its trusted publisher (npmjs.com → package → Settings → Trusted publishing → GitHub

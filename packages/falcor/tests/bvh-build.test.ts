@@ -9,9 +9,13 @@
  * thing the fast path must agree with.
  */
 
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 import { buildBvh, buildBvhParallel, buildBvhSubtree, bvhStackDepth, kBvhTraversalStackSize, refitBvh, refitBvhIndexed, PackedBvhTriangleWriter, splitTopLevels, stableSortKeys, refreshStitchedBvh, stitchBvhs, type BvhBuildResult, type BvhTriangle } from "../src/Scene/SoftwareRT/Bvh.js";
 import { float3, sub3 } from "../src/Utils/Math/Vector.js";
+
+// These tests are long synchronous builds: yield to the event loop after each, so vitest's worker can read its
+// RPC replies. Otherwise a file running past 60 s on a slow runner fails with "Timeout calling onTaskUpdate".
+afterEach(() => new Promise<void>((resolve) => setTimeout(resolve, 0)));
 
 /** Median-split BVH written the obvious way: one entry list per node. */
 function buildBvhReference(triangles: BvhTriangle[]): { nodes: Float32Array; tris: Float32Array; nodeCount: number } {
