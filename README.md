@@ -217,6 +217,33 @@ above also verifies that the no-clone setup keeps working.
 - `Falcor/` — upstream shader sources (+ native oracle for tests); fetched, not committed
 - `tools/` — Slang toolchains; fetched, not committed
 
+## Citation
+
+If you use web-falcor in your research, please cite it:
+
+```bibtex
+@misc{WebFalcor2026,
+   author =      {Xiangyu Wang},
+   title =       {{web-falcor}: A {WebGPU} Reimplementation of the {Falcor} Rendering Framework},
+   year =        {2026},
+   url =         {https://github.com/windingwind/web-falcor},
+   note =        {\url{https://github.com/windingwind/web-falcor}}
+}
+```
+
+Please also consider citing the upstream Falcor framework it is built on:
+
+```bibtex
+@Misc{Kallweit22,
+   author =      {Simon Kallweit and Petrik Clarberg and Craig Kolb and Tom{'a}{\v s} Davidovi{\v c} and Kai-Hwa Yao and Theresa Foley and Yong He and Lifan Wu and Lucy Chen and Tomas Akenine-M{\"o}ller and Chris Wyman and Cyril Crassin and Nir Benty},
+   title =       {The {Falcor} Rendering Framework},
+   year =        {2022},
+   month =       {8},
+   url =         {https://github.com/NVIDIAGameWorks/Falcor},
+   note =        {\url{https://github.com/NVIDIAGameWorks/Falcor}}
+}
+```
+
 ## License
 
 web-falcor's own code is licensed under the [MIT license](LICENSE).
