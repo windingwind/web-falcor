@@ -1,6 +1,6 @@
 {
   "name": "@web-falcor/mogwai",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Browser render-graph viewer application (mirrors Falcor/Source/Mogwai)",
   "type": "module",
   "scripts": {

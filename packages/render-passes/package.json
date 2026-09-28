@@ -1,6 +1,6 @@
 {
   "name": "@web-falcor/render-passes",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Render pass plugins (mirrors Falcor/Source/RenderPasses)",
   "type": "module",
   "main": "src/index.ts",
