@@ -85,6 +85,9 @@
       <button id="record">Record</button>
       <label title="Load Script / Load Scene (Ctrl+O / Ctrl+Shift+O): a media path or URL; .py loads as a script, anything else as a scene. Recent entries are suggested.">open <input id="openPath" list="recentList" placeholder="scene or script path" size="28" /></label>
       <datalist id="recentList"></datalist>
+      <button id="openFolder" title="Open a local folder of scenes, models and scripts (or drop one onto the page). Its files load by their relative paths, like served media.">folder</button>
+      <input id="folderInput" type="file" webkitdirectory multiple hidden />
+      <label hidden title="Scenes and scripts in the opened folder">local <select id="localFiles"></select></label>
       <label>graph <input id="graphFile" type="file" accept=".py" /></label>
       <label hidden>active graph <select id="activeGraph"></select> <button id="removeGraph" title="Renderer::removeActiveGraph">remove</button></label>
       <label>output <select id="output"></select></label>

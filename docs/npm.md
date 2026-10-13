@@ -25,6 +25,13 @@ The viewer takes the same URL parameters as the dev server: `?scene=` (a path un
 `?script=` (a render-graph script, `.py` or `.js`; see [scripting.md](scripting.md)) and `?plugin=` (a plugin module,
 repeatable).
 
+**Local folders.** The toolbar's **folder** button, or dropping a folder (or several files) onto the page, opens local
+files without serving them. They're mounted under a virtual path, so files a scene references by relative path
+load from the same folder; the viewer loads the folder's scene, or lists its scenes and scripts to pick from. The
+files are gone after a reload. In your own app, `mountLocalFiles(files)` from `@web-falcor/falcor` does the same,
+with `filesFromInput` and `filesFromDataTransfer` to collect the files. A JS scene script from a local folder runs
+from a blob URL, so its own relative `import`s don't resolve.
+
 ## Write a plugin
 
 A plugin adds render passes (or scene importers) to the viewer without a web-falcor checkout:

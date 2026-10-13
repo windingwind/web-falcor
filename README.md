@@ -33,6 +33,10 @@ npx @web-falcor/mogwai                        # http://localhost:5173/, with the
 npx @web-falcor/mogwai --media ./my-scenes    # serve your own scenes at /Falcor/media/
 ```
 
+To open a scene without serving it, including in the [online demo](https://windingwind.github.io/web-falcor/), click
+**folder** in the toolbar or drop a folder onto the page. Its files load by their relative paths, so a `.pyscene` or
+`.gltf` finds the files next to it.
+
 ![The Mogwai viewer in the browser: render-graph editor, pass properties and the settings panel over the Cornell box](docs/assets/mogwai-ui.png)
 
 *The Mogwai viewer on the default Cornell box — the render-graph editor (top left), the selected

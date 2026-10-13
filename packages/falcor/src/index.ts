@@ -9,6 +9,7 @@ export * from "./Core/Plugin.js";
 export * from "./Core/Platform/OS.js";
 export * from "./Core/AssetBase.js";
 export * from "./Core/AssetResolver.js";
+export * from "./Core/LocalMedia.js";
 export * from "./Core/API/Device.js";
 export * from "./Core/API/DeviceFactories.js";
 export * from "./Core/API/Formats.js";

@@ -8,6 +8,7 @@
 import type { Device } from "../../Core/API/Device.js";
 import { RuntimeError } from "../../Core/Error.js";
 import { AssetResolver } from "../../Core/AssetResolver.js";
+import { getLocalFile } from "../../Core/LocalMedia.js";
 import { Properties } from "../Properties.js";
 import { RenderGraph } from "../../RenderGraph/RenderGraph.js";
 import { createPass } from "../../RenderGraph/RenderPass.js";
@@ -274,7 +275,9 @@ async function loadScriptEntry(url: string, names: string[]): Promise<(ctx: Reco
     // A fresh module per run, so edited scripts reload without a page reload (their own imports stay cached).
     const abs = new URL(url, globalThis.location?.href ?? "http://localhost/").href;
     // blob:/data: URLs take no query (and are fresh per file anyway).
-    const fresh = /^(blob|data):/.test(abs) ? abs : `${abs}${abs.includes("?") ? "&" : "?"}webfalcor=${++moduleRuns}`;
+    // import() bypasses the fetch hook, so local media runs from a blob URL (its relative imports don't resolve).
+    const local = getLocalFile(abs);
+    const fresh = local ? URL.createObjectURL(local) : /^(blob|data):/.test(abs) ? abs : `${abs}${abs.includes("?") ? "&" : "?"}webfalcor=${++moduleRuns}`;
     const mod = (await import(/* @vite-ignore */ fresh)) as Record<string, unknown>;
     const entry = [mod.default, ...names.map((n) => mod[n])].find((f) => typeof f === "function");
     if (!entry) throw new RuntimeError(`${url}: a script module must export default function (${names.join(" or ")} works too)`);

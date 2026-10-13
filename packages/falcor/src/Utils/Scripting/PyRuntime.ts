@@ -4,6 +4,8 @@
  * JS scripts receive it as `py` (hand-written ones can use it too).
  */
 
+import { listLocalDirectory } from "../../Core/LocalMedia.js";
+
 /** Thrown by exit(); the script runners treat it as a normal end (Python's SystemExit). */
 export class PySystemExit extends Error {
     readonly pyExit = true;
@@ -200,6 +202,8 @@ const pathApi = {
  * os.listdir/glob are synchronous. Null without a listing (static hosting), as the Python path.
  */
 function listDirectorySync(dir: string): string[] | null {
+    const local = listLocalDirectory(dir);
+    if (local) return [...local.dirs, ...local.files];
     if (typeof XMLHttpRequest === "undefined") return null;
     const xhr = new XMLHttpRequest();
     xhr.open("GET", `/__webfalcor/ls?path=${encodeURIComponent(new URL(dir, globalThis.location?.href ?? "http://localhost/").pathname)}`, false);

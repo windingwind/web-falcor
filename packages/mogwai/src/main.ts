@@ -6,7 +6,7 @@
 
 import { FrameCaptureExtension, captureOutput } from "./FrameCapture.js";
 import { recordMogwaiSource, replayMogwaiCommands, type MogwaiHost } from "./ScriptRunner.js";
-import { AssetCategory, AssetResolver, assetUrl, setAssetBase, isAbsoluteUrl, convertPythonSource, runConsoleCommandJs, isJsScript, isJsSceneScript, recordMogwaiModule, runSceneModule, type MogwaiCommand, kProjectMediaUrl, Clock, Device, Logger, LogLevel, SceneBuilderFlags, getGlobalSettings, Profiler, ProfilerUI, VideoRecorder, ProgramManager, RenderGraph, ResourceFormat, Bitmap, BitmapExportFlags, createPass, loadPluginLibrary, initScripting, initSlang, runConsoleCommand, runSceneScript, DomWidgets, nativeKeyCode, GamepadInput, GamepadEventType, GamepadButton, type MogwaiCallbacks, runPbrtScene, runMitsubaScene, presentToCanvas, OverlayDrawList, type Scene } from "@web-falcor/falcor";
+import { AssetCategory, AssetResolver, assetUrl, mountLocalFiles, isLocalMediaUrl, filesFromInput, filesFromDataTransfer, dataTransferHasDirectory, setAssetBase, isAbsoluteUrl, convertPythonSource, runConsoleCommandJs, isJsScript, isJsSceneScript, recordMogwaiModule, runSceneModule, type MogwaiCommand, kProjectMediaUrl, Clock, Device, Logger, LogLevel, SceneBuilderFlags, getGlobalSettings, Profiler, ProfilerUI, VideoRecorder, ProgramManager, RenderGraph, ResourceFormat, Bitmap, BitmapExportFlags, createPass, loadPluginLibrary, initScripting, initSlang, runConsoleCommand, runSceneScript, DomWidgets, nativeKeyCode, GamepadInput, GamepadEventType, GamepadButton, type MogwaiCallbacks, runPbrtScene, runMitsubaScene, presentToCanvas, OverlayDrawList, type Scene } from "@web-falcor/falcor";
 import "@web-falcor/render-passes";
 import { CameraController, kCameraControllerTypes, kUpDirectionNames } from "./CameraController.js";
 import { buildUIPanel } from "./UIPanel.js";
@@ -151,15 +151,17 @@ async function createScene(state: ViewerState, url: string, baseUrl: string, fla
     const lower = url.toLowerCase().split(/[?#]/)[0]!;
     if (rebuildSceneCache) flags = (flags ?? SceneBuilderFlags.Default) | SceneBuilderFlags.RebuildCache;
     rebuildSceneCache = false;
+    // The cache is keyed on the script text, so a picked folder's scene could hit another folder's entry.
+    const cache = !isLocalMediaUrl(url);
     const scene = isJsScript(lower)
-        ? await runSceneModule(state.device, url, { cache: true, path: url, flags, baseUrl }) // JS scene module (*.scene.js)
+        ? await runSceneModule(state.device, url, { cache, path: url, flags, baseUrl }) // JS scene module (*.scene.js)
         : lower.endsWith(".pbrt")
         ? await runPbrtScene(state.device, await (await fetch(url)).text(), baseUrl, { flags })
         : lower.endsWith(".xml") // Mitsuba scenes are the only .xml we load
           ? await runMitsubaScene(state.device, await (await fetch(url)).text(), baseUrl)
           : lower.endsWith(".pyscene")
-            ? await runSceneScript(state.device, await (await fetch(url)).text(), baseUrl, { cache: true, path: url, flags }) // OPFS scene cache: fast reloads
-            : await runSceneScript(state.device, `sceneBuilder.importScene(${JSON.stringify(url.slice(baseUrl.length + 1))})`, baseUrl, { cache: true, path: url, flags });
+            ? await runSceneScript(state.device, await (await fetch(url)).text(), baseUrl, { cache, path: url, flags }) // OPFS scene cache: fast reloads
+            : await runSceneScript(state.device, `sceneBuilder.importScene(${JSON.stringify(url.slice(baseUrl.length + 1))})`, baseUrl, { cache, path: url, flags });
     if (scene.importPaths[0] !== url) scene.importPaths.unshift(url);
     return scene;
 }
@@ -351,7 +353,7 @@ function getRecent(kind: RecentKind): string[] {
     }
 }
 function addRecent(kind: RecentKind, path: string): void {
-    if (!recordRecent) return;
+    if (!recordRecent || isLocalMediaUrl(path)) return; // picked files are gone after a reload
     localStorage.setItem(`mogwai.recent.${kind}`, JSON.stringify([path, ...getRecent(kind).filter((p) => p !== path)].slice(0, 25)));
     refreshRecentList();
 }
@@ -840,6 +842,11 @@ function wireGraphEditor(state: ViewerState, rebuildUI: () => void, resetAccum: 
 }
 
 /** Wires the plain-DOM control bar (created in index.html). */
+/** Files the viewer loads as scenes (anything else in an opened folder is a script or an asset). */
+const kSceneFile = /\.(pyscene|scene\.js|pbrt|xml|fbx|gltf|glb|obj|usd|usda|usdc|usdz|dae|3ds|ply|blend)$/i;
+/** Scene files that describe a whole scene, preferred over the models they import. */
+const kSceneScriptFile = /\.(pyscene|scene\.js|pbrt|xml)$/i;
+
 function wireControls(state: ViewerState, rebuildUI: () => void): void {
     const $ = (id: string) => document.getElementById(id);
     // MogwaiSettings::winSizeUI: the renderable area (swapchain) size, common resolutions or custom.
@@ -863,7 +870,16 @@ function wireControls(state: ViewerState, rebuildUI: () => void): void {
     // directory: pyscenes resolve assets against the media root, binary formats must be self-contained.
     window.addEventListener("dragover", (ev) => ev.preventDefault());
     window.addEventListener("drop", (ev) => {
-        const file = ev.dataTransfer?.files[0];
+        const dt = ev.dataTransfer;
+        if (dt && (dataTransferHasDirectory(dt) || dt.files.length > 1)) {
+            // A folder or several files (a .gltf with its .bin and textures): mount them, keeping their layout.
+            ev.preventDefault();
+            void filesFromDataTransfer(dt)
+                .then((files) => openLocalFiles(files))
+                .catch((err: unknown) => Logger.error(`Mogwai: failed to open the dropped files: ${String(err)}`));
+            return;
+        }
+        const file = dt?.files[0];
         if (!file) return;
         ev.preventDefault();
         const ext = file.name.slice(file.name.lastIndexOf(".") + 1).toLowerCase();
@@ -885,6 +901,46 @@ function wireControls(state: ViewerState, rebuildUI: () => void): void {
             refreshOutputs(state);
             rebuildUI();
         })().catch((err: unknown) => Logger.error(`Mogwai: failed to load dropped '${file.name}': ${String(err)}`));
+    });
+    // Open folder: the picked or dropped files load by their relative paths, like served media.
+    const localSel = $("localFiles") as HTMLSelectElement | null;
+    const openLocalUrl = (url: string) => {
+        const isScript = !kSceneFile.test(url);
+        status.textContent = `loading ${url.slice(url.lastIndexOf("/") + 1)}…`;
+        void (async () => {
+            if (isScript) await loadGraph(state, url);
+            else await loadScene(state, url, url.slice(0, url.lastIndexOf("/")));
+            refreshOutputs(state);
+            rebuildUI();
+        })().catch((err: unknown) => Logger.error(`Mogwai: failed to load '${url}': ${String(err)}`));
+    };
+    const openLocalFiles = async (files: [string, File][]) => {
+        if (files.length === 0 || !localSel) return;
+        const { baseUrl, urls } = await mountLocalFiles(files);
+        const scenes = urls.filter((u) => kSceneFile.test(u)).sort();
+        const scripts = urls.filter((u) => !kSceneFile.test(u) && (/\.py$/i.test(u) || isJsScript(u))).sort();
+        const option = (u: string) => Object.assign(document.createElement("option"), { value: u, textContent: u.slice(baseUrl.length) });
+        const sceneGroup = Object.assign(document.createElement("optgroup"), { label: "scenes" });
+        sceneGroup.append(...scenes.map(option));
+        const scriptGroup = Object.assign(document.createElement("optgroup"), { label: "scripts" });
+        scriptGroup.append(...scripts.map(option));
+        localSel.replaceChildren(Object.assign(document.createElement("option"), { value: "", textContent: `${scenes.length} scenes, ${scripts.length} scripts` }), sceneGroup, scriptGroup);
+        localSel.parentElement!.hidden = false;
+        Logger.info(`Opened ${files.length} local files: ${scenes.length} scenes, ${scripts.length} scripts`);
+        // Load the scene when the choice is clear: the only scene script, else the only model.
+        const sceneScripts = scenes.filter((u) => kSceneScriptFile.test(u));
+        const only = sceneScripts.length === 1 ? sceneScripts[0] : sceneScripts.length === 0 && scenes.length === 1 ? scenes[0] : undefined;
+        if (only) {
+            localSel.value = only;
+            openLocalUrl(only);
+        } else status.textContent = scenes.length > 0 ? "pick a scene from the opened folder" : "the opened folder has no scenes";
+    };
+    localSel?.addEventListener("change", () => localSel.value && openLocalUrl(localSel.value));
+    const folderInput = $("folderInput") as HTMLInputElement | null;
+    $("openFolder")?.addEventListener("click", () => folderInput?.click());
+    folderInput?.addEventListener("change", () => {
+        if (folderInput.files) void openLocalFiles(filesFromInput(folderInput.files)).catch((err: unknown) => Logger.error(`Mogwai: failed to open the folder: ${String(err)}`));
+        folderInput.value = "";
     });
     // File > Load Script / Load Scene and the recent lists (Enter loads the typed or picked path).
     const open = $("openPath") as HTMLInputElement | null;

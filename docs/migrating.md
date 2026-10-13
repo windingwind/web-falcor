@@ -111,8 +111,8 @@ derived from, diff the native and web versions: that shows most of what your por
   Use the widget callbacks to change state. Text such as "frames accumulated" does not refresh on its own.
 - **Errors arrive at different times.** Slang errors throw synchronously from `create`. WebGPU validation errors
   arrive later, through the device's `uncapturederror` handler, so they don't point at the call that caused them.
-- **Files.** Assets are fetched over HTTP from the served media directory: there are no absolute paths,
-  environment variables or child processes.
+- **Files.** Assets are fetched by URL: from the served media directory, or from a local folder the user opened
+  ([npm.md](npm.md#run-the-viewer)). There are no absolute paths, environment variables or child processes.
 
 ### 2.3 Binding values from TypeScript
 

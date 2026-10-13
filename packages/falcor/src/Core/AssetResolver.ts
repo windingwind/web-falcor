@@ -7,6 +7,7 @@
 
 import { ArgumentError } from "./Error.js";
 import { Logger } from "../Utils/Logger.js";
+import { listLocalDirectory } from "./LocalMedia.js";
 
 /** Mirrors Falcor::AssetCategory. */
 export enum AssetCategory {
@@ -31,6 +32,8 @@ export type DirectoryLister = (url: string) => Promise<string[] | null>;
 
 /** The dev server's directory listing (scripts/vite-plugin-dir-listing.mjs): files and subdirectories of a served path. */
 export async function fetchDirectoryListing(url: string): Promise<{ files: string[]; dirs: string[] } | null> {
+    const local = listLocalDirectory(url);
+    if (local) return local;
     const origin = typeof location !== "undefined" ? location.origin : "http://localhost";
     const u = new URL(url, origin);
     if (u.origin !== origin) return null;

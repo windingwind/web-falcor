@@ -53,6 +53,7 @@ interface PyodideApi {
 let pyodide: PyodideApi | null = null;
 
 import { kPyodidePackagesUrl } from "../../Core/AssetBase.js";
+import { readLocalFileSync } from "../../Core/LocalMedia.js";
 export { kPyodidePackagesUrl };
 
 /** Loads Pyodide (idempotent). indexURL points at the pyodide distribution. */
@@ -74,7 +75,10 @@ function installServedFileOpen(py: PyodideApi): void {
     py.registerJsModule("_webfalcor_fs", {
         fetchFile(path: string): Uint8Array | undefined {
             const root = kPythonFsRoots.find((r) => path.startsWith(`${r}/`));
-            if (!root || typeof XMLHttpRequest === "undefined") return undefined;
+            if (!root) return undefined;
+            const local = readLocalFileSync(path.slice(root.length));
+            if (local !== null) return local;
+            if (typeof XMLHttpRequest === "undefined") return undefined;
             const xhr = new XMLHttpRequest();
             xhr.open("GET", path.slice(root.length), false);
             xhr.overrideMimeType("text/plain; charset=x-user-defined");
@@ -95,7 +99,8 @@ _webfalcor_open = io.open
 def _webfalcor_served_open(file, mode="r", *args, **kwargs):
     if isinstance(file, (str, os.PathLike)) and not any(c in mode for c in "wax+"):
         path = os.path.abspath(os.fspath(file))
-        if not os.path.exists(path):
+        # Empty files may be placeholders from the glob mirror (mirrorDirectoryTree): fetch those too.
+        if not os.path.exists(path) or os.path.getsize(path) == 0:
             data = _webfalcor_fs.fetchFile(path)
             if data is not None:
                 os.makedirs(os.path.dirname(path), exist_ok=True)
