@@ -68,9 +68,9 @@ if (git("diff", "--cached", "--name-only")) run("git", "commit", "-m", `chore: r
 run("git", "tag", ...(retag ? ["-f"] : []), tag);
 
 if (push) {
-    run("git", "push", "origin", "HEAD");
-    run("git", "push", ...(retag ? ["-f"] : []), "origin", tag);
+    // One atomic push: a separate tag push can race GitHub and fail with "missing necessary objects".
+    run("git", "push", "--atomic", "origin", "HEAD:main", `${retag ? "+" : ""}refs/tags/${tag}`);
     console.log(`\nPushed ${tag}: the Release workflow publishes it (https://github.com/windingwind/web-falcor/actions).`);
 } else {
-    console.log(`\nTagged ${tag} locally. Publish with: git push origin HEAD && git push ${retag ? "-f " : ""}origin ${tag}`);
+    console.log(`\nTagged ${tag} locally. Publish with: git push --atomic origin HEAD:main ${retag ? "+" : ""}refs/tags/${tag}`);
 }
