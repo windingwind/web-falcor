@@ -167,7 +167,7 @@ replacement with the same interface (entry points, defines, cbuffers, binding na
 under `packages/falcor/shaders/WebFalcor/Overrides/<same path>`. Then map it in
 [`ShaderOverrides.ts`](../packages/falcor/src/Core/Program/ShaderOverrides.ts) and
 run `npm run shaders:list`. Host code keeps using the upstream path. Explain in the
-override file how it differs from upstream. [shader-system.md](shader-system.md) §4
+override file how it differs from upstream. [migrating.md §3](migrating.md#3-porting-shaders)
 covers the common rewrites.
 
 ## Testing a change

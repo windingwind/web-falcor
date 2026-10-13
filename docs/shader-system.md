@@ -22,8 +22,9 @@ Slang → **WGSL** with the same compiler front-end, in two modes:
    `slang-2026.18.2-wasm.zip`, the same artifact powering the Slang Playground) runs the
    identical compiler in the browser (and in Node for tests). The `ProgramManager`
    mirrors Falcor's: program (files + defines + conformances) → hash → cache lookup →
-   compile on miss. Ahead-of-time-compiled variants from the manifest pre-seed the cache
-   so common paths never pay WASM compile time.
+   compile on miss. The runtime path is the one in use: the build-time manifest output is
+   not loaded, and it skips the WGSL rewrites the runtime applies (see
+   [migrating.md §3.0](migrating.md#30-what-the-compiler-handles-for-you)).
 
 ### 4.2 Reflection-driven binding (`ParameterBlock` / `ShaderVar`)
 
@@ -37,15 +38,13 @@ web-falcor keeps this design 1:1:
   populates `ProgramReflection` — types, struct offsets (std140 for uniform, std430
   for storage), binding indices, spaces → **bind groups**.
 - `ParameterBlock` owns a CPU-side `ArrayBuffer` mirror of the uniform data plus the
-  resource table; `ShaderVar` is a thin proxy (JS `Proxy` for the indexing syntax plus
-  explicit `.setFloat3(...)` typed setters) writing through reflection offsets.
+  resource table; `ShaderVar` is a thin proxy (a JS `Proxy` for the indexing syntax)
+  writing through reflection offsets.
 - Falcor's register `space`s map to WebGPU **bind group indices**; slangc's WGSL
   backend already emits `@group/@binding` consistently with its reflection output.
-- WebGPU's 4-bind-group default limit vs. Falcor's arbitrary spaces: the
-  `RootSignature`-equivalent packing lives in `ProgramKernels`, which flattens
-  parameter blocks into ≤ 4 groups (scene = group 1, per-pass = group 0, material
-  system = group 2, misc = group 3) and rewrites bindings via slangc's layout
-  parameters. This is internal; the `ParameterBlock` API is unchanged.
+- WebGPU allows 4 bind groups, where Falcor allows arbitrary spaces. Bindings are
+  not repacked: loose globals take group 0 and each `ParameterBlock<T>` takes its
+  own group, so a shader can declare at most three parameter blocks.
 
 ### 4.3 WebFalcor platform shims (`packages/falcor/shaders/WebFalcor/`)
 
@@ -64,8 +63,9 @@ not change — we swap the implementation module at import/conformance level:
 | `printf`-style `PixelDebug` GPU prints | no printf | already buffer-based in Falcor → portable; only the host decode changes |
 | Wave intrinsics (`WaveActiveSum` etc. in WarpProfiler, some samplers) | WGSL `subgroups` feature (shipped, but optional) | subgroup ops when available; scalar/workgroup-shared fallback otherwise |
 
-The manifest/`ProgramManager` selects shims through Slang's module search path and
-type conformances — never by editing upstream files. `./Falcor` stays a pristine
+`ProgramManager` substitutes shims by path, through the map in
+[`ShaderOverrides.ts`](../packages/falcor/src/Core/Program/ShaderOverrides.ts),
+so host code keeps the upstream path. Upstream files are never edited. `./Falcor` stays a pristine
 checkout that doubles as the image-test oracle.
 
 ## 5. Ray tracing without RT hardware (the biggest emulation)

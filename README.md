@@ -80,6 +80,36 @@ npm install @web-falcor/falcor @web-falcor/render-passes @web-falcor/mogwai
 [docs/npm.md](docs/npm.md) has a minimal app, the Vite plugin that supplies the runtime assets (shaders, the Slang
 compiler, Pyodide), and the details of `web-falcor dev`.
 
+## Migrating from native Falcor
+
+web-falcor keeps Falcor's structure, names and file formats, so most of a Falcor project carries over unchanged
+or ports line for line. **[docs/migrating.md](docs/migrating.md) is the full guide**: the C++ → TypeScript API
+mapping, every kind of shader rewrite this project has needed, and the differences that compile but change results.
+
+**Carries over unchanged:**
+
+- **Scenes:** `.pyscene`, glTF, FBX, pbrt-v4, USD (subset) and Mitsuba 3, by the same relative paths in your
+  [served media directory](#quick-start-npm-recommended).
+- **Render-graph and Mogwai scripts** (`.py`), through Pyodide ([docs/scripting.md](docs/scripting.md)).
+- **Slang modules:** Falcor's shader library has its usual module names (`import Scene.Scene;`, …), and most compute,
+  raster and full-screen shaders compile as they are.
+
+**Ported by hand:**
+
+- **Render passes**, from C++ to TypeScript. The API mirrors native's (`class MyPass extends RenderPass`,
+  `ComputePass.create`, `root["CB"]["x"] = v`). Start from a [scaffolded pass](#quick-start-npm-recommended), and
+  use the port of the closest upstream pass in [`packages/render-passes/src/`](packages/render-passes/src/) as a
+  template.
+- **DXR ray tracing.** WebGPU has no ray-tracing API, so `RtProgram`s become compute kernels that trace with
+  `SceneRayQuery` on a software BVH.
+- **Shaders that exceed WebGPU's limits**, mainly 16 storage buffers per stage, 4 bind groups, no resource
+  arrays, no fp64 or 64-bit integers, `read_write` storage textures only in r32 formats, and optional wave ops.
+- **Changes to Falcor's core**, into the same path under `packages/falcor/src/`, which mirrors
+  `Falcor/Source/Falcor` file for file ([docs/extending.md](docs/extending.md)).
+
+**Has no browser equivalent:** CUDA and PyTorch interop, OptiX, DLSS, NVAPI extensions (SER is a no-op),
+Aftermath, multiple GPUs or queues, and native plugin DLLs ([docs/parity-matrix.md](docs/parity-matrix.md)).
+
 ## Working from source
 
 Use a checkout to change web-falcor itself (core features, fixes, ports of upstream Falcor passes), or to run
