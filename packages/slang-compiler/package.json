@@ -1,6 +1,6 @@
 {
   "name": "@web-falcor/slang-compiler",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "description": "Build-time Slang->WGSL shader compilation driver (wraps tools/slang/bin/slangc)",
   "type": "module",
   "bin": {
