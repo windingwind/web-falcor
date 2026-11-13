@@ -583,6 +583,26 @@
       "path": "rtxdi/RtxdiTypes.h",
       "url": "/Falcor/external/packman/rtxdi/rtxdi-sdk/include/rtxdi/RtxdiTypes.h",
       "upstream": "https://raw.githubusercontent.com/NVIDIAGameWorks/RTXDI/v1.3.0/rtxdi-sdk/include/rtxdi/RtxdiTypes.h"
+    },
+    {
+      "path": "RenderPasses/DepthOfField/DepthOfField.cs.slang",
+      "url": "/packages/render-passes/src/DepthOfField/DepthOfField.cs.slang"
+    },
+    {
+      "path": "RenderPasses/FXAA/FXAA.cs.slang",
+      "url": "/packages/render-passes/src/FXAA/FXAA.cs.slang"
+    },
+    {
+      "path": "RenderPasses/MotionBlur/MotionBlur.cs.slang",
+      "url": "/packages/render-passes/src/MotionBlur/MotionBlur.cs.slang"
+    },
+    {
+      "path": "RenderPasses/PhysicalSky/PhysicalSky.cs.slang",
+      "url": "/packages/render-passes/src/PhysicalSky/PhysicalSky.cs.slang"
+    },
+    {
+      "path": "RenderPasses/SSAO/SSAO.cs.slang",
+      "url": "/packages/render-passes/src/SSAO/SSAO.cs.slang"
     }
   ]
 }
