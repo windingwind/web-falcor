@@ -9,12 +9,20 @@
  *  - materialId : hash01 of the material id in r, the raw id in g;
  *  - flatAlbedo : the material base colour sampled at a coarse LOD (`flatLod`; the texture's mean colour when the texture
  *                 has a full mip chain), i.e. "flat" albedo without texture detail;
- *  - ndotl      : unclamped N.L of the key light in r (half-Lambert 0.5 N.L + 0.5 in g); needs the `normW` input.
+ *  - ndotl      : unclamped N.L of the key light in r (half-Lambert 0.5 N.L + 0.5 in g); needs the `normW` input;
+ *  - ids        : all raw ids at once: geometry instance id (r), material id (g), mesh id (b);
+ *  - posObj     : object-space position (the triangle's object-space vertices interpolated with the hit barycentrics);
+ *  - curvature  : signed raw curvature in 1/world units in r (> 0 convex, < 0 concave), estimated from the posW/normW
+ *                 4-neighbours as the mean of dot(n_j - n, x_j - x) / |x_j - x|^2; neighbours across a depth jump larger
+ *                 than `curvatureDepthThreshold` x view depth (or without geometry) are skipped. Needs `posW` and `normW`.
+ *                 The raw value only: no thresholding, remapping or shading.
  * Background pixels are 0 (alpha 0). All outputs are optional and only written when connected/marked.
  *
- * Inputs : vbuffer (GBufferRaster/VBufferRaster), texC (optional, for flatAlbedo), normW (optional, for ndotl).
+ * Inputs : vbuffer (GBufferRaster/VBufferRaster), texC (optional, for flatAlbedo), normW (optional, for ndotl and
+ *          curvature), posW (optional, for curvature).
  * Params : idSource {instance|material|mesh}, hashSeed (uint), flatLod (default 16),
- *          lightDir ([0,0,0] = first directional light of the scene, else the given direction towards the light).
+ *          lightDir ([0,0,0] = first directional light of the scene, else the given direction towards the light),
+ *          curvatureDepthThreshold (relative view-depth jump that separates curvature neighbours, default 0.05).
  * Hash: PCG (Jarzynski & Olano 2020), written for this pass.
  */
 
@@ -32,7 +40,7 @@ import {
     type RenderContext,
     type UIWidgets,
 } from "@web-falcor/falcor";
-import { addColorOutput, addTexInput, dummyTexture, enumIndex, keyLightDir } from "./StyleCommon.js";
+import { addColorOutput, addTexInput, cameraData, dummyTexture, enumIndex, keyLightDir } from "./StyleCommon.js";
 
 const kShaderFile = "RenderPasses/Stylize/StyleAovs.cs.slang";
 const kIdSources = ["instance", "material", "mesh"] as const;
@@ -42,10 +50,13 @@ const kOutputs = [
     ["materialId", "gMaterialId", "hash01(material id) in r, raw material id in g"],
     ["flatAlbedo", "gFlatAlbedo", "Material base colour at a coarse texture LOD"],
     ["ndotl", "gNdotL", "Unclamped N.L of the key light (r), half-Lambert (g)"],
+    ["ids", "gIds", "Raw instance (r), material (g) and mesh (b) ids"],
+    ["posObj", "gPosObj", "Object-space position"],
+    ["curvature", "gCurvature", "Signed raw curvature in 1/world units (r)"],
 ] as const;
 
 export class StyleAovs extends RenderPass {
-    private p = { idSource: "instance" as string, hashSeed: 0, flatLod: 16, lightDir: [0, 0, 0] as number[] };
+    private p = { idSource: "instance" as string, hashSeed: 0, flatLod: 16, lightDir: [0, 0, 0] as number[], curvatureDepthThreshold: 0.05 };
     private pass: ComputePass | null = null;
     private passKey = "";
 
@@ -62,6 +73,7 @@ export class StyleAovs extends RenderPass {
     override renderUI(ui: UIWidgets): void {
         ui.slider("Hash seed", this.p.hashSeed, 0, 1000, 1, (v) => (this.p.hashSeed = v));
         ui.slider("Flat albedo LOD", this.p.flatLod, 0, 16, 0.5, (v) => (this.p.flatLod = v));
+        ui.slider("Curvature depth threshold", this.p.curvatureDepthThreshold, 0.001, 1, 0.001, (v) => (this.p.curvatureDepthThreshold = v));
     }
 
     override reflect(compileData: CompileData): RenderPassReflection {
@@ -69,7 +81,8 @@ export class StyleAovs extends RenderPass {
         const [w, h] = compileData.defaultTexDims;
         r.addInput("vbuffer", "Visibility buffer").bindFlags(ResourceBindFlags.ShaderResource);
         addTexInput(r, "texC", "Texture coordinates (for flatAlbedo)", true);
-        addTexInput(r, "normW", "World-space shading normal (for ndotl)", true);
+        addTexInput(r, "normW", "World-space shading normal (for ndotl and curvature)", true);
+        addTexInput(r, "posW", "World-space position (for curvature)", true);
         for (const [name, , desc] of kOutputs) addColorOutput(r, name, desc, w, h, true);
         return r;
     }
@@ -87,7 +100,7 @@ export class StyleAovs extends RenderPass {
         }
         const root = this.pass.getRootVar();
         this.scene.bindShaderData(root);
-        const texC = rd.getTexture("texC"), normW = rd.getTexture("normW");
+        const texC = rd.getTexture("texC"), normW = rd.getTexture("normW"), posW = rd.getTexture("posW");
         const L = keyLightDir(this.scene, this.p.lightDir);
         const cb = root["CB"]!;
         cb["gFrameDim"] = [W, H];
@@ -97,10 +110,16 @@ export class StyleAovs extends RenderPass {
         cb["gFlatLod"] = this.p.flatLod;
         cb["gHasTexC"] = texC ? 1 : 0;
         cb["gHasNormW"] = normW ? 1 : 0;
+        cb["gHasPosW"] = posW ? 1 : 0;
+        cb["gCurvDepthThreshold"] = this.p.curvatureDepthThreshold;
+        const cam = cameraData(this.scene);
+        cb["gCamPos"] = cam.pos;
+        cb["gCamFwd"] = cam.fwd;
         const dummy = dummyTexture(this.device);
         root["gVBuffer"] = vbuffer;
         root["gTexC"] = texC ?? dummy;
         root["gNormW"] = normW ?? dummy;
+        root["gPosW"] = posW ?? dummy;
         let any = false;
         for (const [name, tex] of kOutputs) {
             const t = rd.getTexture(name);
@@ -112,5 +131,5 @@ export class StyleAovs extends RenderPass {
 }
 
 registerRenderPass("StyleAovs", (device, props) => new StyleAovs(device, props), {
-    desc: "Object/material IDs, ID colours, flat albedo and N.L for stylization, from the V-buffer",
+    desc: "Object/material IDs, ID colours, flat albedo, N.L, object-space position and raw curvature, from the V-buffer",
 });
