@@ -6,7 +6,7 @@
  * Native Falcor 8 has no motion-blur pass; this is a web-falcor addition.
  *
  * Inputs : color (linear colour), mvec (GBufferRaster/GBufferRT mvec: previous minus current position in UV units),
- *          depth (GBuffer linearZ, x = view depth; 0 = no geometry).
+ *          posW (GBuffer posW, w = 0: no geometry; view depth = (posW - camera position) . camera forward).
  * Outputs: dst (RGBA32Float).
  * The blur spans the motion during an exposure of `shutter` frame intervals centred on the current frame
  * (half-extent V = 0.5 * shutter * mvec * frameDim pixels, clamped to tileSize). Pixels without geometry carry the
@@ -29,6 +29,7 @@ import {
     type RenderContext,
     type UIWidgets,
 } from "@web-falcor/falcor";
+import { cameraFrame } from "../DepthOfField/DepthOfField.js";
 
 const kShaderFile = "RenderPasses/MotionBlur/MotionBlur.cs.slang";
 
@@ -63,7 +64,7 @@ export class MotionBlur extends RenderPass {
         const [w, h] = compileData.defaultTexDims;
         r.addInput("color", "Linear colour").bindFlags(ResourceBindFlags.ShaderResource);
         r.addInput("mvec", "Screen-space motion vectors (UV units, previous - current)").bindFlags(ResourceBindFlags.ShaderResource);
-        r.addInput("depth", "Linear view depth (GBuffer linearZ)").bindFlags(ResourceBindFlags.ShaderResource);
+        r.addInput("posW", "World position (w = 0: background)").bindFlags(ResourceBindFlags.ShaderResource);
         r.addOutput("dst", "Motion-blurred colour")
             .texture2D(w, h)
             .format(ResourceFormat.RGBA32Float)
@@ -82,9 +83,9 @@ export class MotionBlur extends RenderPass {
     override execute(ctx: RenderContext, rd: RenderData): void {
         const color = rd.getTexture("color");
         const mvec = rd.getTexture("mvec");
-        const depth = rd.getTexture("depth");
+        const posW = rd.getTexture("posW");
         const dst = rd.getTexture("dst");
-        if (!color || !mvec || !depth || !dst) return;
+        if (!color || !mvec || !posW || !dst) return;
         const W = dst.width, H = dst.height;
         const K = Math.max(2, Math.round(this.p.tileSize));
         const TW = Math.ceil(W / K), TH = Math.ceil(H / K);
@@ -95,6 +96,7 @@ export class MotionBlur extends RenderPass {
             this.neighborPass = ComputePass.create(this.device, { path: kShaderFile, csEntry: "neighborMaxMain" });
             this.gatherPass = ComputePass.create(this.device, { path: kShaderFile, csEntry: "gatherMain" });
         }
+        const [camPos, camFwd] = cameraFrame(this.scene);
         const passes = [this.tilePass, this.neighborPass!, this.gatherPass!];
         for (const pass of passes) {
             const cb = pass.getRootVar()["CB"]!;
@@ -106,13 +108,15 @@ export class MotionBlur extends RenderPass {
             cb["gSoftZ"] = this.p.softZ;
             cb["gNoise"] = this.p.noise ? 1 : 0;
             cb["gFrame"] = this.frame;
+            cb["gCamPos"] = camPos;
+            cb["gCamFwd"] = camFwd;
         }
         // Every kernel sees every resource; slots a kernel doesn't use get a read-only stand-in, never its own output.
         const bind = (pass: ComputePass, tileIn: Texture, out: Texture) => {
             const root = pass.getRootVar();
             root["gColor"] = color;
             root["gMvec"] = mvec;
-            root["gDepth"] = depth;
+            root["gPosW"] = posW;
             root["gTileIn"] = tileIn;
             root["gOut"] = out;
         };

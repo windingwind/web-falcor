@@ -8,6 +8,8 @@
  * The estimate is the cosine-weighted visibility (1/pi) * int V(w) cos(w) dw restricted to occluders within `radius`
  * (world units, linear falloff over the last `falloff` fraction), the same quantity a ray-traced AO with that ray
  * length converges to, up to GTAO's height-field assumption (no thickness behind the depth buffer).
+ * Samples are re-placed on the slice line using the sampled texel's tangent plane (removes the self-occlusion
+ * bias of pixel-snapped samples on slanted planes).
  * Two dispatches: the slice integration (per-pixel rotated slices, interleaved-gradient noise) and a 5x5
  * depth/normal-aware spatial filter (`blur`).
  */

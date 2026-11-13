@@ -12,11 +12,15 @@ cbuffer CB
     uint gNoise;
     uint gFrame;
     float2 _pad0;
+    float3 gCamPos;
+    float _pad1;
+    float3 gCamFwd;
+    float _pad2;
 }
 
 Texture2D<float4> gColor;
 Texture2D<float4> gMvec;
-Texture2D<float4> gDepth;
+Texture2D<float4> gPosW;
 Texture2D<float4> gTileIn;
 RWTexture2D<float4> gOut;
 
@@ -72,8 +76,8 @@ void neighborMaxMain(uint3 tid: SV_DispatchThreadID)
 
 float depthAt(uint2 p)
 {
-    const float z = gDepth[p].x;
-    return z > 0.f ? z : 1e30f;
+    const float4 pw = gPosW[p];
+    return pw.w != 0.f ? dot(pw.xyz - gCamPos, gCamFwd) : 1e30f;
 }
 
 float softDepthCompare(float za, float zb, float extent) { return saturate(1.f - (za - zb) / extent); }
@@ -109,8 +113,9 @@ void gatherMain(uint3 tid: SV_DispatchThreadID)
         const uint2 Y = uint2(Yi);
         const float zY = depthAt(Y);
         const float dist = length(vN * t);
-        const float f = softDepthCompare(zX, zY, extent); // Y in front of X
-        const float b = softDepthCompare(zY, zX, extent); // Y behind X
+        // softDepthCompare(za, zb) = 1 when za is closer (positive view depth): f = Y in front of X, b = Y behind X
+        const float f = softDepthCompare(zY, zX, extent);
+        const float b = softDepthCompare(zX, zY, extent);
         const float vYLen = max(length(velocity(Y)), 0.5f);
         const float a = f * cone(dist, vYLen) + b * cone(dist, vXLen) + cylinder(dist, vYLen) * cylinder(dist, vXLen) * 2.f;
         weight += a;

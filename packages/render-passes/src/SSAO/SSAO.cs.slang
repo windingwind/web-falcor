@@ -98,10 +98,24 @@ void aoMain(uint3 tid: SV_DispatchThreadID)
                 if (any(q < 0.f) || any(q >= float2(gFrameDim))) continue;
                 const float4 sw = gPosW[uint2(q)];
                 if (sw.w == 0.f) continue;
-                const float3 d = toView(sw.xyz) - P;
+                // The texel centre is off the slice line; read as is, in-plane neighbours of a slanted surface look
+                // like occluders. Re-place the sample where the view ray through the exact position q meets the
+                // texel's tangent plane (exact for planes; falls back to the texel position at grazing angles).
+                const float3 Ps = toView(sw.xyz);
+                const float3 Ns = dirToView(gNormW[uint2(q)].xyz);
+                const float3 rq = float3((q.x - 0.5f * float(gFrameDim.x)) / gFocalPx, -(q.y - 0.5f * float(gFrameDim.y)) / gFocalPx, -1.f);
+                const float den = dot(rq, Ns);
+                const float tq = abs(den) > 1e-6f ? dot(Ps, Ns) / den : -1.f;
+                const float3 Pq = tq * rq;
+                const float lenPs = length(Ps);
+                const float3 Psample = (tq > 0.f && abs(length(Pq) - lenPs) < 0.25f * lenPs) ? Pq : Ps;
+                const float3 d = Psample - P;
                 const float dist = length(d);
-                if (dist < 1e-6f) continue;
-                const float shc = dot(d / dist, V);
+                // horizon angle within the slice plane
+                const float3 ds = d - axis * dot(d, axis);
+                const float dsl = length(ds);
+                if (dist < 1e-6f || dsl < 1e-6f) continue;
+                const float shc = dot(ds / dsl, V);
                 const float w = saturate((gRadius - dist) / falloffRange);
                 if (side == 0) hc0 = max(hc0, lerp(lowCos0, shc, w));
                 else hc1 = max(hc1, lerp(lowCos1, shc, w));
