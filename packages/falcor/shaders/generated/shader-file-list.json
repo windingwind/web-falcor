@@ -615,6 +615,30 @@
     {
       "path": "RenderPasses/SSAO/SSAO.cs.slang",
       "url": "/packages/render-passes/src/SSAO/SSAO.cs.slang"
+    },
+    {
+      "path": "RenderPasses/Stylize/CRT.cs.slang",
+      "url": "/packages/render-passes/src/Stylize/CRT.cs.slang"
+    },
+    {
+      "path": "RenderPasses/Stylize/GradientMap.cs.slang",
+      "url": "/packages/render-passes/src/Stylize/GradientMap.cs.slang"
+    },
+    {
+      "path": "RenderPasses/Stylize/HoldFrames.cs.slang",
+      "url": "/packages/render-passes/src/Stylize/HoldFrames.cs.slang"
+    },
+    {
+      "path": "RenderPasses/Stylize/ShadowTint.cs.slang",
+      "url": "/packages/render-passes/src/Stylize/ShadowTint.cs.slang"
+    },
+    {
+      "path": "RenderPasses/Stylize/TiltShift.cs.slang",
+      "url": "/packages/render-passes/src/Stylize/TiltShift.cs.slang"
+    },
+    {
+      "path": "RenderPasses/Stylize/VHS.cs.slang",
+      "url": "/packages/render-passes/src/Stylize/VHS.cs.slang"
     }
   ]
 }
