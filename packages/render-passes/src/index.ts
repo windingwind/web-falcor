@@ -46,3 +46,5 @@ export * from "./PhysicalSky/PhysicalSky.js";
 export * from "./FXAA/FXAA.js";
 export * from "./DepthOfField/DepthOfField.js";
 export * from "./MotionBlur/MotionBlur.js";
+export * from "./Stylize/GradientFog.js";
+export * from "./Stylize/LightShafts.js";

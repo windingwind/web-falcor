@@ -615,6 +615,14 @@
     {
       "path": "RenderPasses/SSAO/SSAO.cs.slang",
       "url": "/packages/render-passes/src/SSAO/SSAO.cs.slang"
+    },
+    {
+      "path": "RenderPasses/Stylize/GradientFog.cs.slang",
+      "url": "/packages/render-passes/src/Stylize/GradientFog.cs.slang"
+    },
+    {
+      "path": "RenderPasses/Stylize/LightShafts.cs.slang",
+      "url": "/packages/render-passes/src/Stylize/LightShafts.cs.slang"
     }
   ]
 }
