@@ -159,7 +159,16 @@ npm run download:scenes -- Arcade       # just one scene (Arcade, test_scenes, â
 npm run download:scenes -- Bistro       # a large ORCA scene by name
 npm run download:scenes -- cornell-box  # a Bitterli pbrt-v4 scene
 npm run download:scenes -- --all        # everything, incl. the big ORCA scenes
+npm run download:scenes -- FlightHelmet # an extra openly licensed scene by name
+npm run download:scenes -- mcguire      # a whole extra group
+npm run download:scenes -- --dry-run khronos   # show what would be fetched
 ```
+
+Extra groups (fetched by name only): `khronos` (glTF-Sample-Assets), `mcguire`
+(Computer Graphics Archive OBJ scenes), `pbrt-v4-scenes`, `cauldron` (AMD
+Cauldron-Media), `threejs` and `usd-wg`. Each entry records its licence and
+attribution, and the downloader writes them to `<Scene>/ATTRIBUTION.txt`;
+GitHub-hosted entries are pinned to a commit or tag.
 
 Scenes land under `Falcor/media/<Scene>/`, which the dev server serves at
 `/Falcor/media/â€¦`. The Mogwai viewer loads `test_scenes/cornell_box.pyscene` by
