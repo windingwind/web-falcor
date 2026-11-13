@@ -583,6 +583,18 @@
       "path": "rtxdi/RtxdiTypes.h",
       "url": "/Falcor/external/packman/rtxdi/rtxdi-sdk/include/rtxdi/RtxdiTypes.h",
       "upstream": "https://raw.githubusercontent.com/NVIDIAGameWorks/RTXDI/v1.3.0/rtxdi-sdk/include/rtxdi/RtxdiTypes.h"
+    },
+    {
+      "path": "RenderPasses/RasterLighting/DeferredLighting.cs.slang",
+      "url": "/packages/render-passes/src/RasterLighting/DeferredLighting.cs.slang"
+    },
+    {
+      "path": "RenderPasses/RasterLighting/EnvSH.cs.slang",
+      "url": "/packages/render-passes/src/RasterLighting/EnvSH.cs.slang"
+    },
+    {
+      "path": "RenderPasses/RasterLighting/ShadowMap.3d.slang",
+      "url": "/packages/render-passes/src/RasterLighting/ShadowMap.3d.slang"
     }
   ]
 }
