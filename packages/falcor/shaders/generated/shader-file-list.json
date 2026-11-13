@@ -615,6 +615,22 @@
     {
       "path": "RenderPasses/SSAO/SSAO.cs.slang",
       "url": "/packages/render-passes/src/SSAO/SSAO.cs.slang"
+    },
+    {
+      "path": "RenderPasses/Stylize/DitherV2.cs.slang",
+      "url": "/packages/render-passes/src/Stylize/DitherV2.cs.slang"
+    },
+    {
+      "path": "RenderPasses/Stylize/PaletteQuant.cs.slang",
+      "url": "/packages/render-passes/src/Stylize/PaletteQuant.cs.slang"
+    },
+    {
+      "path": "RenderPasses/Stylize/PixelateV2.cs.slang",
+      "url": "/packages/render-passes/src/Stylize/PixelateV2.cs.slang"
+    },
+    {
+      "path": "RenderPasses/Stylize/SelectiveColour.cs.slang",
+      "url": "/packages/render-passes/src/Stylize/SelectiveColour.cs.slang"
     }
   ]
 }
