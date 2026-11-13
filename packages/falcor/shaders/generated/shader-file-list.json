@@ -615,6 +615,18 @@
     {
       "path": "RenderPasses/SSAO/SSAO.cs.slang",
       "url": "/packages/render-passes/src/SSAO/SSAO.cs.slang"
+    },
+    {
+      "path": "RenderPasses/Stylize/RampShade.cs.slang",
+      "url": "/packages/render-passes/src/Stylize/RampShade.cs.slang"
+    },
+    {
+      "path": "RenderPasses/Stylize/RimLight.cs.slang",
+      "url": "/packages/render-passes/src/Stylize/RimLight.cs.slang"
+    },
+    {
+      "path": "RenderPasses/Stylize/StyleAovs.cs.slang",
+      "url": "/packages/render-passes/src/Stylize/StyleAovs.cs.slang"
     }
   ]
 }
