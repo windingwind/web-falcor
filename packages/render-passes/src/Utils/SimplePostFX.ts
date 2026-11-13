@@ -7,6 +7,7 @@
  * texture in a pass; border-mode sampling is emulated in-shader.
  */
 
+import { simplePostFXIsDefault } from "./SimplePostFXDefault.js";
 import {
     IOSize,
     parseIOSize,
@@ -283,17 +284,19 @@ export class SimplePostFX extends RenderPass {
         }
         const [width, height] = [src.width, src.height];
 
-        const isDefault =
-            this.mBloomAmount === 0 &&
-            this.mChromaticAberrationAmount === 0 &&
-            this.mBarrelDistortAmount === 0 &&
-            this.mSaturationCurve.every((v) => v === 1) &&
-            this.mColorOffset.every((v) => v === 0.5) &&
-            this.mColorScale.every((v) => v === 0.5) &&
-            this.mColorPower.every((v) => v === 0.5) &&
-            this.mColorOffsetScalar === 0 &&
-            this.mColorScaleScalar === 0 &&
-            this.mColorPowerScalar === 0;
+        const isDefault = simplePostFXIsDefault({
+            bloomAmount: this.mBloomAmount,
+            vignetteAmount: this.mVignetteAmount,
+            chromaticAberrationAmount: this.mChromaticAberrationAmount,
+            barrelDistortAmount: this.mBarrelDistortAmount,
+            saturationCurve: this.mSaturationCurve,
+            colorOffset: this.mColorOffset,
+            colorScale: this.mColorScale,
+            colorPower: this.mColorPower,
+            colorOffsetScalar: this.mColorOffsetScalar,
+            colorScaleScalar: this.mColorScaleScalar,
+            colorPowerScalar: this.mColorPowerScalar,
+        });
         if (!this.mEnabled || this.mWipe >= 1 || isDefault) {
             ctx.blit(src, dst);
             return;
