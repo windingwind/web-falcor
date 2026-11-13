@@ -276,7 +276,9 @@ GBufferPSOut shadeGBuffer(const VertexData v, const uint materialID, const float
     // Linear z and its derivative
 #if is_valid(gLinearZAndDeriv)
     {
-        const float linearZ = posH.z * posH.w;
+        // Native: SV_Position.w is clip w, so z * w = clip-space z. WGSL's fragment position.w is 1 / clip w
+        // (the D3D value would be z / w here), so divide to store the same clip-space z as native.
+        const float linearZ = posH.z / posH.w;
         psOut.linearZ = float2(linearZ, max(abs(ddx(linearZ)), abs(ddy(linearZ))));
     }
 #endif

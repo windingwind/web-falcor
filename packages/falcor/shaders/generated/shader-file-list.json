@@ -601,6 +601,18 @@
       "url": "/packages/render-passes/src/PhysicalSky/PhysicalSky.cs.slang"
     },
     {
+      "path": "RenderPasses/RasterLighting/DeferredLighting.cs.slang",
+      "url": "/packages/render-passes/src/RasterLighting/DeferredLighting.cs.slang"
+    },
+    {
+      "path": "RenderPasses/RasterLighting/EnvSH.cs.slang",
+      "url": "/packages/render-passes/src/RasterLighting/EnvSH.cs.slang"
+    },
+    {
+      "path": "RenderPasses/RasterLighting/ShadowMap.3d.slang",
+      "url": "/packages/render-passes/src/RasterLighting/ShadowMap.3d.slang"
+    },
+    {
       "path": "RenderPasses/SSAO/SSAO.cs.slang",
       "url": "/packages/render-passes/src/SSAO/SSAO.cs.slang"
     }

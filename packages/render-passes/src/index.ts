@@ -39,6 +39,8 @@ export * from "./WARDiffPathTracer/WARDiffPathTracer.js";
 export * from "./SDFEditor/SDFEditor.js";
 export * from "./BSDFOptimizer/BSDFOptimizer.js";
 export * from "./NRDPass/NRDPass.js";
+export * from "./RasterLighting/CascadedShadowMap.js";
+export * from "./RasterLighting/DeferredLighting.js";
 export * from "./SSAO/SSAO.js";
 export * from "./PhysicalSky/PhysicalSky.js";
 export * from "./FXAA/FXAA.js";

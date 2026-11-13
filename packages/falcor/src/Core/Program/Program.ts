@@ -189,6 +189,8 @@ function shaderTypeToVisibility(type: ShaderType): GPUShaderStageFlags {
 /** Mirrors ProgramManager::CompilationStats (times in seconds): versions are Slang compiles, kernels the WGSL modules. */
 export interface CompilationStats {
     programVersionCount: number;
+    /** Program versions served from the program cache (no Slang compile, no shader module creation). */
+    programVersionCacheHits: number;
     programKernelsCount: number;
     programVersionMaxTime: number;
     programKernelsMaxTime: number;
@@ -196,7 +198,7 @@ export interface CompilationStats {
     programKernelsTotalTime: number;
 }
 
-const kNoCompilationStats: CompilationStats = { programVersionCount: 0, programKernelsCount: 0, programVersionMaxTime: 0, programKernelsMaxTime: 0, programVersionTotalTime: 0, programKernelsTotalTime: 0 };
+const kNoCompilationStats: CompilationStats = { programVersionCount: 0, programVersionCacheHits: 0, programKernelsCount: 0, programVersionMaxTime: 0, programKernelsMaxTime: 0, programVersionTotalTime: 0, programKernelsTotalTime: 0 };
 
 export class ProgramManager {
     readonly globalDefines = new DefineList();
@@ -218,6 +220,16 @@ export class ProgramManager {
     private filePaths: string[];
     /** Bumped by reloadAllPrograms; Programs drop cached versions when it moves. */
     private reloadGeneration = 0;
+    /**
+     * Program cache shared by all Programs of this device: compiled versions keyed by everything that determines the
+     * compile (modules incl. inline source strings, entry points, effective defines, type conformances, Slang runtime).
+     * Shader files are resolved by path, so the cache is cleared whenever the sources can change (reloadAllPrograms).
+     * Without it every new pass instance recompiles its shaders, e.g. each rebuild of a render graph. ProgramVersions
+     * are immutable after creation, so sharing them between Programs is safe.
+     */
+    private versionCache = new Map<string, ProgramVersion>();
+    /** Set to false to compile every Program version anew (e.g. to measure compile times). */
+    programCacheEnabled = true;
 
     constructor(
         private readonly device: Device,
@@ -292,6 +304,7 @@ export class ProgramManager {
             this.resolveSource = source.resolveSource;
             this.filePaths = source.filePaths;
         }
+        this.versionCache.clear();
         this.compiler.dispose();
         this.compiler = this.createCompiler();
         for (const alt of this.altCompilers.values()) {
@@ -320,8 +333,17 @@ export class ProgramManager {
         const alt = desc.slangRuntime ? this.altCompilers.get(desc.slangRuntime) : undefined;
         if (desc.slangRuntime && !alt) throw new RuntimeError(`Slang runtime ${desc.slangRuntime} not loaded (ProgramManager.loadSlangRuntime)`);
         const compiler = alt?.compiler ?? this.compiler;
+        const modules = programModules(desc);
+        const cacheKey = JSON.stringify([modules, desc.entryPoints, allDefines.key(), desc.typeConformances ?? [], desc.slangRuntime ?? ""]);
+        if (this.programCacheEnabled) {
+            const cached = this.versionCache.get(cacheKey);
+            if (cached) {
+                this.stats.programVersionCacheHits++;
+                return cached;
+            }
+        }
         const t0 = performance.now();
-        const result = compiler.compile(programModules(desc), desc.entryPoints, allDefines, desc.typeConformances ?? []);
+        const result = compiler.compile(modules, desc.entryPoints, allDefines, desc.typeConformances ?? []);
         const t1 = performance.now();
         const codes = desc.entryPoints.map((_ep, i) => fixupWgsl(result.entryPointCode[i]!));
         const loadOnly = isLoadOnlyWgsl(codes);
@@ -343,7 +365,19 @@ export class ProgramManager {
         st.programKernelsTotalTime += kernelsTime;
         st.programVersionMaxTime = Math.max(st.programVersionMaxTime, versionTime);
         st.programKernelsMaxTime = Math.max(st.programKernelsMaxTime, kernelsTime);
-        return new ProgramVersion(new ProgramReflection(result.reflection), kernels);
+        const version = new ProgramVersion(new ProgramReflection(result.reflection), kernels);
+        if (this.programCacheEnabled) this.versionCache.set(cacheKey, version);
+        return version;
+    }
+
+    /** Drops all cached program versions (Programs keep the versions they already hold). */
+    clearProgramCache(): void {
+        this.versionCache.clear();
+    }
+
+    /** Number of program versions in the program cache. */
+    get programCacheSize(): number {
+        return this.versionCache.size;
     }
 }
 
