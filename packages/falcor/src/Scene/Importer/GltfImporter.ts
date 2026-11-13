@@ -410,7 +410,9 @@ export class GltfImporter {
                     const pick = (a: Float32Array | null, n: number) => a && gather(a, join.source, n);
                     const pos = pick(rawPos, 3)!;
                     const count = pos.length / 3;
-                    const normals = pick(attribute("NORMAL"), 3);
+                    // glTF 2.0: without NORMAL the client must generate normals. Native imports through Assimp with
+                    // aiProcess_GenSmoothNormals (TargetRealtime_MaxQuality), so smooth normals are generated here too.
+                    const normals = pick(attribute("NORMAL"), 3) ?? generateSmoothNormals(join.indices, pos);
                     const tangents = pick(attribute("TANGENT"), 4);
                     const uvs = pick(attribute("TEXCOORD_0"), 2);
                     // KHR_texture_transform: bake the material's uv transform into the
@@ -492,6 +494,41 @@ export class GltfImporter {
 function gather<T extends Float32Array | Uint32Array>(data: T, source: Uint32Array, n: number): T {
     const out = new (data.constructor as { new (len: number): T })(source.length * n);
     source.forEach((src, i) => out.set(data.subarray(src * n, src * n + n), i * n));
+    return out;
+}
+
+/**
+ * Smooth vertex normals for a triangle list without normals (glTF 2.0: "When normals are not specified, client
+ * implementations MUST calculate" them). Mirrors Assimp's aiProcess_GenSmoothNormals with its default 175 degree limit,
+ * which native Falcor applies on import: every vertex gets the normalized sum of the unit normals of all faces that
+ * touch its position (vertices that share a position but differ in other attributes get the same normal). Degenerate
+ * faces contribute nothing; a vertex whose faces are all degenerate gets (0, 0, 1).
+ */
+export function generateSmoothNormals(indices: Uint32Array, pos: Float32Array): Float32Array {
+    const count = pos.length / 3;
+    const key = (v: number) => `${pos[v * 3]},${pos[v * 3 + 1]},${pos[v * 3 + 2]}`;
+    const sums = new Map<string, [number, number, number]>();
+    for (let t = 0; t + 2 < indices.length; t += 3) {
+        const [a, b, c] = [indices[t]!, indices[t + 1]!, indices[t + 2]!];
+        const e1 = [pos[b * 3]! - pos[a * 3]!, pos[b * 3 + 1]! - pos[a * 3 + 1]!, pos[b * 3 + 2]! - pos[a * 3 + 2]!];
+        const e2 = [pos[c * 3]! - pos[a * 3]!, pos[c * 3 + 1]! - pos[a * 3 + 1]!, pos[c * 3 + 2]! - pos[a * 3 + 2]!];
+        const n = [e1[1]! * e2[2]! - e1[2]! * e2[1]!, e1[2]! * e2[0]! - e1[0]! * e2[2]!, e1[0]! * e2[1]! - e1[1]! * e2[0]!];
+        const len = Math.hypot(n[0]!, n[1]!, n[2]!);
+        if (!(len > 0)) continue;
+        // each position once per face (a face may reference the same position twice)
+        for (const k of new Set([key(a), key(b), key(c)])) {
+            const s = sums.get(k) ?? [0, 0, 0];
+            s[0] += n[0]! / len; s[1] += n[1]! / len; s[2] += n[2]! / len;
+            sums.set(k, s);
+        }
+    }
+    const out = new Float32Array(count * 3);
+    for (let v = 0; v < count; v++) {
+        const s = sums.get(key(v));
+        const len = s ? Math.hypot(s[0], s[1], s[2]) : 0;
+        if (s && len > 0) [out[v * 3], out[v * 3 + 1], out[v * 3 + 2]] = [s[0] / len, s[1] / len, s[2] / len];
+        else out[v * 3 + 2] = 1;
+    }
     return out;
 }
 

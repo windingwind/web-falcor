@@ -76,3 +76,51 @@ gpuTest("GltfImporter.quadRendersThroughGBuffer", async ({ device }) => {
 
     expectEq(scene.getGeometryInstanceCount(), 1, "one instance");
 });
+
+/** A y = 0 quad (counter-clockwise seen from +y) with POSITION only: the importer must generate normals (glTF 2.0). */
+function makeGroundQuadWithoutNormals(): Uint8Array {
+    const positions = new Float32Array([-1, 0, -1, -1, 0, 1, 1, 0, 1, 1, 0, -1]);
+    const indices = new Uint16Array([0, 1, 2, 0, 2, 3]);
+    const bin = new Uint8Array(positions.byteLength + indices.byteLength);
+    bin.set(new Uint8Array(positions.buffer), 0);
+    bin.set(new Uint8Array(indices.buffer), positions.byteLength);
+    const gltf = {
+        asset: { version: "2.0" },
+        scene: 0,
+        scenes: [{ nodes: [0] }],
+        nodes: [{ mesh: 0 }],
+        meshes: [{ primitives: [{ attributes: { POSITION: 0 }, indices: 1, material: 0 }] }],
+        materials: [{ pbrMetallicRoughness: { baseColorFactor: [0.5, 0.5, 0.5, 1.0] } }],
+        accessors: [
+            { bufferView: 0, componentType: 5126, count: 4, type: "VEC3", min: [-1, 0, -1], max: [1, 0, 1] },
+            { bufferView: 1, componentType: 5123, count: 6, type: "SCALAR" },
+        ],
+        bufferViews: [
+            { buffer: 0, byteOffset: 0, byteLength: positions.byteLength },
+            { buffer: 0, byteOffset: positions.byteLength, byteLength: indices.byteLength },
+        ],
+        buffers: [{ uri: `data:application/octet-stream;base64,${btoa(String.fromCharCode(...bin))}`, byteLength: bin.byteLength }],
+    };
+    return new TextEncoder().encode(JSON.stringify(gltf));
+}
+
+gpuTest("GltfImporter.missingNormalsAreGenerated", async ({ device }) => {
+    const scene = await GltfImporter.importFromBytes(device, makeGroundQuadWithoutNormals());
+    scene.camera.setPosition(new float3(0.1, 2, 0.2));
+    scene.camera.setTarget(new float3(0, 0, 0));
+    scene.camera.setAspectRatio(1);
+    const size = 16;
+    const graph = new RenderGraph(device, "GltfNoNormals");
+    graph.onResize(size, size);
+    graph.addPass(createPass(device, "GBufferRaster"), "GBufferRaster");
+    graph.markOutput("GBufferRaster.normW");
+    graph.setScene(scene);
+    const ctx = device.renderContext;
+    graph.execute(ctx);
+    const normW = new Float32Array((await ctx.readTextureSubresource(graph.getOutput("GBufferRaster.normW")!)).buffer);
+    const c = ((size / 2) * size + size / 2) * 4;
+    // Without generated normals the importer used to fall back to (0, 0, 1).
+    expectClose(normW[c]!, 0, 1e-3, "normW.x");
+    expectClose(normW[c + 1]!, 1, 1e-3, "normW.y");
+    expectClose(normW[c + 2]!, 0, 1e-3, "normW.z");
+});
