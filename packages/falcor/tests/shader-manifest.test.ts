@@ -56,6 +56,8 @@ describe.skipIf(!hasShaders)("shader manifest", () => {
     }, kTreeTimeoutMs);
 
     it("externalFiles carry the upstream URL setup:web fetches from", () => {
-        for (const e of manifest.externalFiles) expect(e.upstream, e.path).toMatch(/^https:\/\//);
+        // In-tree pass shaders (repo-shader-list.js files them under externalFiles, served from /packages/) are
+        // repo-owned and fetched from nowhere; setup:web likewise only fetches entries with an upstream URL.
+        for (const e of manifest.externalFiles) if (!e.url.startsWith("/packages/")) expect(e.upstream, e.path).toMatch(/^https:\/\//);
     });
 });
