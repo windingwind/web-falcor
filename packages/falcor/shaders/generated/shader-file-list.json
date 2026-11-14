@@ -613,6 +613,14 @@
       "url": "/packages/render-passes/src/RasterLighting/ShadowMap.3d.slang"
     },
     {
+      "path": "RenderPasses/RasterLighting/Visibility.slangh",
+      "url": "/packages/render-passes/src/RasterLighting/Visibility.slangh"
+    },
+    {
+      "path": "RenderPasses/RasterLighting/VisibilityQuery.cs.slang",
+      "url": "/packages/render-passes/src/RasterLighting/VisibilityQuery.cs.slang"
+    },
+    {
       "path": "RenderPasses/SSAO/SSAO.cs.slang",
       "url": "/packages/render-passes/src/SSAO/SSAO.cs.slang"
     },
