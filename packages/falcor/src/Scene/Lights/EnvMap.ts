@@ -77,6 +77,7 @@ export class EnvMap {
             bindFlags: ResourceBindFlags.ShaderResource,
             name: "EnvMap::texture",
         });
+        device.renderContext.submitBeforeQueueWrite();
         device.gpuDevice.queue.writeTexture(
             { texture: this.texture.gpuTexture },
             image.data as Float32Array<ArrayBuffer>,

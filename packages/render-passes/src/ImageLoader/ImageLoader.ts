@@ -127,6 +127,7 @@ export class ImageLoader extends RenderPass {
                 undefined,
                 flags,
             );
+            this.device.renderContext.submitBeforeQueueWrite();
             this.device.gpuDevice.queue.copyExternalImageToTexture({ source: bitmap }, { texture: texture.gpuTexture }, [bitmap.width, bitmap.height]);
             this.texture = texture;
         }

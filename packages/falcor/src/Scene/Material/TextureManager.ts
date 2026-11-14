@@ -351,6 +351,7 @@ export class TextureManager {
             b.members.forEach((id) => this.gpuFormats.set(id, b.format));
             b.members.forEach((id, layer) => {
                 const src = this.sources[id]!;
+                device.renderContext.submitBeforeQueueWrite();
                 if (b.compressed) {
                     const c = src.compressed!;
                     c.levels.forEach((data, mip) => texture.setSubresourceBlob(mip, layer, data));
@@ -379,6 +380,7 @@ export class TextureManager {
         });
         if (out.length === 0) {
             const texture = new Texture(device, { type: ResourceType.Texture2D, width: 1, height: 1, arraySize: 1, mipLevels: 1, format: ResourceFormat.RGBA8UnormSrgb, bindFlags: ResourceBindFlags.ShaderResource, name: "TextureManager::materialTextures0" });
+            device.renderContext.submitBeforeQueueWrite();
             device.gpuDevice.queue.writeTexture({ texture: texture.gpuTexture }, new Uint8Array([255, 255, 255, 255]), { bytesPerRow: 4 }, { width: 1, height: 1 });
             out.push({ texture, generateMips: false });
         }
