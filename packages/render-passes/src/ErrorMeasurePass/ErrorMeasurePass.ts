@@ -105,6 +105,7 @@ export class ErrorMeasurePass extends RenderPass {
         } else {
             const bitmap = await createImageBitmap(await res.blob(), { colorSpaceConversion: "none", premultiplyAlpha: "none" });
             const tex = this.device.createTexture2D(bitmap.width, bitmap.height, ResourceFormat.RGBA8UnormSrgb, 1, 1, undefined, ResourceBindFlags.ShaderResource | ResourceBindFlags.RenderTarget);
+            this.device.renderContext.submitBeforeQueueWrite();
             this.device.gpuDevice.queue.copyExternalImageToTexture({ source: bitmap }, { texture: tex.gpuTexture }, [bitmap.width, bitmap.height]);
             this.referenceTexture = tex;
         }

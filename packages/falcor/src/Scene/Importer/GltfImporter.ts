@@ -460,8 +460,10 @@ export class GltfImporter {
                         skin = {
                             boneNodeIDs: gltfSkin.joints.slice(),
                             inverseBind,
-                            boneIDs: gather(readAccessor(prim.attributes["JOINTS_0"]) as Uint32Array, join.source, 4),
-                            weights: gather(readAccessor(prim.attributes["WEIGHTS_0"]) as Float32Array, join.source, 4),
+                            // Through attribute(): with KHR_draco_mesh_compression the JOINTS_0/WEIGHTS_0 accessors have
+                            // no bufferView; the values live in the decoded Draco attributes like POSITION does.
+                            boneIDs: gather(Uint32Array.from(attribute("JOINTS_0")!), join.source, 4),
+                            weights: gather(attribute("WEIGHTS_0")!, join.source, 4),
                         };
                     }
                     // Morph targets: per-target POSITION (and optional NORMAL)
