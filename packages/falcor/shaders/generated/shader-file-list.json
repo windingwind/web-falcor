@@ -601,6 +601,10 @@
       "url": "/packages/render-passes/src/Layers/ParticleLayer.cs.slang"
     },
     {
+      "path": "RenderPasses/Layers/VfxLayer.cs.slang",
+      "url": "/packages/render-passes/src/Layers/VfxLayer.cs.slang"
+    },
+    {
       "path": "RenderPasses/MotionBlur/MotionBlur.cs.slang",
       "url": "/packages/render-passes/src/MotionBlur/MotionBlur.cs.slang"
     },
