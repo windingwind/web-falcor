@@ -593,6 +593,14 @@
       "url": "/packages/render-passes/src/FXAA/FXAA.cs.slang"
     },
     {
+      "path": "RenderPasses/Layers/DepthComposite.cs.slang",
+      "url": "/packages/render-passes/src/Layers/DepthComposite.cs.slang"
+    },
+    {
+      "path": "RenderPasses/Layers/ParticleLayer.cs.slang",
+      "url": "/packages/render-passes/src/Layers/ParticleLayer.cs.slang"
+    },
+    {
       "path": "RenderPasses/MotionBlur/MotionBlur.cs.slang",
       "url": "/packages/render-passes/src/MotionBlur/MotionBlur.cs.slang"
     },
@@ -639,6 +647,14 @@
     {
       "path": "RenderPasses/Stylize/StyleAovs.cs.slang",
       "url": "/packages/render-passes/src/Stylize/StyleAovs.cs.slang"
+    },
+    {
+      "path": "RenderPasses/Utils/HiZBuild.cs.slang",
+      "url": "/packages/render-passes/src/Utils/HiZBuild.cs.slang"
+    },
+    {
+      "path": "RenderPasses/Utils/TemporalBlend.cs.slang",
+      "url": "/packages/render-passes/src/Utils/TemporalBlend.cs.slang"
     }
   ]
 }
