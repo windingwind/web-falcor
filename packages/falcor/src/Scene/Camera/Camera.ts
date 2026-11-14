@@ -140,6 +140,22 @@ export class Camera {
         this.dirty = true; // data.prevViewProjMatNoJitter must be rebuilt
     }
 
+    /**
+     * Incremented by resetHistory(). Passes that keep previous-frame state (history buffers, particle state) compare it
+     * with the value they saw last frame and drop their state when it changed.
+     */
+    historyEpoch = 0;
+
+    /**
+     * Starts a new shot (a camera cut): the next beginFrame() uses the current matrix as the previous one, so motion
+     * vectors are zero on that frame, exactly as for a freshly created camera, and historyEpoch is incremented so that
+     * history-keeping passes reset. Without it the previous-frame matrix is whatever the camera rendered last.
+     */
+    resetHistory(): void {
+        this.lastFrameViewProjMatNoJitter = null;
+        this.historyEpoch++;
+    }
+
     setPosition(p: float3): void { this._position = p.clone(); this.dirty = true; }
     getPosition(): float3 { return this._position.clone(); }
     setTarget(t: float3): void { this._target = t.clone(); this.dirty = true; }

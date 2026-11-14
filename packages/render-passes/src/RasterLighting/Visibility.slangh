@@ -1,0 +1,109 @@
+/**
+ * Visibility service: one visibility query that compute passes can call at any world position, e.g. for volumetric
+ * light, contact shadows or translucency, with the same shadowing as DeferredLighting.
+ *
+ *   float visibility(float3 posW, float3 faceN, float3 dirToLight, float distToLight)
+ *     1 = the light is visible from posW, 0 = occluded (fractional under PCF). faceN orients the ray-origin / normal
+ *     offset towards the light; pass float3(0) for points in a medium (no offset).
+ *
+ * Host define VIS_MODE (bound by VisibilityService.ts):
+ *   0 = none (always 1)
+ *   1 = cascaded shadow map of CascadedShadowMap (bilinear PCF, normal and depth bias; the same code as DeferredLighting's
+ *       shadow-map mode). Only meaningful for the light the shadow map was rendered for (VisibilityService.lightIndex).
+ *   2 = ray traced: a visibility ray through the scene's software BVH (SceneRayQuery; same ray setup as DeferredLighting's
+ *       RayTraced mode and MinimalPathTracer). Works for every light, 3-10x slower.
+ * The including shader must import Scene (gScene) and include this file at global scope.
+ */
+#pragma once
+
+#ifndef VIS_MODE
+#define VIS_MODE 0
+#endif
+
+#if VIS_MODE == 2
+import Scene.RaytracingInline;
+#endif
+import Utils.Geometry.GeometryHelpers;
+
+#if VIS_MODE == 1
+static const uint kVisMaxCascades = 4;
+
+cbuffer VisibilityCB
+{
+    uint gVisCascadeCount;
+    uint gVisCascadeSize;          ///< Square cascade resolution (atlas = count*size x size).
+    int gVisPcfRadius;             ///< PCF kernel radius in texels.
+    float gVisDepthBias;           ///< Constant depth bias in world units.
+    float4x4 gVisCascadeViewProj[kVisMaxCascades];
+    float4 gVisCascadeSplits;      ///< Far view depth of each cascade.
+    float4 gVisCascadeTexelWorld;  ///< World-space size of one shadow texel per cascade.
+    float4 gVisCascadeDepthScale;  ///< 1 / light-space depth range (world units) per cascade.
+    float3 gVisCamForward;         ///< Camera forward (normalized) for cascade selection.
+    float gVisNormalBias;          ///< Normal offset in shadow texels.
+};
+
+Texture2D<float> gVisShadowMap;
+
+float visShadowCompare(uint cascade, int2 t, float z)
+{
+    t = clamp(t, int2(0), int2(int(gVisCascadeSize) - 1));
+    const float d = gVisShadowMap.Load(int3(int(cascade * gVisCascadeSize) + t.x, t.y, 0));
+    return z <= d ? 1.f : 0.f;
+}
+
+/// Bilinear PCF over (2r+1)^2 taps (each tap = 2x2 comparisons with bilinear weights).
+float visShadowMap(float3 posW, float3 faceN, float3 L)
+{
+    const float viewZ = dot(posW - gScene.camera.getPosition(), gVisCamForward);
+    uint c = 0;
+    while (c + 1 < gVisCascadeCount && viewZ > gVisCascadeSplits[c]) c++;
+
+    // Normal offset (in world units, scaled by the cascade's texel size), oriented to the light side.
+    const float3 n = dot(faceN, L) >= 0.f ? faceN : -faceN;
+    const float3 p = posW + n * (gVisNormalBias * gVisCascadeTexelWorld[c]);
+    const float4 q = mul(gVisCascadeViewProj[c], float4(p, 1.f));
+    const float2 uv = float2(q.x * 0.5f + 0.5f, 0.5f - q.y * 0.5f);
+    if (any(uv < 0.f) || any(uv > 1.f) || q.z > 1.f) return 1.f;
+    const float z = q.z - gVisDepthBias * gVisCascadeDepthScale[c];
+
+    const float2 tc = uv * float(gVisCascadeSize) - 0.5f;
+    const int2 t0 = int2(floor(tc));
+    const float2 f = tc - float2(t0);
+    float sum = 0.f;
+    for (int dy = -gVisPcfRadius; dy <= gVisPcfRadius; dy++)
+    {
+        for (int dx = -gVisPcfRadius; dx <= gVisPcfRadius; dx++)
+        {
+            const int2 t = t0 + int2(dx, dy);
+            const float s00 = visShadowCompare(c, t, z);
+            const float s10 = visShadowCompare(c, t + int2(1, 0), z);
+            const float s01 = visShadowCompare(c, t + int2(0, 1), z);
+            const float s11 = visShadowCompare(c, t + int2(1, 1), z);
+            sum += lerp(lerp(s00, s10, f.x), lerp(s01, s11, f.x), f.y);
+        }
+    }
+    const float k = float(2 * gVisPcfRadius + 1);
+    return sum / (k * k);
+}
+#endif
+
+#if VIS_MODE == 2
+float visRayTraced(float3 posW, float3 faceN, float3 L, float dist)
+{
+    const float3 origin = any(faceN != float3(0.f)) ? computeRayOrigin(posW, dot(faceN, L) >= 0.f ? faceN : -faceN) : posW;
+    SceneRayQuery<1> query;
+    const Ray ray = Ray(origin, L, 0.f, dist);
+    return query.traceVisibilityRay(ray, RAY_FLAG_ACCEPT_FIRST_HIT_AND_END_SEARCH, 0xff) ? 1.f : 0.f;
+}
+#endif
+
+float visibility(float3 posW, float3 faceN, float3 dirToLight, float distToLight)
+{
+#if VIS_MODE == 1
+    return visShadowMap(posW, faceN, dirToLight);
+#elif VIS_MODE == 2
+    return visRayTraced(posW, faceN, dirToLight, distToLight);
+#else
+    return 1.f;
+#endif
+}

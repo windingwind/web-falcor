@@ -593,8 +593,20 @@
       "url": "/packages/render-passes/src/FXAA/FXAA.cs.slang"
     },
     {
+      "path": "RenderPasses/Layers/DepthComposite.cs.slang",
+      "url": "/packages/render-passes/src/Layers/DepthComposite.cs.slang"
+    },
+    {
+      "path": "RenderPasses/Layers/ParticleLayer.cs.slang",
+      "url": "/packages/render-passes/src/Layers/ParticleLayer.cs.slang"
+    },
+    {
       "path": "RenderPasses/MotionBlur/MotionBlur.cs.slang",
       "url": "/packages/render-passes/src/MotionBlur/MotionBlur.cs.slang"
+    },
+    {
+      "path": "RenderPasses/MotionStats/MotionStats.cs.slang",
+      "url": "/packages/render-passes/src/MotionStats/MotionStats.cs.slang"
     },
     {
       "path": "RenderPasses/PhysicalSky/PhysicalSky.cs.slang",
@@ -611,6 +623,14 @@
     {
       "path": "RenderPasses/RasterLighting/ShadowMap.3d.slang",
       "url": "/packages/render-passes/src/RasterLighting/ShadowMap.3d.slang"
+    },
+    {
+      "path": "RenderPasses/RasterLighting/Visibility.slangh",
+      "url": "/packages/render-passes/src/RasterLighting/Visibility.slangh"
+    },
+    {
+      "path": "RenderPasses/RasterLighting/VisibilityQuery.cs.slang",
+      "url": "/packages/render-passes/src/RasterLighting/VisibilityQuery.cs.slang"
     },
     {
       "path": "RenderPasses/SSAO/SSAO.cs.slang",
@@ -631,6 +651,14 @@
     {
       "path": "RenderPasses/Stylize/StyleShade.cs.slang",
       "url": "/packages/render-passes/src/Stylize/StyleShade.cs.slang"
+    },
+    {
+      "path": "RenderPasses/Utils/HiZBuild.cs.slang",
+      "url": "/packages/render-passes/src/Utils/HiZBuild.cs.slang"
+    },
+    {
+      "path": "RenderPasses/Utils/TemporalBlend.cs.slang",
+      "url": "/packages/render-passes/src/Utils/TemporalBlend.cs.slang"
     }
   ]
 }
