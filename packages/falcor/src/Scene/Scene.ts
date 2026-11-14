@@ -25,7 +25,8 @@ import { packLights, LightType, PackedVertex, SceneLight, type AnalyticLight } f
 import { TextureManager, kMaxTextureBuckets } from "./Material/TextureManager.js";
 import type { EnvMap } from "./Lights/EnvMap.js";
 import { buildLightCollection } from "./Lights/LightCollection.js";
-import { evaluateGlobals, computeSkinMatrices, skinVertices, sampleMorphWeights, applyMorph, type SceneAnimations, type SceneNode, type AnimationChannel, type SkinDesc, type MorphDesc, type WeightTrack } from "./Animation/SceneAnimation.js";
+import { evaluateGlobals, computeSkinMatrices, skinVertices, sampleMorphWeights, applyMorph, quantizeTime, resolveNodeQuantization, type TimeQuantization, type SceneAnimations, type SceneNode, type AnimationChannel, type SkinDesc, type MorphDesc, type WeightTrack } from "./Animation/SceneAnimation.js";
+export type { TimeQuantization } from "./Animation/SceneAnimation.js";
 import { decodeNormal2x16Host, type Vec3 } from "../Rendering/Lights/LightBVHTypes.js";
 import type { EmissiveTriangleInput } from "../Rendering/Lights/LightBVHBuilder.js";
 import { transformPoint, transformVector } from "../Utils/Math/Matrix.js";
@@ -2047,6 +2048,28 @@ export class Scene {
     isLooped(): boolean {
         return this.loopAnimations;
     }
+
+    /** Per-node animation time quantisation (scene-graph node index -> hold); null = off (the default). */
+    private animTimeQuant: Map<number, TimeQuantization> | null = null;
+    private animTimeQuantResolved: (TimeQuantization | undefined)[] | null = null;
+
+    /**
+     * Quantises the animation time per scene-graph node ("on twos/threes", stop-motion): a node with
+     * an entry, and every descendant without its own entry, holds its pose for `hold` seconds
+     * (e.g. 2 / fps), then jumps. Applies to node transforms, skinning by those nodes, and morph weights
+     * and vertex caches of meshes on those nodes. Other nodes, and every node when the map is empty or
+     * null (the default), animate exactly as before.
+     */
+    setAnimationTimeQuantization(q: ReadonlyMap<number, TimeQuantization> | Record<number, TimeQuantization> | null): void {
+        const m = q instanceof Map ? new Map(q) : new Map(Object.entries(q ?? {}).map(([k, v]) => [Number(k), v] as [number, TimeQuantization]));
+        for (const [k, v] of m) if (!(v.hold > 0)) m.delete(k);
+        this.animTimeQuant = m.size > 0 ? m : null;
+        this.animTimeQuantResolved = null;
+        this.invalidateAnimation();
+    }
+    getAnimationTimeQuantization(): Map<number, TimeQuantization> {
+        return new Map(this.animTimeQuant ?? []);
+    }
     private _cameraSpeed = 1;
     /** Mirrors Scene::getCameraSpeed / setCameraSpeed (the camera controller's speed). */
     get cameraSpeed(): number {
@@ -2093,7 +2116,19 @@ export class Scene {
         if (key === this.lastAnimateKey && key === this.prevAnimateKey) return false;
         this.prevAnimateKey = this.lastAnimateKey;
         this.lastAnimateKey = key;
-        const globals = evaluateGlobals(this.animData, sampleTime);
+        // Time quantisation: quantised nodes sample the start of their hold (looped like sampleTime); others sample sampleTime.
+        let nodeTime: ((nodeID: number) => number) | undefined;
+        if (this.animTimeQuant && this.animData.duration > 0) {
+            const resolved = (this.animTimeQuantResolved ??= resolveNodeQuantization(this.animData.nodes, this.animTimeQuant));
+            const duration = this.animData.duration;
+            nodeTime = (nodeID) => {
+                const q = resolved[nodeID];
+                if (!q) return sampleTime;
+                const t = quantizeTime(timeSec, q);
+                return this.loopAnimations ? t % duration : t;
+            };
+        }
+        const globals = evaluateGlobals(this.animData, sampleTime, nodeTime);
         // AnimationController: vertex caches take the looped time, or the raw time without node animations,
         // and cycle before their first sample when they are shorter than the node animations.
         const cacheTime = this.animData.duration > 0 ? sampleTime : timeSec;
@@ -2139,9 +2174,9 @@ export class Scene {
             const base = mesh.polytubeCache
                 ? posePolytube(mesh, curveTime, curveLength < this.animData.duration)
                 : mesh.vertexCache
-                ? sampleVertexCache(mesh.vertexCache, cacheTime, cachePreCycle, mesh.vertices, this.loopAnimations)
+                ? sampleVertexCache(mesh.vertexCache, nodeTime && mesh.nodeID !== undefined ? nodeTime(mesh.nodeID) : cacheTime, cachePreCycle, mesh.vertices, this.loopAnimations)
                 : mesh.morph
-                  ? applyMorph(mesh.vertices, mesh.morph, sampleMorphWeights(mesh.morph, this.animData.weightTracks, sampleTime))
+                  ? applyMorph(mesh.vertices, mesh.morph, sampleMorphWeights(mesh.morph, this.animData.weightTracks, nodeTime ? nodeTime(mesh.morph.nodeID) : sampleTime))
                   : mesh.vertices;
             const isEmissive = this.materialDescs[mesh.materialID]?.header?.emissive === true;
             if (mesh.skin) {
