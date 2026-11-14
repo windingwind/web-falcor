@@ -1474,6 +1474,7 @@ export class Scene {
                     undefined,
                     ResourceBindFlags.ShaderResource | ResourceBindFlags.RenderTarget,
                 );
+                this.device.renderContext.submitBeforeQueueWrite();
                 this.device.gpuDevice.queue.copyExternalImageToTexture({ source: source.bitmap }, { texture: tex.gpuTexture }, [source.bitmap.width, source.bitmap.height]);
                 this.displacementTexture = tex;
             }

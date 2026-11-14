@@ -31,17 +31,12 @@ export async function coverage(device: Device, g: RenderGraph): Promise<number> 
     return hits / (pos.length / 4);
 }
 
-/**
- * Executes a G-buffer-only graph until the scene shows up (a freshly built scene can render an empty G-buffer on its
- * first frame when its programs are already cached). Leaves the camera history as is.
- */
+/** Executes a G-buffer-only graph once and checks that the scene shows up. Leaves the camera history as is. */
 export async function warmUp(device: Device, scene: Scene): Promise<void> {
     const g = buildGraph(device, scene, [], [], [], 32, 32);
-    for (let i = 0; i < 5; i++) {
-        g.execute(device.renderContext);
-        if ((await coverage(device, g)) > 0.2) return;
-    }
-    throw new Error("G-buffer still empty after 5 warm-up frames");
+    g.execute(device.renderContext);
+    const c = await coverage(device, g);
+    if (!(c > 0.2)) throw new Error(`G-buffer empty on the warm-up frame (coverage ${c})`);
 }
 
 export function rgbaTexture(device: Device, w: number, h: number, data: Float32Array): Texture {

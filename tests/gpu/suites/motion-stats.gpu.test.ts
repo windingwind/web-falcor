@@ -108,7 +108,6 @@ gpuTest("MotionStats.syntheticMatchesCpu", async ({ device }) => {
 });
 
 gpuTest("MotionStats.gbufferCameraMove", async ({ device }) => {
-    // Own scene instance (constant sky key): the default shared test scene can render an empty G-buffer after other suites created scenes.
     const scene = makeScene(device, [0.03, 0.03, 0.03]);
     const g = new RenderGraph(device, `MotionStatsTest${++graphCount}`);
     g.onResize(kSize, kSize);
@@ -118,14 +117,11 @@ gpuTest("MotionStats.gbufferCameraMove", async ({ device }) => {
     g.addEdge("G.posW", "M.mask");
     for (const o of ["G.mvec", "G.posW", "M.stats", "M.histogram"]) g.markOutput(o);
     g.setScene(scene);
-    // Execute until the G-buffer shows the scene (a fresh scene can render empty on its first frames), then settle.
+    // First frame (the G-buffer must show the scene), then settle.
+    g.execute(device.renderContext);
+    const pos0 = await read(device, g.getOutput("G.posW")!);
     let hits = 0;
-    for (let tries = 0; tries < 8 && hits <= 0.2 * kSize * kSize; tries++) {
-        g.execute(device.renderContext);
-        const pos0 = await read(device, g.getOutput("G.posW")!);
-        hits = 0;
-        for (let i = 3; i < pos0.length; i += 4) if (pos0[i] !== 0) hits++;
-    }
+    for (let i = 3; i < pos0.length; i += 4) if (pos0[i] !== 0) hits++;
     for (let k = 0; k < 2; k++) g.execute(device.renderContext); // prev = current camera
     expectEq(hits > 0.2 * kSize * kSize, true, `G-buffer shows the scene (${hits} px)`);
     const still = await read(device, g.getOutput("M.stats")!);
