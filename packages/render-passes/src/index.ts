@@ -65,3 +65,4 @@ export * from "./Stylize/WorldRevealMask.js";
 export * from "./Stylize/StopMotion.js";
 export * from "./Layers/VfxLayer.js";
 export * from "./Sky/ProceduralNightSky.js";
+export * from "./Sky/Clouds2D.js";
