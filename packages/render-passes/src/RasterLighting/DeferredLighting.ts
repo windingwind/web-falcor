@@ -8,6 +8,10 @@
  *    env lookup in the reflection direction; envSpecularOcclusion traces one visibility ray
  *    along it so glossy surfaces don't mirror the env map through nearby geometry);
  *  - emission, and the env map as background.
+ * Optional input `clipBuffer` (GBufferRaster's per-instance clip entries): with RayTraced shadows (and the env specular
+ * occlusion ray) the visibility rays skip the clipped parts of clipped instances, so clipped / dissolving objects lose
+ * their shadow with them. Without it (or without rays) nothing changes; for ShadowMap shadows connect the same buffer
+ * to CascadedShadowMap.clipBuffer.
  * brdf = "Material" evaluates the scene material (IMaterialInstance::eval, i.e. the same BSDF
  * the path tracers use); "LambertGGX" is the classic real-time model from the material's
  * BSDFProperties (Lambert + GGX / height-correlated Smith / Schlick).
@@ -34,6 +38,10 @@ import {
     type UIWidgets,
 } from "@web-falcor/falcor";
 import { kCascadedShadowMapData, kMaxCascades, type CascadedShadowMapData } from "./CascadedShadowMap.js";
+
+/** Optional per-instance clip input (GBufferRaster's clip buffer layout: one float4 per geometry instance). */
+const kClipBuffer = "clipBuffer";
+const kClipStride = 16;
 
 const kShaderFile = "RenderPasses/RasterLighting/DeferredLighting.cs.slang";
 const kSHShaderFile = "RenderPasses/RasterLighting/EnvSH.cs.slang";
@@ -128,6 +136,10 @@ export class DeferredLighting extends RenderPass {
         r.addInput("vbuffer", "Packed hit information (V-buffer)").bindFlags(ResourceBindFlags.ShaderResource);
         r.addInput("viewW", "View direction (world)").bindFlags(ResourceBindFlags.ShaderResource).flags(FieldFlags.Optional);
         r.addInput("shadowMap", "CascadedShadowMap.shadowMap").bindFlags(ResourceBindFlags.ShaderResource).flags(FieldFlags.Optional);
+        r.addInput(kClipBuffer, "Per-instance clip entries (GBufferRaster clipBuffer): visibility rays ignore clipped geometry")
+            .rawBuffer(0)
+            .bindFlags(ResourceBindFlags.ShaderResource)
+            .flags(FieldFlags.Optional);
         r.addOutput("color", "Direct radiance")
             .texture2D(w, h)
             .format(ResourceFormat.RGBA32Float)
@@ -184,6 +196,7 @@ export class DeferredLighting extends RenderPass {
         const useEnv = this.envLighting && scene.useEnvLight;
         const outputs = kOptionalOutputs.map((o) => ({ ...o, tex: renderData.getTexture(o.name) }));
 
+        const envOcclusion = useEnv && (this.envSpecularOcclusion === "On" || (this.envSpecularOcclusion === "Auto" && shadowMode === 2));
         const defines = scene.getSceneDefines().addAll({
             BRDF_MODEL: this.brdf === "Material" ? 0 : 1,
             SHADOW_MODE: shadowMode,
@@ -191,10 +204,16 @@ export class DeferredLighting extends RenderPass {
             USE_ENV_LIGHT: useEnv ? 1 : 0,
             USE_ENV_BACKGROUND: this.envBackground && scene.useEnvBackground ? 1 : 0,
             USE_EMISSIVE: this.emissive ? 1 : 0,
-            ENV_SPEC_OCCLUSION: useEnv && (this.envSpecularOcclusion === "On" || (this.envSpecularOcclusion === "Auto" && shadowMode === 2)) ? 1 : 0,
+            ENV_SPEC_OCCLUSION: envOcclusion ? 1 : 0,
             is_valid_gViewW: renderData.getTexture("viewW") ? 1 : 0,
         });
         for (const o of outputs) defines.add(`is_valid_${o.texname}`, o.tex ? 1 : 0);
+        // Per-instance clip of the visibility rays: only with a clip buffer bound and rays traced (the default define set
+        // stays untouched; the shadow-map path clips in CascadedShadowMap).
+        const clipBuffer = renderData.getBuffer(kClipBuffer);
+        const clipCount = clipBuffer ? Math.floor(clipBuffer.size / kClipStride) : 0;
+        const clip = clipBuffer !== undefined && clipCount > 0 && (shadowMode === 2 || envOcclusion);
+        if (clip) defines.add("INSTANCE_CLIP", 1);
         defines.addAll(this.sampleGenerator.getDefines());
         const key = defines.key();
         if (!this.pass || key !== this.passKey) {
@@ -236,6 +255,10 @@ export class DeferredLighting extends RenderPass {
             cb["gCascadeCount"] = 0;
         }
         if (useEnv) root["gEnvSH"] = this.shBuffer!;
+        if (clip) {
+            root["InstanceClipCB"]["gClipCount"] = clipCount;
+            root["gInstanceClip"] = clipBuffer!;
+        }
         root["gVBuffer"] = renderData.getTexture("vbuffer")!;
         const viewW = renderData.getTexture("viewW");
         if (viewW) root["gViewW"] = viewW;
