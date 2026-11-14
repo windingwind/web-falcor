@@ -42,3 +42,27 @@ property or `styleAovs.setInstanceScalars(values)`; the instance id is the one w
 `tests/gpu/suites/light-cookie.gpu.test.ts`: white cookie = bitwise unchanged radiance; directional and spot
 projections against a CPU reference; the custom AOV against the scalar list, with the other StyleAovs outputs
 bitwise unchanged; `LightCookie.defaultHash` prints output hashes to compare against the base commit.
+
+## LightCookiePattern: procedural cookies
+
+`LightCookiePattern` writes a tileable `size` x `size` cookie (RGBA32Float, rgb = lerp(1, `shadowColor`,
+`strength` x occlusion)) to feed the `cookie` input above. The pattern depends only on its parameters and `time`;
+the pass keeps no state.
+
+| mode | occlusion | main parameters |
+|---|---|---|
+| `clouds` | fBm of periodic value noise at `frac(uv - wind x time)`, thresholded with a soft edge | `coverage`, `softness`, `scale` (cells per tile), `octaves`, `wind` (uv/s), `time` |
+| `window` | one window in `rect` (uv), outer frame and mullions; light blocked outside the rect | `rect`, `panes` ([columns, rows]), `frame`, `mullion`, `softness` |
+| `leaves` | sun flecks through foliage: one jittered soft disc of light per cell, optional sway | `scale`, `spotSize`, `softness`, `sway`, `swaySpeed`, `time` |
+
+Common: `size` (default 512), `seed`, `strength` (0 = white cookie = unchanged lighting), `shadowColor`.
+
+```js
+graph.addPass(createPass(device, "LightCookiePattern", { mode: "clouds", coverage: 0.6, time: t }), "Clouds");
+graph.addPass(createPass(device, "DeferredLighting", { cookieWorldSize: 200 }), "Lighting");
+graph.addEdge("Clouds.dst", "Lighting.cookie");
+```
+
+Tests: `tests/gpu/suites/light-cookie-pattern.gpu.test.ts` (patterns vs a CPU reference, seamless tiling, wind
+scrolling, the lighting ratio through DeferredLighting vs the CPU pattern, strength 0 = bitwise unchanged lighting,
+statelessness).

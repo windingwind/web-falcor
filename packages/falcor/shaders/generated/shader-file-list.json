@@ -609,6 +609,10 @@
       "url": "/packages/render-passes/src/RasterLighting/EnvSH.cs.slang"
     },
     {
+      "path": "RenderPasses/RasterLighting/LightCookiePattern.cs.slang",
+      "url": "/packages/render-passes/src/RasterLighting/LightCookiePattern.cs.slang"
+    },
+    {
       "path": "RenderPasses/RasterLighting/ShadowMap.3d.slang",
       "url": "/packages/render-passes/src/RasterLighting/ShadowMap.3d.slang"
     },
