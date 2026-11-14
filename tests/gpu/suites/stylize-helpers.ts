@@ -62,26 +62,13 @@ export function objectClass(x: number, y: number, z: number): number {
     return -1;
 }
 
-const kScenes = new WeakMap<Device, Map<string, Scene>>();
-
-/**
- * The test scene (one instance per device and sky setting, camera reset on every call). A second Scene with identical
- * content and defines rendered an empty G-buffer in GBufferRaster on the same device (seen 2026-11-13, under
- * investigation), so the tests share one scene instead of constructing a new one per test.
- */
+/** A new test scene (optional constant sky), camera set. */
 export function makeScene(device: Device, sky: V3 | null = null, cam: { pos: V3; target: V3 } = { pos: [2.6, 2.4, 3.4], target: [0, 0.4, -0.3] }): Scene {
-    let m = kScenes.get(device);
-    if (!m) kScenes.set(device, (m = new Map()));
-    const key = sky ? sky.join(",") : "none";
-    let scene = m.get(key);
-    if (!scene) {
-        const s = 6;
-        const meshes = [quad([[-s, 0, s], [s, 0, s], [s, 0, -s], [-s, 0, -s]], [0, 1, 0], 0), ...box(...kBoxA, 1), ...box(...kBoxB, 2)];
-        const mats = kAlbedo.map((c) => ({ basic: { baseColor: new float4(c[0], c[1], c[2], 1), specular: new float4(0, 0.6, 0, 0) } }));
-        scene = new Scene(device, meshes, mats, [{ type: LightType.Directional, dirW: new float3(...kLightDirW), intensity: new float3(3, 3, 3) }]);
-        if (sky) scene.setEnvMap(new EnvMap(device, { width: 1, height: 1, data: new Float32Array([sky[0], sky[1], sky[2], 1]) } as never));
-        m.set(key, scene);
-    }
+    const s = 6;
+    const meshes = [quad([[-s, 0, s], [s, 0, s], [s, 0, -s], [-s, 0, -s]], [0, 1, 0], 0), ...box(...kBoxA, 1), ...box(...kBoxB, 2)];
+    const mats = kAlbedo.map((c) => ({ basic: { baseColor: new float4(c[0], c[1], c[2], 1), specular: new float4(0, 0.6, 0, 0) } }));
+    const scene = new Scene(device, meshes, mats, [{ type: LightType.Directional, dirW: new float3(...kLightDirW), intensity: new float3(3, 3, 3) }]);
+    if (sky) scene.setEnvMap(new EnvMap(device, { width: 1, height: 1, data: new Float32Array([sky[0], sky[1], sky[2], 1]) } as never));
     scene.camera.setPosition(new float3(...cam.pos));
     scene.camera.setTarget(new float3(...cam.target));
     scene.camera.setUpVector(new float3(0, 1, 0));
@@ -94,9 +81,8 @@ export type PassDecl = [type: string, id: string, props?: Record<string, unknown
 let graphCount = 0;
 
 /**
- * Graph = GBufferRaster "G" (+ passes), edges, marked outputs (G.posW is always marked). Executes until the G-buffer
- * shows the scene (a freshly created scene can render empty on its very first frame when all programs are cached),
- * then `frames` more times.
+ * Graph = GBufferRaster "G" (+ passes), edges, marked outputs (G.posW is always marked). Executes once, checks that the
+ * G-buffer shows the scene, then executes `frames` more times.
  */
 export async function runGraph(device: Device, scene: Scene, passes: PassDecl[], edges: [string, string][], outputs: string[], frames = 1): Promise<RenderGraph> {
     const g = new RenderGraph(device, `StylizeTest${++graphCount}`);
@@ -106,14 +92,11 @@ export async function runGraph(device: Device, scene: Scene, passes: PassDecl[],
     for (const [a, b] of edges) g.addEdge(a, b);
     for (const o of new Set([...outputs, "G.posW"])) g.markOutput(o);
     g.setScene(scene);
-    for (let tries = 0; ; tries++) {
-        g.execute(device.renderContext);
-        const pos = await read(device, g.getOutput("G.posW")!);
-        let hits = 0;
-        for (let i = 3; i < pos.length; i += 4) if (pos[i] !== 0) hits++;
-        if (hits > 0.2 * kSize * kSize) break;
-        if (tries >= 4) throw new Error(`G-buffer still empty after ${tries + 1} frames`);
-    }
+    g.execute(device.renderContext);
+    const pos = await read(device, g.getOutput("G.posW")!);
+    let hits = 0;
+    for (let i = 3; i < pos.length; i += 4) if (pos[i] !== 0) hits++;
+    if (hits <= 0.2 * kSize * kSize) throw new Error(`G-buffer empty on the first frame (${hits} px)`);
     for (let i = 0; i < frames; i++) g.execute(device.renderContext);
     return g;
 }
