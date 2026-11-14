@@ -1,8 +1,8 @@
 /**
  * Several Scenes on one device: each new Scene must render its own geometry in GBufferRaster on its first frame,
  * whatever was created and rendered on the device before it.
- *  - staticThenAnimated: a static scene, then an animated scene (meshes on animated scene-graph nodes): the animated
- *    meshes are present and the G-buffer is not empty;
+ *  - staticThenAnimated: a static scene, then an animated scene (meshes on animated scene-graph nodes), twice (the
+ *    second time all programs are cached): the animated meshes are present, move, and the G-buffer is not empty;
  *  - twoStaticScenes: two static scenes with the same content (same scene defines, so every program comes from the
  *    program cache) and a third with different content: every G-buffer is non-empty, the twin renders bitwise like the
  *    first scene, and the third covers exactly its own objects.
@@ -121,30 +121,31 @@ function materialPx(gb: { posW: Float32Array; diffuse: Float32Array }, m: number
 
 
 gpuTest("SecondScene.staticThenAnimated", async ({ device }) => {
-    // Reference: the animated scene alone would be the first scene on a fresh device; here a static scene comes first.
-    const first = staticScene(device, 0.9, false);
-    const a = await gbuffer(device, first);
-    const ca = coverage(a.posW, 1.0);
-    expectEq(ca.px > 0.3 * kSize * kSize, true, `static scene G-buffer non-empty (${ca.px} px)`);
-    expectEq(ca.high, 0, "static scene has nothing above y = 1");
-
-    const anim = animatedScene(device);
-    const frames: { t: number; c: ReturnType<typeof coverage>; a: number; b: number; posW: Float32Array }[] = [];
-    for (const t of [0, 0.25, 0.5]) {
-        anim.animate(t);
-        const g = await gbuffer(device, anim);
-        frames.push({ t, c: coverage(g.posW, 1.0), a: materialPx(g, 1), b: materialPx(g, 2), posW: g.posW });
+    // Two rounds of (static scene, animated scene): in the second round every program comes from the program cache.
+    for (const round of [1, 2]) {
+        const first = staticScene(device, 0.9, false);
+        const a = await gbuffer(device, first);
+        const ca = coverage(a.posW, 1.0);
+        const anim = animatedScene(device);
+        const frames: { t: number; c: ReturnType<typeof coverage>; a: number; b: number; posW: Float32Array }[] = [];
+        for (const t of [0, 0.25, 0.5]) {
+            anim.animate(t);
+            const g = await gbuffer(device, anim);
+            frames.push({ t, c: coverage(g.posW, 1.0), a: materialPx(g, 1), b: materialPx(g, 2), posW: g.posW });
+        }
+        console.log(`SecondScene.staticThenAnimated round ${round}: static px ${ca.px}; ${frames.map((f) => `t=${f.t}: px ${f.c.px}, box B px ${f.c.high}, max y ${f.c.maxY.toFixed(3)}, box A/B material px ${f.a}/${f.b}`).join("; ")}`);
+        expectEq(ca.px > 0.3 * kSize * kSize, true, `round ${round}: static scene G-buffer non-empty (${ca.px} px)`);
+        expectEq(ca.high, 0, `round ${round}: static scene has nothing above y = 1`);
+        let moved = 0;
+        for (const [k, f] of frames.entries()) {
+            expectEq(f.c.px > 0.3 * kSize * kSize, true, `round ${round}: animated scene G-buffer non-empty at t=${f.t} (${f.c.px} px)`);
+            expectEq(f.c.high > 50, true, `round ${round}: animated box B present at t=${f.t} (${f.c.high} px above y = 1)`);
+            expectEq(Math.abs(f.c.maxY - 1.4) < 1e-3, true, `round ${round}: animated box B top at y = 1.4 at t=${f.t} (${f.c.maxY})`);
+            expectEq(f.a > 50 && f.b > 50, true, `round ${round}: both animated boxes shaded with their materials at t=${f.t}`);
+            if (k > 0 && !bitwiseEqual(frames[k - 1]!.posW, f.posW)) moved++;
+        }
+        expectEq(moved, 2, `round ${round}: the animated meshes move between frames`);
     }
-    console.log(`SecondScene.staticThenAnimated: static px ${ca.px}; ${frames.map((f) => `t=${f.t}: px ${f.c.px}, box B px ${f.c.high}, max y ${f.c.maxY.toFixed(3)}, box A/B material px ${f.a}/${f.b}`).join("; ")}`);
-    let moved = 0;
-    for (const [k, f] of frames.entries()) {
-        expectEq(f.c.px > 0.3 * kSize * kSize, true, `animated scene G-buffer non-empty at t=${f.t} (${f.c.px} px)`);
-        expectEq(f.c.high > 50, true, `animated box B present at t=${f.t} (${f.c.high} px above y = 1)`);
-        expectEq(Math.abs(f.c.maxY - 1.4) < 1e-3, true, `animated box B top at y = 1.4 at t=${f.t} (${f.c.maxY})`);
-        expectEq(f.a > 50 && f.b > 50, true, `both animated boxes shaded with their materials at t=${f.t}`);
-        if (k > 0 && !bitwiseEqual(frames[k - 1]!.posW, f.posW)) moved++;
-    }
-    expectEq(moved, 2, "the animated meshes move between frames");
 });
 
 gpuTest("SecondScene.twoStaticScenes", async ({ device }) => {
