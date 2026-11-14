@@ -74,3 +74,5 @@ export * from "./Sky/Clouds2D.js";
 export * from "./FroxelFog/FroxelFog.js";
 export * from "./SSGI/SSGI.js";
 export * from "./Water/Ripples.js";
+export * from "./Layers/RainLayer.js";
+export * from "./Weather/RainWetness.js";
