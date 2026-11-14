@@ -58,3 +58,5 @@ export * from "./Utils/HiZBuild.js";
 export * from "./Layers/DepthComposite.js";
 export * from "./Layers/ParticleLayer.js";
 export * from "./SSR/SSR.js";
+export * from "./Layers/RainLayer.js";
+export * from "./Weather/RainWetness.js";

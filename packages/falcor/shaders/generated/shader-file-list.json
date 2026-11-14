@@ -601,6 +601,10 @@
       "url": "/packages/render-passes/src/Layers/ParticleLayer.cs.slang"
     },
     {
+      "path": "RenderPasses/Layers/RainLayer.cs.slang",
+      "url": "/packages/render-passes/src/Layers/RainLayer.cs.slang"
+    },
+    {
       "path": "RenderPasses/MotionBlur/MotionBlur.cs.slang",
       "url": "/packages/render-passes/src/MotionBlur/MotionBlur.cs.slang"
     },
@@ -659,6 +663,10 @@
     {
       "path": "RenderPasses/Utils/TemporalBlend.cs.slang",
       "url": "/packages/render-passes/src/Utils/TemporalBlend.cs.slang"
+    },
+    {
+      "path": "RenderPasses/Weather/RainWetness.cs.slang",
+      "url": "/packages/render-passes/src/Weather/RainWetness.cs.slang"
     }
   ]
 }
