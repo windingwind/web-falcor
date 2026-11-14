@@ -697,12 +697,28 @@
       "url": "/packages/render-passes/src/Sky/ProceduralNightSky.cs.slang"
     },
     {
+      "path": "RenderPasses/Stylize/DitherV2.cs.slang",
+      "url": "/packages/render-passes/src/Stylize/DitherV2.cs.slang"
+    },
+    {
+      "path": "RenderPasses/Stylize/PaletteQuant.cs.slang",
+      "url": "/packages/render-passes/src/Stylize/PaletteQuant.cs.slang"
+    },
+    {
+      "path": "RenderPasses/Stylize/PixelateV2.cs.slang",
+      "url": "/packages/render-passes/src/Stylize/PixelateV2.cs.slang"
+    },
+    {
       "path": "RenderPasses/Stylize/RampShade.cs.slang",
       "url": "/packages/render-passes/src/Stylize/RampShade.cs.slang"
     },
     {
       "path": "RenderPasses/Stylize/RimLight.cs.slang",
       "url": "/packages/render-passes/src/Stylize/RimLight.cs.slang"
+    },
+    {
+      "path": "RenderPasses/Stylize/SelectiveColour.cs.slang",
+      "url": "/packages/render-passes/src/Stylize/SelectiveColour.cs.slang"
     },
     {
       "path": "RenderPasses/Stylize/StopMotion.cs.slang",

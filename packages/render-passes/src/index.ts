@@ -76,3 +76,7 @@ export * from "./SSGI/SSGI.js";
 export * from "./Water/Ripples.js";
 export * from "./Layers/RainLayer.js";
 export * from "./Weather/RainWetness.js";
+export * from "./Stylize/SelectiveColour.js";
+export * from "./Stylize/PaletteQuant.js";
+export * from "./Stylize/DitherV2.js";
+export * from "./Stylize/PixelateV2.js";
