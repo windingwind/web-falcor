@@ -655,6 +655,10 @@
     {
       "path": "RenderPasses/Utils/TemporalBlend.cs.slang",
       "url": "/packages/render-passes/src/Utils/TemporalBlend.cs.slang"
+    },
+    {
+      "path": "RenderPasses/Water/Ripples.cs.slang",
+      "url": "/packages/render-passes/src/Water/Ripples.cs.slang"
     }
   ]
 }
