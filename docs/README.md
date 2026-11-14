@@ -27,7 +27,7 @@ the files**, so every `§N` cross-reference in the text resolves via the map bel
 | — | [npm.md](npm.md) | The npm packages, the prebuilt viewer, the Vite plugin for runtime assets, and releasing |
 | — | [migrating.md](migrating.md) | Porting your own Falcor passes, shaders and core changes: the C++ → TypeScript API mapping, WGSL/WebGPU shader rewrites, and silent behavioural differences |
 | — | [scripting.md](scripting.md) | Scene and render-graph scripts in JS or Python, the JS script API, the `py2js` converter, and how equivalence is checked |
-| — | [light-cookie.md](light-cookie.md) | DeferredLighting light cookies (spot/directional projection) and the StyleAovs per-instance scalar AOV |
+| — | [light-cookie.md](light-cookie.md) | DeferredLighting light cookies (spot/directional projection), procedural cookies (LightCookiePattern) and the StyleAovs per-instance scalar AOV |
 
 ## Status markers
 
