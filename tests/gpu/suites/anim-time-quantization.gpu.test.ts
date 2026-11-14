@@ -1,7 +1,6 @@
 /**
  * Per-node animation time quantisation (Scene.setAnimationTimeQuantization): a floor and two boxes, box A on animated
- * node 0 and box B on animated node 1 (both slide). One scene only: a second Scene with near-identical content on the
- * same device can render stale/empty G-buffers (known issue). Checks:
+ * node 0 and box B on animated node 1 (both slide). Checks:
  *  - default: no quantisation, an empty map and a hold of 0 render bitwise the same posW / mvec / vbuffer frames
  *    (and the frame hash is logged so it can be compared against a checkout without the feature);
  *  - "on twos": with both nodes quantised, frame k equals the unquantised frame 2*floor(k/2) bitwise (posW), held
@@ -46,30 +45,22 @@ const slide = (nodeID: number, from: V3, to: V3): AnimationChannel => ({
     nodeID, path: "translation", interp: "LINEAR", times: new Float32Array([0, 1]), values: new Float32Array([...from, ...to]),
 });
 
-const kScenes = new WeakMap<Device, Map<string, Scene>>();
-
-/** One scene per device (nodes 0 and 1 slide). */
-function makeScene(device: Device, variant: "both" = "both"): Scene {
-    let m = kScenes.get(device);
-    if (!m) kScenes.set(device, (m = new Map()));
-    let scene = m.get(variant);
-    if (!scene) {
-        const s = 5;
-        const nodes: SceneNode[] = [
-            { parent: -1, t: new float3(-1.5, 0, 0), r: new quatf(0, 0, 0, 1), s: new float3(1, 1, 1) },
-            { parent: -1, t: new float3(0.8, 0, -1.2), r: new quatf(0, 0, 0, 1), s: new float3(1, 1, 1) },
-        ];
-        const meshes = [
-            quad([[-s, 0, s], [s, 0, s], [s, 0, -s], [-s, 0, -s]], [0, 1, 0], 0),
-            ...box([-0.4, 0, -0.4], [0.4, 0.9, 0.4], 1, 0),
-            ...box([-0.35, 0, -0.35], [0.35, 1.3, 0.35], 2, 1),
-        ];
-        const channels = [slide(0, [-1.5, 0, 0], [0.5, 0, 0.6]), slide(1, [0.8, 0, -1.2], [1.8, 0, -0.2])];
-        const mats = ([[0.7, 0.7, 0.7], [0.8, 0.2, 0.1], [0.1, 0.3, 0.8]] as V3[]).map((c) => ({ basic: { baseColor: new float4(c[0], c[1], c[2], 1) } }));
-        scene = new Scene(device, meshes, mats, [{ type: LightType.Directional, dirW: new float3(0.3, -1, 0.2), intensity: new float3(2, 2, 2) }],
-            undefined, [], nodes, channels);
-        m.set(variant, scene);
-    }
+/** A new scene (nodes 0 and 1 slide). */
+function makeScene(device: Device): Scene {
+    const s = 5;
+    const nodes: SceneNode[] = [
+        { parent: -1, t: new float3(-1.5, 0, 0), r: new quatf(0, 0, 0, 1), s: new float3(1, 1, 1) },
+        { parent: -1, t: new float3(0.8, 0, -1.2), r: new quatf(0, 0, 0, 1), s: new float3(1, 1, 1) },
+    ];
+    const meshes = [
+        quad([[-s, 0, s], [s, 0, s], [s, 0, -s], [-s, 0, -s]], [0, 1, 0], 0),
+        ...box([-0.4, 0, -0.4], [0.4, 0.9, 0.4], 1, 0),
+        ...box([-0.35, 0, -0.35], [0.35, 1.3, 0.35], 2, 1),
+    ];
+    const channels = [slide(0, [-1.5, 0, 0], [0.5, 0, 0.6]), slide(1, [0.8, 0, -1.2], [1.8, 0, -0.2])];
+    const mats = ([[0.7, 0.7, 0.7], [0.8, 0.2, 0.1], [0.1, 0.3, 0.8]] as V3[]).map((c) => ({ basic: { baseColor: new float4(c[0], c[1], c[2], 1) } }));
+    const scene = new Scene(device, meshes, mats, [{ type: LightType.Directional, dirW: new float3(0.3, -1, 0.2), intensity: new float3(2, 2, 2) }],
+        undefined, [], nodes, channels);
     scene.camera.setPosition(new float3(0.5, 4.2, 5.0));
     scene.camera.setTarget(new float3(0, 0.3, -0.3));
     scene.camera.setUpVector(new float3(0, 1, 0));
@@ -91,15 +82,12 @@ async function renderClip(device: Device, scene: Scene): Promise<{ posW: Float32
     g.markOutput("G.posW");
     g.markOutput("G.mvec");
     g.setScene(scene);
-    for (let tries = 0; ; tries++) {
-        scene.animate(0);
-        g.execute(device.renderContext);
-        const pos = await read(device, g.getOutput("G.posW")!);
-        let hits = 0;
-        for (let i = 3; i < pos.length; i += 4) if (pos[i] !== 0) hits++;
-        if (hits > 0.2 * kSize * kSize) break;
-        if (tries >= 4) throw new Error("G-buffer still empty");
-    }
+    scene.animate(0);
+    g.execute(device.renderContext);
+    const pos = await read(device, g.getOutput("G.posW")!);
+    let hits = 0;
+    for (let i = 3; i < pos.length; i += 4) if (pos[i] !== 0) hits++;
+    if (hits <= 0.2 * kSize * kSize) throw new Error(`G-buffer empty on the warm-up frame (${hits} px)`);
     const posW: Float32Array[] = [], mvec: Float32Array[] = [];
     for (let k = 0; k < kFrames; k++) {
         scene.animate(k / kFps);
@@ -130,7 +118,7 @@ function fnv(frames: Float32Array[]): string {
 type QuantScene = Scene & { setAnimationTimeQuantization?: (q: Record<number, { hold: number; phase?: number }> | null) => void };
 
 gpuTest("AnimTimeQuant.defaultIsUnchanged", async ({ device }) => {
-    const scene = makeScene(device, "both") as QuantScene;
+    const scene = makeScene(device) as QuantScene;
     const base = await renderClip(device, scene);
     console.log(`# AnimTimeQuant default hash posW ${fnv(base.posW)} mvec ${fnv(base.mvec)}`);
     let moving = 0;
@@ -169,7 +157,7 @@ gpuTest("AnimTimeQuant.onTwosHoldsPose", async ({ device }) => {
 });
 
 gpuTest("AnimTimeQuant.onlySelectedNode", async ({ device }) => {
-    const scene = makeScene(device, "both") as QuantScene;
+    const scene = makeScene(device) as QuantScene;
     scene.setAnimationTimeQuantization!(null);
     const full = await renderClip(device, scene);
     scene.setAnimationTimeQuantization!({ 0: { hold: 3 / kFps } });
