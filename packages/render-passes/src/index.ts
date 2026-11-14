@@ -10,6 +10,7 @@ export * from "./ToneMapper/ToneMapper.js";
 export * from "./BlitPass/BlitPass.js";
 export * from "./ImageLoader/ImageLoader.js";
 export * from "./GBuffer/GBufferRaster.js";
+export * from "./GBuffer/SubsetRaster.js";
 export * from "./GBuffer/VBufferRT.js";
 export * from "./GBuffer/VBufferRaster.js";
 export * from "./RenderPassTemplate.js";
