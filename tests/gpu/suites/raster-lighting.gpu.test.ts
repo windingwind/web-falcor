@@ -5,6 +5,9 @@
  *     maxBounces = 0 (one directional light => its direct term is deterministic) to fp32 precision.
  *  2. CascadedShadowMap visibility agrees with ray-traced visibility except along the penumbra.
  *  3. Constant sky: the SH9 diffuse irradiance gives albedo * L exactly on an unoccluded plane.
+ *  4. Env specular occlusion: Auto is on in every shadow mode when the scene has an env map; the occluded ground
+ *     pixels match a CPU mirror-ray / occluder-quad intersection.
+ *  5. Without an env map, envSpecularOcclusion changes nothing (bitwise, every shadow mode).
  */
 
 import {
@@ -59,7 +62,7 @@ function makeScene(device: Device, sky: number[] | null): Scene {
     return scene;
 }
 
-async function renderLighting(device: Device, scene: Scene, lightingProps: Record<string, unknown>, outputs: string[], withRef = false) {
+async function renderLighting(device: Device, scene: Scene, lightingProps: Record<string, unknown>, outputs: string[], withRef = false, withPosW = false) {
     const graph = new RenderGraph(device, "RasterLightingTest");
     graph.onResize(size, size);
     graph.addPass(createPass(device, "GBufferRaster", { samplePattern: "Center" }), "GBuffer");
@@ -76,6 +79,7 @@ async function renderLighting(device: Device, scene: Scene, lightingProps: Recor
     }
     for (const o of outputs) graph.markOutput(`Lighting.${o}`);
     graph.markOutput("GBuffer.mask");
+    if (withPosW) graph.markOutput("GBuffer.posW");
     graph.setScene(scene);
     await graph.init();
     const ctx = device.renderContext;
@@ -85,6 +89,7 @@ async function renderLighting(device: Device, scene: Scene, lightingProps: Recor
     for (const o of outputs) out[o] = await read(`Lighting.${o}`);
     out["mask"] = await read("GBuffer.mask");
     if (withRef) out["ref"] = await read("Ref.color");
+    if (withPosW) out["posW"] = await read("GBuffer.posW");
     return out;
 }
 
@@ -136,4 +141,68 @@ gpuTest("DeferredLighting.constantSkyIrradiance", async ({ device }) => {
     expectEq(n > 1000, true, `ground pixels ${n}`);
     expectEq(maxRel < 2e-3, true, `SH irradiance rel error ${maxRel}`);
     expectEq(r["mask"]![0] === 0 && Math.abs(bg[0]! - sky[0]!) < 1e-5, true, "background = sky");
+});
+
+function bitwiseDiff(a: Float32Array, b: Float32Array): number {
+    const ua = new Uint32Array(a.buffer, a.byteOffset, a.length), ub = new Uint32Array(b.buffer, b.byteOffset, b.length);
+    let n = 0;
+    for (let i = 0; i < ua.length; i++) if (ua[i] !== ub[i]) n++;
+    return n;
+}
+
+gpuTest("DeferredLighting.envSpecOcclusionAutoInEveryShadowMode", async ({ device }) => {
+    const scene = makeScene(device, [0.4, 0.5, 0.6]);
+    const base = { brdf: "LambertGGX", analyticLights: false };
+    const spec: Record<string, Float32Array> = {};
+    let posW: Float32Array | null = null, mask: Float32Array | null = null;
+    for (const mode of ["ShadowMap", "None", "RayTraced"]) {
+        for (const eo of ["Auto", "On", "Off"]) {
+            const r = await renderLighting(device, scene, { ...base, shadowMode: mode, envSpecularOcclusion: eo }, ["specular"], false, true);
+            spec[`${mode}/${eo}`] = r["specular"]!;
+            posW = r["posW"]!; mask = r["mask"]!;
+        }
+    }
+    // Auto == On in every mode, and (no analytic lights) the env specular does not depend on the shadow mode.
+    for (const mode of ["ShadowMap", "None", "RayTraced"]) {
+        expectEq(bitwiseDiff(spec[`${mode}/Auto`]!, spec[`${mode}/On`]!), 0, `${mode}: Auto == On (bitwise)`);
+        expectEq(bitwiseDiff(spec[`${mode}/Off`]!, spec["RayTraced/Off"]!), 0, `${mode}: Off independent of shadow mode`);
+        expectEq(bitwiseDiff(spec[`${mode}/Auto`]!, spec["RayTraced/Auto"]!), 0, `${mode}: Auto independent of shadow mode`);
+    }
+    // CPU reference on the ground plane (y = 0, N = +y): the mirror ray is blocked iff it crosses the occluder quad
+    // (y = 0.6, x in [-0.2, 0.6], z in [-0.3, 0.5]) first.
+    const on = spec["ShadowMap/Auto"]!, off = spec["ShadowMap/Off"]!;
+    const eye = [0.8, 2.2, 2.4];
+    let ground = 0, blocked = 0, mismatch = 0, raised = 0;
+    for (let i = 0; i < size * size; i++) {
+        if (mask![i] !== 1) continue;
+        const p = [posW![i * 4]!, posW![i * 4 + 1]!, posW![i * 4 + 2]!];
+        if (Math.abs(p[1]!) > 1e-4) continue;
+        ground++;
+        const v = [eye[0]! - p[0]!, eye[1]! - p[1]!, eye[2]! - p[2]!];
+        const l = Math.hypot(v[0]!, v[1]!, v[2]!);
+        const rd = [-v[0]! / l, v[1]! / l, -v[2]! / l];
+        const t = 0.6 / rd[1]!;
+        const hx = p[0]! + t * rd[0]!, hz = p[2]! + t * rd[2]!;
+        const edge = Math.min(Math.abs(hx + 0.2), Math.abs(hx - 0.6), Math.abs(hz + 0.3), Math.abs(hz - 0.5));
+        const cpuBlocked = hx > -0.2 && hx < 0.6 && hz > -0.3 && hz < 0.5;
+        const gpuBlocked = on[i * 4 + 1]! === 0 && off[i * 4 + 1]! > 0;
+        if (on[i * 4 + 1]! > off[i * 4 + 1]!) raised++;
+        if (cpuBlocked) blocked++;
+        if (cpuBlocked !== gpuBlocked && edge > 0.01) mismatch++;
+    }
+    console.error(`# env-spec-occlusion: ground=${ground} blocked(cpu)=${blocked} mismatch=${mismatch} raised=${raised}`);
+    expectEq(ground > 1000 && blocked > 200, true, `ground ${ground}, mirror-blocked ${blocked}`);
+    expectEq(mismatch, 0, "GPU occlusion == CPU mirror-ray test (away from the quad edges)");
+    expectEq(raised, 0, "occlusion never raises the specular term");
+});
+
+gpuTest("DeferredLighting.envSpecOcclusionWithoutEnvMapIsNoOp", async ({ device }) => {
+    const scene = makeScene(device, null);
+    for (const mode of ["ShadowMap", "None", "RayTraced"]) {
+        const ref = await renderLighting(device, scene, { brdf: "LambertGGX", shadowMode: mode, envSpecularOcclusion: "Off" }, ["color", "specular"]);
+        for (const eo of ["Auto", "On"]) {
+            const r = await renderLighting(device, scene, { brdf: "LambertGGX", shadowMode: mode, envSpecularOcclusion: eo }, ["color", "specular"]);
+            expectEq(bitwiseDiff(r["color"]!, ref["color"]!) + bitwiseDiff(r["specular"]!, ref["specular"]!), 0, `no env map, ${mode}: ${eo} == Off (bitwise)`);
+        }
+    }
 });

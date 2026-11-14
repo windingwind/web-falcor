@@ -18,7 +18,8 @@
  *  USE_ANALYTIC_LIGHTS / USE_ENV_LIGHT / USE_ENV_BACKGROUND / USE_EMISSIVE  (0/1)
  *  ENV_SPEC_OCCLUSION  1 = the env specular term is dropped where the reflection ray hits scene
  *                          geometry (without it, glossy surfaces facing other geometry mirror the
- *                          env map's distant content, which reads as see-through windows/walls)
+ *                          env map's distant content, which reads as see-through windows/walls);
+ *                      independent of SHADOW_MODE (the ray uses the scene BVH in every mode)
  *  is_valid_gViewW, is_valid_gVisibility, is_valid_gDiffuse, is_valid_gSpecular  (optional I/O)
  */
 #include "Scene/SceneDefines.slangh"

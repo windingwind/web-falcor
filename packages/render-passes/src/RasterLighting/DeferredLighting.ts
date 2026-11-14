@@ -6,7 +6,8 @@
  *    shadowed by CascadedShadowMap (PCF), by ray-traced visibility, or not at all;
  *  - the env map / constant sky as ambient light (unshadowed SH9 diffuse irradiance +
  *    env lookup in the reflection direction; envSpecularOcclusion traces one visibility ray
- *    along it so glossy surfaces don't mirror the env map through nearby geometry);
+ *    along it so glossy surfaces don't mirror the env map through nearby geometry; on by default
+ *    whenever the scene has an env map, independent of shadowMode);
  *  - emission, and the env map as background.
  * brdf = "Material" evaluates the scene material (IMaterialInstance::eval, i.e. the same BSDF
  * the path tracers use); "LambertGGX" is the classic real-time model from the material's
@@ -42,7 +43,10 @@ const kBrdfModels = ["Material", "LambertGGX"] as const;
 const kShadowModes = ["None", "ShadowMap", "RayTraced"] as const;
 type BrdfModel = (typeof kBrdfModels)[number];
 type ShadowMode = (typeof kShadowModes)[number];
-/** Auto = on when shadowMode is RayTraced (ray queries are in use anyway), off otherwise. */
+/**
+ * Auto = on whenever the scene has an env map and geometry (i.e. a BVH to trace the reflection ray against), in every
+ * shadow mode; the env specular visibility does not depend on how the analytic lights are shadowed. On / Off force it.
+ */
 const kEnvOcclusionModes = ["Auto", "On", "Off"] as const;
 type EnvOcclusionMode = (typeof kEnvOcclusionModes)[number];
 
@@ -147,6 +151,12 @@ export class DeferredLighting extends RenderPass {
         this.shSource = null;
     }
 
+    /** Whether the env specular term traces its visibility ray (see kEnvOcclusionModes). */
+    private useEnvSpecOcclusion(): boolean {
+        if (this.envSpecularOcclusion !== "Auto") return this.envSpecularOcclusion === "On";
+        return !!this.scene && !!this.scene.getEnvMap() && this.scene.worldBounds !== null;
+    }
+
     /** Projects the env map onto SH9 once per env map (GPU, one workgroup). */
     private updateEnvSH(ctx: RenderContext): void {
         const env = this.scene!.getEnvMap();
@@ -191,7 +201,7 @@ export class DeferredLighting extends RenderPass {
             USE_ENV_LIGHT: useEnv ? 1 : 0,
             USE_ENV_BACKGROUND: this.envBackground && scene.useEnvBackground ? 1 : 0,
             USE_EMISSIVE: this.emissive ? 1 : 0,
-            ENV_SPEC_OCCLUSION: useEnv && (this.envSpecularOcclusion === "On" || (this.envSpecularOcclusion === "Auto" && shadowMode === 2)) ? 1 : 0,
+            ENV_SPEC_OCCLUSION: useEnv && this.useEnvSpecOcclusion() ? 1 : 0,
             is_valid_gViewW: renderData.getTexture("viewW") ? 1 : 0,
         });
         for (const o of outputs) defines.add(`is_valid_${o.texname}`, o.tex ? 1 : 0);
