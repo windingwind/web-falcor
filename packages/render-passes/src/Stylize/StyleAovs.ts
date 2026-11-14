@@ -15,8 +15,13 @@
  *  - curvature  : signed raw curvature in 1/world units in r (> 0 convex, < 0 concave), estimated from the posW/normW
  *                 4-neighbours as the mean of dot(n_j - n, x_j - x) / |x_j - x|^2; neighbours across a depth jump larger
  *                 than `curvatureDepthThreshold` x view depth (or without geometry) are skipped. Needs `posW` and `normW`.
- *                 The raw value only: no thresholding, remapping or shading.
- * Background pixels are 0 (alpha 0). All outputs are optional and only written when connected/marked.
+ *                 The raw value only: no thresholding, remapping or shading;
+ *  - custom     : a per-instance scalar AOV: r = `instanceScalars[instance id]` (0 for instances past the end of the
+ *                 list), a = 1. The scalars come from the `instanceScalars` property or `setInstanceScalars()`; they let
+ *                 later passes read any per-object value (a mask weight, a stylization strength, ...).
+ * Background pixels are 0 (alpha 0). All outputs are optional and only written when connected/marked. The `custom`
+ * output is written by a separate small kernel (StyleAovsCustom.cs.slang) that runs only while `custom` is used, so the
+ * main kernel and its outputs are unchanged and it stays within WebGPU's 8 storage textures per shader stage.
  *
  * Inputs : vbuffer (GBufferRaster/VBufferRaster), texC (optional, for flatAlbedo), normW (optional, for ndotl and
  *          curvature), posW (optional, for curvature).
@@ -27,7 +32,9 @@
  */
 
 import {
+    Buffer,
     ComputePass,
+    MemoryType,
     Properties,
     RenderData,
     RenderPass,
@@ -43,6 +50,7 @@ import {
 import { addColorOutput, addTexInput, cameraData, dummyTexture, enumIndex, keyLightDir } from "./StyleCommon.js";
 
 const kShaderFile = "RenderPasses/Stylize/StyleAovs.cs.slang";
+const kCustomShaderFile = "RenderPasses/Stylize/StyleAovsCustom.cs.slang";
 const kIdSources = ["instance", "material", "mesh"] as const;
 const kOutputs = [
     ["id", "gId", "hash01(id) in r, raw id in g (id source: idSource)"],
@@ -54,20 +62,61 @@ const kOutputs = [
     ["posObj", "gPosObj", "Object-space position"],
     ["curvature", "gCurvature", "Signed raw curvature in 1/world units (r)"],
 ] as const;
+const kCustomOutput = "custom";
 
 export class StyleAovs extends RenderPass {
     private p = { idSource: "instance" as string, hashSeed: 0, flatLod: 16, lightDir: [0, 0, 0] as number[], curvatureDepthThreshold: 0.05 };
     private pass: ComputePass | null = null;
     private passKey = "";
+    private customPass: ComputePass | null = null;
+    private customPassKey = "";
+    /** Per-instance scalars for the `custom` output (indexed by geometry instance id). */
+    private instanceScalars: number[] = [];
+    private scalarBuffer: Buffer | null = null;
+    private scalarsDirty = true;
 
     constructor(device: Device, props: Properties) {
         super(device);
         for (const k of Object.keys(this.p) as (keyof typeof this.p)[]) (this.p as Record<string, unknown>)[k] = props.get(k, this.p[k]);
         enumIndex("StyleAovs", "idSource", this.p.idSource, kIdSources);
+        this.setInstanceScalars(props.get<number[]>("instanceScalars", []));
     }
 
     override getProperties(): Properties {
-        return new Properties({ ...this.p, lightDir: [...this.p.lightDir] });
+        const p = new Properties({ ...this.p, lightDir: [...this.p.lightDir] });
+        if (this.instanceScalars.length > 0) p.set("instanceScalars", [...this.instanceScalars]);
+        return p;
+    }
+
+    /** Sets the per-instance scalars read by the `custom` output (index = geometry instance id). */
+    setInstanceScalars(values: ArrayLike<number>): void {
+        this.instanceScalars = Array.from(values, (v) => Number(v));
+        this.scalarsDirty = true;
+    }
+
+    getInstanceScalars(): number[] {
+        return [...this.instanceScalars];
+    }
+
+    private updateScalarBuffer(): Buffer {
+        const n = Math.max(1, this.instanceScalars.length);
+        if (!this.scalarBuffer || this.scalarBuffer.size < n * 4) {
+            this.scalarBuffer = new Buffer(this.device, {
+                size: n * 4,
+                structSize: 4,
+                bindFlags: ResourceBindFlags.ShaderResource,
+                memoryType: MemoryType.DeviceLocal,
+                name: "StyleAovs::instanceScalars",
+            });
+            this.scalarsDirty = true;
+        }
+        if (this.scalarsDirty) {
+            const data = new Float32Array(n);
+            data.set(this.instanceScalars);
+            this.scalarBuffer.setBlob(new Uint8Array(data.buffer));
+            this.scalarsDirty = false;
+        }
+        return this.scalarBuffer;
     }
 
     override renderUI(ui: UIWidgets): void {
@@ -84,6 +133,7 @@ export class StyleAovs extends RenderPass {
         addTexInput(r, "normW", "World-space shading normal (for ndotl and curvature)", true);
         addTexInput(r, "posW", "World-space position (for curvature)", true);
         for (const [name, , desc] of kOutputs) addColorOutput(r, name, desc, w, h, true);
+        addColorOutput(r, kCustomOutput, "Per-instance scalar AOV: instanceScalars[instance id] in r", w, h, true);
         return r;
     }
 
@@ -93,6 +143,7 @@ export class StyleAovs extends RenderPass {
         if (!this.scene) throw new RuntimeError("StyleAovs: requires a scene");
         const W = vbuffer.width, H = vbuffer.height;
         const defines = this.scene.getSceneDefines();
+        const custom = rd.getTexture(kCustomOutput);
         const key = defines.key();
         if (!this.pass || key !== this.passKey) {
             this.pass = ComputePass.create(this.device, { path: kShaderFile, defines });
@@ -127,6 +178,20 @@ export class StyleAovs extends RenderPass {
             any ||= !!t;
         }
         if (any) this.pass.execute(ctx, W, H);
+        if (custom) {
+            if (!this.customPass || key !== this.customPassKey) {
+                this.customPass = ComputePass.create(this.device, { path: kCustomShaderFile, defines });
+                this.customPassKey = key;
+            }
+            const croot = this.customPass.getRootVar();
+            const ccb = croot["CB"]!;
+            ccb["gFrameDim"] = [W, H];
+            ccb["gInstanceScalarCount"] = this.instanceScalars.length;
+            croot["gVBuffer"] = vbuffer;
+            croot["gInstanceScalars"] = this.updateScalarBuffer();
+            croot["gCustom"] = custom;
+            this.customPass.execute(ctx, W, H);
+        }
     }
 }
 
