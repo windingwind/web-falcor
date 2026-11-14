@@ -665,6 +665,10 @@
       "url": "/packages/render-passes/src/RasterLighting/EnvSH.cs.slang"
     },
     {
+      "path": "RenderPasses/RasterLighting/InstanceClip.slangh",
+      "url": "/packages/render-passes/src/RasterLighting/InstanceClip.slangh"
+    },
+    {
       "path": "RenderPasses/RasterLighting/LightCookiePattern.cs.slang",
       "url": "/packages/render-passes/src/RasterLighting/LightCookiePattern.cs.slang"
     },

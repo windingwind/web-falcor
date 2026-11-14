@@ -7,12 +7,17 @@
  * the bounding sphere of its frustum slice, deep enough to hold every caster in the scene.
  * The per-cascade matrices go to the graph dictionary (kCascadedShadowMapData) where
  * DeferredLighting picks them up together with the "shadowMap" output.
+ *
+ * Optional input `clipBuffer`: GBufferRaster's per-instance clip entries (float4 threshold, noise mode, edge width,
+ * noise scale per geometry instance). While it is connected the casters are clipped the same way (INSTANCE_CLIP,
+ * InstanceClip.slangh), so clipped / dissolving objects lose their shadow with them. Without it nothing changes.
  */
 
 import {
     DepthStencilState,
     DepthStencilStateDesc,
     Fbo,
+    FieldFlags,
     GraphicsState,
     CullMode,
     RasterizerState,
@@ -44,6 +49,10 @@ import {
     type ShaderVar,
     type UIWidgets,
 } from "@web-falcor/falcor";
+
+/** Optional per-instance clip input (GBufferRaster's clip buffer layout: one float4 per geometry instance). */
+const kClipBuffer = "clipBuffer";
+const kClipStride = 16;
 
 const kShaderFile = "RenderPasses/RasterLighting/ShadowMap.3d.slang";
 export const kMaxCascades = 4;
@@ -85,6 +94,8 @@ export class CascadedShadowMap extends RenderPass {
     private maxDistance = 0;
     private useAlphaTest = true;
     private state: GraphicsState | null = null;
+    /** Whether `state` was built with INSTANCE_CLIP. */
+    private stateClip = false;
     private pipelineLayout: GPUPipelineLayout | null = null;
     private cascades: CascadeVars[] = [];
     private vao: Vao | null = null;
@@ -135,6 +146,10 @@ export class CascadedShadowMap extends RenderPass {
             .texture2D(this.mapSize * this.cascadeCount, this.mapSize)
             .format(ResourceFormat.R32Float)
             .bindFlags(ResourceBindFlags.RenderTarget | ResourceBindFlags.ShaderResource);
+        r.addInput(kClipBuffer, "Per-instance clip entries (GBufferRaster clipBuffer): clipped casters cast no shadow")
+            .rawBuffer(0)
+            .bindFlags(ResourceBindFlags.ShaderResource)
+            .flags(FieldFlags.Optional);
         return r;
     }
 
@@ -152,10 +167,12 @@ export class CascadedShadowMap extends RenderPass {
         return lights.findIndex((l) => l.type === LightType.Directional);
     }
 
-    private build(): void {
+    private build(clip: boolean): void {
         const scene = this.scene!;
         const defines = scene.getSceneDefines();
         defines.add("USE_ALPHA_TEST", this.useAlphaTest ? 1 : 0);
+        if (clip) defines.add("INSTANCE_CLIP", 1); // only with a clip buffer: the default define set stays untouched
+        this.stateClip = clip;
         const program = this.device.programManager.createProgram(
             { path: kShaderFile, entryPoints: [{ name: "vsMain", type: ShaderType.Vertex }, { name: "psMain", type: ShaderType.Pixel }] },
             defines,
@@ -303,7 +320,10 @@ export class CascadedShadowMap extends RenderPass {
         data.lightIndex = li;
         renderData.dictionary.set(kCascadedShadowMapData, data);
 
-        if (!this.state) this.build();
+        const clipBuffer = renderData.getBuffer(kClipBuffer);
+        const clipCount = clipBuffer ? Math.floor(clipBuffer.size / kClipStride) : 0;
+        const clip = clipBuffer !== undefined && clipCount > 0;
+        if (!this.state || this.stateClip !== clip) this.build(clip);
         if (!this.depth || this.depth.width !== atlas.width || this.depth.height !== atlas.height) {
             this.depth?.destroy();
             this.depth = new Texture(this.device, {
@@ -332,6 +352,10 @@ export class CascadedShadowMap extends RenderPass {
             const { vars, root } = this.cascades[c]!;
             this.scene.bindShaderData(root);
             root["PerCascadeCB"]["gLightViewProj"] = data.viewProj[c]!;
+            if (clip) {
+                root["InstanceClipCB"]["gClipCount"] = clipCount;
+                root["gInstanceClip"] = clipBuffer!;
+            }
             groups.push(vars.getGroupIndices().map((g) => ({ index: g, group: vars.getBindGroup(g) })));
         }
 
