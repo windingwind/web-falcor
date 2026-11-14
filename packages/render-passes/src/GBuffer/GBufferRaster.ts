@@ -104,6 +104,8 @@ export class GBufferRaster extends RenderPass {
     /** Native GBufferBase forceCullMode/cull; web default without forcing is None (raster == software-RT coverage). */
     private forceCullMode = false;
     private cullMode = CullMode.Back;
+    /** Whether execute() installs this pass's sample pattern on the camera (subclasses that re-draw part of the scene opt out). */
+    protected setsCameraJitter = true;
 
     constructor(device: Device, props: Properties) {
         super(device);
@@ -287,9 +289,14 @@ export class GBufferRaster extends RenderPass {
         this.pullVao = null;
     }
 
+    /** The draws of one geometry pass (all scene meshes; draw i renders geometry instance i). */
+    protected getDraws(): readonly { indexCount: number; firstIndex: number; baseVertex: number; firstInstance: number }[] {
+        return this.scene!.getMeshDrawData().draws;
+    }
+
     override execute(ctx: RenderContext, renderData: RenderData): void {
         // GBufferBase::execute: consumers re-adjust shading normals the VBuffer can't carry.
-        renderData.dictionary.set(kRenderPassGBufferAdjustShadingNormals, this.adjustShadingNormals);
+        if (this.setsCameraJitter) renderData.dictionary.set(kRenderPassGBufferAdjustShadingNormals, this.adjustShadingNormals);
         const depth = renderData.getTexture("depth")!;
         const [w, h] = [depth.width, depth.height];
         const present = kChannels.filter((ch) => renderData.getTexture(ch.name) !== undefined);
@@ -301,7 +308,7 @@ export class GBufferRaster extends RenderPass {
 
         // Mirrors GBufferBase::updateFrameDim: the camera jitters by the sample
         // pattern scaled to the pass resolution (first sample lands next frame).
-        this.scene.camera.setPatternGenerator(this.sampleGenerator, new float2(Math.fround(1 / w), Math.fround(1 / h)));
+        if (this.setsCameraJitter) this.scene.camera.setPatternGenerator(this.sampleGenerator, new float2(Math.fround(1 / w), Math.fround(1 / h)));
 
         // Depth-only consumers still need the geometry pass: draw posW into a scratch target.
         let targets: { channel: Channel; texture: Texture }[] = present.map((ch) => ({ channel: ch, texture: renderData.getTexture(ch.name)! }));
@@ -353,10 +360,10 @@ export class GBufferRaster extends RenderPass {
             vao.vertexBuffers.forEach((vb, i) => pass.setVertexBuffer(i, vb.gpuBuffer));
             if (pulling) {
                 // Non-indexed: vertexID counts 0..3*triCount per draw (vertex pulling).
-                for (const draw of this.scene.getMeshDrawData().draws) pass.draw(draw.indexCount, 1, 0, draw.firstInstance);
+                for (const draw of this.getDraws()) pass.draw(draw.indexCount, 1, 0, draw.firstInstance);
             } else {
                 pass.setIndexBuffer(vao.indexBuffer!.gpuBuffer, vao.getGpuIndexFormat());
-                for (const draw of this.scene.getMeshDrawData().draws) {
+                for (const draw of this.getDraws()) {
                     pass.drawIndexed(draw.indexCount, 1, draw.firstIndex, draw.baseVertex, draw.firstInstance);
                 }
             }

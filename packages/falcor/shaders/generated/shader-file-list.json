@@ -593,6 +593,10 @@
       "url": "/packages/render-passes/src/FXAA/FXAA.cs.slang"
     },
     {
+      "path": "RenderPasses/GBuffer/SubsetRaster.cs.slang",
+      "url": "/packages/render-passes/src/GBuffer/SubsetRaster.cs.slang"
+    },
+    {
       "path": "RenderPasses/MotionBlur/MotionBlur.cs.slang",
       "url": "/packages/render-passes/src/MotionBlur/MotionBlur.cs.slang"
     },
