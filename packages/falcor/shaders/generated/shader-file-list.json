@@ -653,6 +653,10 @@
       "url": "/packages/render-passes/src/Stylize/StyleAovs.cs.slang"
     },
     {
+      "path": "RenderPasses/Stylize/StyleAovsCustom.cs.slang",
+      "url": "/packages/render-passes/src/Stylize/StyleAovsCustom.cs.slang"
+    },
+    {
       "path": "RenderPasses/Stylize/StyleShade.cs.slang",
       "url": "/packages/render-passes/src/Stylize/StyleShade.cs.slang"
     },
