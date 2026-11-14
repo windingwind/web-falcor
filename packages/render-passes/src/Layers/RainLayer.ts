@@ -14,6 +14,11 @@
  *          composite with DepthComposite (premultiplied; additive for a glowing look);
  *   depth: r = view depth of the nearest streak (DepthComposite's posW convention), 3.4e38 where none.
  *
+ * Sky occlusion (`skyOcclusion`): "None" (default) draws every drop. "RayTraced" casts one visibility ray per drop from
+ * its head along +upAxis (up to `skyOcclusionDistance`) through the scene's software BVH (shared visibility service,
+ * Visibility.slangh); drops with geometry above them (under a roof, an awning or a tree) are not drawn, so interiors stay
+ * dry. Drops with open sky above them are drawn exactly as with "None".
+ *
  * Identity: count 0, opacity 0 (or intensity 0 and opacity 0) give an empty layer, which DepthComposite passes through
  * bit for bit.
  *
@@ -58,12 +63,17 @@ const kDefaults = {
     near: 0.2,
     time: 0,
     upAxis: [0, 1, 0] as number[],
+    skyOcclusion: "None" as RainSkyOcclusion,
+    skyOcclusionDistance: 1e30,
 };
+export const kRainSkyOcclusionModes = ["None", "RayTraced"] as const;
+export type RainSkyOcclusion = (typeof kRainSkyOcclusionModes)[number];
 export type RainLayerParams = typeof kDefaults;
 
 export class RainLayer extends RenderPass {
     private p: RainLayerParams = JSON.parse(JSON.stringify(kDefaults));
     private passes = new Map<Entry, ComputePass>();
+    private splatKey = "";
     private accum: Buffer | null = null;
     private depthBits: Buffer | null = null;
 
@@ -71,6 +81,15 @@ export class RainLayer extends RenderPass {
         super(device);
         for (const k of Object.keys(kDefaults) as (keyof RainLayerParams)[]) (this.p as Record<string, unknown>)[k] = props.get(k, kDefaults[k] as never);
         this.p.count = Math.max(0, Math.min(Math.round(this.p.count), 1 << 20));
+        if (!(kRainSkyOcclusionModes as readonly string[]).includes(this.p.skyOcclusion)) {
+            throw new Error(`RainLayer: unknown skyOcclusion '${this.p.skyOcclusion}' (${kRainSkyOcclusionModes.join(", ")})`);
+        }
+    }
+
+    override setScene(scene: typeof this.scene): void {
+        super.setScene(scene);
+        this.passes.delete("splat");
+        this.splatKey = "";
     }
 
     override getProperties(): Properties {
@@ -82,6 +101,7 @@ export class RainLayer extends RenderPass {
         ui.slider("Intensity", this.p.intensity, 0, 10, 0.01, (v) => (this.p.intensity = v));
         ui.slider("Speed", this.p.speed, 0, 20, 0.1, (v) => (this.p.speed = v));
         ui.slider("Time", this.p.time, 0, 60, 0.01, (v) => (this.p.time = v));
+        ui.dropdown("Sky occlusion", [...kRainSkyOcclusionModes], this.p.skyOcclusion, (v) => (this.p.skyOcclusion = v as RainSkyOcclusion));
     }
 
     override reflect(compileData: CompileData): RenderPassReflection {
@@ -93,9 +113,22 @@ export class RainLayer extends RenderPass {
         return r;
     }
 
+    /** Sky occlusion needs the scene (BVH); without one the pass draws every drop. */
+    private occluded(): boolean {
+        return this.p.skyOcclusion === "RayTraced" && !!this.scene;
+    }
+
     private kernel(e: Entry): ComputePass {
+        // Only the splat kernel traces rays: with sky occlusion it gets the scene defines and the visibility service in
+        // BVH mode; otherwise (and for the other kernels) the plain shader without defines.
+        const defines = e === "splat" && this.occluded() ? this.scene!.getSceneDefines().addAll({ RAIN_SKY_OCCLUSION: 1, VIS_MODE: 2 }) : null;
+        const key = defines ? defines.key() : "";
         let k = this.passes.get(e);
-        if (!k) this.passes.set(e, (k = ComputePass.create(this.device, { path: kShaderFile, csEntry: e })));
+        if (!k || (e === "splat" && key !== this.splatKey)) {
+            k = defines ? ComputePass.create(this.device, { path: kShaderFile, csEntry: e, defines }) : ComputePass.create(this.device, { path: kShaderFile, csEntry: e });
+            this.passes.set(e, k);
+            if (e === "splat") this.splatKey = key;
+        }
         return k;
     }
 
@@ -138,6 +171,10 @@ export class RainLayer extends RenderPass {
             root["gPosW"] = posW ?? dummyTexture(this.device);
             root["gColor"] = color;
             root["gDepth"] = depthOut ?? dummyTexture(this.device, "out:depth");
+            if (e === "splat" && this.occluded()) {
+                this.scene!.bindShaderData(root);
+                root["SkyCB"]!["gSkyDist"] = Math.max(Number(this.p.skyOcclusionDistance), 1e-3);
+            }
             k.execute(ctx, x, y);
         };
         run("clearAccum", W, H);
