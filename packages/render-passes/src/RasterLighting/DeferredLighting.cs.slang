@@ -19,6 +19,9 @@
  *  ENV_SPEC_OCCLUSION  1 = the env specular term is dropped where the reflection ray hits scene
  *                          geometry (without it, glossy surfaces facing other geometry mirror the
  *                          env map's distant content, which reads as see-through windows/walls)
+ *  INSTANCE_CLIP       (only while a clip buffer is bound, with SHADOW_MODE 2 or ENV_SPEC_OCCLUSION) visibility rays
+ *                      ignore the clipped parts of clipped instances (InstanceClip.slangh, same clip as GBufferRaster;
+ *                      dither mode at the receiving pixel), so clipped geometry casts no ray-traced shadow
  *  is_valid_gViewW, is_valid_gVisibility, is_valid_gDiffuse, is_valid_gSpecular  (optional I/O)
  */
 #include "Scene/SceneDefines.slangh"
@@ -35,6 +38,39 @@ import Rendering.Lights.LightHelpers;
 
 #define is_valid(name) (is_valid_##name != 0)
 static const uint kMaxCascades = 4;
+
+#ifdef INSTANCE_CLIP
+#include "RenderPasses/RasterLighting/InstanceClip.slangh"
+
+/** Pixel of the current thread (dither-mode clip of shadow-ray hits). */
+static int2 gClipPixel;
+
+/** Visibility-ray candidate filter: the material alpha test (as SceneRayQuery<1>) plus the per-instance clip. */
+struct ClipHitFilter : ITriangleHitFilter
+{
+    bool accept(const uint instance, const uint primitive, const float2 barycentrics, const float t)
+    {
+        GeometryInstanceID id;
+        id.index = instance;
+        const uint3 vi = gScene.getIndices(id, primitive);
+        const float3 posObj = gScene.getVertex(vi.x).position * (1.f - barycentrics.x - barycentrics.y)
+            + gScene.getVertex(vi.y).position * barycentrics.x + gScene.getVertex(vi.z).position * barycentrics.y;
+        if (isInstanceClipped(instance, gClipPixel, posObj)) return false;
+        AlphaTestHitFilter alpha = { true };
+        return alpha.accept(instance, primitive, barycentrics, t);
+    }
+};
+
+/** traceVisibilityRay over triangle meshes with ClipHitFilter: true = unoccluded. */
+bool traceClippedVisibilityRay(const Ray ray)
+{
+    ClipHitFilter filter;
+    uint instance, primitive;
+    float2 barycentrics;
+    float t;
+    return !traverseBvhFiltered(ray, true, filter, instance, primitive, barycentrics, t, RAY_FLAG_ACCEPT_FIRST_HIT_AND_END_SEARCH);
+}
+#endif
 
 cbuffer CB
 {
@@ -118,7 +154,11 @@ float evalVisibility(const ShadingData sd, const AnalyticLightSample ls, uint li
     const float3 origin = computeRayOrigin(sd.posW, dot(sd.faceN, ls.dir) >= 0.f ? sd.faceN : -sd.faceN);
     SceneRayQuery<1> query;
     const Ray ray = Ray(origin, ls.dir, 0.f, ls.distance);
+#ifdef INSTANCE_CLIP
+    return traceClippedVisibilityRay(ray) ? 1.f : 0.f;
+#else
     return query.traceVisibilityRay(ray, RAY_FLAG_ACCEPT_FIRST_HIT_AND_END_SEARCH, 0xff) ? 1.f : 0.f;
+#endif
 #else
     return 1.f;
 #endif
@@ -193,6 +233,9 @@ void main(uint3 dispatchThreadId: SV_DispatchThreadID)
 {
     const uint2 pixel = dispatchThreadId.xy;
     if (any(pixel >= gFrameDim)) return;
+#ifdef INSTANCE_CLIP
+    gClipPixel = int2(pixel);
+#endif
 
     const float3 rayDir = is_valid(gViewW) ? -gViewW[pixel].xyz : gScene.camera.computeRayPinhole(pixel, gFrameDim).dir;
     const HitInfo hit = HitInfo(gVBuffer[pixel]);
@@ -254,7 +297,11 @@ void main(uint3 dispatchThreadId: SV_DispatchThreadID)
             const float3 origin = computeRayOrigin(sd.posW, dot(sd.faceN, R) >= 0.f ? sd.faceN : -sd.faceN);
             SceneRayQuery<1> query;
             const Ray ray = Ray(origin, R, 0.f, FLT_MAX);
+#ifdef INSTANCE_CLIP
+            if (!traceClippedVisibilityRay(ray)) Lspec = float3(0.f);
+#else
             if (!query.traceVisibilityRay(ray, RAY_FLAG_ACCEPT_FIRST_HIT_AND_END_SEARCH, 0xff)) Lspec = float3(0.f);
+#endif
         }
 #endif
 #if BRDF_MODEL == 0
