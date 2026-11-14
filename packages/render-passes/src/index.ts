@@ -49,3 +49,8 @@ export * from "./MotionBlur/MotionBlur.js";
 export * from "./Stylize/StyleAovs.js";
 export * from "./Stylize/RimLight.js";
 export * from "./Stylize/RampShade.js";
+export * from "./Utils/History.js";
+export * from "./Utils/TemporalBlend.js";
+export * from "./Utils/HiZBuild.js";
+export * from "./Layers/DepthComposite.js";
+export * from "./Layers/ParticleLayer.js";
