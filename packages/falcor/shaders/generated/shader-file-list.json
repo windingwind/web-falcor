@@ -625,6 +625,10 @@
       "url": "/packages/render-passes/src/SSAO/SSAO.cs.slang"
     },
     {
+      "path": "RenderPasses/SSR/SSR.cs.slang",
+      "url": "/packages/render-passes/src/SSR/SSR.cs.slang"
+    },
+    {
       "path": "RenderPasses/Stylize/RampShade.cs.slang",
       "url": "/packages/render-passes/src/Stylize/RampShade.cs.slang"
     },
