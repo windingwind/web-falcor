@@ -597,6 +597,10 @@
       "url": "/packages/render-passes/src/MotionBlur/MotionBlur.cs.slang"
     },
     {
+      "path": "RenderPasses/MotionStats/MotionStats.cs.slang",
+      "url": "/packages/render-passes/src/MotionStats/MotionStats.cs.slang"
+    },
+    {
       "path": "RenderPasses/PhysicalSky/PhysicalSky.cs.slang",
       "url": "/packages/render-passes/src/PhysicalSky/PhysicalSky.cs.slang"
     },
