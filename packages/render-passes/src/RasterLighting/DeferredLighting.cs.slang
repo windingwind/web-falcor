@@ -5,8 +5,9 @@
  * stack as GBufferRaster / MinimalPathTracer), then sum the direct light of
  *  - every point / spot / directional analytic light (evalLightApproximate),
  *    shadowed by the cascaded shadow map (PCF), by ray-traced visibility, or not at all;
- *  - the env map / constant sky as unshadowed ambient light: diffuse irradiance from
- *    order-2 SH, specular from the env map in the reflection direction;
+ *  - the env map / constant sky as ambient light: diffuse irradiance from order-2 SH
+ *    (unshadowed), specular from the env map in the reflection direction, optionally
+ *    occluded by one visibility ray along that direction (ENV_SPEC_OCCLUSION);
  *  - emission.
  *
  * Host defines:
@@ -15,13 +16,16 @@
  *                      1 = classic Lambert + GGX from the material's BSDFProperties
  *  SHADOW_MODE         0 = none, 1 = shadow map (cascaded, PCF), 2 = ray traced (SceneRayQuery)
  *  USE_ANALYTIC_LIGHTS / USE_ENV_LIGHT / USE_ENV_BACKGROUND / USE_EMISSIVE  (0/1)
+ *  ENV_SPEC_OCCLUSION  1 = the env specular term is dropped where the reflection ray hits scene
+ *                          geometry (without it, glossy surfaces facing other geometry mirror the
+ *                          env map's distant content, which reads as see-through windows/walls)
  *  is_valid_gViewW, is_valid_gVisibility, is_valid_gDiffuse, is_valid_gSpecular  (optional I/O)
  */
 #include "Scene/SceneDefines.slangh"
 #include "Utils/Math/MathConstants.slangh"
 
 import Scene.Shading;
-#if SHADOW_MODE == 2
+#if SHADOW_MODE == 2 || ENV_SPEC_OCCLUSION
 import Scene.RaytracingInline;
 #endif
 import Utils.Math.MathHelpers;
@@ -243,7 +247,16 @@ void main(uint3 dispatchThreadId: SV_DispatchThreadID)
         const float NoV = saturate(dot(N, sd.V));
         diffuse += props.diffuseReflectionAlbedo * shIrradiance(N) * M_1_PI;
         const float3 R = reflect(-sd.V, N);
-        const float3 Lspec = gScene.envMap.eval(R, props.roughness * gEnvSpecLodScale);
+        float3 Lspec = gScene.envMap.eval(R, props.roughness * gEnvSpecLodScale);
+#if ENV_SPEC_OCCLUSION
+        // Mirror-direction specular occlusion: the env map only reaches the surface if the reflection ray escapes.
+        {
+            const float3 origin = computeRayOrigin(sd.posW, dot(sd.faceN, R) >= 0.f ? sd.faceN : -sd.faceN);
+            SceneRayQuery<1> query;
+            const Ray ray = Ray(origin, R, 0.f, FLT_MAX);
+            if (!query.traceVisibilityRay(ray, RAY_FLAG_ACCEPT_FIRST_HIT_AND_END_SEARCH, 0xff)) Lspec = float3(0.f);
+        }
+#endif
 #if BRDF_MODEL == 0
         specular += Lspec * props.specularReflectionAlbedo;
 #else
