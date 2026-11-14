@@ -61,3 +61,4 @@ export * from "./Layers/DepthComposite.js";
 export * from "./Layers/ParticleLayer.js";
 export * from "./SSR/SSR.js";
 export * from "./Stylize/WorldRevealMask.js";
+export * from "./Stylize/StopMotion.js";
