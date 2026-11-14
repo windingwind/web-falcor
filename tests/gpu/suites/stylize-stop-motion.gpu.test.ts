@@ -207,6 +207,11 @@ gpuTest("StopMotion.perObjectFrameRate", async ({ device }) => {
     await clip(device, scene, { nodeHolds: {} }, [0]);
     expectEq(scene.getAnimationTimeQuantization().size, 1, "empty nodeHolds leaves the quantisation as it was");
     scene.setAnimationTimeQuantization(null);
+    let fg = 0, maxY = -1e9, moving = 0;
+    for (let i = 0; i < kSize * kSize; i++) if (full.pos[0]![i * 4 + 3] !== 0) { fg++; maxY = Math.max(maxY, full.pos[0]![i * 4 + 1]!); }
+    for (let k = 1; k < ks.length; k++) if (!bitwiseEqual(full.pos[k]!, full.pos[k - 1]!)) moving++;
+    log(`StopMotion animated scene: geometry px ${fg}, max y ${maxY.toFixed(3)}, unquantised frames that move ${moving}/${ks.length - 1}`);
+    expectEq(moving, ks.length - 1, "the animated scene moves on every frame");
     let samePass = 0, bBad = 0, bN = 0, aDiff = 0;
     for (let k = 0; k < ks.length; k++) {
         if (bitwiseEqual(viaPass.pos[k]!, direct.pos[k]!)) samePass++;
