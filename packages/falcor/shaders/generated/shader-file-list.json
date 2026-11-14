@@ -731,6 +731,10 @@
     {
       "path": "RenderPasses/VolumetricClouds/VolumetricClouds.cs.slang",
       "url": "/packages/render-passes/src/VolumetricClouds/VolumetricClouds.cs.slang"
+    },
+    {
+      "path": "RenderPasses/Water/Ripples.cs.slang",
+      "url": "/packages/render-passes/src/Water/Ripples.cs.slang"
     }
   ]
 }

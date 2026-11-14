@@ -73,3 +73,4 @@ export * from "./Sky/ProceduralNightSky.js";
 export * from "./Sky/Clouds2D.js";
 export * from "./FroxelFog/FroxelFog.js";
 export * from "./SSGI/SSGI.js";
+export * from "./Water/Ripples.js";
