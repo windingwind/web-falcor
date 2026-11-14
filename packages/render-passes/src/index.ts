@@ -88,3 +88,4 @@ export * from "./Stylize/TiltShift.js";
 export * from "./Stylize/CRT.js";
 export * from "./Stylize/VHS.js";
 export * from "./Stylize/HoldFrames.js";
+export * from "./EdgeAwareFilter/EdgeAwareFilter.js";
