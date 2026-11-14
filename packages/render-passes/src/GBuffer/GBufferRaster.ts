@@ -8,6 +8,15 @@
  * (docs §9). The vbuffer channel needs SV_PrimitiveID: when it is connected the
  * pass switches to non-indexed vertex pulling (WEBFALCOR_VERTEX_PULLING), like
  * VBufferRaster, so the triangle index and barycentrics are available.
+ *
+ * WebFalcor addition, per-instance clip: an optional raw-buffer input `clipBuffer` holds one float4 per geometry
+ * instance (threshold, noise mode, edge width, noise scale). While it is connected the pass compiles with
+ * INSTANCE_CLIP and discards the fragments of instance i whose noise value is below threshold i (mode 0 = off,
+ * 1 = 4x4 ordered screen-space dither, 2 = object-space value noise scaled by the noise scale; threshold <= 0 = off;
+ * instances past the end of the buffer are not clipped). The optional `clipEdge` output (R32Float) then holds
+ * 1 - (noise - threshold) / edge width, saturated, on the surviving fragments of clipped instances (0 elsewhere).
+ * Without a clip buffer nothing changes: the define is off, the shader and the outputs are those of the plain pass,
+ * and `clipEdge` (if connected) is cleared to 0. The pass keeps no state.
  */
 
 import {
@@ -75,6 +84,12 @@ const kChannels: { name: string; texname: string; format: ResourceFormat; desc: 
     { name: "vbuffer", texname: "gVBuffer", format: ResourceFormat.RGBA32Uint, desc: "Visibility buffer" },
 ];
 type Channel = (typeof kChannels)[number];
+
+/** Per-instance clip: output channel (only part of the shader while a clip buffer is bound) and its input. */
+const kClipEdge: Channel = { name: "clipEdge", texname: "gClipEdge", format: ResourceFormat.R32Float, desc: "Per-instance clip edge (1 at the clip boundary, 0 beyond the edge width)" };
+const kClipBuffer = "clipBuffer";
+/** Bytes per clip entry: float4 (threshold, noise mode, edge width, noise scale). */
+export const kInstanceClipStride = 16;
 
 /** WebGPU guarantees 8 color attachments; each batch is one geometry pass. */
 const kMaxTargetsPerBatch = 8;
@@ -188,6 +203,15 @@ export class GBufferRaster extends RenderPass {
                 .bindFlags(ResourceBindFlags.RenderTarget | ResourceBindFlags.ShaderResource)
                 .flags(FieldFlags.Optional);
         }
+        r.addOutput(kClipEdge.name, kClipEdge.desc)
+            .texture2D(w, h)
+            .format(kClipEdge.format)
+            .bindFlags(ResourceBindFlags.RenderTarget | ResourceBindFlags.ShaderResource)
+            .flags(FieldFlags.Optional);
+        r.addInput(kClipBuffer, "Per-instance clip entries: float4 (threshold, noise mode, edge width, noise scale) per geometry instance")
+            .rawBuffer(0)
+            .bindFlags(ResourceBindFlags.ShaderResource)
+            .flags(FieldFlags.Optional);
         r.addOutput("depth", "Depth buffer")
             .texture2D(w, h)
             .format(ResourceFormat.D32Float)
@@ -196,8 +220,8 @@ export class GBufferRaster extends RenderPass {
     }
 
     /** Compiles the program for one batch of channels (is_valid_/LOC_ defines pick the targets). */
-    private getVariant(batch: Channel[], pulling: boolean): Variant {
-        const key = `${batch.map((c) => c.texname).join(",")}|${pulling}|${this.useAlphaTest}|${this.adjustShadingNormals}|${this.forceCullMode ? this.cullMode : -1}`;
+    private getVariant(batch: Channel[], pulling: boolean, clip: boolean): Variant {
+        const key = `${batch.map((c) => c.texname).join(",")}|${pulling}|${this.useAlphaTest}|${this.adjustShadingNormals}|${this.forceCullMode ? this.cullMode : -1}${clip ? "|clip" : ""}`;
         const cached = this.variants.get(key);
         if (cached) return cached;
 
@@ -211,6 +235,13 @@ export class GBufferRaster extends RenderPass {
         defines.add("WEBFALCOR_VERTEX_PULLING", pulling ? 1 : 0);
         defines.add("USE_ALPHA_TEST", this.useAlphaTest ? 1 : 0);
         defines.add("ADJUST_SHADING_NORMALS", this.adjustShadingNormals ? 1 : 0);
+        if (clip) {
+            // Only with a clip buffer bound: the default define set (and shader) stays untouched.
+            const loc = batch.indexOf(kClipEdge);
+            defines.add("INSTANCE_CLIP", 1);
+            defines.add(`is_valid_${kClipEdge.texname}`, loc >= 0 ? 1 : 0);
+            defines.add(`LOC_${kClipEdge.texname}`, Math.max(loc, 0));
+        }
 
         const program = this.device.programManager.createProgram(
             {
@@ -293,10 +324,16 @@ export class GBufferRaster extends RenderPass {
         const depth = renderData.getTexture("depth")!;
         const [w, h] = [depth.width, depth.height];
         const present = kChannels.filter((ch) => renderData.getTexture(ch.name) !== undefined);
+        const clipBuffer = renderData.getBuffer(kClipBuffer);
+        const clipCount = clipBuffer ? Math.floor(clipBuffer.size / kInstanceClipStride) : 0;
+        const clip = clipBuffer !== undefined && clipCount > 0;
+        const clipEdge = renderData.getTexture(kClipEdge.name);
 
         // Mirrors GBufferRaster::execute: clear depth and all connected channels first.
         ctx.clearDsv(depth.getDSV(), 1, 0);
         for (const ch of present) ctx.clearTexture(renderData.getTexture(ch.name)!, [0, 0, 0, 0]);
+        if (clipEdge) ctx.clearTexture(clipEdge, [0, 0, 0, 0]);
+        if (clip && clipEdge) present.push(kClipEdge);
         if (!this.scene) return;
 
         // Mirrors GBufferBase::updateFrameDim: the camera jitters by the sample
@@ -319,15 +356,16 @@ export class GBufferRaster extends RenderPass {
             targets = [{ channel: kChannels[0]!, texture: this.scratchTarget }];
         }
 
-        // The vbuffer channel needs the triangle index: pull vertices (non-indexed) for every batch.
-        const pulling = targets.some((t) => t.channel.name === "vbuffer");
+        // The vbuffer channel needs the triangle index, the clip the object-space position: pull vertices
+        // (non-indexed) for every batch.
+        const pulling = clip || targets.some((t) => t.channel.name === "vbuffer");
 
         // One geometry pass per batch of <= 8 targets. Each batch re-resolves
         // visibility itself (depth cleared, Less + write): identical draw order and
         // vertex math give identical depth, so the batches agree per pixel.
         for (let b = 0; b < targets.length; b += kMaxTargetsPerBatch) {
             const batch = targets.slice(b, b + kMaxTargetsPerBatch);
-            const variant = this.getVariant(batch.map((t) => t.channel), pulling);
+            const variant = this.getVariant(batch.map((t) => t.channel), pulling, clip);
 
             const fbo = new Fbo();
             batch.forEach((t, i) => fbo.attachColorTarget(t.texture, i));
@@ -336,6 +374,10 @@ export class GBufferRaster extends RenderPass {
 
             this.scene.bindShaderData(variant.root);
             variant.root["PerFrameCB"]["gFrameDim"] = [w, h];
+            if (clip) {
+                variant.root["PerFrameCB"]["gClipCount"] = clipCount;
+                variant.root["gInstanceClip"] = clipBuffer!;
+            }
 
             const state = variant.state;
             state.setFbo(fbo);
