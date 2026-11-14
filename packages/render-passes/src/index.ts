@@ -47,6 +47,8 @@ export * from "./SSAO/SSAO.js";
 export * from "./PhysicalSky/PhysicalSky.js";
 export * from "./FXAA/FXAA.js";
 export * from "./DepthOfField/DepthOfField.js";
+export * from "./Focus/SelectiveBloom.js";
+export * from "./Focus/StylizedFocus.js";
 export * from "./MotionBlur/MotionBlur.js";
 export * from "./MotionStats/MotionStats.js";
 export * from "./Stylize/StyleAovs.js";

@@ -593,6 +593,14 @@
       "url": "/packages/render-passes/src/FXAA/FXAA.cs.slang"
     },
     {
+      "path": "RenderPasses/Focus/SelectiveBloom.cs.slang",
+      "url": "/packages/render-passes/src/Focus/SelectiveBloom.cs.slang"
+    },
+    {
+      "path": "RenderPasses/Focus/StylizedFocus.cs.slang",
+      "url": "/packages/render-passes/src/Focus/StylizedFocus.cs.slang"
+    },
+    {
       "path": "RenderPasses/Layers/DepthComposite.cs.slang",
       "url": "/packages/render-passes/src/Layers/DepthComposite.cs.slang"
     },
