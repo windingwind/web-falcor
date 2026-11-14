@@ -593,12 +593,24 @@
       "url": "/packages/render-passes/src/FXAA/FXAA.cs.slang"
     },
     {
+      "path": "RenderPasses/GBuffer/SubsetRaster.cs.slang",
+      "url": "/packages/render-passes/src/GBuffer/SubsetRaster.cs.slang"
+    },
+    {
       "path": "RenderPasses/Layers/DepthComposite.cs.slang",
       "url": "/packages/render-passes/src/Layers/DepthComposite.cs.slang"
     },
     {
       "path": "RenderPasses/Layers/ParticleLayer.cs.slang",
       "url": "/packages/render-passes/src/Layers/ParticleLayer.cs.slang"
+    },
+    {
+      "path": "RenderPasses/Layers/VfxLayer.cs.slang",
+      "url": "/packages/render-passes/src/Layers/VfxLayer.cs.slang"
+    },
+    {
+      "path": "RenderPasses/LensFlare/LensFlare.cs.slang",
+      "url": "/packages/render-passes/src/LensFlare/LensFlare.cs.slang"
     },
     {
       "path": "RenderPasses/MotionBlur/MotionBlur.cs.slang",
@@ -645,6 +657,10 @@
       "url": "/packages/render-passes/src/Sky/Clouds2D.cs.slang"
     },
     {
+      "path": "RenderPasses/Sky/ProceduralNightSky.cs.slang",
+      "url": "/packages/render-passes/src/Sky/ProceduralNightSky.cs.slang"
+    },
+    {
       "path": "RenderPasses/Stylize/RampShade.cs.slang",
       "url": "/packages/render-passes/src/Stylize/RampShade.cs.slang"
     },
@@ -653,8 +669,24 @@
       "url": "/packages/render-passes/src/Stylize/RimLight.cs.slang"
     },
     {
+      "path": "RenderPasses/Stylize/StopMotion.cs.slang",
+      "url": "/packages/render-passes/src/Stylize/StopMotion.cs.slang"
+    },
+    {
       "path": "RenderPasses/Stylize/StyleAovs.cs.slang",
       "url": "/packages/render-passes/src/Stylize/StyleAovs.cs.slang"
+    },
+    {
+      "path": "RenderPasses/Stylize/StyleAovsCustom.cs.slang",
+      "url": "/packages/render-passes/src/Stylize/StyleAovsCustom.cs.slang"
+    },
+    {
+      "path": "RenderPasses/Stylize/StyleShade.cs.slang",
+      "url": "/packages/render-passes/src/Stylize/StyleShade.cs.slang"
+    },
+    {
+      "path": "RenderPasses/Stylize/WorldRevealMask.cs.slang",
+      "url": "/packages/render-passes/src/Stylize/WorldRevealMask.cs.slang"
     },
     {
       "path": "RenderPasses/Utils/HiZBuild.cs.slang",
