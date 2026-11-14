@@ -20,7 +20,8 @@
  *                 list), a = 1. The scalars come from the `instanceScalars` property or `setInstanceScalars()`; they let
  *                 later passes read any per-object value (a mask weight, a stylization strength, ...).
  * Background pixels are 0 (alpha 0). All outputs are optional and only written when connected/marked. The `custom`
- * code path is compiled only while the `custom` output is used, so the pass is otherwise unchanged.
+ * output is written by a separate small kernel (StyleAovsCustom.cs.slang) that runs only while `custom` is used, so the
+ * main kernel and its outputs are unchanged and it stays within WebGPU's 8 storage textures per shader stage.
  *
  * Inputs : vbuffer (GBufferRaster/VBufferRaster), texC (optional, for flatAlbedo), normW (optional, for ndotl and
  *          curvature), posW (optional, for curvature).
@@ -49,6 +50,7 @@ import {
 import { addColorOutput, addTexInput, cameraData, dummyTexture, enumIndex, keyLightDir } from "./StyleCommon.js";
 
 const kShaderFile = "RenderPasses/Stylize/StyleAovs.cs.slang";
+const kCustomShaderFile = "RenderPasses/Stylize/StyleAovsCustom.cs.slang";
 const kIdSources = ["instance", "material", "mesh"] as const;
 const kOutputs = [
     ["id", "gId", "hash01(id) in r, raw id in g (id source: idSource)"],
@@ -66,6 +68,8 @@ export class StyleAovs extends RenderPass {
     private p = { idSource: "instance" as string, hashSeed: 0, flatLod: 16, lightDir: [0, 0, 0] as number[], curvatureDepthThreshold: 0.05 };
     private pass: ComputePass | null = null;
     private passKey = "";
+    private customPass: ComputePass | null = null;
+    private customPassKey = "";
     /** Per-instance scalars for the `custom` output (indexed by geometry instance id). */
     private instanceScalars: number[] = [];
     private scalarBuffer: Buffer | null = null;
@@ -140,7 +144,6 @@ export class StyleAovs extends RenderPass {
         const W = vbuffer.width, H = vbuffer.height;
         const defines = this.scene.getSceneDefines();
         const custom = rd.getTexture(kCustomOutput);
-        if (custom) defines.add("USE_CUSTOM_AOV", 1);
         const key = defines.key();
         if (!this.pass || key !== this.passKey) {
             this.pass = ComputePass.create(this.device, { path: kShaderFile, defines });
@@ -174,13 +177,21 @@ export class StyleAovs extends RenderPass {
             root[tex] = t ?? dummyTexture(this.device, `out:${name}`);
             any ||= !!t;
         }
-        if (custom) {
-            cb["gInstanceScalarCount"] = this.instanceScalars.length;
-            root["gInstanceScalars"] = this.updateScalarBuffer();
-            root["gCustom"] = custom;
-            any = true;
-        }
         if (any) this.pass.execute(ctx, W, H);
+        if (custom) {
+            if (!this.customPass || key !== this.customPassKey) {
+                this.customPass = ComputePass.create(this.device, { path: kCustomShaderFile, defines });
+                this.customPassKey = key;
+            }
+            const croot = this.customPass.getRootVar();
+            const ccb = croot["CB"]!;
+            ccb["gFrameDim"] = [W, H];
+            ccb["gInstanceScalarCount"] = this.instanceScalars.length;
+            croot["gVBuffer"] = vbuffer;
+            croot["gInstanceScalars"] = this.updateScalarBuffer();
+            croot["gCustom"] = custom;
+            this.customPass.execute(ctx, W, H);
+        }
     }
 }
 

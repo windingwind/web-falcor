@@ -35,7 +35,9 @@ graph.addEdge("Clouds.dst", "Lighting.cookie");   // or graph.setInput("Lighting
 `custom` (optional output, RGBA32Float) holds `instanceScalars[instance id]` in r and 1 in alpha for geometry pixels
 (0 for instances past the end of the list), and 0 for the background. Set the scalars with the `instanceScalars`
 property or `styleAovs.setInstanceScalars(values)`; the instance id is the one written to `id.g` with
-`idSource = "instance"`. Later passes can read the AOV as a per-object weight or mask.
+`idSource = "instance"`. Later passes can read the AOV as a per-object weight or mask. The output is written by a separate
+small kernel that runs only while `custom` is connected, so the main StyleAovs kernel and its outputs are unchanged
+(and it stays within WebGPU's 8 storage textures per shader stage).
 
 ## Tests
 
