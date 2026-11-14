@@ -30,13 +30,12 @@ async function render(device: Device, scene: Scene, mode: string, dlShadow: stri
         g.markOutput("DL.visibility");
     }
     g.setScene(scene);
-    for (let tries = 0; ; tries++) {
-        g.execute(device.renderContext);
+    g.execute(device.renderContext);
+    {
         const pos = await read(device, g.getOutput("G.posW")!);
         let hits = 0;
         for (let i = 3; i < pos.length; i += 4) if (pos[i] !== 0) hits++;
-        if (hits > 0.2 * kSize * kSize) break;
-        if (tries >= 4) throw new Error("G-buffer still empty");
+        if (hits <= 0.2 * kSize * kSize) throw new Error(`G-buffer empty on the first frame (${hits} px)`);
     }
     g.execute(device.renderContext);
     const vis = await read(device, g.getOutput("V.visibility")!);
@@ -64,7 +63,7 @@ function blocked(p: V3, L: V3): boolean {
 }
 
 gpuTest("Visibility.matchesDeferredLighting", async ({ device }) => {
-    const scene = makeScene(device, [0.02, 0.02, 0.02]); // own instance: the default shared scene can render an empty G-buffer after other suites created scenes
+    const scene = makeScene(device, [0.02, 0.02, 0.02]);
     for (const [mode, extra] of [["ShadowMap", {}], ["ShadowMap", { pcfRadius: 2, normalBias: 2.5 }], ["RayTraced", {}]] as const) {
         const r = await render(device, scene, mode, mode, extra);
         let n = 0, bad = 0, lit = 0, shadow = 0;
@@ -84,7 +83,7 @@ gpuTest("Visibility.matchesDeferredLighting", async ({ device }) => {
 });
 
 gpuTest("Visibility.rayTracedMatchesCpuAndShadowMap", async ({ device }) => {
-    const scene = makeScene(device, [0.02, 0.02, 0.02]); // own instance: the default shared scene can render an empty G-buffer after other suites created scenes
+    const scene = makeScene(device, [0.02, 0.02, 0.02]);
     const rt = await render(device, scene, "RayTraced", null);
     const sm = await render(device, scene, "ShadowMap", null);
     const none = await render(device, scene, "None", null);

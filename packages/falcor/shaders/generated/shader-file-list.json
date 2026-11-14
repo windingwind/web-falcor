@@ -589,8 +589,36 @@
       "url": "/packages/render-passes/src/DepthOfField/DepthOfField.cs.slang"
     },
     {
+      "path": "RenderPasses/Dissolve/Dissolve.cs.slang",
+      "url": "/packages/render-passes/src/Dissolve/Dissolve.cs.slang"
+    },
+    {
       "path": "RenderPasses/FXAA/FXAA.cs.slang",
       "url": "/packages/render-passes/src/FXAA/FXAA.cs.slang"
+    },
+    {
+      "path": "RenderPasses/Focus/SelectiveBloom.cs.slang",
+      "url": "/packages/render-passes/src/Focus/SelectiveBloom.cs.slang"
+    },
+    {
+      "path": "RenderPasses/Focus/StylizedFocus.cs.slang",
+      "url": "/packages/render-passes/src/Focus/StylizedFocus.cs.slang"
+    },
+    {
+      "path": "RenderPasses/FroxelFog/FroxelFog.cs.slang",
+      "url": "/packages/render-passes/src/FroxelFog/FroxelFog.cs.slang"
+    },
+    {
+      "path": "RenderPasses/FroxelFog/FroxelFogCommon.slangh",
+      "url": "/packages/render-passes/src/FroxelFog/FroxelFogCommon.slangh"
+    },
+    {
+      "path": "RenderPasses/FroxelFog/FroxelFogScatter.cs.slang",
+      "url": "/packages/render-passes/src/FroxelFog/FroxelFogScatter.cs.slang"
+    },
+    {
+      "path": "RenderPasses/GBuffer/SubsetRaster.cs.slang",
+      "url": "/packages/render-passes/src/GBuffer/SubsetRaster.cs.slang"
     },
     {
       "path": "RenderPasses/Layers/DepthComposite.cs.slang",
@@ -599,6 +627,18 @@
     {
       "path": "RenderPasses/Layers/ParticleLayer.cs.slang",
       "url": "/packages/render-passes/src/Layers/ParticleLayer.cs.slang"
+    },
+    {
+      "path": "RenderPasses/Layers/RainLayer.cs.slang",
+      "url": "/packages/render-passes/src/Layers/RainLayer.cs.slang"
+    },
+    {
+      "path": "RenderPasses/Layers/VfxLayer.cs.slang",
+      "url": "/packages/render-passes/src/Layers/VfxLayer.cs.slang"
+    },
+    {
+      "path": "RenderPasses/LensFlare/LensFlare.cs.slang",
+      "url": "/packages/render-passes/src/LensFlare/LensFlare.cs.slang"
     },
     {
       "path": "RenderPasses/MotionBlur/MotionBlur.cs.slang",
@@ -621,6 +661,10 @@
       "url": "/packages/render-passes/src/RasterLighting/EnvSH.cs.slang"
     },
     {
+      "path": "RenderPasses/RasterLighting/LightCookiePattern.cs.slang",
+      "url": "/packages/render-passes/src/RasterLighting/LightCookiePattern.cs.slang"
+    },
+    {
       "path": "RenderPasses/RasterLighting/ShadowMap.3d.slang",
       "url": "/packages/render-passes/src/RasterLighting/ShadowMap.3d.slang"
     },
@@ -637,6 +681,54 @@
       "url": "/packages/render-passes/src/SSAO/SSAO.cs.slang"
     },
     {
+      "path": "RenderPasses/SSGI/SSGI.cs.slang",
+      "url": "/packages/render-passes/src/SSGI/SSGI.cs.slang"
+    },
+    {
+      "path": "RenderPasses/SSR/SSR.cs.slang",
+      "url": "/packages/render-passes/src/SSR/SSR.cs.slang"
+    },
+    {
+      "path": "RenderPasses/Sky/Clouds2D.cs.slang",
+      "url": "/packages/render-passes/src/Sky/Clouds2D.cs.slang"
+    },
+    {
+      "path": "RenderPasses/Sky/ProceduralNightSky.cs.slang",
+      "url": "/packages/render-passes/src/Sky/ProceduralNightSky.cs.slang"
+    },
+    {
+      "path": "RenderPasses/Stylize/CRT.cs.slang",
+      "url": "/packages/render-passes/src/Stylize/CRT.cs.slang"
+    },
+    {
+      "path": "RenderPasses/Stylize/DitherV2.cs.slang",
+      "url": "/packages/render-passes/src/Stylize/DitherV2.cs.slang"
+    },
+    {
+      "path": "RenderPasses/Stylize/GradientFog.cs.slang",
+      "url": "/packages/render-passes/src/Stylize/GradientFog.cs.slang"
+    },
+    {
+      "path": "RenderPasses/Stylize/GradientMap.cs.slang",
+      "url": "/packages/render-passes/src/Stylize/GradientMap.cs.slang"
+    },
+    {
+      "path": "RenderPasses/Stylize/HoldFrames.cs.slang",
+      "url": "/packages/render-passes/src/Stylize/HoldFrames.cs.slang"
+    },
+    {
+      "path": "RenderPasses/Stylize/LightShafts.cs.slang",
+      "url": "/packages/render-passes/src/Stylize/LightShafts.cs.slang"
+    },
+    {
+      "path": "RenderPasses/Stylize/PaletteQuant.cs.slang",
+      "url": "/packages/render-passes/src/Stylize/PaletteQuant.cs.slang"
+    },
+    {
+      "path": "RenderPasses/Stylize/PixelateV2.cs.slang",
+      "url": "/packages/render-passes/src/Stylize/PixelateV2.cs.slang"
+    },
+    {
       "path": "RenderPasses/Stylize/RampShade.cs.slang",
       "url": "/packages/render-passes/src/Stylize/RampShade.cs.slang"
     },
@@ -645,8 +737,40 @@
       "url": "/packages/render-passes/src/Stylize/RimLight.cs.slang"
     },
     {
+      "path": "RenderPasses/Stylize/SelectiveColour.cs.slang",
+      "url": "/packages/render-passes/src/Stylize/SelectiveColour.cs.slang"
+    },
+    {
+      "path": "RenderPasses/Stylize/ShadowTint.cs.slang",
+      "url": "/packages/render-passes/src/Stylize/ShadowTint.cs.slang"
+    },
+    {
+      "path": "RenderPasses/Stylize/StopMotion.cs.slang",
+      "url": "/packages/render-passes/src/Stylize/StopMotion.cs.slang"
+    },
+    {
       "path": "RenderPasses/Stylize/StyleAovs.cs.slang",
       "url": "/packages/render-passes/src/Stylize/StyleAovs.cs.slang"
+    },
+    {
+      "path": "RenderPasses/Stylize/StyleAovsCustom.cs.slang",
+      "url": "/packages/render-passes/src/Stylize/StyleAovsCustom.cs.slang"
+    },
+    {
+      "path": "RenderPasses/Stylize/StyleShade.cs.slang",
+      "url": "/packages/render-passes/src/Stylize/StyleShade.cs.slang"
+    },
+    {
+      "path": "RenderPasses/Stylize/TiltShift.cs.slang",
+      "url": "/packages/render-passes/src/Stylize/TiltShift.cs.slang"
+    },
+    {
+      "path": "RenderPasses/Stylize/VHS.cs.slang",
+      "url": "/packages/render-passes/src/Stylize/VHS.cs.slang"
+    },
+    {
+      "path": "RenderPasses/Stylize/WorldRevealMask.cs.slang",
+      "url": "/packages/render-passes/src/Stylize/WorldRevealMask.cs.slang"
     },
     {
       "path": "RenderPasses/Utils/HiZBuild.cs.slang",
@@ -655,6 +779,18 @@
     {
       "path": "RenderPasses/Utils/TemporalBlend.cs.slang",
       "url": "/packages/render-passes/src/Utils/TemporalBlend.cs.slang"
+    },
+    {
+      "path": "RenderPasses/VolumetricClouds/VolumetricClouds.cs.slang",
+      "url": "/packages/render-passes/src/VolumetricClouds/VolumetricClouds.cs.slang"
+    },
+    {
+      "path": "RenderPasses/Water/Ripples.cs.slang",
+      "url": "/packages/render-passes/src/Water/Ripples.cs.slang"
+    },
+    {
+      "path": "RenderPasses/Weather/RainWetness.cs.slang",
+      "url": "/packages/render-passes/src/Weather/RainWetness.cs.slang"
     }
   ]
 }
