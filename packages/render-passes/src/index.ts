@@ -52,6 +52,7 @@ export * from "./MotionStats/MotionStats.js";
 export * from "./Stylize/StyleAovs.js";
 export * from "./Stylize/RimLight.js";
 export * from "./Stylize/RampShade.js";
+export * from "./Stylize/StyleShade.js";
 export * from "./Utils/History.js";
 export * from "./Utils/TemporalBlend.js";
 export * from "./Utils/HiZBuild.js";
