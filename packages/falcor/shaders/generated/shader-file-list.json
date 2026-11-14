@@ -637,6 +637,10 @@
       "url": "/packages/render-passes/src/SSAO/SSAO.cs.slang"
     },
     {
+      "path": "RenderPasses/SSGI/SSGI.cs.slang",
+      "url": "/packages/render-passes/src/SSGI/SSGI.cs.slang"
+    },
+    {
       "path": "RenderPasses/Stylize/RampShade.cs.slang",
       "url": "/packages/render-passes/src/Stylize/RampShade.cs.slang"
     },
