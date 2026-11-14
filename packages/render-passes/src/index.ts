@@ -55,6 +55,7 @@ export * from "./Focus/StylizedFocus.js";
 export * from "./MotionBlur/MotionBlur.js";
 export * from "./MotionStats/MotionStats.js";
 export * from "./Stylize/StyleAovs.js";
+export * from "./Dissolve/Dissolve.js";
 export * from "./Stylize/RimLight.js";
 export * from "./Stylize/RampShade.js";
 export * from "./Stylize/StyleShade.js";

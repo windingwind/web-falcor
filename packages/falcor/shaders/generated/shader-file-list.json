@@ -589,6 +589,10 @@
       "url": "/packages/render-passes/src/DepthOfField/DepthOfField.cs.slang"
     },
     {
+      "path": "RenderPasses/Dissolve/Dissolve.cs.slang",
+      "url": "/packages/render-passes/src/Dissolve/Dissolve.cs.slang"
+    },
+    {
       "path": "RenderPasses/FXAA/FXAA.cs.slang",
       "url": "/packages/render-passes/src/FXAA/FXAA.cs.slang"
     },
