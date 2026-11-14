@@ -4,8 +4,9 @@
  * rebuilds the scene's ShadingData per pixel and evaluates, without stochastic sampling:
  *  - point / spot / directional analytic lights (Falcor's evalLightApproximate),
  *    shadowed by CascadedShadowMap (PCF), by ray-traced visibility, or not at all;
- *  - the env map / constant sky as unshadowed ambient light (SH9 diffuse irradiance +
- *    env lookup in the reflection direction);
+ *  - the env map / constant sky as ambient light (unshadowed SH9 diffuse irradiance +
+ *    env lookup in the reflection direction; envSpecularOcclusion traces one visibility ray
+ *    along it so glossy surfaces don't mirror the env map through nearby geometry);
  *  - emission, and the env map as background.
  * brdf = "Material" evaluates the scene material (IMaterialInstance::eval, i.e. the same BSDF
  * the path tracers use); "LambertGGX" is the classic real-time model from the material's
@@ -41,6 +42,9 @@ const kBrdfModels = ["Material", "LambertGGX"] as const;
 const kShadowModes = ["None", "ShadowMap", "RayTraced"] as const;
 type BrdfModel = (typeof kBrdfModels)[number];
 type ShadowMode = (typeof kShadowModes)[number];
+/** Auto = on when shadowMode is RayTraced (ray queries are in use anyway), off otherwise. */
+const kEnvOcclusionModes = ["Auto", "On", "Off"] as const;
+type EnvOcclusionMode = (typeof kEnvOcclusionModes)[number];
 
 const kOptionalOutputs = [
     { name: "visibility", texname: "gVisibility", format: ResourceFormat.R32Float, desc: "Visibility of the shadowed light (1 = lit)" },
@@ -62,6 +66,7 @@ export class DeferredLighting extends RenderPass {
     private analyticLights = true;
     private emissive = true;
     private envBackground = true;
+    private envSpecularOcclusion: EnvOcclusionMode = "Auto";
     /** Constant shadow depth bias in world units. */
     private depthBias = 0.002;
     /** Normal offset in shadow texels. */
@@ -80,6 +85,9 @@ export class DeferredLighting extends RenderPass {
         this.analyticLights = props.get("analyticLights", true);
         this.emissive = props.get("emissive", true);
         this.envBackground = props.get("envBackground", true);
+        const eo = props.get<string>("envSpecularOcclusion", "Auto");
+        if (!(kEnvOcclusionModes as readonly string[]).includes(eo)) throw new Error(`DeferredLighting: unknown envSpecularOcclusion '${eo}' (${kEnvOcclusionModes.join(", ")})`);
+        this.envSpecularOcclusion = eo as EnvOcclusionMode;
         this.depthBias = props.get("depthBias", 0.002);
         this.normalBias = props.get("normalBias", 1.5);
         this.pcfRadius = props.get("pcfRadius", 1);
@@ -94,6 +102,7 @@ export class DeferredLighting extends RenderPass {
             analyticLights: this.analyticLights,
             emissive: this.emissive,
             envBackground: this.envBackground,
+            envSpecularOcclusion: this.envSpecularOcclusion,
             depthBias: this.depthBias,
             normalBias: this.normalBias,
             pcfRadius: this.pcfRadius,
@@ -107,6 +116,7 @@ export class DeferredLighting extends RenderPass {
         ui.checkbox("Analytic lights", this.analyticLights, (v) => (this.analyticLights = v));
         ui.checkbox("Emission", this.emissive, (v) => (this.emissive = v));
         ui.checkbox("Env background", this.envBackground, (v) => (this.envBackground = v));
+        ui.dropdown("Env specular occlusion", [...kEnvOcclusionModes], this.envSpecularOcclusion, (v) => (this.envSpecularOcclusion = v as EnvOcclusionMode));
         ui.slider("Depth bias (world)", this.depthBias, 0, 0.1, 0.0005, (v) => (this.depthBias = v));
         ui.slider("Normal bias (texels)", this.normalBias, 0, 8, 0.1, (v) => (this.normalBias = v));
         ui.slider("PCF radius", this.pcfRadius, 0, 4, 1, (v) => (this.pcfRadius = Math.round(v)));
@@ -181,6 +191,7 @@ export class DeferredLighting extends RenderPass {
             USE_ENV_LIGHT: useEnv ? 1 : 0,
             USE_ENV_BACKGROUND: this.envBackground && scene.useEnvBackground ? 1 : 0,
             USE_EMISSIVE: this.emissive ? 1 : 0,
+            ENV_SPEC_OCCLUSION: useEnv && (this.envSpecularOcclusion === "On" || (this.envSpecularOcclusion === "Auto" && shadowMode === 2)) ? 1 : 0,
             is_valid_gViewW: renderData.getTexture("viewW") ? 1 : 0,
         });
         for (const o of outputs) defines.add(`is_valid_${o.texname}`, o.tex ? 1 : 0);

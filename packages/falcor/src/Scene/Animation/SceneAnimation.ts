@@ -288,27 +288,66 @@ function sampleQuat(ch: AnimationChannel, time: number): quatf {
 }
 
 /**
+ * Per-node animation time quantisation ("on twos/threes"): the node's pose is held for `hold`
+ * seconds and then jumps, while unquantised nodes keep animating every frame. `phase` shifts
+ * the hold boundaries (seconds, default 0).
+ */
+export interface TimeQuantization {
+    hold: number;
+    phase?: number;
+}
+
+/** Start of the hold that contains `t`: phase + floor((t - phase) / hold) * hold; `hold <= 0` returns `t` unchanged. */
+export function quantizeTime(t: number, q: TimeQuantization): number {
+    if (!(q.hold > 0)) return t;
+    const phase = q.phase ?? 0;
+    // The epsilon keeps t = k * hold (e.g. frame / fps with hold = 2 / fps) in hold k despite float rounding.
+    return phase + Math.floor((t - phase) / q.hold + 1e-6) * q.hold;
+}
+
+/**
+ * Effective quantisation of every node: its own entry, else the nearest quantised ancestor's,
+ * else undefined (the node animates at full rate).
+ */
+export function resolveNodeQuantization(nodes: readonly SceneNode[], q: ReadonlyMap<number, TimeQuantization>): (TimeQuantization | undefined)[] {
+    const out: (TimeQuantization | undefined)[] = new Array(nodes.length);
+    const done = new Uint8Array(nodes.length);
+    const resolve = (i: number): TimeQuantization | undefined => {
+        if (done[i]) return out[i];
+        const p = nodes[i]!.parent;
+        out[i] = q.get(i) ?? (p >= 0 ? resolve(p) : undefined);
+        done[i] = 1;
+        return out[i];
+    };
+    for (let i = 0; i < nodes.length; i++) resolve(i);
+    return out;
+}
+
+/**
  * Every node's global matrix at `time`: animation channels override the bind-pose
  * local TRS component they target; unanimated components keep the bind value. Nodes
  * are composed parents-first (the array is required to be in that order).
+ * `nodeTime`, if given, overrides the sample time per animated node (time quantisation);
+ * without it every channel samples `time`.
  */
-export function evaluateGlobals(anim: SceneAnimations, time: number): float4x4[] {
+export function evaluateGlobals(anim: SceneAnimations, time: number, nodeTime?: (nodeID: number) => number): float4x4[] {
     const n = anim.nodes.length;
     const locals = anim.nodes.map((nd) => ({ t: nd.t, r: nd.r, s: nd.s }));
     const animated = new Uint8Array(n);
     for (const ch of anim.channels) {
+        const t = nodeTime ? nodeTime(ch.nodeID) : time;
         if (ch.path === "transform") {
             if (ch.keyframes && ch.keyframes.getKeyframes().length > 0) {
-                const k = ch.keyframes.animate(time);
+                const k = ch.keyframes.animate(t);
                 locals[ch.nodeID] = { t: k.translation, r: k.rotation, s: k.scaling };
                 animated[ch.nodeID] = 1;
             }
             continue;
         }
         animated[ch.nodeID] = 1;
-        if (ch.path === "translation") locals[ch.nodeID]!.t = sampleVec3(ch, time);
-        else if (ch.path === "scale") locals[ch.nodeID]!.s = sampleVec3(ch, time);
-        else locals[ch.nodeID]!.r = sampleQuat(ch, time);
+        if (ch.path === "translation") locals[ch.nodeID]!.t = sampleVec3(ch, t);
+        else if (ch.path === "scale") locals[ch.nodeID]!.s = sampleVec3(ch, t);
+        else locals[ch.nodeID]!.r = sampleQuat(ch, t);
     }
     // Resolve parents-first via memoized recursion (node order isn't guaranteed
     // topological; glTF is a forest so there are no cycles).
