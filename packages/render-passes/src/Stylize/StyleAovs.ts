@@ -10,7 +10,11 @@
  *  - flatAlbedo : the material base colour sampled at a coarse LOD (`flatLod`; the texture's mean colour when the texture
  *                 has a full mip chain), i.e. "flat" albedo without texture detail;
  *  - ndotl      : unclamped N.L of the key light in r (half-Lambert 0.5 N.L + 0.5 in g); needs the `normW` input.
- * Background pixels are 0 (alpha 0). All outputs are optional and only written when connected/marked.
+ *  - custom     : a per-instance scalar AOV: r = `instanceScalars[instance id]` (0 for instances past the end of the
+ *                 list), a = 1. The scalars come from the `instanceScalars` property or `setInstanceScalars()`; they let
+ *                 later passes read any per-object value (a mask weight, a stylization strength, ...).
+ * Background pixels are 0 (alpha 0). All outputs are optional and only written when connected/marked. The `custom`
+ * code path is compiled only while the `custom` output is used, so the pass is otherwise unchanged.
  *
  * Inputs : vbuffer (GBufferRaster/VBufferRaster), texC (optional, for flatAlbedo), normW (optional, for ndotl).
  * Params : idSource {instance|material|mesh}, hashSeed (uint), flatLod (default 16),
@@ -19,7 +23,9 @@
  */
 
 import {
+    Buffer,
     ComputePass,
+    MemoryType,
     Properties,
     RenderData,
     RenderPass,
@@ -43,20 +49,59 @@ const kOutputs = [
     ["flatAlbedo", "gFlatAlbedo", "Material base colour at a coarse texture LOD"],
     ["ndotl", "gNdotL", "Unclamped N.L of the key light (r), half-Lambert (g)"],
 ] as const;
+const kCustomOutput = "custom";
 
 export class StyleAovs extends RenderPass {
     private p = { idSource: "instance" as string, hashSeed: 0, flatLod: 16, lightDir: [0, 0, 0] as number[] };
     private pass: ComputePass | null = null;
     private passKey = "";
+    /** Per-instance scalars for the `custom` output (indexed by geometry instance id). */
+    private instanceScalars: number[] = [];
+    private scalarBuffer: Buffer | null = null;
+    private scalarsDirty = true;
 
     constructor(device: Device, props: Properties) {
         super(device);
         for (const k of Object.keys(this.p) as (keyof typeof this.p)[]) (this.p as Record<string, unknown>)[k] = props.get(k, this.p[k]);
         enumIndex("StyleAovs", "idSource", this.p.idSource, kIdSources);
+        this.setInstanceScalars(props.get<number[]>("instanceScalars", []));
     }
 
     override getProperties(): Properties {
-        return new Properties({ ...this.p, lightDir: [...this.p.lightDir] });
+        const p = new Properties({ ...this.p, lightDir: [...this.p.lightDir] });
+        if (this.instanceScalars.length > 0) p.set("instanceScalars", [...this.instanceScalars]);
+        return p;
+    }
+
+    /** Sets the per-instance scalars read by the `custom` output (index = geometry instance id). */
+    setInstanceScalars(values: ArrayLike<number>): void {
+        this.instanceScalars = Array.from(values, (v) => Number(v));
+        this.scalarsDirty = true;
+    }
+
+    getInstanceScalars(): number[] {
+        return [...this.instanceScalars];
+    }
+
+    private updateScalarBuffer(): Buffer {
+        const n = Math.max(1, this.instanceScalars.length);
+        if (!this.scalarBuffer || this.scalarBuffer.size < n * 4) {
+            this.scalarBuffer = new Buffer(this.device, {
+                size: n * 4,
+                structSize: 4,
+                bindFlags: ResourceBindFlags.ShaderResource,
+                memoryType: MemoryType.DeviceLocal,
+                name: "StyleAovs::instanceScalars",
+            });
+            this.scalarsDirty = true;
+        }
+        if (this.scalarsDirty) {
+            const data = new Float32Array(n);
+            data.set(this.instanceScalars);
+            this.scalarBuffer.setBlob(new Uint8Array(data.buffer));
+            this.scalarsDirty = false;
+        }
+        return this.scalarBuffer;
     }
 
     override renderUI(ui: UIWidgets): void {
@@ -71,6 +116,7 @@ export class StyleAovs extends RenderPass {
         addTexInput(r, "texC", "Texture coordinates (for flatAlbedo)", true);
         addTexInput(r, "normW", "World-space shading normal (for ndotl)", true);
         for (const [name, , desc] of kOutputs) addColorOutput(r, name, desc, w, h, true);
+        addColorOutput(r, kCustomOutput, "Per-instance scalar AOV: instanceScalars[instance id] in r", w, h, true);
         return r;
     }
 
@@ -80,6 +126,8 @@ export class StyleAovs extends RenderPass {
         if (!this.scene) throw new RuntimeError("StyleAovs: requires a scene");
         const W = vbuffer.width, H = vbuffer.height;
         const defines = this.scene.getSceneDefines();
+        const custom = rd.getTexture(kCustomOutput);
+        if (custom) defines.add("USE_CUSTOM_AOV", 1);
         const key = defines.key();
         if (!this.pass || key !== this.passKey) {
             this.pass = ComputePass.create(this.device, { path: kShaderFile, defines });
@@ -106,6 +154,12 @@ export class StyleAovs extends RenderPass {
             const t = rd.getTexture(name);
             root[tex] = t ?? dummyTexture(this.device, `out:${name}`);
             any ||= !!t;
+        }
+        if (custom) {
+            cb["gInstanceScalarCount"] = this.instanceScalars.length;
+            root["gInstanceScalars"] = this.updateScalarBuffer();
+            root["gCustom"] = custom;
+            any = true;
         }
         if (any) this.pass.execute(ctx, W, H);
     }

@@ -6,6 +6,7 @@
  *  gMaterialId : r = hash01(material id), g = raw material id, a = 1
  *  gFlatAlbedo : material base colour sampled at a coarse texture LOD (the texture's mean colour when mips exist)
  *  gNdotL      : r = unclamped dot(N, L) in [-1, 1] for the key light, g = 0.5 * dot + 0.5 (half-Lambert), a = 1
+ *  gCustom     : (only with USE_CUSTOM_AOV) r = gInstanceScalars[instance id] (0 past the end), a = 1
  */
 #include "Scene/SceneDefines.slangh"
 
@@ -22,6 +23,9 @@ cbuffer CB
     float gFlatLod;
     uint gHasTexC;
     uint gHasNormW;
+#ifdef USE_CUSTOM_AOV
+    uint gInstanceScalarCount;
+#endif
 };
 
 Texture2D<PackedHitInfo> gVBuffer;
@@ -33,6 +37,10 @@ RWTexture2D<float4> gIdColor;
 RWTexture2D<float4> gMaterialId;
 RWTexture2D<float4> gFlatAlbedo;
 RWTexture2D<float4> gNdotL;
+#ifdef USE_CUSTOM_AOV
+RWTexture2D<float4> gCustom;
+StructuredBuffer<float> gInstanceScalars;
+#endif
 
 /** PCG-style integer hash (Jarzynski & Olano 2020, "Hash Functions for GPU Rendering"). */
 uint pcgHash(uint v)
@@ -61,6 +69,9 @@ void main(uint3 tid: SV_DispatchThreadID)
         gMaterialId[p] = float4(0.f);
         gFlatAlbedo[p] = float4(0.f);
         gNdotL[p] = float4(0.f);
+#ifdef USE_CUSTOM_AOV
+        gCustom[p] = float4(0.f);
+#endif
         return;
     }
 
@@ -74,6 +85,9 @@ void main(uint3 tid: SV_DispatchThreadID)
     gId[p] = float4(hash01(id, 0u), float(id), 0.f, 1.f);
     gIdColor[p] = float4(hash01(id, 1u), hash01(id, 2u), hash01(id, 3u), 1.f);
     gMaterialId[p] = float4(hash01(materialId, 4u), float(materialId), 0.f, 1.f);
+#ifdef USE_CUSTOM_AOV
+    gCustom[p] = float4(instanceId < gInstanceScalarCount ? gInstanceScalars[instanceId] : 0.f, 0.f, 0.f, 1.f);
+#endif
 
     float4 albedo = float4(0.f, 0.f, 0.f, 1.f);
     if (gScene.materials.isBasicMaterial(materialId))

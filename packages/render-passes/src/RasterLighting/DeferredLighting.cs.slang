@@ -16,6 +16,8 @@
  *  SHADOW_MODE         0 = none, 1 = shadow map (cascaded, PCF), 2 = ray traced (SceneRayQuery)
  *  USE_ANALYTIC_LIGHTS / USE_ENV_LIGHT / USE_ENV_BACKGROUND / USE_EMISSIVE  (0/1)
  *  is_valid_gViewW, is_valid_gVisibility, is_valid_gDiffuse, is_valid_gSpecular  (optional I/O)
+ *  USE_LIGHT_COOKIE    defined only when a cookie texture is bound: one light's radiance is multiplied by the
+ *                      projected cookie (see LightCookie below). Not defined = the shader is unchanged.
  */
 #include "Scene/SceneDefines.slangh"
 #include "Utils/Math/MathConstants.slangh"
@@ -47,6 +49,12 @@ cbuffer CB
     int gPcfRadius;           ///< PCF kernel radius in texels (bilinear taps, (2r+1)^2 of them).
     float3 gCamForward;       ///< Camera forward (normalized) for cascade selection.
     float gEnvSpecLodScale;   ///< Env map lod = roughness * scale.
+#ifdef USE_LIGHT_COOKIE
+    int gCookieLightIndex;    ///< Light whose radiance the cookie modulates.
+    float gCookieWorldSize;   ///< Directional lights: world size of one cookie tile.
+    float2 gCookieOffset;     ///< Directional lights: uv offset (scrolling).
+    int2 gCookieDim;          ///< Cookie texture size in texels.
+#endif
 };
 
 Texture2D<PackedHitInfo> gVBuffer;
@@ -58,6 +66,69 @@ WTexture2D<float4> gOutputColor;
 WTexture2D<float> gVisibility;     // optional: visibility of the shadowed light
 WTexture2D<float4> gDiffuse;       // optional: direct diffuse radiance (analytic + env)
 WTexture2D<float4> gSpecular;      // optional: direct specular radiance (analytic + env)
+#ifdef USE_LIGHT_COOKIE
+Texture2D<float4> gCookie;         // light cookie (rgb multiplier)
+#endif
+
+#ifdef USE_LIGHT_COOKIE
+// ---------------------------------------------------------------------------
+// Light cookie: a texture projected from one light, multiplying its radiance (gobo, window frames, cloud shadows).
+// Projection conventions follow the light-texture idea of Bevy's light_textures example (MIT OR Apache-2.0,
+// https://github.com/bevyengine/bevy); the code here is written for this pass.
+//  - directional / distant light: orthographic, tiled; uv = (dot(p, T), dot(p, B)) / worldSize + offset (repeat);
+//  - spot light (point light with openingAngle < pi/2): perspective over the cone; uv in [0,1] maps to the square
+//    that circumscribes the cone's cross-section, zero outside;
+//  - other lights (omni point, area): no cookie (factor 1).
+// T, B = branchless orthonormal basis of the light direction (Duff et al. 2017, "Building an Orthonormal Basis, Revisited").
+
+void cookieBasis(float3 n, out float3 T, out float3 B)
+{
+    const float sgn = n.z >= 0.f ? 1.f : -1.f;
+    const float a = -1.f / (sgn + n.z);
+    const float b = n.x * n.y * a;
+    T = float3(1.f + sgn * n.x * n.x * a, sgn * b, -sgn * n.x);
+    B = float3(b, sgn + n.y * n.y * a, -n.y);
+}
+
+float3 cookieTexel(int2 t, bool tile)
+{
+    t = tile ? ((t % gCookieDim) + gCookieDim) % gCookieDim : clamp(t, int2(0), gCookieDim - 1);
+    return gCookie.Load(int3(t, 0)).rgb;
+}
+
+/// Bilinear lookup with explicit texel fetches (same result on any texture format, reproducible on the CPU).
+float3 cookieLookup(float2 uv, bool tile)
+{
+    const float2 tc = uv * float2(gCookieDim) - 0.5f;
+    const float2 f0 = floor(tc);
+    const int2 t0 = int2(f0);
+    const float2 f = tc - f0;
+    const float3 c00 = cookieTexel(t0, tile), c10 = cookieTexel(t0 + int2(1, 0), tile);
+    const float3 c01 = cookieTexel(t0 + int2(0, 1), tile), c11 = cookieTexel(t0 + int2(1, 1), tile);
+    return lerp(lerp(c00, c10, f.x), lerp(c01, c11, f.x), f.y);
+}
+
+float3 evalCookie(const LightData light, float3 posW)
+{
+    float3 T, B;
+    cookieBasis(light.dirW, T, B);
+    if (light.type == uint(LightType::Directional) || light.type == uint(LightType::Distant))
+    {
+        const float2 uv = float2(dot(posW, T), dot(posW, B)) / gCookieWorldSize + gCookieOffset;
+        return cookieLookup(uv - floor(uv), true);
+    }
+    if (light.type == uint(LightType::Point) && light.openingAngle < 0.5f * M_PI)
+    {
+        const float3 w = posW - light.posW;
+        const float z = dot(w, light.dirW);
+        if (z <= 0.f) return float3(0.f);
+        const float2 uv = 0.5f + 0.5f * float2(dot(w, T), dot(w, B)) / (z * tan(light.openingAngle));
+        if (any(uv < 0.f) || any(uv > 1.f)) return float3(0.f);
+        return cookieLookup(uv, false);
+    }
+    return float3(1.f);
+}
+#endif
 
 // ---------------------------------------------------------------------------
 // Shadows
@@ -220,6 +291,9 @@ void main(uint3 dispatchThreadId: SV_DispatchThreadID)
         {
             AnalyticLightSample ls;
             if (!evalLightApproximate(sd.posW, gScene.getLight(i), ls)) continue;
+#ifdef USE_LIGHT_COOKIE
+            if (int(i) == gCookieLightIndex) ls.Li *= evalCookie(gScene.getLight(i), sd.posW);
+#endif
             const float NdotL = dot(orientedFaceN, ls.dir);
             if ((NdotL <= kMinCosTheta && !hasTransmission) || (NdotL >= -kMinCosTheta && !hasReflection)) continue;
             const float vis = evalVisibility(sd, ls, i);
