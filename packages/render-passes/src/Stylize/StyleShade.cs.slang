@@ -23,12 +23,17 @@
  * Blinn-Phong (n + 8) / (8 pi) (N.H)^n.
  *
  * Host defines: USE_ANALYTIC_LIGHTS / USE_ENV_LIGHT / USE_ENV_BACKGROUND / USE_EMISSIVE (0/1),
+ *               ENV_SPEC_OCCLUSION (0/1: env specular dropped where the reflection ray hits geometry, as DeferredLighting),
  *               is_valid_gViewW, is_valid_gVisibility, is_valid_gMaterialId, is_valid_gDiffuse, is_valid_gSpecular.
  */
 #include "Scene/SceneDefines.slangh"
 #include "Utils/Math/MathConstants.slangh"
 
 import Scene.Shading;
+#if ENV_SPEC_OCCLUSION
+import Scene.RaytracingInline;
+import Utils.Geometry.GeometryHelpers;
+#endif
 import Utils.Math.MathHelpers;
 import Utils.Sampling.SampleGenerator;
 import Rendering.Lights.LightHelpers;
@@ -274,7 +279,15 @@ void main(uint3 dispatchThreadId: SV_DispatchThreadID)
         ambient = props.diffuseReflectionAlbedo * shIrradiance(N) * M_1_PI;
         diffuse += ambient;
         const float3 R = reflect(-sd.V, N);
-        const float3 Lspec = gScene.envMap.eval(R, props.roughness * gEnvSpecLodScale);
+        float3 Lspec = gScene.envMap.eval(R, props.roughness * gEnvSpecLodScale);
+#if ENV_SPEC_OCCLUSION
+        {
+            const float3 origin = computeRayOrigin(sd.posW, dot(sd.faceN, R) >= 0.f ? sd.faceN : -sd.faceN);
+            SceneRayQuery<1> query;
+            const Ray ray = Ray(origin, R, 0.f, FLT_MAX);
+            if (!query.traceVisibilityRay(ray, RAY_FLAG_ACCEPT_FIRST_HIT_AND_END_SEARCH, 0xff)) Lspec = float3(0.f);
+        }
+#endif
         const float3 envSpec = Lspec * envBRDFApprox(props.specularReflectance, props.roughness, NoV);
         specular += envSpec;
         sSpecular += envSpec;
