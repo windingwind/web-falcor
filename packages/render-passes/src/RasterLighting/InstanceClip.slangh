@@ -1,0 +1,66 @@
+/**
+ * Per-instance clip for shadow casters: the clip of GBufferRaster's INSTANCE_CLIP (same clip entries, same noise), for
+ * passes that draw or trace the scene for shadows, so clipped (e.g. dissolving) geometry stops casting shadows where it
+ * stops being visible.
+ *
+ * Entry i of gInstanceClip = (threshold, noise mode, edge width, noise scale) for geometry instance i; a point of
+ * instance i is clipped where its noise value is below the threshold. Mode 0 = off, 1 = 4x4 ordered dither at a pixel
+ * position (the caller passes the pixel: the shadow-map texel when rasterizing the shadow map, the receiving pixel for
+ * shadow rays), 2 = 3-octave object-space value noise of posObj * scale (the same field as in the G-buffer, so the
+ * shadow follows the visible pattern). Threshold <= 0 = off; instances past gClipCount are never clipped.
+ * Include only while a clip buffer is bound (host define INSTANCE_CLIP).
+ */
+#pragma once
+
+cbuffer InstanceClipCB
+{
+    uint gClipCount;
+};
+
+StructuredBuffer<float4> gInstanceClip;
+
+/** PCG3D integer hash (Jarzynski & Olano 2020) of a lattice point, first component in [0, 1). */
+float shadowClipLatticeValue(int3 c)
+{
+    uint3 v = uint3(c) * 1664525u + 1013904223u;
+    v.x += v.y * v.z; v.y += v.z * v.x; v.z += v.x * v.y;
+    v ^= v >> 16u;
+    v.x += v.y * v.z; v.y += v.z * v.x; v.z += v.x * v.y;
+    return float(v.x >> 8u) * (1.f / 16777216.f);
+}
+
+/** Trilinear value noise with smoothstep weights, in [0, 1]. */
+float shadowClipValueNoise(float3 p)
+{
+    const float3 f = floor(p);
+    const int3 c = int3(f);
+    const float3 t = p - f;
+    const float3 w = t * t * (3.f - 2.f * t);
+    const float x00 = lerp(shadowClipLatticeValue(c), shadowClipLatticeValue(c + int3(1, 0, 0)), w.x);
+    const float x10 = lerp(shadowClipLatticeValue(c + int3(0, 1, 0)), shadowClipLatticeValue(c + int3(1, 1, 0)), w.x);
+    const float x01 = lerp(shadowClipLatticeValue(c + int3(0, 0, 1)), shadowClipLatticeValue(c + int3(1, 0, 1)), w.x);
+    const float x11 = lerp(shadowClipLatticeValue(c + int3(0, 1, 1)), shadowClipLatticeValue(c + int3(1, 1, 1)), w.x);
+    return lerp(lerp(x00, x10, w.y), lerp(x01, x11, w.y), w.z);
+}
+
+/** Clip noise: mode 1 = 4x4 Bayer value at the pixel, mode 2 = 3-octave value noise of posObj * scale. */
+float shadowClipNoise(uint mode, int2 ipos, float3 posObj, float scale)
+{
+    if (mode == 1)
+    {
+        const uint bayer[16] = { 0, 8, 2, 10, 12, 4, 14, 6, 3, 11, 1, 9, 15, 7, 13, 5 };
+        return (float(bayer[(uint(ipos.y) & 3u) * 4u + (uint(ipos.x) & 3u)]) + 0.5f) * (1.f / 16.f);
+    }
+    const float3 p = posObj * scale;
+    return (4.f * shadowClipValueNoise(p) + 2.f * shadowClipValueNoise(2.f * p + 17.f) + shadowClipValueNoise(4.f * p + 31.f)) * (1.f / 7.f);
+}
+
+/** True if the point posObj of geometry instance `instance` (seen at pixel ipos) is clipped away. */
+bool isInstanceClipped(uint instance, int2 ipos, float3 posObj)
+{
+    if (instance >= gClipCount) return false;
+    const float4 clip = gInstanceClip[instance];
+    const uint mode = uint(clip.y);
+    if (mode == 0 || clip.x <= 0.f) return false;
+    return shadowClipNoise(mode, ipos, posObj, clip.w) < clip.x;
+}
