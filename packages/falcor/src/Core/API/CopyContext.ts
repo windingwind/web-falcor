@@ -32,6 +32,17 @@ export class CopyContext {
         }
     }
 
+    /**
+     * Call before a queue-level write (queue.writeTexture, queue.copyExternalImageToTexture). Those run at the next
+     * queue submit, ahead of everything recorded on this context so far; submitting the recorded work first keeps the
+     * write ordered after it, like updateBuffer. It also keeps staged buffer uploads intact: buffer copies recorded
+     * from mapped staging buffers, followed by a queue write before the submit, were seen to land as zeros
+     * (Chromium, Vulkan), e.g. a new Scene's buffers when nothing else flushed before its first frame.
+     */
+    submitBeforeQueueWrite(): void {
+        this.submit();
+    }
+
     /** Mirrors submit(wait=true) as an async variant. */
     async submitAndWait(): Promise<void> {
         this.submit();
