@@ -10,12 +10,18 @@
  * brdf = "Material" evaluates the scene material (IMaterialInstance::eval, i.e. the same BSDF
  * the path tracers use); "LambertGGX" is the classic real-time model from the material's
  * BSDFProperties (Lambert + GGX / height-correlated Smith / Schlick).
+ *
+ * Light cookie (optional input `cookie`): one light's radiance is multiplied by a projected texture (rgb), e.g. a
+ * gobo, window frame or cloud-shadow pattern. `cookieLight` picks the light (-1 = the first directional/distant
+ * light); directional lights tile the cookie over `cookieWorldSize` world units (shifted by `cookieOffset`), spot
+ * lights project it over the cone. Without a bound cookie the pass compiles and runs exactly as before.
  */
 
 import {
     Buffer,
     ComputePass,
     FieldFlags,
+    LightType,
     MemoryType,
     Properties,
     RenderData,
@@ -67,6 +73,12 @@ export class DeferredLighting extends RenderPass {
     /** Normal offset in shadow texels. */
     private normalBias = 1.5;
     private pcfRadius = 1;
+    /** Light the cookie applies to (-1 = first directional/distant light). */
+    private cookieLight = -1;
+    /** Directional lights: world size of one cookie tile. */
+    private cookieWorldSize = 10;
+    /** Directional lights: uv offset of the cookie (e.g. animated for drifting cloud shadows). */
+    private cookieOffset: number[] = [0, 0];
 
     constructor(device: Device, props: Properties) {
         super(device);
@@ -83,6 +95,10 @@ export class DeferredLighting extends RenderPass {
         this.depthBias = props.get("depthBias", 0.002);
         this.normalBias = props.get("normalBias", 1.5);
         this.pcfRadius = props.get("pcfRadius", 1);
+        this.cookieLight = props.get("cookieLight", -1);
+        this.cookieWorldSize = props.get("cookieWorldSize", 10);
+        this.cookieOffset = [...props.get<number[]>("cookieOffset", [0, 0])];
+        if (!(this.cookieWorldSize > 0)) throw new Error(`DeferredLighting: cookieWorldSize must be > 0 (${this.cookieWorldSize})`);
         this.sampleGenerator = SampleGenerator.create(device, SAMPLE_GENERATOR_UNIFORM);
     }
 
@@ -97,6 +113,9 @@ export class DeferredLighting extends RenderPass {
             depthBias: this.depthBias,
             normalBias: this.normalBias,
             pcfRadius: this.pcfRadius,
+            cookieLight: this.cookieLight,
+            cookieWorldSize: this.cookieWorldSize,
+            cookieOffset: [...this.cookieOffset],
         });
     }
 
@@ -118,6 +137,7 @@ export class DeferredLighting extends RenderPass {
         r.addInput("vbuffer", "Packed hit information (V-buffer)").bindFlags(ResourceBindFlags.ShaderResource);
         r.addInput("viewW", "View direction (world)").bindFlags(ResourceBindFlags.ShaderResource).flags(FieldFlags.Optional);
         r.addInput("shadowMap", "CascadedShadowMap.shadowMap").bindFlags(ResourceBindFlags.ShaderResource).flags(FieldFlags.Optional);
+        r.addInput("cookie", "Light cookie (rgb multiplier projected from `cookieLight`)").bindFlags(ResourceBindFlags.ShaderResource).flags(FieldFlags.Optional);
         r.addOutput("color", "Direct radiance")
             .texture2D(w, h)
             .format(ResourceFormat.RGBA32Float)
@@ -160,6 +180,13 @@ export class DeferredLighting extends RenderPass {
         this.shSource = env;
     }
 
+    /** Index of the cookie light among the active lights, or -1 when there is none. */
+    private resolveCookieLight(): number {
+        const lights = this.scene!.activeLights;
+        if (this.cookieLight >= 0) return this.cookieLight < lights.length ? this.cookieLight : -1;
+        return lights.findIndex((l) => l.type === LightType.Directional || l.type === LightType.Distant);
+    }
+
     override execute(ctx: RenderContext, renderData: RenderData): void {
         const color = renderData.getTexture("color")!;
         if (!this.scene) {
@@ -184,6 +211,10 @@ export class DeferredLighting extends RenderPass {
             is_valid_gViewW: renderData.getTexture("viewW") ? 1 : 0,
         });
         for (const o of outputs) defines.add(`is_valid_${o.texname}`, o.tex ? 1 : 0);
+        // Cookie: only defined when a cookie is bound and the light exists, so the default shader is unchanged.
+        const cookie = renderData.getTexture("cookie");
+        const cookieLight = cookie && this.analyticLights && scene.useAnalyticLights ? this.resolveCookieLight() : -1;
+        if (cookieLight >= 0) defines.add("USE_LIGHT_COOKIE", 1);
         defines.addAll(this.sampleGenerator.getDefines());
         const key = defines.key();
         if (!this.pass || key !== this.passKey) {
@@ -228,6 +259,13 @@ export class DeferredLighting extends RenderPass {
         root["gVBuffer"] = renderData.getTexture("vbuffer")!;
         const viewW = renderData.getTexture("viewW");
         if (viewW) root["gViewW"] = viewW;
+        if (cookieLight >= 0) {
+            cb["gCookieLightIndex"] = cookieLight;
+            cb["gCookieWorldSize"] = this.cookieWorldSize;
+            cb["gCookieOffset"] = [this.cookieOffset[0] ?? 0, this.cookieOffset[1] ?? 0];
+            cb["gCookieDim"] = [cookie!.width, cookie!.height];
+            root["gCookie"] = cookie!;
+        }
         root["gOutputColor"] = color;
         for (const o of outputs) if (o.tex) root[o.texname] = o.tex;
         this.pass.execute(ctx, color.width, color.height);
