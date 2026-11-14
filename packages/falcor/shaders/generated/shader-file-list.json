@@ -653,6 +653,10 @@
       "url": "/packages/render-passes/src/SSR/SSR.cs.slang"
     },
     {
+      "path": "RenderPasses/Sky/ProceduralNightSky.cs.slang",
+      "url": "/packages/render-passes/src/Sky/ProceduralNightSky.cs.slang"
+    },
+    {
       "path": "RenderPasses/Stylize/RampShade.cs.slang",
       "url": "/packages/render-passes/src/Stylize/RampShade.cs.slang"
     },
