@@ -601,6 +601,10 @@
       "url": "/packages/render-passes/src/Layers/ParticleLayer.cs.slang"
     },
     {
+      "path": "RenderPasses/LensFlare/LensFlare.cs.slang",
+      "url": "/packages/render-passes/src/LensFlare/LensFlare.cs.slang"
+    },
+    {
       "path": "RenderPasses/MotionBlur/MotionBlur.cs.slang",
       "url": "/packages/render-passes/src/MotionBlur/MotionBlur.cs.slang"
     },
