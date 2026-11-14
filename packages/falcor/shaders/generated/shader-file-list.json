@@ -593,6 +593,18 @@
       "url": "/packages/render-passes/src/FXAA/FXAA.cs.slang"
     },
     {
+      "path": "RenderPasses/FroxelFog/FroxelFog.cs.slang",
+      "url": "/packages/render-passes/src/FroxelFog/FroxelFog.cs.slang"
+    },
+    {
+      "path": "RenderPasses/FroxelFog/FroxelFogCommon.slangh",
+      "url": "/packages/render-passes/src/FroxelFog/FroxelFogCommon.slangh"
+    },
+    {
+      "path": "RenderPasses/FroxelFog/FroxelFogScatter.cs.slang",
+      "url": "/packages/render-passes/src/FroxelFog/FroxelFogScatter.cs.slang"
+    },
+    {
       "path": "RenderPasses/Layers/DepthComposite.cs.slang",
       "url": "/packages/render-passes/src/Layers/DepthComposite.cs.slang"
     },

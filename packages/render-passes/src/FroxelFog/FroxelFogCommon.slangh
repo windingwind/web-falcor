@@ -1,0 +1,213 @@
+/**
+ * FroxelFog shared definitions: constant buffer, froxel <-> world mapping, participating-media model, phase function and
+ * froxel volume storage. Included by FroxelFogScatter.cs.slang and FroxelFog.cs.slang (see FroxelFog.ts; the GPU test
+ * suite froxel-fog.gpu.test.ts holds the CPU reference of every function here).
+ *
+ * Parts of the froxel layout (exponential depth slicing with a spread exponent, froxel-space temporal reprojection with
+ * Halton jitter, energy-conserving front-to-back integration, integer hash) are adapted from Godot Engine
+ * (servers/rendering/renderer_rd/shaders/environment/volumetric_fog_process.glsl, https://github.com/godotengine/godot),
+ * MIT licence:
+ *   Copyright (c) 2014-present Godot Engine contributors (see AUTHORS.md).
+ *   Copyright (c) 2007-2014 Juan Linietsky, Ariel Manzur.
+ *   Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated
+ *   documentation files (the "Software"), to deal in the Software without restriction, including without limitation the
+ *   rights to use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of the Software, and to
+ *   permit persons to whom the Software is furnished to do so, subject to the following conditions:
+ *   The above copyright notice and this permission notice shall be included in all copies or substantial portions of the
+ *   Software.
+ *   THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE
+ *   WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR
+ *   COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR
+ *   OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+ */
+#pragma once
+
+static const uint kFogMaxVolumes = 8;
+
+cbuffer CB
+{
+    uint4 gGrid;        ///< xyz = froxel grid size, w = flags (bit 0: history valid, bit 1: fog on background pixels)
+    uint4 gMisc;        ///< xy = frame size, z = local volume count, w = light index + 1 (0 = no light)
+    float4 gCamPos;     ///< xyz = camera position, w = |W| (focal distance)
+    float4 gCamU;       ///< xyz = camera U (right, scaled by the FOV), w = |U|^2
+    float4 gCamV;       ///< xyz = camera V (up, scaled by the FOV), w = |V|^2
+    float4 gCamW;       ///< xyz = camera W (forward x focal distance), w = unused
+    float4 gPrevPos;    ///< previous frame's camera, same layout (temporal reprojection)
+    float4 gPrevU;
+    float4 gPrevV;
+    float4 gPrevW;
+    float4 gSlices;     ///< x = far (view depth of the last slice edge), y = spread exponent, z = 1 / spread, w = temporal blend
+    float4 gJitter;     ///< xyz = froxel sample offset in [0,1) (0.5 = centre), w = time (noise animation)
+    float4 gGlobal;     ///< x = density, y = height falloff, z = height base, w = anisotropy g
+    float4 gUp;         ///< xyz = up axis (normalized), w = noise amount of the global fog
+    float4 gAlbedo;     ///< rgb = scattering albedo of the global fog, w = noise scale
+    float4 gWind;       ///< xyz = noise wind (world units per time unit), w = intensity multiplier of the other lights (0 = off)
+    float4 gLightScale; ///< rgb = light colour x intensity multiplier
+    float4 gAmbient;    ///< rgb = isotropic ambient radiance
+    float4 gVol[kFogMaxVolumes * 4]; ///< per volume: (centre, shape 0 box / 1 sphere), (half extent, density), (albedo, edge softness), (noise, noise scale, -, -)
+};
+
+// ---------------------------------------------------------------------------------------------------------------------
+// Froxel volume storage: one element per froxel, index = (z * gridY + y) * gridX + x. FROXEL_HALF packs rgba to four
+// halves (the RGBA16F layout), otherwise float4.
+
+#ifdef FROXEL_HALF
+typedef uint2 FroxelT;
+float4 unpackFroxel(uint2 v)
+{
+    return float4(f16tof32(v.x & 0xffffu), f16tof32(v.x >> 16), f16tof32(v.y & 0xffffu), f16tof32(v.y >> 16));
+}
+uint2 packFroxel(float4 c)
+{
+    c = clamp(c, float4(0.f), float4(65504.f));
+    return uint2(f32tof16(c.x) | (f32tof16(c.y) << 16), f32tof16(c.z) | (f32tof16(c.w) << 16));
+}
+#else
+typedef float4 FroxelT;
+float4 unpackFroxel(float4 v) { return v; }
+float4 packFroxel(float4 c) { return max(c, float4(0.f)); }
+#endif
+
+/// Froxel volume read by the current dispatch (history in scatter, media in integrate, integrated volume in apply) and
+/// the one it writes (scatter, integrate).
+StructuredBuffer<FroxelT> gFroxelSrc;
+RWStructuredBuffer<FroxelT> gFroxelDst;
+
+uint froxelIndex(uint3 id)
+{
+    return (id.z * gGrid.y + id.y) * gGrid.x + id.x;
+}
+
+/// Trilinear lookup in gFroxelSrc at continuous froxel coordinates q (froxel centres at integers), clamped to the grid.
+float4 sampleFroxels(float3 q)
+{
+    const float3 hi = float3(gGrid.xyz) - 1.f;
+    q = clamp(q, float3(0.f), hi);
+    const float3 f0 = floor(q);
+    const float3 f = q - f0;
+    const uint3 a = uint3(f0);
+    const uint3 b = uint3(min(f0 + 1.f, hi));
+    const float4 c000 = unpackFroxel(gFroxelSrc[froxelIndex(uint3(a.x, a.y, a.z))]);
+    const float4 c100 = unpackFroxel(gFroxelSrc[froxelIndex(uint3(b.x, a.y, a.z))]);
+    const float4 c010 = unpackFroxel(gFroxelSrc[froxelIndex(uint3(a.x, b.y, a.z))]);
+    const float4 c110 = unpackFroxel(gFroxelSrc[froxelIndex(uint3(b.x, b.y, a.z))]);
+    const float4 c001 = unpackFroxel(gFroxelSrc[froxelIndex(uint3(a.x, a.y, b.z))]);
+    const float4 c101 = unpackFroxel(gFroxelSrc[froxelIndex(uint3(b.x, a.y, b.z))]);
+    const float4 c011 = unpackFroxel(gFroxelSrc[froxelIndex(uint3(a.x, b.y, b.z))]);
+    const float4 c111 = unpackFroxel(gFroxelSrc[froxelIndex(uint3(b.x, b.y, b.z))]);
+    const float4 x00 = c000 + (c100 - c000) * f.x, x10 = c010 + (c110 - c010) * f.x;
+    const float4 x01 = c001 + (c101 - c001) * f.x, x11 = c011 + (c111 - c011) * f.x;
+    const float4 y0 = x00 + (x10 - x00) * f.y, y1 = x01 + (x11 - x01) * f.y;
+    return y0 + (y1 - y0) * f.z;
+}
+
+// ---------------------------------------------------------------------------------------------------------------------
+// Froxel <-> world. Screen uv has its origin at the top left (as Camera.computeRayPinhole); depth is the view depth
+// along the camera forward axis. Slice edge k of D sits at depth far * (k / D)^spread.
+
+float sliceDepth(float u)
+{
+    return u <= 0.f ? 0.f : gSlices.x * pow(u, gSlices.y);
+}
+
+/// Non-normalized ray through screen uv whose forward component has length |W| (so ray * depth / |W| is at view depth depth).
+float3 cameraRay(float2 uv)
+{
+    const float2 ndc = float2(2.f * uv.x - 1.f, 1.f - 2.f * uv.y);
+    return ndc.x * gCamU.xyz + ndc.y * gCamV.xyz + gCamW.xyz;
+}
+
+float3 froxelWorld(float3 uvw)
+{
+    return gCamPos.xyz + cameraRay(uvw.xy) * (sliceDepth(uvw.z) / gCamPos.w);
+}
+
+/// World position -> continuous froxel coordinates of the previous frame's grid; false outside its frustum.
+bool prevFroxel(float3 p, out float3 q)
+{
+    q = float3(0.f);
+    const float3 rel = p - gPrevPos.xyz;
+    const float dz = dot(rel, gPrevW.xyz) / gPrevPos.w;
+    if (!(dz > 0.f)) return false;
+    const float t = dz / gPrevPos.w;
+    const float nx = dot(rel, gPrevU.xyz) / (t * gPrevU.w);
+    const float ny = dot(rel, gPrevV.xyz) / (t * gPrevV.w);
+    const float3 u = float3(nx * 0.5f + 0.5f, 0.5f - ny * 0.5f, pow(dz / gSlices.x, gSlices.z));
+    if (any(u <= 0.f) || any(u >= 1.f)) return false;
+    q = u * float3(gGrid.xyz) - 0.5f;
+    return true;
+}
+
+// ---------------------------------------------------------------------------------------------------------------------
+// Media: exponential height fog + local box/sphere volumes, each optionally modulated by animated value-noise fBm.
+
+float fogHash(int3 c)
+{
+    const uint3 u = uint3(c);
+    uint h = (u.x * 73856093u) ^ (u.y * 19349663u) ^ (u.z * 83492791u);
+    h = ((h >> 16) ^ h) * 0x45d9f3bu;
+    h = ((h >> 16) ^ h) * 0x45d9f3bu;
+    h = (h >> 16) ^ h;
+    return float(h & 0xffffffu) / 16777215.f;
+}
+
+float valueNoise(float3 p)
+{
+    const float3 i = floor(p);
+    const float3 f = p - i;
+    const float3 w = f * f * (3.f - 2.f * f);
+    const int3 c = int3(i);
+    const float n000 = fogHash(c), n100 = fogHash(c + int3(1, 0, 0)), n010 = fogHash(c + int3(0, 1, 0)), n110 = fogHash(c + int3(1, 1, 0));
+    const float n001 = fogHash(c + int3(0, 0, 1)), n101 = fogHash(c + int3(1, 0, 1)), n011 = fogHash(c + int3(0, 1, 1)), n111 = fogHash(c + int3(1, 1, 1));
+    const float x00 = n000 + (n100 - n000) * w.x, x10 = n010 + (n110 - n010) * w.x;
+    const float x01 = n001 + (n101 - n001) * w.x, x11 = n011 + (n111 - n011) * w.x;
+    const float y0 = x00 + (x10 - x00) * w.y, y1 = x01 + (x11 - x01) * w.y;
+    return y0 + (y1 - y0) * w.z;
+}
+
+float fogFbm(float3 p)
+{
+    return (0.5f * valueNoise(p) + 0.25f * valueNoise(p * 2.03f + 17.1f) + 0.125f * valueNoise(p * 4.01f + 31.7f)) / 0.875f;
+}
+
+/// Density multiplier max(0, 1 + amount * (2 fbm - 1)) (mean ~1).
+float noiseFactor(float3 p, float amount, float scale)
+{
+    if (!(amount > 0.f)) return 1.f;
+    return max(0.f, 1.f + amount * (2.f * fogFbm(p * scale + gWind.xyz * gJitter.w) - 1.f));
+}
+
+void evalMedia(float3 p, out float3 sigmaS, out float sigmaT)
+{
+    sigmaS = float3(0.f);
+    sigmaT = 0.f;
+    if (gGlobal.x > 0.f)
+    {
+        const float h = dot(p, gUp.xyz) - gGlobal.z;
+        const float d = gGlobal.x * exp(min(-gGlobal.y * h, 40.f)) * noiseFactor(p, gUp.w, gAlbedo.w);
+        sigmaT += d;
+        sigmaS += d * gAlbedo.rgb;
+    }
+    for (uint v = 0; v < gMisc.z; v++)
+    {
+        const float4 A = gVol[v * 4], B = gVol[v * 4 + 1], C = gVol[v * 4 + 2], D = gVol[v * 4 + 3];
+        const float3 l = (p - A.xyz) / B.xyz;
+        const float r = A.w > 0.5f ? length(l) : max(max(abs(l.x), abs(l.y)), abs(l.z));
+        float w = C.w > 0.f ? saturate((1.f - r) / C.w) : (r <= 1.f ? 1.f : 0.f);
+        w = w * w * (3.f - 2.f * w);
+        if (w > 0.f)
+        {
+            const float d = B.w * w * noiseFactor(p, D.x, D.y);
+            sigmaT += d;
+            sigmaS += d * C.rgb;
+        }
+    }
+}
+
+/// Henyey-Greenstein phase; cosTheta = dot(view direction, direction to the light), so g > 0 brightens towards the light.
+float hgPhase(float cosTheta, float g)
+{
+    const float k = 0.0795774715459f; // 1 / (4 pi)
+    const float d = 1.f + g * g - 2.f * g * cosTheta;
+    return k * (1.f - g * g) / (d * sqrt(d));
+}
