@@ -80,3 +80,5 @@ export * from "./Stylize/SelectiveColour.js";
 export * from "./Stylize/PaletteQuant.js";
 export * from "./Stylize/DitherV2.js";
 export * from "./Stylize/PixelateV2.js";
+export * from "./Stylize/GradientFog.js";
+export * from "./Stylize/LightShafts.js";

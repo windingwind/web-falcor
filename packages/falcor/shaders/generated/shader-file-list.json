@@ -701,6 +701,14 @@
       "url": "/packages/render-passes/src/Stylize/DitherV2.cs.slang"
     },
     {
+      "path": "RenderPasses/Stylize/GradientFog.cs.slang",
+      "url": "/packages/render-passes/src/Stylize/GradientFog.cs.slang"
+    },
+    {
+      "path": "RenderPasses/Stylize/LightShafts.cs.slang",
+      "url": "/packages/render-passes/src/Stylize/LightShafts.cs.slang"
+    },
+    {
       "path": "RenderPasses/Stylize/PaletteQuant.cs.slang",
       "url": "/packages/render-passes/src/Stylize/PaletteQuant.cs.slang"
     },
