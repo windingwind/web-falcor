@@ -10,12 +10,17 @@
  *  5. Cold vs consecutive on the whole rainy-night graph (SSR temporal on): shot X on a fresh graph equals X after shots
  *     A and B on one graph with a camera reset, a prime render or resetGraphHistory in between (bit for bit); without
  *     a cut X differs (control: SSR's history); with SSR temporal off the chain is stateless.
+ *  6. RainLayer sky occlusion (RayTraced): under the floor plane (the "roof") drops vanish, drops with open sky above
+ *     them are drawn exactly as without occlusion (bit for bit wherever no roofed drop lands); parity against the CPU
+ *     splat minus the roofed drops (camera above the floor: only drops ending inside a box or below the floor are
+ *     roofed; camera below the floor: the floor is a roof); default layer hashes (defaultHash) for comparison with the
+ *     pass before the option existed.
  */
 
 import type { Device, RenderGraph, Scene } from "@web-falcor/falcor";
 import { planarBasis } from "@web-falcor/render-passes";
 import { gpuTest, expectEq } from "../harness/registry.js";
-import { bitwiseEqual, kSize, log, makeScene, read, type PassDecl } from "./stylize-helpers.js";
+import { bitwiseEqual, kBoxA, kBoxB, kSize, log, makeScene, read, type PassDecl } from "./stylize-helpers.js";
 import { buildGraph, coldVsConsecutive, kPoseA, setPose, warmUp } from "./fx-helpers.js";
 
 const kFar = 3.402823466e38;
@@ -199,7 +204,7 @@ function rnd(i: number, salt: number, seed: number): number {
 }
 
 /** CPU splat of RainLayer (same algorithm, doubles; accumulation in the same fixed point). */
-function rainCpu(scene: Scene, p: RainParams, pos: Float32Array): { rgba: Float32Array; depth: Float32Array; drawn: number } {
+function rainCpu(scene: Scene, p: RainParams, pos: Float32Array, skip?: (head: number[]) => boolean): { rgba: Float32Array; depth: Float32Array; drawn: number } {
     const N = kSize;
     const cam = scene.camera;
     const cp = cam.getPosition(), ct = cam.getTarget();
@@ -226,6 +231,7 @@ function rainCpu(scene: Scene, p: RainParams, pos: Float32Array): { rgba: Float3
         const rel = Math.max(...[0, 1, 2].map((c) => Math.abs(head[c]! - C[c]!) / (0.5 * p.box)));
         const fade = sat((1 - rel) * 4);
         if (fade <= 0) continue;
+        if (skip && skip(head)) continue;
         const a = toPx(clip(head));
         let b = toPx(clip(tail));
         let ab = [b[0]! - a[0]!, b[1]! - a[1]!];
@@ -374,4 +380,78 @@ gpuTest("RainyNight.coldVsConsecutive", async ({ device }) => {
     const off = await coldVsConsecutive(device, scene, () => rainyNight(device, scene, false, outs), outs, ["none"]);
     log(`RainyNight, SSR temporal off, no cut: X frames bitwise equal ${off[0]!.equalFrames}/${off[0]!.frames}`);
     expectEq(off[0]!.equalFrames, off[0]!.frames, "temporal off: the chain keeps no state");
+});
+
+// ---------------------------------------------------------------------------------------------- RainLayer sky occlusion
+
+/** Up-ray (+y) from x hits the test scene: floor quad (y = 0, |x|,|z| <= 6) or one of the boxes (origin below its top). */
+function roofed(x: number[]): boolean {
+    const under = (lo: number[], hi: number[]) => x[0]! >= lo[0]! && x[0]! <= hi[0]! && x[2]! >= lo[2]! && x[2]! <= hi[2]! && x[1]! < hi[1]!;
+    return under([-6, 0, -6], [6, 0, 6]) || under(kBoxA[0], kBoxA[1]) || under(kBoxB[0], kBoxB[1]);
+}
+
+/** Camera below the floor plane near its edge (z = 6), looking along +z: the floor is a roof over the near drops. */
+const kPoseUnder = { pos: [1.0, -1.0, 3.0] as [number, number, number], target: [1.0, -0.6, 9.0] as [number, number, number] };
+/** Larger box and more drops for the under-the-roof pose: roofed drops at z < 6, open-sky drops at z > 6. */
+const kRainUnder: RainParams = { ...kRain, box: 10, count: 3000 };
+
+function fnv(a: Float32Array): string {
+    const u = new Uint8Array(a.buffer, a.byteOffset, a.byteLength);
+    let h = 0x811c9dc5;
+    for (let i = 0; i < u.length; i++) h = Math.imul(h ^ u[i]!, 16777619) >>> 0;
+    return h.toString(16).padStart(8, "0");
+}
+
+gpuTest("RainLayer.skyOcclusion", async ({ device }) => {
+    const scene = makeScene(device, kSky);
+    await warmUp(device, scene);
+    const outs = ["R.color", "R.depth"];
+    const render = async (props: Record<string, unknown>) => {
+        const g = rainGraph(device, scene, props, outs);
+        g.execute(device.renderContext);
+        return { col: await read(device, g.getOutput("R.color")!), dep: await read(device, g.getOutput("R.depth")!), pos: await read(device, g.getOutput("G.posW")!) };
+    };
+    // (a) default hashes (compare with the pass before the option existed) and explicit "None" = default
+    const hashes: string[] = [];
+    let explicitNone = true;
+    for (const [name, pose] of [["A", kPoseA], ["under", kPoseUnder]] as const) {
+        setPose(scene, pose);
+        const d = await render(kRain), n = await render({ ...kRain, skyOcclusion: "None" });
+        hashes.push(`${name}: color=${fnv(d.col)} depth=${fnv(d.dep)}`);
+        explicitNone &&= bitwiseEqual(d.col, n.col) && bitwiseEqual(d.dep, n.dep);
+    }
+    log(`defaultHash RainLayer ${hashes.join(" ")}`);
+    // (b) both poses: RayTraced vs the CPU splat without roofed drops, and vs None
+    let ok = explicitNone;
+    const lines: string[] = [];
+    for (const [name, pose, p] of [["above", kPoseA, kRain], ["under", kPoseUnder, kRainUnder]] as const) {
+        setPose(scene, pose);
+        const un = await render(p), ur = await render({ ...p, skyOcclusion: "RayTraced" });
+        const all = rainCpu(scene, p, un.pos), open = rainCpu(scene, p, un.pos, roofed);
+        let off = 0, lit = 0, depthOff = 0, maxErr = 0, roofPx = 0, roofLeft = 0, openPx = 0, openChanged = 0;
+        for (let k = 0; k < kSize * kSize; k++) {
+            let e = 0;
+            for (let c = 0; c < 4; c++) e = Math.max(e, Math.abs(ur.col[k * 4 + c]! - open.rgba[k * 4 + c]!));
+            if (ur.col[k * 4 + 3]! > 0 || open.rgba[k * 4 + 3]! > 0) lit++;
+            if (e > 2e-3) off++;
+            else maxErr = Math.max(maxErr, e);
+            const gd = ur.dep[k * 4]!, rd = open.depth[k]!;
+            if ((gd === kFar) !== (rd === kFar) || (gd !== kFar && Math.abs(gd - rd) > 1e-4 * Math.max(1, rd))) depthOff++;
+            const allA = all.rgba[k * 4 + 3]!, openA = open.rgba[k * 4 + 3]!;
+            if (allA > 0 && openA === 0) { roofPx++; if (ur.col[k * 4 + 3]! !== 0) roofLeft++; }
+            let sameRef = all.depth[k] === open.depth[k];
+            for (let c = 0; c < 4; c++) sameRef &&= all.rgba[k * 4 + c] === open.rgba[k * 4 + c];
+            if (openA > 0 && sameRef) {
+                openPx++;
+                let same = ur.dep[k * 4] === un.dep[k * 4];
+                for (let c = 0; c < 4; c++) same &&= ur.col[k * 4 + c] === un.col[k * 4 + c];
+                if (!same) openChanged++;
+            }
+        }
+        lines.push(`${name}: drops drawn ${all.drawn} -> ${open.drawn} (CPU), layer px ${lit}, off-ref (> 2e-3) ${off}, max err ${maxErr.toExponential(2)}, depth mismatches ${depthOff}; roof-only px ${roofPx} (still lit ${roofLeft}); open-sky px ${openPx} (changed vs None ${openChanged})`);
+        ok &&= off <= Math.ceil(0.005 * lit) && depthOff <= Math.ceil(0.005 * lit) && openPx > 200 && openChanged === 0 && roofLeft <= Math.ceil(0.005 * roofPx);
+        if (name === "under") ok &&= all.drawn - open.drawn > 50 && open.drawn > 50 && roofPx > 200;
+    }
+    log(`RainLayer sky occlusion: explicit None = default ${explicitNone}; ${lines.join("; ")}`);
+    expectEq(ok, true, "roofed drops vanish (CPU parity), open-sky streaks unchanged bit for bit, explicit None = default");
 });

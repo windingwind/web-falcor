@@ -6,9 +6,26 @@
  *                           (one pixel column/row per step along the major axis), occluded per pixel by posW;
  *                           integer atomics (fixed point, 1/4096) keep the result independent of thread order
  *  resolve    (per pixel) : accumulators -> layer colour (premultiplied rgba) and nearest streak view depth
+ * Host define RAIN_SKY_OCCLUSION (splat only; with VIS_MODE 2 and the scene defines): one visibility ray per drop from its
+ * head along +gUp through the scene BVH (Visibility.slangh); drops with geometry above them are skipped. Without the
+ * define the shader is the plain splat.
  * Written for this pass (splat/resolve layout as in ParticleLayer). Idea of a camera-following rain volume after the
  * three.js webgpu_compute_particles_rain example (MIT, https://github.com/mrdoob/three.js); no code copied.
  */
+#ifndef RAIN_SKY_OCCLUSION
+#define RAIN_SKY_OCCLUSION 0
+#endif
+
+#if RAIN_SKY_OCCLUSION
+#include "Scene/SceneDefines.slangh"
+#include "RenderPasses/RasterLighting/Visibility.slangh"
+
+cbuffer SkyCB
+{
+    float gSkyDist;       ///< length of the upward occlusion ray (world units)
+};
+#endif
+
 cbuffer CB
 {
     uint2 gFrameDim;
@@ -129,6 +146,10 @@ void splat(uint3 tid: SV_DispatchThreadID)
     const float3 rel = abs(head - gCamPos) / (0.5f * gBox);
     const float fade = saturate((1.f - max(rel.x, max(rel.y, rel.z))) * 4.f);
     if (fade <= 0.f) return;
+#if RAIN_SKY_OCCLUSION
+    // Under a roof: geometry straight above the drop head hides the whole drop.
+    if (visibility(head, float3(0.f), gUp, gSkyDist) == 0.f) return;
+#endif
     const float2 a = toPixel(clip(head));
     float2 b = toPixel(clip(tail));
     float2 ab = b - a;
