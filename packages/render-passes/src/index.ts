@@ -49,6 +49,8 @@ export * from "./PhysicalSky/PhysicalSky.js";
 export * from "./FXAA/FXAA.js";
 export * from "./DepthOfField/DepthOfField.js";
 export * from "./LensFlare/LensFlare.js";
+export * from "./Focus/SelectiveBloom.js";
+export * from "./Focus/StylizedFocus.js";
 export * from "./MotionBlur/MotionBlur.js";
 export * from "./MotionStats/MotionStats.js";
 export * from "./Stylize/StyleAovs.js";

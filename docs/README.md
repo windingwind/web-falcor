@@ -29,6 +29,7 @@ the files**, so every `§N` cross-reference in the text resolves via the map bel
 | — | [scripting.md](scripting.md) | Scene and render-graph scripts in JS or Python, the JS script API, the `py2js` converter, and how equivalence is checked |
 | — | [light-cookie.md](light-cookie.md) | DeferredLighting light cookies (spot/directional projection) and the StyleAovs per-instance scalar AOV |
 | — | [subset-raster.md](subset-raster.md) | SubsetRaster: re-rasterise only chosen instances into separate G-buffer targets, with a visible/hidden mask |
+| — | [stylized-focus.md](stylized-focus.md) | StylizedFocus (region-of-interest blur/desaturation) and SelectiveBloom (bloom from selected object ids) |
 
 ## Status markers
 
