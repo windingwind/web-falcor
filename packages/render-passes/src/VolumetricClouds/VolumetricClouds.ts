@@ -11,7 +11,9 @@
  *
  * Weather (the "sky weather" knobs): coverage [0, 1], cloudType (0 stratus, 0.5 stratocumulus, 1 cumulus: vertical
  * profile), a 2D weather map (value-noise fBm over the horizontal plane, weatherScale) that varies coverage by
- * weatherAmount and type by typeVariation, density (extinction), wind (world units per time unit) x time.
+ * weatherAmount and type by typeVariation, density (extinction), wind (world units per time unit) x time. Shape: 3D
+ * value-noise fBm (contrast-stretched x2.5 around 0.5) x the type's vertical profile, remapped by the local coverage and
+ * eroded by detail fBm.
  * Geometry: cloudBottom / cloudTop are altitudes above groundHeight along upAxis; planetRadius > 0 curves the slab
  * (rays reach the horizon at a finite distance), 0 = flat slab. Units are the scene's (defaults: metres).
  * Light: lightDir ([0, 0, 0] = the scene's first directional light, else up), lightColor x lightIntensity; ambient =
@@ -116,10 +118,10 @@ export const kDefaultVolumetricClouds: VolumetricCloudsParams = {
     weatherScale: 1 / 12000,
     weatherAmount: 0.6,
     typeVariation: 0.3,
-    shapeScale: 1 / 1800,
+    shapeScale: 1 / 2500,
     octaves: 4,
     detailScale: 1 / 300,
-    detailStrength: 0.35,
+    detailStrength: 0.45,
     detailOctaves: 2,
     cloudBottom: 1250,
     cloudTop: 2400,
@@ -309,7 +311,7 @@ export function cloudDensity(f: CloudFrame, r: readonly number[], alt: number): 
     const wt = fbm3(wu, wv, 3.5, 2, (f.salt + 202) >>> 0);
     const prof = heightProfile(h, sat(p.cloudType + p.typeVariation * (2 * wt - 1)));
     if (prof <= 0) return 0;
-    const base = fbm3(q[0]! * p.shapeScale, q[1]! * p.shapeScale, q[2]! * p.shapeScale, p.octaves, f.salt);
+    const base = sat(0.5 + 2.5 * (fbm3(q[0]! * p.shapeScale, q[1]! * p.shapeScale, q[2]! * p.shapeScale, p.octaves, f.salt) - 0.5));
     let d = sat((base * prof - (1 - cov)) / Math.max(cov, 1e-3));
     if (d > 0 && p.detailStrength > 0) {
         const det = fbm3(q[0]! * p.detailScale, q[1]! * p.detailScale, q[2]! * p.detailScale, p.detailOctaves, (f.salt + 303) >>> 0);

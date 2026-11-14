@@ -158,7 +158,7 @@ float cloudDensity(float3 r, float alt)
     const float type = saturate(gWeather.y + gWeather.w * (2.f * wt - 1.f));
     const float prof = heightProfile(h, type);
     if (prof <= 0.f) return 0.f;
-    const float base = fbm3(q * gShape.x, gSeed.z, salt);
+    const float base = saturate(0.5f + 2.5f * (fbm3(q * gShape.x, gSeed.z, salt) - 0.5f));
     float d = saturate((base * prof - (1.f - cov)) / max(cov, 1e-3f));
     if (d > 0.f && gShape.z > 0.f)
     {
