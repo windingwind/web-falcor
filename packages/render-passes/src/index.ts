@@ -49,3 +49,4 @@ export * from "./MotionBlur/MotionBlur.js";
 export * from "./Stylize/StyleAovs.js";
 export * from "./Stylize/RimLight.js";
 export * from "./Stylize/RampShade.js";
+export * from "./Stylize/StopMotion.js";
