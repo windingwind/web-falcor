@@ -649,6 +649,10 @@
       "url": "/packages/render-passes/src/Stylize/StyleAovs.cs.slang"
     },
     {
+      "path": "RenderPasses/Stylize/StyleShade.cs.slang",
+      "url": "/packages/render-passes/src/Stylize/StyleShade.cs.slang"
+    },
+    {
       "path": "RenderPasses/Utils/HiZBuild.cs.slang",
       "url": "/packages/render-passes/src/Utils/HiZBuild.cs.slang"
     },
