@@ -18,7 +18,8 @@
  *  USE_ANALYTIC_LIGHTS / USE_ENV_LIGHT / USE_ENV_BACKGROUND / USE_EMISSIVE  (0/1)
  *  ENV_SPEC_OCCLUSION  1 = the env specular term is dropped where the reflection ray hits scene
  *                          geometry (without it, glossy surfaces facing other geometry mirror the
- *                          env map's distant content, which reads as see-through windows/walls)
+ *                          env map's distant content, which reads as see-through windows/walls);
+ *                      independent of SHADOW_MODE (the ray uses the scene BVH in every mode)
  *  INSTANCE_CLIP       (only while a clip buffer is bound, with SHADOW_MODE 2 or ENV_SPEC_OCCLUSION) visibility rays
  *                      ignore the clipped parts of clipped instances (InstanceClip.slangh, same clip as GBufferRaster;
  *                      dither mode at the receiving pixel), so clipped geometry casts no ray-traced shadow

@@ -6,7 +6,8 @@
  *    shadowed by CascadedShadowMap (PCF), by ray-traced visibility, or not at all;
  *  - the env map / constant sky as ambient light (unshadowed SH9 diffuse irradiance +
  *    env lookup in the reflection direction; envSpecularOcclusion traces one visibility ray
- *    along it so glossy surfaces don't mirror the env map through nearby geometry);
+ *    along it so glossy surfaces don't mirror the env map through nearby geometry; on by default
+ *    whenever the scene has an env map, independent of shadowMode);
  *  - emission, and the env map as background.
  * Optional input `clipBuffer` (GBufferRaster's per-instance clip entries): with RayTraced shadows (and the env specular
  * occlusion ray) the visibility rays skip the clipped parts of clipped instances, so clipped / dissolving objects lose
@@ -56,7 +57,10 @@ const kBrdfModels = ["Material", "LambertGGX"] as const;
 const kShadowModes = ["None", "ShadowMap", "RayTraced"] as const;
 type BrdfModel = (typeof kBrdfModels)[number];
 type ShadowMode = (typeof kShadowModes)[number];
-/** Auto = on when shadowMode is RayTraced (ray queries are in use anyway), off otherwise. */
+/**
+ * Auto = on whenever the scene has an env map and geometry (i.e. a BVH to trace the reflection ray against), in every
+ * shadow mode; the env specular visibility does not depend on how the analytic lights are shadowed. On / Off force it.
+ */
 const kEnvOcclusionModes = ["Auto", "On", "Off"] as const;
 type EnvOcclusionMode = (typeof kEnvOcclusionModes)[number];
 
@@ -179,6 +183,12 @@ export class DeferredLighting extends RenderPass {
         this.shSource = null;
     }
 
+    /** Whether the env specular term traces its visibility ray (see kEnvOcclusionModes). */
+    private useEnvSpecOcclusion(): boolean {
+        if (this.envSpecularOcclusion !== "Auto") return this.envSpecularOcclusion === "On";
+        return !!this.scene && !!this.scene.getEnvMap() && this.scene.worldBounds !== null;
+    }
+
     /** Projects the env map onto SH9 once per env map (GPU, one workgroup). */
     private updateEnvSH(ctx: RenderContext): void {
         const env = this.scene!.getEnvMap();
@@ -223,7 +233,7 @@ export class DeferredLighting extends RenderPass {
         const useEnv = this.envLighting && scene.useEnvLight;
         const outputs = kOptionalOutputs.map((o) => ({ ...o, tex: renderData.getTexture(o.name) }));
 
-        const envOcclusion = useEnv && (this.envSpecularOcclusion === "On" || (this.envSpecularOcclusion === "Auto" && shadowMode === 2));
+        const envOcclusion = useEnv && this.useEnvSpecOcclusion();
         const defines = scene.getSceneDefines().addAll({
             BRDF_MODEL: this.brdf === "Material" ? 0 : 1,
             SHADOW_MODE: shadowMode,
