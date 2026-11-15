@@ -374,7 +374,7 @@ gpuTest("RainyNight.coldVsConsecutive", async ({ device }) => {
     const scene = makeScene(device, kSky);
     const outs = ["D.dst", "S.reflection", "W.wetness"];
     const res = await coldVsConsecutive(device, scene, () => rainyNight(device, scene, true, outs), outs, ["camera-reset", "prime", "explicit", "none"]);
-    for (const r of res) log(`RainyNight (wetness + SSR temporal + rain) cold vs consecutive [${r.method}]: X frames bitwise equal ${r.equalFrames}/${r.frames}`);
+    for (const r of res) log(`RainyNight (wetness + SSR temporal + rain) cold vs consecutive [${r.method}]: X frames bitwise equal ${r.equalFrames}/${r.frames} (cold drift ${r.coldDrift})`);
     for (const r of res.filter((r) => r.method !== "none")) expectEq(r.equalFrames, r.frames, `cold = consecutive after ${r.method}`);
     expectEq(res.find((r) => r.method === "none")!.differs.some((d) => d), true, "without a cut SSR's history changes X (control)");
     const off = await coldVsConsecutive(device, scene, () => rainyNight(device, scene, false, outs), outs, ["none"]);
@@ -416,9 +416,12 @@ gpuTest("RainLayer.skyOcclusion", async ({ device }) => {
     let explicitNone = true;
     for (const [name, pose] of [["A", kPoseA], ["under", kPoseUnder]] as const) {
         setPose(scene, pose);
-        const d = await render(kRain), n = await render({ ...kRain, skyOcclusion: "None" });
+        // Default before and after the explicit render: equal to either (see coldVsConsecutive on drivers that re-optimise
+        // a pipeline after creation).
+        const d = await render(kRain), n = await render({ ...kRain, skyOcclusion: "None" }), d2 = await render(kRain);
         hashes.push(`${name}: color=${fnv(d.col)} depth=${fnv(d.dep)}`);
-        explicitNone &&= bitwiseEqual(d.col, n.col) && bitwiseEqual(d.dep, n.dep);
+        const eq = (a: typeof d, b: typeof d) => bitwiseEqual(a.col, b.col) && bitwiseEqual(a.dep, b.dep);
+        explicitNone &&= eq(n, d) || eq(n, d2);
     }
     log(`defaultHash RainLayer ${hashes.join(" ")}`);
     // (b) both poses: RayTraced vs the CPU splat without roofed drops, and vs None
@@ -426,7 +429,9 @@ gpuTest("RainLayer.skyOcclusion", async ({ device }) => {
     const lines: string[] = [];
     for (const [name, pose, p] of [["above", kPoseA, kRain], ["under", kPoseUnder, kRainUnder]] as const) {
         setPose(scene, pose);
-        const un = await render(p), ur = await render({ ...p, skyOcclusion: "RayTraced" });
+        // None before and after RayTraced: an open-sky pixel must equal one of them bit for bit (the splat program is the
+        // same in both modes; the two None renders only differ if the driver re-optimised it in between).
+        const un = await render(p), ur = await render({ ...p, skyOcclusion: "RayTraced" }), un2 = await render(p);
         const all = rainCpu(scene, p, un.pos), open = rainCpu(scene, p, un.pos, roofed);
         let off = 0, lit = 0, depthOff = 0, maxErr = 0, roofPx = 0, roofLeft = 0, openPx = 0, openChanged = 0;
         for (let k = 0; k < kSize * kSize; k++) {
@@ -443,9 +448,12 @@ gpuTest("RainLayer.skyOcclusion", async ({ device }) => {
             for (let c = 0; c < 4; c++) sameRef &&= all.rgba[k * 4 + c] === open.rgba[k * 4 + c];
             if (openA > 0 && sameRef) {
                 openPx++;
-                let same = ur.dep[k * 4] === un.dep[k * 4];
-                for (let c = 0; c < 4; c++) same &&= ur.col[k * 4 + c] === un.col[k * 4 + c];
-                if (!same) openChanged++;
+                const sameAs = (v: typeof un) => {
+                    let same = ur.dep[k * 4] === v.dep[k * 4];
+                    for (let c = 0; c < 4; c++) same &&= ur.col[k * 4 + c] === v.col[k * 4 + c];
+                    return same;
+                };
+                if (!sameAs(un) && !sameAs(un2)) openChanged++;
             }
         }
         lines.push(`${name}: drops drawn ${all.drawn} -> ${open.drawn} (CPU), layer px ${lit}, off-ref (> 2e-3) ${off}, max err ${maxErr.toExponential(2)}, depth mismatches ${depthOff}; roof-only px ${roofPx} (still lit ${roofLeft}); open-sky px ${openPx} (changed vs None ${openChanged})`);

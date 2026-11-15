@@ -6,9 +6,12 @@
  *                           (one pixel column/row per step along the major axis), occluded per pixel by posW;
  *                           integer atomics (fixed point, 1/4096) keep the result independent of thread order
  *  resolve    (per pixel) : accumulators -> layer colour (premultiplied rgba) and nearest streak view depth
- * Host define RAIN_SKY_OCCLUSION (splat only; with VIS_MODE 2 and the scene defines): one visibility ray per drop from its
- * head along +gUp through the scene BVH (Visibility.slangh); drops with geometry above them are skipped. Without the
- * define the shader is the plain splat.
+ *  skyVisibility (per drop, only with the host define RAIN_SKY_OCCLUSION, VIS_MODE 2 and the scene defines): one
+ *                           visibility ray per drop from its head along +gUp through the scene BVH (Visibility.slangh);
+ *                           writes 1 (open sky) or 0 (geometry above) per drop. It runs before splat, which skips
+ *                           drops marked 0 when gSkyOcc is set.
+ * The splat kernel is the same program with and without sky occlusion (the ray tracing lives in its own kernel), so the
+ * open-sky drops are drawn by identical code in both modes.
  * Written for this pass (splat/resolve layout as in ParticleLayer). Idea of a camera-following rain volume after the
  * three.js webgpu_compute_particles_rain example (MIT, https://github.com/mrdoob/three.js); no code copied.
  */
@@ -24,6 +27,7 @@ cbuffer SkyCB
 {
     float gSkyDist;       ///< length of the upward occlusion ray (world units)
 };
+RWStructuredBuffer<uint> gDropVisibleOut;     ///< skyVisibility: 1 per drop, 1 = open sky
 #endif
 
 cbuffer CB
@@ -51,6 +55,7 @@ cbuffer CB
     float4 gViewProj1;
     float4 gViewProj2;
     float4 gViewProj3;
+    uint gSkyOcc;         ///< 1: skip drops whose gDropVisible entry is 0
 };
 
 static const float kFar = 3.402823466e+38f;
@@ -58,6 +63,7 @@ static const float kFixed = 4096.f;
 
 RWStructuredBuffer<Atomic<uint>> gAccum;     ///< 4 per pixel: r, g, b, coverage (fixed point)
 RWStructuredBuffer<Atomic<uint>> gDepthBits; ///< 1 per pixel: asuint(min view depth)
+StructuredBuffer<uint> gDropVisible;         ///< per drop (gSkyOcc only): 0 = under a roof
 Texture2D<float4> gPosW;
 RWTexture2D<float4> gColor;
 RWTexture2D<float4> gDepth;
@@ -146,10 +152,8 @@ void splat(uint3 tid: SV_DispatchThreadID)
     const float3 rel = abs(head - gCamPos) / (0.5f * gBox);
     const float fade = saturate((1.f - max(rel.x, max(rel.y, rel.z))) * 4.f);
     if (fade <= 0.f) return;
-#if RAIN_SKY_OCCLUSION
-    // Under a roof: geometry straight above the drop head hides the whole drop.
-    if (visibility(head, float3(0.f), gUp, gSkyDist) == 0.f) return;
-#endif
+    // Under a roof (skyVisibility found geometry straight above the drop head): the whole drop is hidden.
+    if (gSkyOcc != 0u && gDropVisible[i] == 0u) return;
     const float2 a = toPixel(clip(head));
     float2 b = toPixel(clip(tail));
     float2 ab = b - a;
@@ -195,6 +199,18 @@ void splat(uint3 tid: SV_DispatchThreadID)
         }
     }
 }
+
+#if RAIN_SKY_OCCLUSION
+[numthreads(64, 1, 1)]
+void skyVisibility(uint3 tid: SV_DispatchThreadID)
+{
+    const uint i = tid.x;
+    if (i >= gCount) return;
+    float3 head, vel;
+    dropState(i, head, vel);
+    gDropVisibleOut[i] = visibility(head, float3(0.f), gUp, gSkyDist) == 0.f ? 0u : 1u;
+}
+#endif
 
 [numthreads(16, 16, 1)]
 void resolve(uint3 tid: SV_DispatchThreadID)
