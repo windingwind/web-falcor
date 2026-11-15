@@ -77,18 +77,35 @@ export async function renderShot(device: Device, scene: Scene, g: RenderGraph, p
  */
 export type CutMethod = "camera-reset" | "prime" | "explicit" | "none";
 
-export interface ColdConsecutiveResult { method: CutMethod; equalFrames: number; frames: number; differs: boolean[] }
+export interface ColdConsecutiveResult {
+    method: CutMethod;
+    equalFrames: number;
+    frames: number;
+    differs: boolean[];
+    /** X frames whose cold render before the consecutive shots differs from the cold render after them (see below). */
+    coldDrift: number;
+}
 
 /**
  * Cold: a new graph on a camera without history (Camera.resetHistory) renders X for `frames` frames.
  * Consecutive: one graph renders A (moving), B (moving), the cut, then X. Each X frame of each output is compared bit for bit.
+ *
+ * The cold shot is rendered twice, before and after all consecutive shots (each time on a new graph and a reset
+ * camera), and a consecutive X frame counts as equal when it matches either cold render of that frame bit for bit.
+ * Some GPU drivers replace a pipeline's machine code some time after it was created by a re-optimised variant whose
+ * floating-point results differ in the last bit; renders before and after that point then differ although no state is
+ * involved, e.g. a cold shot right after the first compile and a consecutive shot a second later. Leaked history differs
+ * from both cold renders, so the check still catches it; `coldDrift` reports frames where the two cold renders differ.
  */
 export async function coldVsConsecutive(device: Device, scene: Scene, mk: () => RenderGraph, outputs: string[], methods: CutMethod[], frames = 3): Promise<ColdConsecutiveResult[]> {
     await warmUp(device, scene);
-    setPose(scene, kPoseX);
-    scene.camera.resetHistory();
-    const cold = await renderShot(device, scene, mk(), kPoseX, frames, outputs);
-    const results: ColdConsecutiveResult[] = [];
+    const renderCold = async () => {
+        setPose(scene, kPoseX);
+        scene.camera.resetHistory();
+        return renderShot(device, scene, mk(), kPoseX, frames, outputs);
+    };
+    const cold = await renderCold();
+    const shots: { method: CutMethod; x: Float32Array[][] }[] = [];
     for (const method of methods) {
         const g = mk();
         await renderShot(device, scene, g, kPoseA, 4, outputs, 0.05);
@@ -97,9 +114,13 @@ export async function coldVsConsecutive(device: Device, scene: Scene, mk: () => 
         if (method === "camera-reset") scene.camera.resetHistory();
         else if (method === "prime") buildGraph(device, scene, [], [], [], 16, 16).execute(device.renderContext);
         else if (method === "explicit") resetGraphHistory(g);
-        const x = await renderShot(device, scene, g, kPoseX, frames, outputs);
-        const differs = x.map((row, f) => row.some((buf, o) => !bitwiseEqual(buf, cold[f]![o]!)));
-        results.push({ method, equalFrames: differs.filter((d) => !d).length, frames, differs });
+        shots.push({ method, x: await renderShot(device, scene, g, kPoseX, frames, outputs) });
     }
-    return results;
+    const coldAfter = await renderCold();
+    const same = (a: Float32Array[], b: Float32Array[]) => a.every((buf, o) => bitwiseEqual(buf, b[o]!));
+    const coldDrift = cold.filter((row, f) => !same(row, coldAfter[f]!)).length;
+    return shots.map(({ method, x }) => {
+        const differs = x.map((row, f) => !same(row, cold[f]!) && !same(row, coldAfter[f]!));
+        return { method, equalFrames: differs.filter((d) => !d).length, frames, differs, coldDrift };
+    });
 }

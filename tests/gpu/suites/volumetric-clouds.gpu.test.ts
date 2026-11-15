@@ -165,7 +165,7 @@ gpuTest("VolumetricClouds.coldVsConsecutive", async ({ device }) => {
     for (const resolution of ["full", "half"]) {
         const props = { ...kLow, resolution, temporal: true };
         const res = await coldVsConsecutive(device, scene, () => cloudGraph(device, scene, props, ["C.dst", "C.layer"]), ["C.dst", "C.layer"], ["camera-reset", "prime", "explicit", "none"]);
-        for (const r of res) log(`VolumetricClouds cold vs consecutive [${resolution}, ${r.method}]: X frames bitwise equal ${r.equalFrames}/${r.frames}`);
+        for (const r of res) log(`VolumetricClouds cold vs consecutive [${resolution}, ${r.method}]: X frames bitwise equal ${r.equalFrames}/${r.frames} (cold drift ${r.coldDrift})`);
         for (const r of res.filter((r) => r.method !== "none")) expectEq(r.equalFrames, r.frames, `cold = consecutive after ${r.method} (${resolution})`);
         expectEq(res.find((r) => r.method === "none")!.differs[0], true, `without a cut the leaked history changes X (control, ${resolution})`);
     }

@@ -14,6 +14,12 @@
  *          composite with DepthComposite (premultiplied; additive for a glowing look);
  *   depth: r = view depth of the nearest streak (DepthComposite's posW convention), 3.4e38 where none.
  *
+ * Sky occlusion (`skyOcclusion`): "None" (default) draws every drop. "RayTraced" casts one visibility ray per drop from
+ * its head along +upAxis (up to `skyOcclusionDistance`) through the scene's software BVH (shared visibility service,
+ * Visibility.slangh); drops with geometry above them (under a roof, an awning or a tree) are not drawn, so interiors stay
+ * dry. The rays are traced by a separate per-drop kernel before the splat; the splat program itself is the same in both
+ * modes, so drops with open sky above them are drawn by identical code and exactly as with "None".
+ *
  * Identity: count 0, opacity 0 (or intensity 0 and opacity 0) give an empty layer, which DepthComposite passes through
  * bit for bit.
  *
@@ -39,7 +45,7 @@ import {
 import { addColorOutput, addTexInput, dummyTexture, parseColour } from "../Stylize/StyleCommon.js";
 
 const kShaderFile = "RenderPasses/Layers/RainLayer.cs.slang";
-const kEntries = ["clearAccum", "splat", "resolve"] as const;
+const kEntries = ["clearAccum", "skyVisibility", "splat", "resolve"] as const;
 type Entry = (typeof kEntries)[number];
 
 const kDefaults = {
@@ -58,19 +64,35 @@ const kDefaults = {
     near: 0.2,
     time: 0,
     upAxis: [0, 1, 0] as number[],
+    skyOcclusion: "None" as RainSkyOcclusion,
+    skyOcclusionDistance: 1e30,
 };
+export const kRainSkyOcclusionModes = ["None", "RayTraced"] as const;
+export type RainSkyOcclusion = (typeof kRainSkyOcclusionModes)[number];
 export type RainLayerParams = typeof kDefaults;
 
 export class RainLayer extends RenderPass {
     private p: RainLayerParams = JSON.parse(JSON.stringify(kDefaults));
     private passes = new Map<Entry, ComputePass>();
+    private skyKey = "";
     private accum: Buffer | null = null;
     private depthBits: Buffer | null = null;
+    /** Per-drop sky visibility (RayTraced), or a one-element placeholder. */
+    private dropVisible: Buffer | null = null;
 
     constructor(device: Device, props: Properties) {
         super(device);
         for (const k of Object.keys(kDefaults) as (keyof RainLayerParams)[]) (this.p as Record<string, unknown>)[k] = props.get(k, kDefaults[k] as never);
         this.p.count = Math.max(0, Math.min(Math.round(this.p.count), 1 << 20));
+        if (!(kRainSkyOcclusionModes as readonly string[]).includes(this.p.skyOcclusion)) {
+            throw new Error(`RainLayer: unknown skyOcclusion '${this.p.skyOcclusion}' (${kRainSkyOcclusionModes.join(", ")})`);
+        }
+    }
+
+    override setScene(scene: typeof this.scene): void {
+        super.setScene(scene);
+        this.passes.delete("skyVisibility");
+        this.skyKey = "";
     }
 
     override getProperties(): Properties {
@@ -82,6 +104,7 @@ export class RainLayer extends RenderPass {
         ui.slider("Intensity", this.p.intensity, 0, 10, 0.01, (v) => (this.p.intensity = v));
         ui.slider("Speed", this.p.speed, 0, 20, 0.1, (v) => (this.p.speed = v));
         ui.slider("Time", this.p.time, 0, 60, 0.01, (v) => (this.p.time = v));
+        ui.dropdown("Sky occlusion", [...kRainSkyOcclusionModes], this.p.skyOcclusion, (v) => (this.p.skyOcclusion = v as RainSkyOcclusion));
     }
 
     override reflect(compileData: CompileData): RenderPassReflection {
@@ -93,7 +116,23 @@ export class RainLayer extends RenderPass {
         return r;
     }
 
+    /** Sky occlusion needs the scene (BVH); without one the pass draws every drop. */
+    private occluded(): boolean {
+        return this.p.skyOcclusion === "RayTraced" && !!this.scene;
+    }
+
     private kernel(e: Entry): ComputePass {
+        // Only skyVisibility traces rays: it gets the scene defines and the visibility service in BVH mode. The other
+        // kernels (splat included) are the plain shader without defines, the same program with and without sky occlusion.
+        if (e === "skyVisibility") {
+            const defines = this.scene!.getSceneDefines().addAll({ RAIN_SKY_OCCLUSION: 1, VIS_MODE: 2 });
+            let k = this.passes.get(e);
+            if (!k || defines.key() !== this.skyKey) {
+                this.passes.set(e, (k = ComputePass.create(this.device, { path: kShaderFile, csEntry: e, defines })));
+                this.skyKey = defines.key();
+            }
+            return k;
+        }
         let k = this.passes.get(e);
         if (!k) this.passes.set(e, (k = ComputePass.create(this.device, { path: kShaderFile, csEntry: e })));
         return k;
@@ -119,6 +158,11 @@ export class RainLayer extends RenderPass {
         const u = this.p.upAxis.map(Number);
         const ul = Math.hypot(u[0]!, u[1]!, u[2]!) || 1;
         const count = cam ? this.p.count : 0;
+        const sky = this.occluded() && count > 0;
+        const visSize = sky ? count * 4 : 4;
+        if (!this.dropVisible || this.dropVisible.size !== visSize) {
+            this.dropVisible = new Buffer(this.device, { size: visSize, structSize: 4, bindFlags: flags, memoryType: MemoryType.DeviceLocal, name: "RainLayer::dropVisible" });
+        }
         const consts: Record<string, unknown> = {
             gFrameDim: [W, H], gCount: count, gSeed: Math.max(0, Math.round(this.p.seed)) >>> 0,
             gUp: u.map((x) => x / ul), gBox: Math.max(Number(this.p.box), 1e-3), gWind: this.p.wind.map(Number), gSpeed: Number(this.p.speed),
@@ -126,7 +170,7 @@ export class RainLayer extends RenderPass {
             gCamFwd: [f[0]! / fl, f[1]! / fl, f[2]! / fl], gExposure: Math.max(Number(this.p.exposure), 0), gHalfWidth: Math.max(Number(this.p.width), 0.1) * 0.5,
             gOpacity: Math.max(Number(this.p.opacity), 0), gMaxLenPx: Math.max(Number(this.p.maxLengthPx), 1), gNear: Math.max(Number(this.p.near), 1e-3),
             gHasPosW: posW ? 1 : 0, gSpeedJitter: Math.min(Math.max(Number(this.p.speedJitter), 0), 1.9),
-            gViewProj0: rows[0], gViewProj1: rows[1], gViewProj2: rows[2], gViewProj3: rows[3],
+            gViewProj0: rows[0], gViewProj1: rows[1], gViewProj2: rows[2], gViewProj3: rows[3], gSkyOcc: sky ? 1 : 0,
         };
         const run = (e: Entry, x: number, y: number) => {
             const k = this.kernel(e);
@@ -138,10 +182,20 @@ export class RainLayer extends RenderPass {
             root["gPosW"] = posW ?? dummyTexture(this.device);
             root["gColor"] = color;
             root["gDepth"] = depthOut ?? dummyTexture(this.device, "out:depth");
+            if (e === "skyVisibility") {
+                this.scene!.bindShaderData(root);
+                root["SkyCB"]!["gSkyDist"] = Math.max(Number(this.p.skyOcclusionDistance), 1e-3);
+                root["gDropVisibleOut"] = this.dropVisible!;
+            } else {
+                root["gDropVisible"] = this.dropVisible!;
+            }
             k.execute(ctx, x, y);
         };
         run("clearAccum", W, H);
-        if (count > 0 && Number(this.p.opacity) > 0) run("splat", count, 1);
+        if (count > 0 && Number(this.p.opacity) > 0) {
+            if (sky) run("skyVisibility", count, 1);
+            run("splat", count, 1);
+        }
         run("resolve", W, H);
     }
 }
