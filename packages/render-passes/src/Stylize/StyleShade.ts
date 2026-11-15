@@ -109,6 +109,10 @@ export function packStyleRecord(r: StyleRecord, materialId: number): number[] {
     ];
 }
 
+/** Env specular occlusion (as DeferredLighting.envSpecularOcclusion): Auto = on when the scene has an env map and geometry. */
+const kEnvOcclusionModes = ["Auto", "On", "Off"] as const;
+type EnvOcclusionMode = (typeof kEnvOcclusionModes)[number];
+
 /** Rejects ramp / band properties: this pass has no colour-ramp or band-count mode. */
 function assertNoRamp(keys: Iterable<string>, where: string): void {
     for (const k of keys) if (/^(ramp|band)/i.test(k)) throw new Error(`StyleShade: '${k}' (${where}) is not supported; StyleShade has no ramp/band mode`);
@@ -123,6 +127,7 @@ export class StyleShade extends RenderPass {
     private analyticLights = true;
     private emissive = true;
     private envBackground = true;
+    private envSpecularOcclusion: EnvOcclusionMode = "Auto";
 
     private pass: ComputePass | null = null;
     private passKey = "";
@@ -142,6 +147,9 @@ export class StyleShade extends RenderPass {
         this.analyticLights = props.get("analyticLights", true);
         this.emissive = props.get("emissive", true);
         this.envBackground = props.get("envBackground", true);
+        const eo = props.get<string>("envSpecularOcclusion", "Auto");
+        if (!(kEnvOcclusionModes as readonly string[]).includes(eo)) throw new Error(`StyleShade: unknown envSpecularOcclusion '${eo}' (${kEnvOcclusionModes.join(", ")})`);
+        this.envSpecularOcclusion = eo as EnvOcclusionMode;
         const mats = props.get<PropertyValue[]>("materials", []);
         if (!Array.isArray(mats)) throw new Error("StyleShade: materials must be a list of { materialId, ...style }");
         if (mats.length > kStyleShadeMaxOverrides) throw new Error(`StyleShade: at most ${kStyleShadeMaxOverrides} material overrides`);
@@ -167,6 +175,7 @@ export class StyleShade extends RenderPass {
             analyticLights: this.analyticLights,
             emissive: this.emissive,
             envBackground: this.envBackground,
+            envSpecularOcclusion: this.envSpecularOcclusion,
         });
     }
 
@@ -255,6 +264,7 @@ export class StyleShade extends RenderPass {
             USE_ENV_LIGHT: useEnv ? 1 : 0,
             USE_ENV_BACKGROUND: this.envBackground && scene.useEnvBackground ? 1 : 0,
             USE_EMISSIVE: this.emissive ? 1 : 0,
+            ENV_SPEC_OCCLUSION: useEnv && (this.envSpecularOcclusion === "On" || (this.envSpecularOcclusion === "Auto" && !!scene.getEnvMap() && scene.worldBounds !== null)) ? 1 : 0,
             is_valid_gViewW: viewW ? 1 : 0,
             is_valid_gVisibility: vis ? 1 : 0,
             is_valid_gMaterialId: mat ? 1 : 0,
