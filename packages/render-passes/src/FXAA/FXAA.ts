@@ -27,25 +27,33 @@ import {
 
 const kShaderFile = "RenderPasses/FXAA/FXAA.cs.slang";
 
+/** Smooths luminance edges with the FXAA quality search and subpixel filter. */
 export class FXAA extends RenderPass {
-    private p = { edgeThresholdMin: 0.0312, edgeThresholdMax: 0.125, subpixelQuality: 0.75, iterations: 12, enabled: true };
-    private pass: ComputePass | null = null;
+    private mParameters: {
+        edgeThresholdMin: number;
+        edgeThresholdMax: number;
+        subpixelQuality: number;
+        iterations: number;
+        enabled: boolean;
+    } = { edgeThresholdMin: 0.0312, edgeThresholdMax: 0.125, subpixelQuality: 0.75, iterations: 12, enabled: true };
+    private mPass: ComputePass | null = null;
 
     constructor(device: Device, props: Properties) {
         super(device);
-        for (const k of Object.keys(this.p) as (keyof typeof this.p)[]) (this.p as Record<string, unknown>)[k] = props.get(k, this.p[k]);
+        for (const k of Object.keys(this.mParameters) as (keyof typeof this.mParameters)[])
+            (this.mParameters as Record<string, unknown>)[k] = props.get(k, this.mParameters[k]);
     }
 
     override getProperties(): Properties {
-        return new Properties({ ...this.p });
+        return new Properties({ ...this.mParameters });
     }
 
     override renderUI(ui: UIWidgets): void {
-        ui.checkbox("Enabled", this.p.enabled, (v) => (this.p.enabled = v));
-        ui.slider("Edge threshold min", this.p.edgeThresholdMin, 0, 0.1, 0.0001, (v) => (this.p.edgeThresholdMin = v));
-        ui.slider("Edge threshold max", this.p.edgeThresholdMax, 0, 0.5, 0.001, (v) => (this.p.edgeThresholdMax = v));
-        ui.slider("Subpixel quality", this.p.subpixelQuality, 0, 1, 0.01, (v) => (this.p.subpixelQuality = v));
-        ui.slider("Search iterations", this.p.iterations, 1, 12, 1, (v) => (this.p.iterations = v));
+        ui.checkbox("Enabled", this.mParameters.enabled, (v) => (this.mParameters.enabled = v));
+        ui.slider("Edge threshold min", this.mParameters.edgeThresholdMin, 0, 0.1, 0.0001, (v) => (this.mParameters.edgeThresholdMin = v));
+        ui.slider("Edge threshold max", this.mParameters.edgeThresholdMax, 0, 0.5, 0.001, (v) => (this.mParameters.edgeThresholdMax = v));
+        ui.slider("Subpixel quality", this.mParameters.subpixelQuality, 0, 1, 0.01, (v) => (this.mParameters.subpixelQuality = v));
+        ui.slider("Search iterations", this.mParameters.iterations, 1, 12, 1, (v) => (this.mParameters.iterations = v));
     }
 
     override reflect(compileData: CompileData): RenderPassReflection {
@@ -63,18 +71,18 @@ export class FXAA extends RenderPass {
         const src = rd.getTexture("src");
         const dst = rd.getTexture("dst");
         if (!src || !dst) return;
-        if (!this.pass) this.pass = ComputePass.create(this.device, { path: kShaderFile });
-        const cb = this.pass.getRootVar()["CB"]!;
+        if (!this.mPass) this.mPass = ComputePass.create(this.device, { path: kShaderFile });
+        const cb = this.mPass.getRootVar()["CB"]!;
         cb["gFrameDim"] = [dst.width, dst.height];
-        cb["gEdgeThresholdMin"] = this.p.edgeThresholdMin;
-        cb["gEdgeThresholdMax"] = this.p.edgeThresholdMax;
-        cb["gSubpixelQuality"] = this.p.subpixelQuality;
-        cb["gIterations"] = Math.min(12, Math.max(1, Math.round(this.p.iterations)));
-        cb["gEnabled"] = this.p.enabled ? 1 : 0;
-        const root = this.pass.getRootVar();
+        cb["gEdgeThresholdMin"] = this.mParameters.edgeThresholdMin;
+        cb["gEdgeThresholdMax"] = this.mParameters.edgeThresholdMax;
+        cb["gSubpixelQuality"] = this.mParameters.subpixelQuality;
+        cb["gIterations"] = Math.min(12, Math.max(1, Math.round(this.mParameters.iterations)));
+        cb["gEnabled"] = this.mParameters.enabled ? 1 : 0;
+        const root = this.mPass.getRootVar();
         root["gSrc"] = src;
         root["gDst"] = dst;
-        this.pass.execute(ctx, dst.width, dst.height);
+        this.mPass.execute(ctx, dst.width, dst.height);
     }
 }
 

@@ -33,8 +33,15 @@ float3 linearSrgbToOklab(float3 c)
                   0.0259040371f * l_ + 0.7827717662f * m_ - 0.8086757660f * s_);
 }
 
-float encodeSrgb(float x) { x = saturate(x); return x <= 0.0031308f ? 12.92f * x : 1.055f * pow(x, 1.f / 2.4f) - 0.055f; }
-float decodeSrgb(float x) { return x <= 0.04045f ? x / 12.92f : pow((x + 0.055f) / 1.055f, 2.4f); }
+float encodeSrgb(float x)
+{
+    x = saturate(x);
+    return x <= 0.0031308f ? 12.92f * x : 1.055f * pow(x, 1.f / 2.4f) - 0.055f;
+}
+float decodeSrgb(float x)
+{
+    return x <= 0.04045f ? x / 12.92f : pow((x + 0.055f) / 1.055f, 2.4f);
+}
 
 /** 4x4 Bayer threshold in (-0.5, 0.5). */
 float bayer4(uint2 p)
@@ -49,7 +56,11 @@ void main(uint3 tid: SV_DispatchThreadID)
     const uint2 p = tid.xy;
     if (any(p >= gFrameDim)) return;
     const float4 src = gSrc[p];
-    if (gMix == 0.f) { gDst[p] = src; return; }
+    if (gMix == 0.f)
+    {
+        gDst[p] = src;
+        return;
+    }
     const float t = gDither * bayer4(p) * gSpacing;
     float3 q;
     if (gBits > 0)
@@ -70,7 +81,11 @@ void main(uint3 tid: SV_DispatchThreadID)
         {
             const float3 d = x - gPaletteLab[i].xyz;
             const float dd = dot(d, d);
-            if (dd < best) { best = dd; bi = i; }
+            if (dd < best)
+            {
+                best = dd;
+                bi = i;
+            }
         }
         q = gPalette[bi].rgb;
     }

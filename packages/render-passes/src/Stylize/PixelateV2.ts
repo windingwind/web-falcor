@@ -33,27 +33,38 @@ import {
 import { addColorOutput, addTexInput, cameraData, dummyTexture, enumIndex } from "./StyleCommon.js";
 
 const kShaderFile = "RenderPasses/Stylize/PixelateV2.cs.slang";
+/** Ordered option names; preserve this order for numeric property compatibility. */
 const kModes = ["avg", "nearest", "majority"] as const;
-const kDefaults = { block: 4, mode: "nearest" as string, offset: [0, 0] as number[], outline: 0, outlineThreshold: 0.05, normalThreshold: 0.3 };
+/** Creation defaults for the pass parameters documented in this file header. */
+const kDefaults = {
+    block: 4,
+    mode: "nearest" as string,
+    offset: [0, 0] as number[],
+    outline: 0,
+    outlineThreshold: 0.05,
+    normalThreshold: 0.3,
+};
 
+/** Reduces colour over pixel blocks, with optional depth and identity boundaries. */
 export class PixelateV2 extends RenderPass {
-    private p = { ...kDefaults };
-    private passes: Record<string, ComputePass> = {};
-    private tex: Record<string, Texture> = {};
+    private mParameters: typeof kDefaults = { ...kDefaults };
+    private mPasses: Record<string, ComputePass> = {};
+    private mTextures: Record<string, Texture> = {};
 
     constructor(device: Device, props: Properties) {
         super(device);
-        for (const k of Object.keys(kDefaults) as (keyof typeof kDefaults)[]) (this.p as Record<string, unknown>)[k] = props.get(k, kDefaults[k]);
-        enumIndex("PixelateV2", "mode", this.p.mode, kModes);
+        for (const k of Object.keys(kDefaults) as (keyof typeof kDefaults)[])
+            (this.mParameters as Record<string, unknown>)[k] = props.get(k, kDefaults[k]);
+        enumIndex("PixelateV2", "mode", this.mParameters.mode, kModes);
     }
 
     override getProperties(): Properties {
-        return new Properties(JSON.parse(JSON.stringify(this.p)) as Record<string, PropertyValue>);
+        return new Properties(JSON.parse(JSON.stringify(this.mParameters)) as Record<string, PropertyValue>);
     }
 
     override renderUI(ui: UIWidgets): void {
-        ui.slider("Block (px)", this.p.block, 1, 32, 1, (v) => (this.p.block = v));
-        ui.slider("Outline", this.p.outline, 0, 1, 0.01, (v) => (this.p.outline = v));
+        ui.slider("Block (px)", this.mParameters.block, 1, 32, 1, (v) => (this.mParameters.block = v));
+        ui.slider("Outline", this.mParameters.outline, 0, 1, 0.01, (v) => (this.mParameters.outline = v));
     }
 
     override reflect(compileData: CompileData): RenderPassReflection {
@@ -67,44 +78,81 @@ export class PixelateV2 extends RenderPass {
     }
 
     private texture(name: string, w: number, h: number): Texture {
-        let t = this.tex[name];
+        let t = this.mTextures[name];
         if (!t || t.width !== w || t.height !== h) {
-            t = this.tex[name] = new Texture(this.device, {
-                type: ResourceType.Texture2D, width: w, height: h, format: ResourceFormat.RGBA32Float,
-                bindFlags: ResourceBindFlags.UnorderedAccess | ResourceBindFlags.ShaderResource, name: `PixelateV2::${name}`,
+            t = this.mTextures[name] = new Texture(this.device, {
+                type: ResourceType.Texture2D,
+                width: w,
+                height: h,
+                format: ResourceFormat.RGBA32Float,
+                bindFlags: ResourceBindFlags.UnorderedAccess | ResourceBindFlags.ShaderResource,
+                name: `PixelateV2::${name}`,
             });
         }
         return t;
     }
 
     override execute(ctx: RenderContext, rd: RenderData): void {
-        const src = rd.getTexture("src"), dst = rd.getTexture("dst");
+        const src = rd.getTexture("src");
+        const dst = rd.getTexture("dst");
         if (!src || !dst) return;
-        const posW = rd.getTexture("posW"), normW = rd.getTexture("normW");
-        const W = dst.width, H = dst.height;
-        const B = Math.min(Math.max(Math.round(this.p.block), 1), 32);
-        const off = [0, 1].map((i) => ((Math.round(Number(this.p.offset[i] ?? 0)) % B) + B) % B);
-        const lw = Math.ceil((W + off[0]!) / B), lh = Math.ceil((H + off[1]!) / B);
-        const lowA = this.texture("low", lw, lh), geo = this.texture("geo", lw, lh), lowB = this.texture("lowOut", lw, lh);
+        const posW = rd.getTexture("posW");
+        const normW = rd.getTexture("normW");
+        const W = dst.width;
+        const H = dst.height;
+        const B = Math.min(Math.max(Math.round(this.mParameters.block), 1), 32);
+        const off = [0, 1].map((i) => ((Math.round(Number(this.mParameters.offset[i] ?? 0)) % B) + B) % B);
+        const lw = Math.ceil((W + off[0]!) / B);
+        const lh = Math.ceil((H + off[1]!) / B);
+        const lowA = this.texture("low", lw, lh);
+        const geo = this.texture("geo", lw, lh);
+        const lowB = this.texture("lowOut", lw, lh);
         const cam = this.scene ? cameraData(this.scene) : null;
         const dIn = dummyTexture(this.device);
         const stages: [string, number, number, Record<string, Texture>][] = [
-            ["lowMain", lw, lh, { gLowIn: dIn, gLowGeoIn: dIn, gLow: lowA, gLowGeo: geo, gDst: dummyTexture(this.device, "out:PixelateV2.dst") }],
-            ["edgeMain", lw, lh, { gLowIn: lowA, gLowGeoIn: geo, gLow: lowB, gLowGeo: dummyTexture(this.device, "out:PixelateV2.geo"), gDst: dummyTexture(this.device, "out:PixelateV2.dst") }],
-            ["upMain", W, H, { gLowIn: lowB, gLowGeoIn: dIn, gLow: dummyTexture(this.device, "out:PixelateV2.low"), gLowGeo: dummyTexture(this.device, "out:PixelateV2.geo"), gDst: dst }],
+            [
+                "lowMain",
+                lw,
+                lh,
+                { gLowIn: dIn, gLowGeoIn: dIn, gLow: lowA, gLowGeo: geo, gDst: dummyTexture(this.device, "out:PixelateV2.dst") },
+            ],
+            [
+                "edgeMain",
+                lw,
+                lh,
+                {
+                    gLowIn: lowA,
+                    gLowGeoIn: geo,
+                    gLow: lowB,
+                    gLowGeo: dummyTexture(this.device, "out:PixelateV2.geo"),
+                    gDst: dummyTexture(this.device, "out:PixelateV2.dst"),
+                },
+            ],
+            [
+                "upMain",
+                W,
+                H,
+                {
+                    gLowIn: lowB,
+                    gLowGeoIn: dIn,
+                    gLow: dummyTexture(this.device, "out:PixelateV2.low"),
+                    gLowGeo: dummyTexture(this.device, "out:PixelateV2.geo"),
+                    gDst: dst,
+                },
+            ],
         ];
         for (const [entry, dw, dh, binds] of stages) {
-            const pass = (this.passes[entry] ??= ComputePass.create(this.device, { path: kShaderFile, csEntry: entry }));
+            const pass = (this.mPasses[entry] ??= ComputePass.create(this.device, { path: kShaderFile, csEntry: entry }));
             const root = pass.getRootVar();
             const cb = root["CB"]!;
             cb["gFrameDim"] = [W, H];
             cb["gLowDim"] = [lw, lh];
             cb["gOffset"] = off;
             cb["gBlock"] = B;
-            cb["gMode"] = enumIndex("PixelateV2", "mode", this.p.mode, kModes);
-            cb["gOutline"] = posW ? this.p.outline : 0;
-            cb["gOutlineThreshold"] = this.p.outlineThreshold;
-            cb["gNormalThreshold"] = this.p.normalThreshold;
+            cb["gMode"] = enumIndex("PixelateV2", "mode", this.mParameters.mode, kModes);
+            cb["gOutline"] = posW ? this.mParameters.outline : 0;
+            cb["gOutlineThreshold"] = this.mParameters.outlineThreshold;
+            cb["gNormalThreshold"] = this.mParameters.normalThreshold;
             cb["gCamPos"] = cam?.pos ?? [0, 0, 0];
             cb["gCamFwd"] = cam?.fwd ?? [0, 0, -1];
             cb["gHasPosW"] = posW && cam ? 1 : 0;

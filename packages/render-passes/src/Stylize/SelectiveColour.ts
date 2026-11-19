@@ -13,7 +13,9 @@
 import { Properties, registerRenderPass, type Device, type RenderData, type ShaderVar } from "@web-falcor/falcor";
 import { StylePostPass, enumIndex, type PortSpec } from "./StyleCommon.js";
 
+/** Ordered option names; preserve this order for numeric property compatibility. */
 const kSources = ["src", "albedo"] as const;
+/** Creation defaults for the pass parameters documented in this file header. */
 const kDefaults = {
     keepHue: 29,
     hueWidth: 20,
@@ -24,6 +26,7 @@ const kDefaults = {
     source: "src" as string,
 };
 
+/** Adjusts selected colour ranges while retaining the remaining source colour. */
 export class SelectiveColour extends StylePostPass<typeof kDefaults> {
     protected readonly shaderFile = "RenderPasses/Stylize/SelectiveColour.cs.slang";
     protected readonly outputDesc = "Selectively desaturated colour";

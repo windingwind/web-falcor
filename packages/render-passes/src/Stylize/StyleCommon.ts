@@ -35,8 +35,15 @@ export function dummyTexture(device: Device, slot = "in"): Texture {
     if (!m) kDummies.set(device, (m = new Map()));
     let t = m.get(slot);
     if (!t) {
-        t = device.createTexture2D(1, 1, ResourceFormat.RGBA32Float, 1, 1, new Float32Array([0, 0, 0, 1]),
-            ResourceBindFlags.ShaderResource | ResourceBindFlags.UnorderedAccess);
+        t = device.createTexture2D(
+            1,
+            1,
+            ResourceFormat.RGBA32Float,
+            1,
+            1,
+            new Float32Array([0, 0, 0, 1]),
+            ResourceBindFlags.ShaderResource | ResourceBindFlags.UnorderedAccess,
+        );
         m.set(slot, t);
     }
     return t;
@@ -44,7 +51,10 @@ export function dummyTexture(device: Device, slot = "in"): Texture {
 
 /** Adds a full-resolution RGBA32Float output usable as a UAV and as a shader resource. */
 export function addColorOutput(r: RenderPassReflection, name: string, desc: string, w: number, h: number, optional = false): void {
-    const f = r.addOutput(name, desc).texture2D(w, h).format(ResourceFormat.RGBA32Float)
+    const f = r
+        .addOutput(name, desc)
+        .texture2D(w, h)
+        .format(ResourceFormat.RGBA32Float)
         .bindFlags(ResourceBindFlags.UnorderedAccess | ResourceBindFlags.ShaderResource);
     if (optional) f.flags(FieldFlags.Optional);
 }
@@ -55,6 +65,7 @@ export function addTexInput(r: RenderPassReflection, name: string, desc: string,
     if (optional) f.flags(FieldFlags.Optional);
 }
 
+/** Camera position, direction and matrix rows used by the stylization shaders. */
 export interface CameraData {
     pos: [number, number, number];
     fwd: [number, number, number];
@@ -65,12 +76,15 @@ export interface CameraData {
     fovY: number;
 }
 
+/** Collects the scene camera in the row layout expected by the stylization shaders. */
 export function cameraData(scene: Scene): CameraData {
     const cam = scene.camera;
-    const p = cam.getPosition(), t = cam.getTarget();
+    const p = cam.getPosition();
+    const t = cam.getTarget();
     const f = [t.x - p.x, t.y - p.y, t.z - p.z];
     const l = Math.hypot(f[0]!, f[1]!, f[2]!) || 1;
-    const v = cam.getViewMatrix(), vp = cam.getViewProjMatrix();
+    const v = cam.getViewMatrix();
+    const vp = cam.getViewProjMatrix();
     const row = (m: typeof v, r: number) => [m.get(r, 0), m.get(r, 1), m.get(r, 2), m.get(r, 3)];
     return {
         pos: [p.x, p.y, p.z],
@@ -105,10 +119,12 @@ export function parseColour(c: unknown): [number, number, number] {
     return [0, 2, 4].map((i) => srgbToLinear(parseInt(s.slice(i, i + 2), 16) / 255)) as [number, number, number];
 }
 
+/** Decodes one sRGB channel using the IEC 61966-2-1 transfer function. */
 export function srgbToLinear(x: number): number {
     return x <= 0.04045 ? x / 12.92 : Math.pow((x + 0.055) / 1.055, 2.4);
 }
 
+/** Encodes one linear channel using the IEC 61966-2-1 transfer function. */
 export function linearToSrgb(x: number): number {
     x = Math.min(Math.max(x, 0), 1);
     return x <= 0.0031308 ? 12.92 * x : 1.055 * Math.pow(x, 1 / 2.4) - 0.055;
@@ -121,6 +137,7 @@ export function enumIndex(pass: string, key: string, v: unknown, names: readonly
     return i;
 }
 
+/** Property values accepted by the single-dispatch stylization passes. */
 export type ParamValue = number | string | boolean | number[] | string[];
 
 /** [port name, description, optional, shader texture name] */
@@ -135,7 +152,7 @@ export abstract class StylePostPass<P extends Record<string, ParamValue>> extend
     protected p: P;
     /** Additional textures bound by shader name on the next execute (e.g. lookup tables). */
     protected extraBindings: Record<string, Texture> = {};
-    private pass: ComputePass | null = null;
+    private mPass: ComputePass | null = null;
 
     constructor(device: Device, props: Properties, defaults: P) {
         super(device);
@@ -170,8 +187,8 @@ export abstract class StylePostPass<P extends Record<string, ParamValue>> extend
         if (!dst) return;
         for (const [name, , optional] of this.ports) if (!optional && !rd.getTexture(name)) return;
         if (this.needsScene && !this.scene) throw new RuntimeError(`${this.constructor.name}: requires a scene (camera)`);
-        this.pass ??= ComputePass.create(this.device, { path: this.shaderFile });
-        const root = this.pass.getRootVar();
+        this.mPass ??= ComputePass.create(this.device, { path: this.shaderFile });
+        const root = this.mPass.getRootVar();
         const cb = root["CB"]!;
         cb["gFrameDim"] = [dst.width, dst.height];
         for (const [name, , optional, tex] of this.ports) {
@@ -182,6 +199,6 @@ export abstract class StylePostPass<P extends Record<string, ParamValue>> extend
         this.setConstants(cb, dst.width, dst.height, rd);
         for (const [name, t] of Object.entries(this.extraBindings)) root[name] = t;
         root["gDst"] = dst;
-        this.pass.execute(ctx, dst.width, dst.height);
+        this.mPass.execute(ctx, dst.width, dst.height);
     }
 }

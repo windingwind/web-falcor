@@ -32,7 +32,11 @@ void main(uint3 tid: SV_DispatchThreadID)
     const int2 p = int2(tid.xy);
     if (any(p >= int2(gFrameDim))) return;
     const float4 src = gSrc[p];
-    if (gStrength == 0.f) { gDst[p] = src; return; }
+    if (gStrength == 0.f)
+    {
+        gDst[p] = src;
+        return;
+    }
     float2 uv = (float2(p) + 0.5f) / float2(gFrameDim);
     float2 c = uv * 2.f - 1.f;
     c *= 1.f + gCurvature * dot(c, c) * 0.25f;

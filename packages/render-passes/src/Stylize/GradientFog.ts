@@ -15,12 +15,18 @@
 import { Properties, registerRenderPass, type Device, type RenderData, type ShaderVar } from "@web-falcor/falcor";
 import { StylePostPass, cameraData, enumIndex, parseColour, type PortSpec } from "./StyleCommon.js";
 
+/** Ordered option names; preserve this order for numeric property compatibility. */
 const kSkyModes = ["fog", "keep"] as const;
+/** Matches the fixed stop arrays in this pass’s Slang constant buffer. */
 const kMaxStops = 4;
 type Stop = [number, string | number[]];
 
+/** Creation defaults for the pass parameters documented in this file header. */
 const kDefaults = {
-    stops: [[0, "#e6c9a8"], [60, "#8fa6c4"]] as unknown as number[],
+    stops: [
+        [0, "#e6c9a8"],
+        [60, "#8fa6c4"],
+    ] as unknown as number[],
     density: 0.02,
     start: 0,
     heightFalloff: 0,
@@ -30,6 +36,7 @@ const kDefaults = {
     maxOpacity: 1,
 };
 
+/** Blends scene colour into a depth-dependent colour gradient. */
 export class GradientFog extends StylePostPass<typeof kDefaults> {
     protected readonly shaderFile = "RenderPasses/Stylize/GradientFog.cs.slang";
     protected readonly outputDesc = "Fogged colour";
@@ -49,7 +56,8 @@ export class GradientFog extends StylePostPass<typeof kDefaults> {
         const s = this.p.stops as unknown as Stop[];
         if (!Array.isArray(s) || s.length < 1 || s.length > kMaxStops) throw new Error(`GradientFog: 1-${kMaxStops} stops`);
         const out = s.map(([d, c]) => [Number(d), parseColour(c)] as [number, [number, number, number]]);
-        for (let i = 1; i < out.length; i++) if (!(out[i]![0] >= out[i - 1]![0])) throw new Error("GradientFog: stop distances must ascend");
+        for (let i = 1; i < out.length; i++)
+            if (!(out[i]![0] >= out[i - 1]![0])) throw new Error("GradientFog: stop distances must ascend");
         return out;
     }
 

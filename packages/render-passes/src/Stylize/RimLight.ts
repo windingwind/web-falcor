@@ -16,7 +16,9 @@
 import { Properties, registerRenderPass, type Device, type RenderData, type ShaderVar } from "@web-falcor/falcor";
 import { StylePostPass, cameraData, enumIndex, keyLightDir, type PortSpec } from "./StyleCommon.js";
 
+/** Ordered option names; preserve this order for numeric property compatibility. */
 const kModes = ["fresnel", "depth_offset"] as const;
+/** Creation defaults for the pass parameters documented in this file header. */
 const kDefaults = {
     mode: "fresnel" as string,
     colour: [1, 1, 1] as number[],
@@ -31,6 +33,7 @@ const kDefaults = {
     tint: 0,
 };
 
+/** Adds a Fresnel rim or a constant-width depth-offset rim to shaded geometry. */
 export class RimLight extends StylePostPass<typeof kDefaults> {
     protected readonly shaderFile = "RenderPasses/Stylize/RimLight.cs.slang";
     protected readonly outputDesc = "Colour with rim light added";

@@ -29,7 +29,10 @@ Texture2D<float4> gPosW;
 Texture2D<float4> gVisibility;
 RWTexture2D<float4> gDst;
 
-float cbrtS(float x) { return sign(x) * pow(abs(x), 1.f / 3.f); }
+float cbrtS(float x)
+{
+    return sign(x) * pow(abs(x), 1.f / 3.f);
+}
 float3 toOklab(float3 c)
 {
     const float l = cbrtS(0.4122214708f * c.r + 0.5363325363f * c.g + 0.0514459929f * c.b);
@@ -55,7 +58,11 @@ void main(uint3 tid: SV_DispatchThreadID)
     if (any(p >= gFrameDim)) return;
     const float4 src = gSrc[p];
     const float4 pos = gPosW[p];
-    if (pos.w == 0.f || gStrength == 0.f) { gDst[p] = src; return; }
+    if (pos.w == 0.f || gStrength == 0.f)
+    {
+        gDst[p] = src;
+        return;
+    }
     float s = saturate(dot(normalize(gNormW[p].xyz), gLightDir));
     if (gHasVisibility != 0) s *= saturate(gVisibility[p].r);
     const float m = 1.f - smoothstep(gThreshold - gSoftness, gThreshold + gSoftness + 1e-5f, s);

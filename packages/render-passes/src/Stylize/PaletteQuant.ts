@@ -18,27 +18,68 @@ export const kPalettes: Record<string, string[]> = {
     "1bit_mac": ["#000000", "#ffffff"],
     obra_1bit: ["#333319", "#e5ffff"],
     gameboy4: ["#0f380f", "#306230", "#8bac0f", "#9bbc0f"],
-    pico8_16: ["#000000", "#1d2b53", "#7e2553", "#008751", "#ab5236", "#5f574f", "#c2c3c7", "#fff1e8",
-        "#ff004d", "#ffa300", "#ffec27", "#00e436", "#29adff", "#83769c", "#ff77a8", "#ffccaa"],
+    pico8_16: [
+        "#000000",
+        "#1d2b53",
+        "#7e2553",
+        "#008751",
+        "#ab5236",
+        "#5f574f",
+        "#c2c3c7",
+        "#fff1e8",
+        "#ff004d",
+        "#ffa300",
+        "#ffec27",
+        "#00e436",
+        "#29adff",
+        "#83769c",
+        "#ff77a8",
+        "#ffccaa",
+    ],
     cga4: ["#000000", "#55ffff", "#ff55ff", "#ffffff"],
-    ega16: ["#000000", "#0000aa", "#00aa00", "#00aaaa", "#aa0000", "#aa00aa", "#aa5500", "#aaaaaa",
-        "#555555", "#5555ff", "#55ff55", "#55ffff", "#ff5555", "#ff55ff", "#ffff55", "#ffffff"],
+    ega16: [
+        "#000000",
+        "#0000aa",
+        "#00aa00",
+        "#00aaaa",
+        "#aa0000",
+        "#aa00aa",
+        "#aa5500",
+        "#aaaaaa",
+        "#555555",
+        "#5555ff",
+        "#55ff55",
+        "#55ffff",
+        "#ff5555",
+        "#ff55ff",
+        "#ffff55",
+        "#ffffff",
+    ],
     sunset6: ["#2b1b3d", "#5c2a5a", "#a23e5c", "#e0645a", "#f5a15d", "#fce3a6"],
 };
+/** Ordered option names; preserve this order for numeric property compatibility. */
 const kPaletteNames = [...Object.keys(kPalettes), "rgb555", "custom"] as const;
+/** Ordered option names; preserve this order for numeric property compatibility. */
 const kSpaces = ["oklab", "rgb"] as const;
+/** Matches the 16-entry palette arrays in PaletteQuant.cs.slang. */
 const kMaxColours = 16;
 
+/** Converts linear sRGB to Oklab using the matrices from Ottosson’s Oklab definition. */
 export function linearSrgbToOklab(c: readonly number[]): [number, number, number] {
     const l = 0.4122214708 * c[0]! + 0.5363325363 * c[1]! + 0.0514459929 * c[2]!;
     const m = 0.2119034982 * c[0]! + 0.6806995451 * c[1]! + 0.1073969566 * c[2]!;
     const s = 0.0883024619 * c[0]! + 0.2817188376 * c[1]! + 0.6299787005 * c[2]!;
-    const l_ = Math.cbrt(l), m_ = Math.cbrt(m), s_ = Math.cbrt(s);
-    return [0.2104542553 * l_ + 0.793617785 * m_ - 0.0040720468 * s_,
+    const l_ = Math.cbrt(l);
+    const m_ = Math.cbrt(m);
+    const s_ = Math.cbrt(s);
+    return [
+        0.2104542553 * l_ + 0.793617785 * m_ - 0.0040720468 * s_,
         1.9779984951 * l_ - 2.428592205 * m_ + 0.4505937099 * s_,
-        0.0259040371 * l_ + 0.7827717662 * m_ - 0.808675766 * s_];
+        0.0259040371 * l_ + 0.7827717662 * m_ - 0.808675766 * s_,
+    ];
 }
 
+/** Creation defaults for the pass parameters documented in this file header. */
 const kDefaults = {
     palette: "pico8_16" as string,
     colours: [] as string[],
@@ -47,6 +88,7 @@ const kDefaults = {
     mix: 1,
 };
 
+/** Chooses palette colours using the configured perceptual distance. */
 export class PaletteQuant extends StylePostPass<typeof kDefaults> {
     protected readonly shaderFile = "RenderPasses/Stylize/PaletteQuant.cs.slang";
     protected readonly outputDesc = "Palette-quantised colour";
@@ -63,7 +105,8 @@ export class PaletteQuant extends StylePostPass<typeof kDefaults> {
         const name = kPaletteNames[enumIndex("PaletteQuant", "palette", this.p.palette, kPaletteNames)]!;
         if (name === "rgb555") return [];
         const hex = name === "custom" ? this.p.colours : kPalettes[name]!;
-        if (!Array.isArray(hex) || hex.length < 2 || hex.length > kMaxColours) throw new Error(`PaletteQuant: palette needs 2-${kMaxColours} colours`);
+        if (!Array.isArray(hex) || hex.length < 2 || hex.length > kMaxColours)
+            throw new Error(`PaletteQuant: palette needs 2-${kMaxColours} colours`);
         return hex.map(parseColour);
     }
 
@@ -77,7 +120,9 @@ export class PaletteQuant extends StylePostPass<typeof kDefaults> {
             let sum = 0;
             for (let i = 0; i < cmp.length; i++) {
                 let best = Infinity;
-                for (let j = 0; j < cmp.length; j++) if (i !== j) best = Math.min(best, Math.hypot(cmp[i]![0] - cmp[j]![0], cmp[i]![1] - cmp[j]![1], cmp[i]![2] - cmp[j]![2]));
+                for (let j = 0; j < cmp.length; j++)
+                    if (i !== j)
+                        best = Math.min(best, Math.hypot(cmp[i]![0] - cmp[j]![0], cmp[i]![1] - cmp[j]![1], cmp[i]![2] - cmp[j]![2]));
                 sum += best;
             }
             spacing = sum / cmp.length;
@@ -85,8 +130,14 @@ export class PaletteQuant extends StylePostPass<typeof kDefaults> {
         const pad = <T>(a: T[], fill: T) => Array.from({ length: kMaxColours }, (_, i) => a[i] ?? fill);
         cb["gCount"] = pal.length;
         cb["gSpace"] = space;
-        cb["gPalette"] = pad(pal.map((c) => [...c, 1]), [0, 0, 0, 1]);
-        cb["gPaletteLab"] = pad(cmp.map((c) => [...c, 0]), [0, 0, 0, 0]);
+        cb["gPalette"] = pad(
+            pal.map((c) => [...c, 1]),
+            [0, 0, 0, 1],
+        );
+        cb["gPaletteLab"] = pad(
+            cmp.map((c) => [...c, 0]),
+            [0, 0, 0, 0],
+        );
         cb["gDither"] = this.p.dither;
         cb["gSpacing"] = spacing;
         cb["gMix"] = this.p.mix;

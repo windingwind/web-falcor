@@ -12,10 +12,23 @@
 import { Properties, registerRenderPass, type Device, type RenderData, type ShaderVar } from "@web-falcor/falcor";
 import { StylePostPass, enumIndex, type PortSpec } from "./StyleCommon.js";
 
+/** Ordered option names; preserve this order for numeric property compatibility. */
 const kMasks = ["none", "aperture", "slot", "dot"] as const;
-const kDefaults = { sourceLines: 240, beamMin: 0.3, beamMax: 0.6, mask: "aperture" as string, maskStrength: 0.5, curvature: 0.1,
-    halation: 0.1, vignette: 0.5, brightness: 1.3, strength: 1 };
+/** Creation defaults for the pass parameters documented in this file header. */
+const kDefaults = {
+    sourceLines: 240,
+    beamMin: 0.3,
+    beamMax: 0.6,
+    mask: "aperture" as string,
+    maskStrength: 0.5,
+    curvature: 0.1,
+    halation: 0.1,
+    vignette: 0.5,
+    brightness: 1.3,
+    strength: 1,
+};
 
+/** Simulates CRT scanline beams, phosphor masks, curvature and halation. */
 export class CRT extends StylePostPass<typeof kDefaults> {
     protected readonly shaderFile = "RenderPasses/Stylize/CRT.cs.slang";
     protected readonly outputDesc = "CRT-filtered colour";
@@ -40,4 +53,6 @@ export class CRT extends StylePostPass<typeof kDefaults> {
     }
 }
 
-registerRenderPass("CRT", (device, props) => new CRT(device, props), { desc: "CRT display: curvature, scanline beams, phosphor mask, halation" });
+registerRenderPass("CRT", (device, props) => new CRT(device, props), {
+    desc: "CRT display: curvature, scanline beams, phosphor mask, halation",
+});

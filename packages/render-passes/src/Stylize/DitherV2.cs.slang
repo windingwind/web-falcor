@@ -30,8 +30,15 @@ Texture2D<float4> gNormW;
 Texture2D<float4> gBlueNoise;   ///< r = rank / N in [0, 1)
 RWTexture2D<float4> gDst;
 
-float encodeSrgb(float x) { x = saturate(x); return x <= 0.0031308f ? 12.92f * x : 1.055f * pow(x, 1.f / 2.4f) - 0.055f; }
-float decodeSrgb(float x) { return x <= 0.04045f ? x / 12.92f : pow((x + 0.055f) / 1.055f, 2.4f); }
+float encodeSrgb(float x)
+{
+    x = saturate(x);
+    return x <= 0.0031308f ? 12.92f * x : 1.055f * pow(x, 1.f / 2.4f) - 0.055f;
+}
+float decodeSrgb(float x)
+{
+    return x <= 0.04045f ? x / 12.92f : pow((x + 0.055f) / 1.055f, 2.4f);
+}
 
 /** Bayer matrix of size 2^n (n <= 3): the finest coordinate bit is the most significant digit of the index. */
 float bayer(uint2 c, uint n)
@@ -66,7 +73,11 @@ void main(uint3 tid: SV_DispatchThreadID)
     const int2 p = int2(tid.xy);
     if (any(p >= int2(gFrameDim))) return;
     const float4 src = gSrc[p];
-    if (gMix == 0.f) { gDst[p] = src; return; }
+    if (gMix == 0.f)
+    {
+        gDst[p] = src;
+        return;
+    }
 
     // pattern cell coordinates
     float2 cf = float2(p) / max(gScale, 1e-3f);

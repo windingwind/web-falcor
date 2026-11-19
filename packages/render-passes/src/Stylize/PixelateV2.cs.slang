@@ -33,10 +33,20 @@ RWTexture2D<float4> gLow;
 RWTexture2D<float4> gLowGeo;
 RWTexture2D<float4> gDst;
 
-float encodeSrgb(float x) { x = saturate(x); return x <= 0.0031308f ? 12.92f * x : 1.055f * pow(x, 1.f / 2.4f) - 0.055f; }
-uint binOf(float3 c) { return (uint(encodeSrgb(c.r) * 15.f + 0.5f) << 8) | (uint(encodeSrgb(c.g) * 15.f + 0.5f) << 4) | uint(encodeSrgb(c.b) * 15.f + 0.5f); }
+float encodeSrgb(float x)
+{
+    x = saturate(x);
+    return x <= 0.0031308f ? 12.92f * x : 1.055f * pow(x, 1.f / 2.4f) - 0.055f;
+}
+uint binOf(float3 c)
+{
+    return (uint(encodeSrgb(c.r) * 15.f + 0.5f) << 8) | (uint(encodeSrgb(c.g) * 15.f + 0.5f) << 4) | uint(encodeSrgb(c.b) * 15.f + 0.5f);
+}
 
-int2 cellOrigin(int2 cell) { return cell * int(gBlock) - gOffset; }
+int2 cellOrigin(int2 cell)
+{
+    return cell * int(gBlock) - gOffset;
+}
 
 [numthreads(8, 8, 1)]
 void lowMain(uint3 tid: SV_DispatchThreadID)
@@ -64,7 +74,11 @@ void lowMain(uint3 tid: SV_DispatchThreadID)
             const uint b = binOf(gSrc[int2(x, y)].rgb);
             uint count = 0;
             for (int y2 = lo.y; y2 < hi.y; y2++) for (int x2 = lo.x; x2 < hi.x; x2++) count += binOf(gSrc[int2(x2, y2)].rgb) == b ? 1u : 0u;
-            if (count > bestCount) { bestCount = count; bestBin = b; }
+            if (count > bestCount)
+            {
+                bestCount = count;
+                bestBin = b;
+            }
         }
         for (int y = lo.y; y < hi.y; y++) for (int x = lo.x; x < hi.x; x++)
         {
@@ -88,7 +102,11 @@ void lowMain(uint3 tid: SV_DispatchThreadID)
     gLowGeo[cell] = geo;
 }
 
-float3 unpackN(float4 g) { const float z = sqrt(saturate(1.f - g.y * g.y - g.z * g.z)); return float3(g.y, g.z, g.w > 1.5f ? -z : z); }
+float3 unpackN(float4 g)
+{
+    const float z = sqrt(saturate(1.f - g.y * g.y - g.z * g.z));
+    return float3(g.y, g.z, g.w > 1.5f ? -z : z);
+}
 
 [numthreads(8, 8, 1)]
 void edgeMain(uint3 tid: SV_DispatchThreadID)
@@ -106,7 +124,11 @@ void edgeMain(uint3 tid: SV_DispatchThreadID)
             const int2 q = cell + offs[i];
             if (any(q < 0) || any(q >= int2(gLowDim))) continue;
             const float4 gq = gLowGeoIn[q];
-            if (gq.w == 0.f) { edge = 1.f; continue; }
+            if (gq.w == 0.f)
+            {
+                edge = 1.f;
+                continue;
+            }
             if (gq.x < g.x) continue;
             if (gq.x - g.x > gOutlineThreshold * g.x) edge = 1.f;
             else if (gHasNormW != 0 && 1.f - dot(unpackN(g), unpackN(gq)) > gNormalThreshold) edge = 1.f;

@@ -34,9 +34,16 @@ import {
 } from "@web-falcor/falcor";
 
 /** Camera position and unit forward vector ([0,0,0], [0,0,-1] without a scene). */
-export function cameraFrame(scene: { camera: { getPosition(): { x: number; y: number; z: number }; getTarget(): { x: number; y: number; z: number } } } | null): [number[], number[]] {
-    if (!scene) return [[0, 0, 0], [0, 0, -1]];
-    const p = scene.camera.getPosition(), t = scene.camera.getTarget();
+export function cameraFrame(
+    scene: { camera: { getPosition(): { x: number; y: number; z: number }; getTarget(): { x: number; y: number; z: number } } } | null,
+): [number[], number[]] {
+    if (!scene)
+        return [
+            [0, 0, 0],
+            [0, 0, -1],
+        ];
+    const p = scene.camera.getPosition();
+    const t = scene.camera.getTarget();
     const f = [t.x - p.x, t.y - p.y, t.z - p.z];
     const l = Math.hypot(f[0]!, f[1]!, f[2]!) || 1;
     return [[p.x, p.y, p.z], f.map((v) => v / l)];
@@ -44,33 +51,43 @@ export function cameraFrame(scene: { camera: { getPosition(): { x: number; y: nu
 
 const kShaderFile = "RenderPasses/DepthOfField/DepthOfField.cs.slang";
 
+/** Applies a thin-lens circle of confusion using scene depth and the active camera. */
 export class DepthOfField extends RenderPass {
-    private p = { useCamera: true, apertureRadius: 0.05, focalDistance: 5.0, maxCoC: 24, radiusScale: 1.0, farDepth: 1e6, fovY: 45 };
-    private pass: ComputePass | null = null;
+    private mParameters: {
+        useCamera: boolean;
+        apertureRadius: number;
+        focalDistance: number;
+        maxCoC: number;
+        radiusScale: number;
+        farDepth: number;
+        fovY: number;
+    } = { useCamera: true, apertureRadius: 0.05, focalDistance: 5.0, maxCoC: 24, radiusScale: 1.0, farDepth: 1e6, fovY: 45 };
+    private mPass: ComputePass | null = null;
 
     constructor(device: Device, props: Properties) {
         super(device);
-        for (const k of Object.keys(this.p) as (keyof typeof this.p)[]) (this.p as Record<string, unknown>)[k] = props.get(k, this.p[k]);
+        for (const k of Object.keys(this.mParameters) as (keyof typeof this.mParameters)[])
+            (this.mParameters as Record<string, unknown>)[k] = props.get(k, this.mParameters[k]);
     }
 
     override getProperties(): Properties {
-        return new Properties({ ...this.p });
+        return new Properties({ ...this.mParameters });
     }
 
     override renderUI(ui: UIWidgets): void {
-        ui.checkbox("Use camera lens", this.p.useCamera, (v) => (this.p.useCamera = v));
-        ui.slider("Aperture radius", this.p.apertureRadius, 0, 1, 0.001, (v) => (this.p.apertureRadius = v));
-        ui.slider("Focal distance", this.p.focalDistance, 0.01, 1000, 0.01, (v) => (this.p.focalDistance = v));
-        ui.slider("Max CoC (px)", this.p.maxCoC, 1, 64, 1, (v) => (this.p.maxCoC = v));
-        ui.slider("Radius scale", this.p.radiusScale, 0.25, 4, 0.01, (v) => (this.p.radiusScale = v));
+        ui.checkbox("Use camera lens", this.mParameters.useCamera, (v) => (this.mParameters.useCamera = v));
+        ui.slider("Aperture radius", this.mParameters.apertureRadius, 0, 1, 0.001, (v) => (this.mParameters.apertureRadius = v));
+        ui.slider("Focal distance", this.mParameters.focalDistance, 0.01, 1000, 0.01, (v) => (this.mParameters.focalDistance = v));
+        ui.slider("Max CoC (px)", this.mParameters.maxCoC, 1, 64, 1, (v) => (this.mParameters.maxCoC = v));
+        ui.slider("Radius scale", this.mParameters.radiusScale, 0.25, 4, 0.01, (v) => (this.mParameters.radiusScale = v));
     }
 
     /** Lens parameters in effect: [apertureRadius, focalDistance, fovY (rad)]. */
     lens(): [number, number, number] {
         const cam = this.scene?.camera;
-        const fovY = cam ? cam.getFovY() : (this.p.fovY * Math.PI) / 180;
-        if (this.p.useCamera && cam) return [cam.getApertureRadius(), cam.getFocalDistance(), fovY];
-        return [this.p.apertureRadius, this.p.focalDistance, fovY];
+        const fovY = cam ? cam.getFovY() : (this.mParameters.fovY * Math.PI) / 180;
+        if (this.mParameters.useCamera && cam) return [cam.getApertureRadius(), cam.getFocalDistance(), fovY];
+        return [this.mParameters.apertureRadius, this.mParameters.focalDistance, fovY];
     }
 
     override reflect(compileData: CompileData): RenderPassReflection {
@@ -90,24 +107,25 @@ export class DepthOfField extends RenderPass {
         const posW = rd.getTexture("posW");
         const dst = rd.getTexture("dst");
         if (!color || !posW || !dst) return;
-        if (!this.pass) this.pass = ComputePass.create(this.device, { path: kShaderFile });
+        if (!this.mPass) this.mPass = ComputePass.create(this.device, { path: kShaderFile });
         const [A, zf, fovY] = this.lens();
-        const W = dst.width, H = dst.height;
-        const cb = this.pass.getRootVar()["CB"]!;
+        const W = dst.width;
+        const H = dst.height;
+        const cb = this.mPass.getRootVar()["CB"]!;
         cb["gFrameDim"] = [W, H];
         cb["gCocScale"] = (A * H) / (2 * Math.tan(0.5 * fovY) * Math.max(zf, 1e-6)); // coc = scale * |z - zf| / z
         cb["gFocalDistance"] = zf;
-        cb["gMaxCoC"] = this.p.maxCoC;
-        cb["gRadiusScale"] = Math.max(0.05, this.p.radiusScale);
-        cb["gFarDepth"] = this.p.farDepth;
+        cb["gMaxCoC"] = this.mParameters.maxCoC;
+        cb["gRadiusScale"] = Math.max(0.05, this.mParameters.radiusScale);
+        cb["gFarDepth"] = this.mParameters.farDepth;
         const [camPos, camFwd] = cameraFrame(this.scene);
         cb["gCamPos"] = camPos;
         cb["gCamFwd"] = camFwd;
-        const root = this.pass.getRootVar();
+        const root = this.mPass.getRootVar();
         root["gColor"] = color;
         root["gPosW"] = posW;
         root["gDst"] = dst;
-        this.pass.execute(ctx, W, H);
+        this.mPass.execute(ctx, W, H);
     }
 }
 

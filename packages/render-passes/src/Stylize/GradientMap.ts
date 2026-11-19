@@ -11,15 +11,35 @@ import { StylePostPass, enumIndex, parseColour, type PortSpec } from "./StyleCom
 
 type Stop = [number, string | number[]];
 export const kGradientMaps: Record<string, Stop[]> = {
-    duotone_navy: [[0, "#141a2e"], [1, "#f4ead2"]],
-    tritone_sunset: [[0, "#2a1440"], [0.5, "#d0485a"], [1, "#ffd88a"]],
-    neon: [[0, "#05010f"], [0.35, "#3a0ca3"], [0.7, "#f72585"], [1, "#b8f2ff"]],
-    sepia: [[0, "#1e130a"], [0.5, "#8c6a46"], [1, "#f7ecd6"]],
+    duotone_navy: [
+        [0, "#141a2e"],
+        [1, "#f4ead2"],
+    ],
+    tritone_sunset: [
+        [0, "#2a1440"],
+        [0.5, "#d0485a"],
+        [1, "#ffd88a"],
+    ],
+    neon: [
+        [0, "#05010f"],
+        [0.35, "#3a0ca3"],
+        [0.7, "#f72585"],
+        [1, "#b8f2ff"],
+    ],
+    sepia: [
+        [0, "#1e130a"],
+        [0.5, "#8c6a46"],
+        [1, "#f7ecd6"],
+    ],
 };
+/** Ordered option names; preserve this order for numeric property compatibility. */
 const kNames = [...Object.keys(kGradientMaps), "custom"] as const;
+/** Matches the fixed stop arrays in this pass’s Slang constant buffer. */
 const kMaxStops = 6;
+/** Creation defaults for the pass parameters documented in this file header. */
 const kDefaults = { preset: "duotone_navy" as string, stops: [] as unknown as number[], strength: 1 };
 
+/** Remaps source luminance through a colour gradient. */
 export class GradientMap extends StylePostPass<typeof kDefaults> {
     protected readonly shaderFile = "RenderPasses/Stylize/GradientMap.cs.slang";
     protected readonly outputDesc = "Gradient-mapped colour";
@@ -35,7 +55,8 @@ export class GradientMap extends StylePostPass<typeof kDefaults> {
         const stops = name === "custom" ? (this.p.stops as unknown as Stop[]) : kGradientMaps[name]!;
         if (!Array.isArray(stops) || stops.length < 2 || stops.length > kMaxStops) throw new Error(`GradientMap: 2-${kMaxStops} stops`);
         const out = stops.map(([p, c]) => [Number(p), parseColour(c)] as [number, [number, number, number]]);
-        for (let i = 1; i < out.length; i++) if (!(out[i]![0] >= out[i - 1]![0])) throw new Error("GradientMap: stop positions must ascend");
+        for (let i = 1; i < out.length; i++)
+            if (!(out[i]![0] >= out[i - 1]![0])) throw new Error("GradientMap: stop positions must ascend");
         return out;
     }
 
@@ -43,8 +64,13 @@ export class GradientMap extends StylePostPass<typeof kDefaults> {
         const s = this.mapStops();
         cb["gStopCount"] = s.length;
         cb["gStrength"] = this.p.strength;
-        cb["gStops"] = Array.from({ length: kMaxStops }, (_, i) => { const [p, c] = s[Math.min(i, s.length - 1)]!; return [c[0], c[1], c[2], p]; });
+        cb["gStops"] = Array.from({ length: kMaxStops }, (_, i) => {
+            const [p, c] = s[Math.min(i, s.length - 1)]!;
+            return [c[0], c[1], c[2], p];
+        });
     }
 }
 
-registerRenderPass("GradientMap", (device, props) => new GradientMap(device, props), { desc: "Map image luma onto a 2-6 stop colour gradient" });
+registerRenderPass("GradientMap", (device, props) => new GradientMap(device, props), {
+    desc: "Map image luma onto a 2-6 stop colour gradient",
+});

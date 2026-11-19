@@ -33,7 +33,10 @@ Texture2D<float4> gNormW;
 Texture2D<float4> gAlbedo;
 RWTexture2D<float4> gDst;
 
-float viewDepth(float3 posW) { return dot(posW - gCamPos, gCamFwd); }
+float viewDepth(float3 posW)
+{
+    return dot(posW - gCamPos, gCamFwd);
+}
 
 [numthreads(16, 16, 1)]
 void main(uint3 tid: SV_DispatchThreadID)

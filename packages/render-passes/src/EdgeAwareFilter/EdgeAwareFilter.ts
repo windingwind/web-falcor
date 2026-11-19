@@ -44,13 +44,31 @@ import {
 } from "@web-falcor/falcor";
 
 const kShaderFile = "RenderPasses/EdgeAwareFilter/EdgeAwareFilter.cs.slang";
+/** Ordered option names; preserve this order for numeric property compatibility. */
 export const kEdgeAwareMethods = ["guided", "bilateralGrid", "localLaplacian"] as const;
-const kEntries = ["copyMain", "gfH1", "gfV1", "gfH2", "gfV2", "bgClear", "bgSplat", "bgBlurU", "bgBlur", "bgSlice",
-    "llGuide", "llDown", "llRemap", "llLap", "llCollapse", "llFinal"] as const;
+const kEntries = [
+    "copyMain",
+    "gfH1",
+    "gfV1",
+    "gfH2",
+    "gfV2",
+    "bgClear",
+    "bgSplat",
+    "bgBlurU",
+    "bgBlur",
+    "bgSlice",
+    "llGuide",
+    "llDown",
+    "llRemap",
+    "llLap",
+    "llCollapse",
+    "llFinal",
+] as const;
 type Entry = (typeof kEntries)[number];
 /** Largest bilateral grid (cells); 16 bytes per cell stays below WebGPU's default 128 MiB storage binding limit. */
 const kMaxGridCells = 8_000_000;
 
+/** Creation defaults for the pass parameters documented in this file header. */
 const kDefaults = {
     method: "guided" as string,
     radius: 8,
@@ -77,95 +95,130 @@ const kRanges: Record<Exclude<keyof Params, "method">, [number, number, boolean]
     guideScale: [-1e6, 1e6, false],
 };
 
+/** Preserves edges while filtering detail with a guided filter, bilateral grid or local Laplacian pyramid. */
 export class EdgeAwareFilter extends RenderPass {
-    private p: Params = { ...kDefaults };
-    private passes = new Map<Entry, ComputePass>();
-    private tex = new Map<string, Texture>();
-    private bufs = new Map<string, Buffer>();
-    private dummy: Texture | null = null;
+    private mParameters: Params = { ...kDefaults };
+    private mPasses: Map<Entry, ComputePass> = new Map<Entry, ComputePass>();
+    private mTextures: Map<string, Texture> = new Map<string, Texture>();
+    private mBuffers: Map<string, Buffer> = new Map<string, Buffer>();
+    private mDummy: Texture | null = null;
 
     constructor(device: Device, props: Properties) {
         super(device);
         for (const [k] of props.entries()) {
-            if (!(k in kDefaults)) throw new Error(`EdgeAwareFilter: unknown property '${k}' (known: ${Object.keys(kDefaults).join(", ")})`);
+            if (!(k in kDefaults))
+                throw new Error(`EdgeAwareFilter: unknown property '${k}' (known: ${Object.keys(kDefaults).join(", ")})`);
         }
-        this.p.method = String(props.get("method", kDefaults.method));
-        if (!(kEdgeAwareMethods as readonly string[]).includes(this.p.method)) {
-            throw new Error(`EdgeAwareFilter: method must be one of ${kEdgeAwareMethods.join("|")} (got ${this.p.method})`);
+        this.mParameters.method = String(props.get("method", kDefaults.method));
+        if (!(kEdgeAwareMethods as readonly string[]).includes(this.mParameters.method)) {
+            throw new Error(`EdgeAwareFilter: method must be one of ${kEdgeAwareMethods.join("|")} (got ${this.mParameters.method})`);
         }
         for (const [k, [lo, hi, int]] of Object.entries(kRanges) as [keyof typeof kRanges, [number, number, boolean]][]) {
             const v = Number(props.get(k, kDefaults[k]));
             if (!(v >= lo && v <= hi) || (int && !Number.isInteger(v))) {
-                throw new Error(`EdgeAwareFilter: ${k} must be ${int ? "an integer " : ""}in [${lo}, ${hi}] (got ${String(props.get(k, kDefaults[k]))})`);
+                throw new Error(
+                    `EdgeAwareFilter: ${k} must be ${int ? "an integer " : ""}in [${lo}, ${hi}] (got ${String(props.get(k, kDefaults[k]))})`,
+                );
             }
-            this.p[k] = v;
+            this.mParameters[k] = v;
         }
     }
 
     override getProperties(): Properties {
-        return new Properties({ ...this.p } as Record<string, PropertyValue>);
+        return new Properties({ ...this.mParameters } as Record<string, PropertyValue>);
     }
 
     override renderUI(ui: UIWidgets): void {
-        ui.text(`method: ${this.p.method}`);
-        ui.slider("Detail", this.p.detail, -1, 4, 0.01, (v) => (this.p.detail = v));
-        ui.slider("Strength", this.p.strength, 0, 1, 0.01, (v) => (this.p.strength = v));
-        ui.slider("Range sigma", this.p.sigmaR, 0.01, 1, 0.01, (v) => (this.p.sigmaR = v));
+        ui.text(`method: ${this.mParameters.method}`);
+        ui.slider("Detail", this.mParameters.detail, -1, 4, 0.01, (v) => (this.mParameters.detail = v));
+        ui.slider("Strength", this.mParameters.strength, 0, 1, 0.01, (v) => (this.mParameters.strength = v));
+        ui.slider("Range sigma", this.mParameters.sigmaR, 0.01, 1, 0.01, (v) => (this.mParameters.sigmaR = v));
     }
 
     override reflect(compileData: CompileData): RenderPassReflection {
         const r = new RenderPassReflection();
         const [w, h] = compileData.defaultTexDims;
         r.addInput("src", "Colour").bindFlags(ResourceBindFlags.ShaderResource);
-        r.addInput("guide", "Optional guide image (x channel, times guideScale), e.g. linear depth").bindFlags(ResourceBindFlags.ShaderResource).flags(FieldFlags.Optional);
-        r.addOutput("dst", "Filtered colour").texture2D(w, h).format(ResourceFormat.RGBA32Float)
+        r.addInput("guide", "Optional guide image (x channel, times guideScale), e.g. linear depth")
+            .bindFlags(ResourceBindFlags.ShaderResource)
+            .flags(FieldFlags.Optional);
+        r.addOutput("dst", "Filtered colour")
+            .texture2D(w, h)
+            .format(ResourceFormat.RGBA32Float)
             .bindFlags(ResourceBindFlags.UnorderedAccess | ResourceBindFlags.ShaderResource);
         return r;
     }
 
     private pass(e: Entry): ComputePass {
-        let p = this.passes.get(e);
-        if (!p) this.passes.set(e, (p = ComputePass.create(this.device, { path: kShaderFile, csEntry: e })));
+        let p = this.mPasses.get(e);
+        if (!p) this.mPasses.set(e, (p = ComputePass.create(this.device, { path: kShaderFile, csEntry: e })));
         return p;
     }
 
     private texture(key: string, w: number, h: number, format: ResourceFormat): Texture {
-        let t = this.tex.get(key);
+        let t = this.mTextures.get(key);
         if (!t || t.width !== w || t.height !== h) {
-            t = this.device.createTexture2D(w, h, format, 1, 1, undefined, ResourceBindFlags.ShaderResource | ResourceBindFlags.UnorderedAccess);
-            this.tex.set(key, t);
+            t = this.device.createTexture2D(
+                w,
+                h,
+                format,
+                1,
+                1,
+                undefined,
+                ResourceBindFlags.ShaderResource | ResourceBindFlags.UnorderedAccess,
+            );
+            this.mTextures.set(key, t);
         }
         return t;
     }
 
     private buffer(key: string, elements: number, structSize: number): Buffer {
-        let b = this.bufs.get(key);
+        let b = this.mBuffers.get(key);
         if (!b || b.size < elements * structSize) {
             b = new Buffer(this.device, {
-                size: Math.max(elements, 1) * structSize, structSize,
+                size: Math.max(elements, 1) * structSize,
+                structSize,
                 bindFlags: ResourceBindFlags.ShaderResource | ResourceBindFlags.UnorderedAccess,
-                memoryType: MemoryType.DeviceLocal, name: `EdgeAwareFilter::${key}`,
+                memoryType: MemoryType.DeviceLocal,
+                name: `EdgeAwareFilter::${key}`,
             });
-            this.bufs.set(key, b);
+            this.mBuffers.set(key, b);
         }
         return b;
     }
 
     /** Binds the common constants plus `extra` (constants by CB name, resources by shader name) and dispatches. */
-    private run(ctx: RenderContext, e: Entry, src: Texture, guide: Texture | null, extra: Record<string, unknown>, threads: [number, number?]): void {
+    private run(
+        ctx: RenderContext,
+        e: Entry,
+        src: Texture,
+        guide: Texture | null,
+        extra: Record<string, unknown>,
+        threads: [number, number?],
+    ): void {
         const pass = this.pass(e);
         const root = pass.getRootVar();
         const cb = root["CB"]!;
         cb["gFrameDim"] = [src.width, src.height];
-        cb["gRadius"] = this.p.radius;
-        cb["gEps"] = this.p.eps;
-        cb["gDetail"] = this.p.detail;
-        cb["gStrength"] = this.p.strength;
+        cb["gRadius"] = this.mParameters.radius;
+        cb["gEps"] = this.mParameters.eps;
+        cb["gDetail"] = this.mParameters.detail;
+        cb["gStrength"] = this.mParameters.strength;
         cb["gHasGuide"] = guide ? 1 : 0;
-        cb["gGuideScale"] = this.p.guideScale;
-        cb["gInvSigmaR"] = 1 / this.p.sigmaR;
+        cb["gGuideScale"] = this.mParameters.guideScale;
+        cb["gInvSigmaR"] = 1 / this.mParameters.sigmaR;
         root["gSrc"] = src;
-        root["gGuide"] = guide ?? (this.dummy ??= this.device.createTexture2D(1, 1, ResourceFormat.RGBA32Float, 1, 1, new Float32Array([0, 0, 0, 1]), ResourceBindFlags.ShaderResource));
+        root["gGuide"] =
+            guide ??
+            (this.mDummy ??= this.device.createTexture2D(
+                1,
+                1,
+                ResourceFormat.RGBA32Float,
+                1,
+                1,
+                new Float32Array([0, 0, 0, 1]),
+                ResourceBindFlags.ShaderResource,
+            ));
         for (const [k, v] of Object.entries(extra)) {
             if (v instanceof Texture || v instanceof Buffer) root[k] = v;
             else cb[k] = v as number;
@@ -174,22 +227,26 @@ export class EdgeAwareFilter extends RenderPass {
     }
 
     override execute(ctx: RenderContext, rd: RenderData): void {
-        const src = rd.getTexture("src"), dst = rd.getTexture("dst");
+        const src = rd.getTexture("src");
+        const dst = rd.getTexture("dst");
         if (!src || !dst) return;
         const guide = rd.getTexture("guide") ?? null;
-        const W = dst.width, H = dst.height;
+        const W = dst.width;
+        const H = dst.height;
         const full: [number, number] = [W, H];
-        if (this.p.detail === 0 || this.p.strength === 0) {
+        if (this.mParameters.detail === 0 || this.mParameters.strength === 0) {
             this.run(ctx, "copyMain", src, guide, { gDst: dst }, full);
             return;
         }
-        if (this.p.method === "guided") this.guided(ctx, src, guide, dst);
-        else if (this.p.method === "bilateralGrid") this.bilateralGrid(ctx, src, guide, dst);
+        if (this.mParameters.method === "guided") this.guided(ctx, src, guide, dst);
+        else if (this.mParameters.method === "bilateralGrid") this.bilateralGrid(ctx, src, guide, dst);
         else this.localLaplacian(ctx, src, dst);
     }
 
     private guided(ctx: RenderContext, src: Texture, guide: Texture | null, dst: Texture): void {
-        const W = dst.width, H = dst.height, f = ResourceFormat.RGBA32Float;
+        const W = dst.width;
+        const H = dst.height;
+        const f = ResourceFormat.RGBA32Float;
         const [a1, b1, a2, b2] = ["a1", "b1", "a2", "b2"].map((k) => this.texture(k, W, H, f)) as [Texture, Texture, Texture, Texture];
         this.run(ctx, "gfH1", src, guide, { gOutA: a1, gOutB: b1 }, [W, H]);
         this.run(ctx, "gfV1", src, guide, { gInA: a1, gInB: b1, gOutA: a2, gOutB: b2 }, [W, H]);
@@ -203,12 +260,18 @@ export class EdgeAwareFilter extends RenderPass {
     }
 
     private bilateralGrid(ctx: RenderContext, src: Texture, guide: Texture | null, dst: Texture): void {
-        const W = dst.width, H = dst.height;
-        const [gw, gh, gd] = EdgeAwareFilter.gridDims(W, H, this.p.cellSize, this.p.sigmaR);
+        const W = dst.width;
+        const H = dst.height;
+        const [gw, gh, gd] = EdgeAwareFilter.gridDims(W, H, this.mParameters.cellSize, this.mParameters.sigmaR);
         const n = gw * gh * gd;
-        if (n > kMaxGridCells) throw new Error(`EdgeAwareFilter: bilateral grid of ${gw}x${gh}x${gd} cells is too large (max ${kMaxGridCells}); raise cellSize or sigmaR`);
-        const u = this.buffer("gridU", 4 * n, 4), g0 = this.buffer("grid0", n, 16), g1 = this.buffer("grid1", n, 16);
-        const grid = { gGridW: gw, gGridH: gh, gGridD: gd, gCellSize: this.p.cellSize };
+        if (n > kMaxGridCells)
+            throw new Error(
+                `EdgeAwareFilter: bilateral grid of ${gw}x${gh}x${gd} cells is too large (max ${kMaxGridCells}); raise cellSize or sigmaR`,
+            );
+        const u = this.buffer("gridU", 4 * n, 4);
+        const g0 = this.buffer("grid0", n, 16);
+        const g1 = this.buffer("grid1", n, 16);
+        const grid = { gGridW: gw, gGridH: gh, gGridD: gd, gCellSize: this.mParameters.cellSize };
         this.run(ctx, "bgClear", src, guide, { ...grid, gGridU: u }, [4 * n]);
         this.run(ctx, "bgSplat", src, guide, { ...grid, gGridU: u }, [W, H]);
         this.run(ctx, "bgBlurU", src, guide, { ...grid, gAxis: 0, gGridU: u, gGridOut: g0 }, [n]);
@@ -229,17 +292,26 @@ export class EdgeAwareFilter extends RenderPass {
     }
 
     private localLaplacian(ctx: RenderContext, src: Texture, dst: Texture): void {
-        const W = dst.width, H = dst.height, f = ResourceFormat.R32Float;
-        const dims = EdgeAwareFilter.pyramidDims(W, H, this.p.pyramidLevels);
+        const W = dst.width;
+        const H = dst.height;
+        const f = ResourceFormat.R32Float;
+        const dims = EdgeAwareFilter.pyramidDims(W, H, this.mParameters.pyramidLevels);
         const n = dims.length - 1; // Laplacian levels 0..n-1, Gaussian levels 0..n
         if (n < 1) throw new Error(`EdgeAwareFilter: localLaplacian needs an image of at least 4x4 px (got ${W}x${H})`);
-        const K = this.p.intensitySamples;
+        const K = this.mParameters.intensitySamples;
         const gin = dims.map(([w, h], l) => this.texture(`gin${l}`, w, h, f));
         const rk = dims.map(([w, h], l) => this.texture(`rk${l}`, w, h, f));
         const acc = dims.slice(0, n).map(([w, h], l) => this.buffer(`acc${l}`, w * h, 4));
         const lvl = (l: number) => ({ gOutDim: dims[l]!, gInDim: dims[l + 1] ?? dims[l]! });
         const down = (from: Texture[], l: number) =>
-            this.run(ctx, "llDown", src, null, { gInDim: dims[l]!, gOutDim: dims[l + 1]!, gInL: from[l]!, gOutL: from[l + 1]! }, dims[l + 1]!);
+            this.run(
+                ctx,
+                "llDown",
+                src,
+                null,
+                { gInDim: dims[l]!, gOutDim: dims[l + 1]!, gInL: from[l]!, gOutL: from[l + 1]! },
+                dims[l + 1]!,
+            );
         this.run(ctx, "llGuide", src, null, { gOutL: gin[0]! }, [W, H]);
         for (let l = 0; l < n; l++) down(gin, l);
         for (let k = 0; k < K; k++) {
@@ -247,13 +319,35 @@ export class EdgeAwareFilter extends RenderPass {
             this.run(ctx, "llRemap", src, null, { gRef: ref, gInL: gin[0]!, gOutL: rk[0]! }, [W, H]);
             for (let l = 0; l < n; l++) down(rk, l);
             for (let l = 0; l < n; l++) {
-                this.run(ctx, "llLap", src, null, { ...lvl(l), gRef: ref, gRefStep: K - 1, gFirst: k === 0 ? 1 : 0,
-                    gInL: gin[l]!, gGuideL: rk[l]!, gCoarseL: rk[l + 1]!, gAcc: acc[l]! }, dims[l]!);
+                this.run(
+                    ctx,
+                    "llLap",
+                    src,
+                    null,
+                    {
+                        ...lvl(l),
+                        gRef: ref,
+                        gRefStep: K - 1,
+                        gFirst: k === 0 ? 1 : 0,
+                        gInL: gin[l]!,
+                        gGuideL: rk[l]!,
+                        gCoarseL: rk[l + 1]!,
+                        gAcc: acc[l]!,
+                    },
+                    dims[l]!,
+                );
             }
         }
         // collapse: out_n = gin_n; out_l (l >= 1) written into rk_l; level 0 goes straight to dst
         for (let l = n - 1; l >= 1; l--) {
-            this.run(ctx, "llCollapse", src, null, { ...lvl(l), gAcc: acc[l]!, gCoarseL: l === n - 1 ? gin[n]! : rk[l + 1]!, gOutL: rk[l]! }, dims[l]!);
+            this.run(
+                ctx,
+                "llCollapse",
+                src,
+                null,
+                { ...lvl(l), gAcc: acc[l]!, gCoarseL: l === n - 1 ? gin[n]! : rk[l + 1]!, gOutL: rk[l]! },
+                dims[l]!,
+            );
         }
         this.run(ctx, "llFinal", src, null, { ...lvl(0), gAcc: acc[0]!, gCoarseL: n === 1 ? gin[1]! : rk[1]!, gDst: dst }, [W, H]);
     }

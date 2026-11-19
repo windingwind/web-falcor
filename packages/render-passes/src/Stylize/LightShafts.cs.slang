@@ -37,7 +37,11 @@ void main(uint3 tid: SV_DispatchThreadID)
     const uint2 p = tid.xy;
     if (any(p >= gFrameDim)) return;
     const float4 src = gSrc[p];
-    if (gExposure == 0.f || gSunFacing <= 0.f) { gDst[p] = src; return; }
+    if (gExposure == 0.f || gSunFacing <= 0.f)
+    {
+        gDst[p] = src;
+        return;
+    }
     float2 uv = (float2(p) + 0.5f) / float2(gFrameDim);
     const float2 step = (gSunUV - uv) * (gDensity / float(gSamples));
     float illum = 1.f, acc = 0.f;
