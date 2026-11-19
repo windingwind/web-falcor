@@ -58,8 +58,16 @@ void main(uint3 tid: SV_DispatchThreadID)
     {
         float3 add;
         float3 keep;
-        if (gAlphaMode == 2) { add = l.rgb; keep = float3(1.f); }
-        else if (gAlphaMode == 1) { add = l.rgb * l.a; keep = float3(1.f - l.a); }
+        if (gAlphaMode == 2)
+        {
+            add = l.rgb;
+            keep = float3(1.f);
+        }
+        else if (gAlphaMode == 1)
+        {
+            add = l.rgb * l.a;
+            keep = float3(1.f - l.a);
+        }
         else { add = l.rgb; keep = float3(1.f - l.a); }
         if (gHasTransmittance != 0) keep = gTransmittance[p].rgb;
         // k scales the layer's contribution: keep -> lerp(1, keep, k), add -> k * add.

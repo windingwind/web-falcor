@@ -38,25 +38,33 @@ import {
 } from "@web-falcor/falcor";
 
 const kShaderFile = "RenderPasses/MotionStats/MotionStats.cs.slang";
+/** Matches the maximum histogram bin count in MotionStats.cs.slang. */
 const kMaxBins = 64;
 
+/** Reduces motion vectors into magnitude, direction and summary statistics. */
 export class MotionStats extends RenderPass {
-    private p = { magBins: 16, dirBins: 16, magRange: 32, minMotion: 0.5 };
-    private clearPass: ComputePass | null = null;
-    private reducePass: ComputePass | null = null;
-    private finalPass: ComputePass | null = null;
-    private partials: Buffer | null = null;
-    private hist: Buffer | null = null;
-    private dummyMask: Texture | null = null;
-    private dummyHist: Texture | null = null;
+    private mParameters: { magBins: number; dirBins: number; magRange: number; minMotion: number } = {
+        magBins: 16,
+        dirBins: 16,
+        magRange: 32,
+        minMotion: 0.5,
+    };
+    private mClearPass: ComputePass | null = null;
+    private mReducePass: ComputePass | null = null;
+    private mFinalPass: ComputePass | null = null;
+    private mPartials: Buffer | null = null;
+    private mHistogram: Buffer | null = null;
+    private mDummyMask: Texture | null = null;
+    private mDummyHist: Texture | null = null;
 
     constructor(device: Device, props: Properties) {
         super(device);
-        for (const k of Object.keys(this.p) as (keyof typeof this.p)[]) this.p[k] = Number(props.get(k, this.p[k]));
-        this.p.magBins = MotionStats.bins(this.p.magBins);
-        this.p.dirBins = MotionStats.bins(this.p.dirBins);
-        if (!(this.p.magRange > 0)) throw new Error(`MotionStats: magRange must be > 0 (got ${this.p.magRange})`);
-        if (!(this.p.minMotion >= 0)) throw new Error(`MotionStats: minMotion must be >= 0 (got ${this.p.minMotion})`);
+        for (const k of Object.keys(this.mParameters) as (keyof typeof this.mParameters)[])
+            this.mParameters[k] = Number(props.get(k, this.mParameters[k]));
+        this.mParameters.magBins = MotionStats.bins(this.mParameters.magBins);
+        this.mParameters.dirBins = MotionStats.bins(this.mParameters.dirBins);
+        if (!(this.mParameters.magRange > 0)) throw new Error(`MotionStats: magRange must be > 0 (got ${this.mParameters.magRange})`);
+        if (!(this.mParameters.minMotion >= 0)) throw new Error(`MotionStats: minMotion must be >= 0 (got ${this.mParameters.minMotion})`);
     }
 
     private static bins(v: number): number {
@@ -66,25 +74,27 @@ export class MotionStats extends RenderPass {
     }
 
     override getProperties(): Properties {
-        return new Properties({ ...this.p });
+        return new Properties({ ...this.mParameters });
     }
 
     override renderUI(ui: UIWidgets): void {
-        ui.slider("Magnitude range (px)", this.p.magRange, 1, 256, 1, (v) => (this.p.magRange = v));
-        ui.slider("Min motion (px)", this.p.minMotion, 0, 8, 0.05, (v) => (this.p.minMotion = v));
-        ui.text(`${this.p.magBins} magnitude bins, ${this.p.dirBins} direction bins`);
+        ui.slider("Magnitude range (px)", this.mParameters.magRange, 1, 256, 1, (v) => (this.mParameters.magRange = v));
+        ui.slider("Min motion (px)", this.mParameters.minMotion, 0, 8, 0.05, (v) => (this.mParameters.minMotion = v));
+        ui.text(`${this.mParameters.magBins} magnitude bins, ${this.mParameters.dirBins} direction bins`);
     }
 
     override reflect(_compileData: CompileData): RenderPassReflection {
         const r = new RenderPassReflection();
         r.addInput("mvec", "Screen-space motion vectors (UV units, previous - current)").bindFlags(ResourceBindFlags.ShaderResource);
-        r.addInput("mask", "Optional mask: pixel counted when w != 0 (e.g. GBuffer posW)").bindFlags(ResourceBindFlags.ShaderResource).flags(FieldFlags.Optional);
+        r.addInput("mask", "Optional mask: pixel counted when w != 0 (e.g. GBuffer posW)")
+            .bindFlags(ResourceBindFlags.ShaderResource)
+            .flags(FieldFlags.Optional);
         r.addOutput("stats", "Motion statistics (4 x 1, see MotionStats.ts)")
             .texture2D(4, 1)
             .format(ResourceFormat.RGBA32Float)
             .bindFlags(ResourceBindFlags.UnorderedAccess | ResourceBindFlags.ShaderResource);
         r.addOutput("histogram", "Magnitude (row 0) and direction (row 1) histograms")
-            .texture2D(Math.max(this.p.magBins, this.p.dirBins), 2)
+            .texture2D(Math.max(this.mParameters.magBins, this.mParameters.dirBins), 2)
             .format(ResourceFormat.RGBA32Float)
             .bindFlags(ResourceBindFlags.UnorderedAccess | ResourceBindFlags.ShaderResource)
             .flags(FieldFlags.Optional);
@@ -108,41 +118,51 @@ export class MotionStats extends RenderPass {
         if (!mvec || !stats) return;
         const mask = rd.getTexture("mask");
         let histOut = rd.getTexture("histogram");
-        const W = mvec.width, H = mvec.height;
-        const gx = Math.ceil(W / 16), gy = Math.ceil(H / 16);
-        this.partials = this.buffer(this.partials, 2 * gx * gy, 16, "MotionStats::partials");
-        this.hist = this.buffer(this.hist, 2 * kMaxBins, 4, "MotionStats::hist");
+        const W = mvec.width;
+        const H = mvec.height;
+        const gx = Math.ceil(W / 16);
+        const gy = Math.ceil(H / 16);
+        this.mPartials = this.buffer(this.mPartials, 2 * gx * gy, 16, "MotionStats::partials");
+        this.mHistogram = this.buffer(this.mHistogram, 2 * kMaxBins, 4, "MotionStats::hist");
         const placeholder = (w: number, h: number) =>
-            this.device.createTexture2D(w, h, ResourceFormat.RGBA32Float, 1, 1, undefined, ResourceBindFlags.ShaderResource | ResourceBindFlags.UnorderedAccess);
-        this.dummyMask ??= placeholder(1, 1);
-        if (!histOut) histOut = this.dummyHist ??= placeholder(kMaxBins, 2);
-        if (!this.clearPass) {
-            this.clearPass = ComputePass.create(this.device, { path: kShaderFile, csEntry: "clearMain" });
-            this.reducePass = ComputePass.create(this.device, { path: kShaderFile, csEntry: "reduceMain" });
-            this.finalPass = ComputePass.create(this.device, { path: kShaderFile, csEntry: "finalMain" });
+            this.device.createTexture2D(
+                w,
+                h,
+                ResourceFormat.RGBA32Float,
+                1,
+                1,
+                undefined,
+                ResourceBindFlags.ShaderResource | ResourceBindFlags.UnorderedAccess,
+            );
+        this.mDummyMask ??= placeholder(1, 1);
+        if (!histOut) histOut = this.mDummyHist ??= placeholder(kMaxBins, 2);
+        if (!this.mClearPass) {
+            this.mClearPass = ComputePass.create(this.device, { path: kShaderFile, csEntry: "clearMain" });
+            this.mReducePass = ComputePass.create(this.device, { path: kShaderFile, csEntry: "reduceMain" });
+            this.mFinalPass = ComputePass.create(this.device, { path: kShaderFile, csEntry: "finalMain" });
         }
-        const passes = [this.clearPass, this.reducePass!, this.finalPass!];
+        const passes = [this.mClearPass, this.mReducePass!, this.mFinalPass!];
         for (const pass of passes) {
             const root = pass.getRootVar();
             const cb = root["CB"]!;
             cb["gFrameDim"] = [W, H];
             cb["gGroupsX"] = gx;
             cb["gNumGroups"] = gx * gy;
-            cb["gMagBins"] = this.p.magBins;
-            cb["gDirBins"] = this.p.dirBins;
-            cb["gMagRange"] = this.p.magRange;
-            cb["gMinMotion"] = this.p.minMotion;
+            cb["gMagBins"] = this.mParameters.magBins;
+            cb["gDirBins"] = this.mParameters.dirBins;
+            cb["gMagRange"] = this.mParameters.magRange;
+            cb["gMinMotion"] = this.mParameters.minMotion;
             cb["gUseMask"] = mask ? 1 : 0;
             root["gMvec"] = mvec;
-            root["gMask"] = mask ?? this.dummyMask;
-            root["gPartials"] = this.partials;
-            root["gHist"] = this.hist;
+            root["gMask"] = mask ?? this.mDummyMask;
+            root["gPartials"] = this.mPartials;
+            root["gHist"] = this.mHistogram;
             root["gStats"] = stats;
             root["gHistOut"] = histOut;
         }
-        this.clearPass.execute(ctx, 2 * kMaxBins);
-        this.reducePass!.execute(ctx, gx * 16, gy * 16);
-        this.finalPass!.execute(ctx, 256);
+        this.mClearPass.execute(ctx, 2 * kMaxBins);
+        this.mReducePass!.execute(ctx, gx * 16, gy * 16);
+        this.mFinalPass!.execute(ctx, 256);
     }
 }
 

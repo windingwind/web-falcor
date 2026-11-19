@@ -47,9 +47,11 @@ import { addColorOutput, addTexInput, dummyTexture, parseColour } from "../Styli
 import { HistoryTracker } from "../Utils/History.js";
 
 const kShaderFile = "RenderPasses/Layers/ParticleLayer.cs.slang";
+/** Compute entry points declared by the companion Slang shader. */
 const kEntries = ["init", "simulate", "clearAccum", "splat", "resolve"] as const;
 type Entry = (typeof kEntries)[number];
 
+/** Creation defaults for the pass parameters documented in this file header. */
 const kDefaults = {
     count: 4096,
     seed: 0,
@@ -73,44 +75,47 @@ const kDefaults = {
     restitution: 0.3,
     thickness: 0.05,
 };
+/** Creation properties for ParticleLayer, including its documented defaults. */
 export type ParticleLayerParams = typeof kDefaults;
 
+/** Simulates and rasterizes a deterministic particle colour and depth layer. */
 export class ParticleLayer extends RenderPass {
-    private p: ParticleLayerParams = JSON.parse(JSON.stringify(kDefaults));
-    private passes = new Map<Entry, ComputePass>();
-    private readonly history = new HistoryTracker();
-    private state: Buffer | null = null;
-    private accum: Buffer | null = null;
-    private depthBits: Buffer | null = null;
+    private mParameters: ParticleLayerParams = JSON.parse(JSON.stringify(kDefaults));
+    private mPasses: Map<Entry, ComputePass> = new Map<Entry, ComputePass>();
+    private readonly mHistory: HistoryTracker = new HistoryTracker();
+    private mState: Buffer | null = null;
+    private mAccum: Buffer | null = null;
+    private mDepthBits: Buffer | null = null;
 
     constructor(device: Device, props: Properties) {
         super(device);
-        for (const k of Object.keys(kDefaults) as (keyof ParticleLayerParams)[]) (this.p as Record<string, unknown>)[k] = props.get(k, kDefaults[k] as never);
-        this.p.count = Math.max(0, Math.min(Math.round(this.p.count), 1 << 20));
+        for (const k of Object.keys(kDefaults) as (keyof ParticleLayerParams)[])
+            (this.mParameters as Record<string, unknown>)[k] = props.get(k, kDefaults[k] as never);
+        this.mParameters.count = Math.max(0, Math.min(Math.round(this.mParameters.count), 1 << 20));
     }
 
     override getProperties(): Properties {
-        return new Properties(JSON.parse(JSON.stringify(this.p)));
+        return new Properties(JSON.parse(JSON.stringify(this.mParameters)));
     }
 
     override renderUI(ui: UIWidgets): void {
-        ui.slider("Intensity", this.p.intensity, 0, 10, 0.01, (v) => (this.p.intensity = v));
-        ui.slider("Size", this.p.size, 0.001, 0.2, 0.001, (v) => (this.p.size = v));
+        ui.slider("Intensity", this.mParameters.intensity, 0, 10, 0.01, (v) => (this.mParameters.intensity = v));
+        ui.slider("Size", this.mParameters.size, 0.001, 0.2, 0.001, (v) => (this.mParameters.size = v));
     }
 
     /** Re-seeds the particles on the next frame. */
     resetHistory(): void {
-        this.history.reset();
+        this.mHistory.reset();
     }
 
     /** Simulation steps since the last re-seed. */
     get frameIndex(): number {
-        return this.history.frameIndex;
+        return this.mHistory.frameIndex;
     }
 
     /** The particle state buffer (2 x float4 per particle: position, age; velocity, generation), for tests. */
     get stateBuffer(): Buffer | null {
-        return this.state;
+        return this.mState;
     }
 
     override reflect(compileData: CompileData): RenderPassReflection {
@@ -124,35 +129,65 @@ export class ParticleLayer extends RenderPass {
     }
 
     private kernel(e: Entry): ComputePass {
-        let k = this.passes.get(e);
-        if (!k) this.passes.set(e, (k = ComputePass.create(this.device, { path: kShaderFile, csEntry: e })));
+        let k = this.mPasses.get(e);
+        if (!k) this.mPasses.set(e, (k = ComputePass.create(this.device, { path: kShaderFile, csEntry: e })));
         return k;
     }
 
     private ensureBuffers(W: number, H: number): void {
         const flags = ResourceBindFlags.ShaderResource | ResourceBindFlags.UnorderedAccess;
-        const n = Math.max(this.p.count, 1);
-        if (!this.state || this.state.size !== n * 32) this.state = new Buffer(this.device, { size: n * 32, structSize: 16, bindFlags: flags, memoryType: MemoryType.DeviceLocal, name: "ParticleLayer::state" });
-        if (!this.accum || this.accum.size !== W * H * 16) {
-            this.accum = new Buffer(this.device, { size: W * H * 16, structSize: 4, bindFlags: flags, memoryType: MemoryType.DeviceLocal, name: "ParticleLayer::accum" });
-            this.depthBits = new Buffer(this.device, { size: W * H * 4, structSize: 4, bindFlags: flags, memoryType: MemoryType.DeviceLocal, name: "ParticleLayer::depth" });
+        const n = Math.max(this.mParameters.count, 1);
+        if (!this.mState || this.mState.size !== n * 32)
+            this.mState = new Buffer(this.device, {
+                size: n * 32,
+                structSize: 16,
+                bindFlags: flags,
+                memoryType: MemoryType.DeviceLocal,
+                name: "ParticleLayer::state",
+            });
+        if (!this.mAccum || this.mAccum.size !== W * H * 16) {
+            this.mAccum = new Buffer(this.device, {
+                size: W * H * 16,
+                structSize: 4,
+                bindFlags: flags,
+                memoryType: MemoryType.DeviceLocal,
+                name: "ParticleLayer::accum",
+            });
+            this.mDepthBits = new Buffer(this.device, {
+                size: W * H * 4,
+                structSize: 4,
+                bindFlags: flags,
+                memoryType: MemoryType.DeviceLocal,
+                name: "ParticleLayer::depth",
+            });
         }
     }
 
     private bounds(): [number[], number[]] {
         const zero = (v: number[]) => v.every((x) => Number(x) === 0);
-        if (!(zero(this.p.boundsMin) && zero(this.p.boundsMax))) return [this.p.boundsMin.map(Number), this.p.boundsMax.map(Number)];
+        if (!(zero(this.mParameters.boundsMin) && zero(this.mParameters.boundsMax)))
+            return [this.mParameters.boundsMin.map(Number), this.mParameters.boundsMax.map(Number)];
         const b = this.scene?.bounds;
-        if (b && Number.isFinite(b.minPoint.x)) return [[b.minPoint.x, b.minPoint.y, b.minPoint.z], [b.maxPoint.x, b.maxPoint.y, b.maxPoint.z]];
-        return [[-1, 0, -1], [1, 2, 1]];
+        if (b && Number.isFinite(b.minPoint.x))
+            return [
+                [b.minPoint.x, b.minPoint.y, b.minPoint.z],
+                [b.maxPoint.x, b.maxPoint.y, b.maxPoint.z],
+            ];
+        return [
+            [-1, 0, -1],
+            [1, 2, 1],
+        ];
     }
 
     override execute(ctx: RenderContext, rd: RenderData): void {
         const color = rd.getTexture("color");
         if (!color) return;
-        const W = color.width, H = color.height;
-        const depthOut = rd.getTexture("depth"), posW = rd.getTexture("posW"), normW = rd.getTexture("normW");
-        const frame = this.history.begin(this.scene, `${this.p.count}`);
+        const W = color.width;
+        const H = color.height;
+        const depthOut = rd.getTexture("depth");
+        const posW = rd.getTexture("posW");
+        const normW = rd.getTexture("normW");
+        const frame = this.mHistory.begin(this.scene, `${this.mParameters.count}`);
         this.ensureBuffers(W, H);
 
         const [bmin, bmax] = this.bounds();
@@ -166,15 +201,37 @@ export class ParticleLayer extends RenderPass {
         const fl = Math.hypot(f[0]!, f[1]!, f[2]!) || 1;
         const fovY = cam ? cam.getFovY() : Math.PI / 3;
         const consts: Record<string, unknown> = {
-            gFrameDim: [W, H], gCount: this.p.count, gSeed: Math.max(0, Math.round(this.p.seed)) >>> 0,
-            gBoundsMin: bmin, gBoundsMax: bmax, gDt: this.p.dt, gTime: frame.frameIndex * this.p.dt,
-            gGravity: this.p.gravity, gLifetime: Math.max(this.p.lifetime, 1e-4), gWind: this.p.wind, gDrag: this.p.drag,
-            gColour: parseColour(this.p.colour), gTurbulence: this.p.turbulence, gTurbulenceScale: this.p.turbulenceScale,
-            gColourJitter: this.p.colourJitter, gIntensity: this.p.intensity, gTwinkle: this.p.twinkle, gTwinkleRate: this.p.twinkleRate,
-            gSize: this.p.size, gMaxRadiusPx: Math.max(this.p.maxRadiusPx, 0.75), gRestitution: this.p.restitution, gThickness: this.p.thickness,
-            gCollide: this.p.collide ? 1 : 0, gHasPosW: posW ? 1 : 0, gHasNormW: normW ? 1 : 0,
-            gViewProj0: rows[0], gViewProj1: rows[1], gViewProj2: rows[2], gViewProj3: rows[3],
-            gCamPos: [pos.x, pos.y, pos.z], gPixelsPerUnitAtUnitDepth: (0.5 * H) / Math.tan(0.5 * fovY),
+            gFrameDim: [W, H],
+            gCount: this.mParameters.count,
+            gSeed: Math.max(0, Math.round(this.mParameters.seed)) >>> 0,
+            gBoundsMin: bmin,
+            gBoundsMax: bmax,
+            gDt: this.mParameters.dt,
+            gTime: frame.frameIndex * this.mParameters.dt,
+            gGravity: this.mParameters.gravity,
+            gLifetime: Math.max(this.mParameters.lifetime, 1e-4),
+            gWind: this.mParameters.wind,
+            gDrag: this.mParameters.drag,
+            gColour: parseColour(this.mParameters.colour),
+            gTurbulence: this.mParameters.turbulence,
+            gTurbulenceScale: this.mParameters.turbulenceScale,
+            gColourJitter: this.mParameters.colourJitter,
+            gIntensity: this.mParameters.intensity,
+            gTwinkle: this.mParameters.twinkle,
+            gTwinkleRate: this.mParameters.twinkleRate,
+            gSize: this.mParameters.size,
+            gMaxRadiusPx: Math.max(this.mParameters.maxRadiusPx, 0.75),
+            gRestitution: this.mParameters.restitution,
+            gThickness: this.mParameters.thickness,
+            gCollide: this.mParameters.collide ? 1 : 0,
+            gHasPosW: posW ? 1 : 0,
+            gHasNormW: normW ? 1 : 0,
+            gViewProj0: rows[0],
+            gViewProj1: rows[1],
+            gViewProj2: rows[2],
+            gViewProj3: rows[3],
+            gCamPos: [pos.x, pos.y, pos.z],
+            gPixelsPerUnitAtUnitDepth: (0.5 * H) / Math.tan(0.5 * fovY),
             gCamFwd: [f[0]! / fl, f[1]! / fl, f[2]! / fl],
         };
         const run = (e: Entry, x: number, y: number) => {
@@ -182,20 +239,20 @@ export class ParticleLayer extends RenderPass {
             const root = k.getRootVar();
             const cb = root["CB"]!;
             for (const [name, v] of Object.entries(consts)) cb[name] = v as never;
-            root["gState"] = this.state!;
-            root["gAccum"] = this.accum!;
-            root["gDepthBits"] = this.depthBits!;
+            root["gState"] = this.mState!;
+            root["gAccum"] = this.mAccum!;
+            root["gDepthBits"] = this.mDepthBits!;
             root["gPosW"] = posW ?? dummyTexture(this.device);
             root["gNormW"] = normW ?? dummyTexture(this.device);
             root["gColor"] = color;
             root["gDepth"] = depthOut ?? dummyTexture(this.device, "out:depth");
             k.execute(ctx, x, y);
         };
-        const n = this.p.count;
+        const n = this.mParameters.count;
         if (frame.reset && n > 0) run("init", n, 1);
         if (n > 0) run("simulate", n, 1);
         run("clearAccum", W, H);
-        if (n > 0 && this.p.intensity !== 0) run("splat", n, 1);
+        if (n > 0 && this.mParameters.intensity !== 0) run("splat", n, 1);
         run("resolve", W, H);
     }
 }

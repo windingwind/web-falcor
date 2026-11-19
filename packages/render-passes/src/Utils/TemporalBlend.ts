@@ -29,73 +29,88 @@ import { HistoryTracker, PingPongTextures } from "./History.js";
 
 const kShaderFile = "RenderPasses/Utils/TemporalBlend.cs.slang";
 
+/** Demonstrates temporal accumulation using shared history reset and texture helpers. */
 export class TemporalBlend extends RenderPass {
-    private p = { alpha: 0.8 };
-    private pass: ComputePass | null = null;
-    private readonly history = new HistoryTracker();
-    private readonly pp: PingPongTextures;
-    private dummy: import("@web-falcor/falcor").Texture | null = null;
+    private mParameters: { alpha: number } = { alpha: 0.8 };
+    private mPass: ComputePass | null = null;
+    private readonly mHistory: HistoryTracker = new HistoryTracker();
+    private readonly mHistoryTextures: PingPongTextures;
+    private mDummy: import("@web-falcor/falcor").Texture | null = null;
 
     constructor(device: Device, props: Properties) {
         super(device);
-        this.p.alpha = Number(props.get("alpha", this.p.alpha));
-        this.pp = new PingPongTextures(device, ResourceFormat.RGBA32Float, "TemporalBlend::history");
+        this.mParameters.alpha = Number(props.get("alpha", this.mParameters.alpha));
+        this.mHistoryTextures = new PingPongTextures(device, ResourceFormat.RGBA32Float, "TemporalBlend::history");
     }
 
     override getProperties(): Properties {
-        return new Properties({ ...this.p });
+        return new Properties({ ...this.mParameters });
     }
 
     override renderUI(ui: UIWidgets): void {
-        ui.slider("History weight", this.p.alpha, 0, 0.99, 0.01, (v) => (this.p.alpha = v));
+        ui.slider("History weight", this.mParameters.alpha, 0, 0.99, 0.01, (v) => (this.mParameters.alpha = v));
     }
 
     /** Drops the history: the next frame outputs the input. */
     resetHistory(): void {
-        this.history.reset();
+        this.mHistory.reset();
     }
 
     /** Frames since the last history reset. */
     get frameIndex(): number {
-        return this.history.frameIndex;
+        return this.mHistory.frameIndex;
     }
 
     /** The ping-pong pair (tests). */
     get historyTextures() {
-        return this.pp.textures;
+        return this.mHistoryTextures.textures;
     }
 
     override reflect(compileData: CompileData): RenderPassReflection {
         const r = new RenderPassReflection();
         const [w, h] = compileData.defaultTexDims;
         r.addInput("src", "Colour").bindFlags(ResourceBindFlags.ShaderResource);
-        r.addInput("mvec", "Motion vectors (UV, previous minus current)").bindFlags(ResourceBindFlags.ShaderResource).flags(FieldFlags.Optional);
-        r.addOutput("dst", "Blended colour").texture2D(w, h).format(ResourceFormat.RGBA32Float)
+        r.addInput("mvec", "Motion vectors (UV, previous minus current)")
+            .bindFlags(ResourceBindFlags.ShaderResource)
+            .flags(FieldFlags.Optional);
+        r.addOutput("dst", "Blended colour")
+            .texture2D(w, h)
+            .format(ResourceFormat.RGBA32Float)
             .bindFlags(ResourceBindFlags.UnorderedAccess | ResourceBindFlags.ShaderResource);
         return r;
     }
 
     override execute(ctx: RenderContext, rd: RenderData): void {
-        const src = rd.getTexture("src"), dst = rd.getTexture("dst");
+        const src = rd.getTexture("src");
+        const dst = rd.getTexture("dst");
         if (!src || !dst) return;
-        const W = dst.width, H = dst.height;
-        const frame = this.history.begin(this.scene, `${W}x${H}`);
-        const { read, write } = this.pp.get(ctx, W, H, frame);
+        const W = dst.width;
+        const H = dst.height;
+        const frame = this.mHistory.begin(this.scene, `${W}x${H}`);
+        const { read, write } = this.mHistoryTextures.get(ctx, W, H, frame);
         const mvec = rd.getTexture("mvec");
-        this.pass ??= ComputePass.create(this.device, { path: kShaderFile });
-        this.dummy ??= this.device.createTexture2D(1, 1, ResourceFormat.RGBA32Float, 1, 1, new Float32Array(4), ResourceBindFlags.ShaderResource);
-        const root = this.pass.getRootVar();
+        this.mPass ??= ComputePass.create(this.device, { path: kShaderFile });
+        this.mDummy ??= this.device.createTexture2D(
+            1,
+            1,
+            ResourceFormat.RGBA32Float,
+            1,
+            1,
+            new Float32Array(4),
+            ResourceBindFlags.ShaderResource,
+        );
+        const root = this.mPass.getRootVar();
         const cb = root["CB"]!;
         cb["gFrameDim"] = [W, H];
-        cb["gAlpha"] = Math.min(Math.max(this.p.alpha, 0), 1);
+        cb["gAlpha"] = Math.min(Math.max(this.mParameters.alpha, 0), 1);
         cb["gHistoryValid"] = frame.frameIndex > 0 ? 1 : 0;
         cb["gHasMvec"] = mvec ? 1 : 0;
         root["gSrc"] = src;
-        root["gMvec"] = mvec ?? this.dummy;
+        root["gMvec"] = mvec ?? this.mDummy;
         root["gHistory"] = read;
         root["gDst"] = dst;
         root["gHistoryOut"] = write;
-        this.pass.execute(ctx, W, H);
+        this.mPass.execute(ctx, W, H);
     }
 }
 

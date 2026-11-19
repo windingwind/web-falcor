@@ -24,12 +24,12 @@
  * created pair: nothing from earlier frames can be read back.
  *
  * Usage in a pass:
- *   private history = new HistoryTracker();
- *   private pp = new PingPongTextures(device, ResourceFormat.RGBA32Float, "MyPass::history");
- *   resetHistory() { this.history.reset(); }
+ *   private mHistory: HistoryTracker = new HistoryTracker();
+ *   private mHistoryTextures: PingPongTextures = new PingPongTextures(device, ResourceFormat.RGBA32Float, "MyPass::history");
+ *   resetHistory() { this.mHistory.reset(); }
  *   execute(ctx, rd) {
- *       const f = this.history.begin(this.scene, `${w}x${h}`);
- *       const { read, write } = this.pp.get(ctx, w, h, f);
+ *       const f = this.mHistory.begin(this.scene, `${w}x${h}`);
+ *       const { read, write } = this.mHistoryTextures.get(ctx, w, h, f);
  *       // f.frameIndex == 0: no valid history (read is all zero); otherwise read holds the previous frame's write.
  *   }
  */
@@ -44,6 +44,7 @@ import {
     type Texture,
 } from "@web-falcor/falcor";
 
+/** History validity, reset reason and frame index returned by HistoryTracker.begin(). */
 export interface HistoryFrame {
     /** Frames since the last reset: 0 on the first frame after a reset (no valid history). */
     frameIndex: number;
@@ -58,56 +59,59 @@ function sameMatrix(a: ArrayLike<number>, b: ArrayLike<number>): boolean {
     return true;
 }
 
+/** Tracks scene, camera and layout changes so temporal passes discard stale state. */
 export class HistoryTracker {
-    private frame = 0;
-    private pending = "fresh";
-    private scene: Scene | null = null;
-    private camera: unknown = null;
-    private epoch = 0;
-    private key = "";
-    private lastViewProj: Float32Array | null = null;
+    private mFrame: number = 0;
+    private mPending: string = "fresh";
+    private mScene: Scene | null = null;
+    private mCamera: unknown = null;
+    private mEpoch: number = 0;
+    private mKey: string = "";
+    private mLastViewProj: Float32Array | null = null;
 
     /** Requests a reset at the next begin(). */
     reset(reason = "explicit"): void {
-        this.pending ||= reason;
+        this.mPending ||= reason;
     }
 
     /** Frames since the last reset as of the last begin() (0 before the first one). */
     get frameIndex(): number {
-        return this.frame;
+        return this.mFrame;
     }
 
     /** Call once at the top of execute(). */
     begin(scene: Scene | null, key = ""): HistoryFrame {
         const cam = scene?.camera ?? null;
-        let reason = this.pending;
+        let reason = this.mPending;
         let cur: Float32Array | null = null;
         if (cam) {
             const d = cam.getData();
             cur = new Float32Array(d.viewProjMatNoJitter.toArray());
             if (!reason) {
-                if (scene !== this.scene) reason = "scene";
-                else if (cam !== this.camera) reason = "camera";
-                else if (key !== this.key) reason = "key";
-                else if (cam.historyEpoch !== this.epoch) reason = "camera-reset";
-                else if (this.lastViewProj && !sameMatrix(this.lastViewProj, cur) && sameMatrix(d.prevViewProjMatNoJitter.toArray(), cur)) reason = "camera-cut";
+                if (scene !== this.mScene) reason = "scene";
+                else if (cam !== this.mCamera) reason = "camera";
+                else if (key !== this.mKey) reason = "key";
+                else if (cam.historyEpoch !== this.mEpoch) reason = "camera-reset";
+                else if (this.mLastViewProj && !sameMatrix(this.mLastViewProj, cur) && sameMatrix(d.prevViewProjMatNoJitter.toArray(), cur))
+                    reason = "camera-cut";
             }
-        } else if (!reason && (scene !== this.scene || key !== this.key)) {
-            reason = scene !== this.scene ? "scene" : "key";
+        } else if (!reason && (scene !== this.mScene || key !== this.mKey)) {
+            reason = scene !== this.mScene ? "scene" : "key";
         }
-        this.scene = scene;
-        this.camera = cam;
-        this.epoch = cam?.historyEpoch ?? 0;
-        this.key = key;
-        this.lastViewProj = cur;
-        this.pending = "";
-        this.frame = reason ? 0 : this.frame + 1;
-        return { frameIndex: this.frame, reset: !!reason, reason };
+        this.mScene = scene;
+        this.mCamera = cam;
+        this.mEpoch = cam?.historyEpoch ?? 0;
+        this.mKey = key;
+        this.mLastViewProj = cur;
+        this.mPending = "";
+        this.mFrame = reason ? 0 : this.mFrame + 1;
+        return { frameIndex: this.mFrame, reset: !!reason, reason };
     }
 }
 
+/** Owns a texture pair that alternates read/write roles and clears both textures after a history reset. */
 export class PingPongTextures {
-    private tex: [Texture, Texture] | null = null;
+    private mTextures: [Texture, Texture] | null = null;
 
     constructor(
         private readonly device: Device,
@@ -118,19 +122,22 @@ export class PingPongTextures {
     /** The pair for this frame; reallocates on a size change and clears both on a reset or reallocation. */
     get(ctx: RenderContext, width: number, height: number, frame: HistoryFrame): { read: Texture; write: Texture } {
         let fresh = false;
-        if (!this.tex || this.tex[0].width !== width || this.tex[0].height !== height) {
+        if (!this.mTextures || this.mTextures[0].width !== width || this.mTextures[0].height !== height) {
             const flags = ResourceBindFlags.ShaderResource | ResourceBindFlags.UnorderedAccess | ResourceBindFlags.RenderTarget;
-            this.tex = [0, 1].map(() => this.device.createTexture2D(width, height, this.format, 1, 1, undefined, flags)) as [Texture, Texture];
+            this.mTextures = [0, 1].map(() => this.device.createTexture2D(width, height, this.format, 1, 1, undefined, flags)) as [
+                Texture,
+                Texture,
+            ];
             fresh = true;
         }
-        if (fresh || frame.reset) for (const t of this.tex) ctx.clearTexture(t, [0, 0, 0, 0]);
+        if (fresh || frame.reset) for (const t of this.mTextures) ctx.clearTexture(t, [0, 0, 0, 0]);
         const w = frame.frameIndex & 1;
-        return { write: this.tex[w]!, read: this.tex[1 - w]! };
+        return { write: this.mTextures[w]!, read: this.mTextures[1 - w]! };
     }
 
     /** Both textures (for tests and debugging); null before the first get(). */
     get textures(): readonly Texture[] | null {
-        return this.tex;
+        return this.mTextures;
     }
 }
 
