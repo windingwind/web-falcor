@@ -31,18 +31,73 @@ function quad(c: V3[], n: V3, materialID: number, nodeID?: number) {
 
 /** Box in node-local space (5 faces, open bottom). */
 function box(min: V3, max: V3, materialID: number, nodeID: number) {
-    const [x0, y0, z0] = min, [x1, y1, z1] = max;
+    const [x0, y0, z0] = min;
+    const [x1, y1, z1] = max;
     return [
-        quad([[x0, y1, z1], [x1, y1, z1], [x1, y1, z0], [x0, y1, z0]], [0, 1, 0], materialID, nodeID),
-        quad([[x0, y0, z1], [x1, y0, z1], [x1, y1, z1], [x0, y1, z1]], [0, 0, 1], materialID, nodeID),
-        quad([[x1, y0, z0], [x0, y0, z0], [x0, y1, z0], [x1, y1, z0]], [0, 0, -1], materialID, nodeID),
-        quad([[x1, y0, z1], [x1, y0, z0], [x1, y1, z0], [x1, y1, z1]], [1, 0, 0], materialID, nodeID),
-        quad([[x0, y0, z0], [x0, y0, z1], [x0, y1, z1], [x0, y1, z0]], [-1, 0, 0], materialID, nodeID),
+        quad(
+            [
+                [x0, y1, z1],
+                [x1, y1, z1],
+                [x1, y1, z0],
+                [x0, y1, z0],
+            ],
+            [0, 1, 0],
+            materialID,
+            nodeID,
+        ),
+        quad(
+            [
+                [x0, y0, z1],
+                [x1, y0, z1],
+                [x1, y1, z1],
+                [x0, y1, z1],
+            ],
+            [0, 0, 1],
+            materialID,
+            nodeID,
+        ),
+        quad(
+            [
+                [x1, y0, z0],
+                [x0, y0, z0],
+                [x0, y1, z0],
+                [x1, y1, z0],
+            ],
+            [0, 0, -1],
+            materialID,
+            nodeID,
+        ),
+        quad(
+            [
+                [x1, y0, z1],
+                [x1, y0, z0],
+                [x1, y1, z0],
+                [x1, y1, z1],
+            ],
+            [1, 0, 0],
+            materialID,
+            nodeID,
+        ),
+        quad(
+            [
+                [x0, y0, z0],
+                [x0, y0, z1],
+                [x0, y1, z1],
+                [x0, y1, z0],
+            ],
+            [-1, 0, 0],
+            materialID,
+            nodeID,
+        ),
     ];
 }
 
 const slide = (nodeID: number, from: V3, to: V3): AnimationChannel => ({
-    nodeID, path: "translation", interp: "LINEAR", times: new Float32Array([0, 1]), values: new Float32Array([...from, ...to]),
+    nodeID,
+    path: "translation",
+    interp: "LINEAR",
+    times: new Float32Array([0, 1]),
+    values: new Float32Array([...from, ...to]),
 });
 
 /** A new scene (nodes 0 and 1 slide). */
@@ -53,14 +108,37 @@ function makeScene(device: Device): Scene {
         { parent: -1, t: new float3(0.8, 0, -1.2), r: new quatf(0, 0, 0, 1), s: new float3(1, 1, 1) },
     ];
     const meshes = [
-        quad([[-s, 0, s], [s, 0, s], [s, 0, -s], [-s, 0, -s]], [0, 1, 0], 0),
+        quad(
+            [
+                [-s, 0, s],
+                [s, 0, s],
+                [s, 0, -s],
+                [-s, 0, -s],
+            ],
+            [0, 1, 0],
+            0,
+        ),
         ...box([-0.4, 0, -0.4], [0.4, 0.9, 0.4], 1, 0),
         ...box([-0.35, 0, -0.35], [0.35, 1.3, 0.35], 2, 1),
     ];
     const channels = [slide(0, [-1.5, 0, 0], [0.5, 0, 0.6]), slide(1, [0.8, 0, -1.2], [1.8, 0, -0.2])];
-    const mats = ([[0.7, 0.7, 0.7], [0.8, 0.2, 0.1], [0.1, 0.3, 0.8]] as V3[]).map((c) => ({ basic: { baseColor: new float4(c[0], c[1], c[2], 1) } }));
-    const scene = new Scene(device, meshes, mats, [{ type: LightType.Directional, dirW: new float3(0.3, -1, 0.2), intensity: new float3(2, 2, 2) }],
-        undefined, [], nodes, channels);
+    const mats = (
+        [
+            [0.7, 0.7, 0.7],
+            [0.8, 0.2, 0.1],
+            [0.1, 0.3, 0.8],
+        ] as V3[]
+    ).map((c) => ({ basic: { baseColor: new float4(c[0], c[1], c[2], 1) } }));
+    const scene = new Scene(
+        device,
+        meshes,
+        mats,
+        [{ type: LightType.Directional, dirW: new float3(0.3, -1, 0.2), intensity: new float3(2, 2, 2) }],
+        undefined,
+        [],
+        nodes,
+        channels,
+    );
     scene.camera.setPosition(new float3(0.5, 4.2, 5.0));
     scene.camera.setTarget(new float3(0, 0.3, -0.3));
     scene.camera.setUpVector(new float3(0, 1, 0));
@@ -88,7 +166,8 @@ async function renderClip(device: Device, scene: Scene): Promise<{ posW: Float32
     let hits = 0;
     for (let i = 3; i < pos.length; i += 4) if (pos[i] !== 0) hits++;
     if (hits <= 0.2 * kSize * kSize) throw new Error(`G-buffer empty on the warm-up frame (${hits} px)`);
-    const posW: Float32Array[] = [], mvec: Float32Array[] = [];
+    const posW: Float32Array[] = [];
+    const mvec: Float32Array[] = [];
     for (let k = 0; k < kFrames; k++) {
         scene.animate(k / kFps);
         g.execute(device.renderContext);
@@ -100,7 +179,8 @@ async function renderClip(device: Device, scene: Scene): Promise<{ posW: Float32
 
 function bitwiseEqual(a: Float32Array, b: Float32Array): boolean {
     if (a.length !== b.length) return false;
-    const ua = new Uint32Array(a.buffer, a.byteOffset, a.length), ub = new Uint32Array(b.buffer, b.byteOffset, b.length);
+    const ua = new Uint32Array(a.buffer, a.byteOffset, a.length);
+    const ub = new Uint32Array(b.buffer, b.byteOffset, b.length);
     for (let i = 0; i < ua.length; i++) if (ua[i] !== ub[i]) return false;
     return true;
 }
@@ -150,7 +230,9 @@ gpuTest("AnimTimeQuant.onTwosHoldsPose", async ({ device }) => {
         const sameAsPrev = k > 0 && bitwiseEqual(twos.posW[k]!, twos.posW[k - 1]!);
         const maxPx = twos.mvec[k]!.reduce((m, v) => Math.max(m, Math.abs(v) * kSize), 0);
         const fullPx = full.mvec[k]!.reduce((m, v) => Math.max(m, Math.abs(v) * kSize), 0);
-        console.log(`# AnimTimeQuant twos frame ${k}: posW == full frame ${held} ${posOk}, == previous frame ${sameAsPrev}; max |mvec| ${maxPx.toExponential(3)} px (unquantised ${fullPx.toExponential(3)} px)`);
+        console.log(
+            `# AnimTimeQuant twos frame ${k}: posW == full frame ${held} ${posOk}, == previous frame ${sameAsPrev}; max |mvec| ${maxPx.toExponential(3)} px (unquantised ${fullPx.toExponential(3)} px)`,
+        );
         expectEq(posOk, true, `frame ${k} shows the pose of frame ${held}`);
         if (k > 0) expectEq(sameAsPrev, k % 2 === 1, `frame ${k}: pose changes only on hold boundaries`);
     }
@@ -164,9 +246,12 @@ gpuTest("AnimTimeQuant.onlySelectedNode", async ({ device }) => {
     const q = await renderClip(device, scene);
     scene.setAnimationTimeQuantization!(null);
     // Box B is the only geometry above y = 0.95 (box A is 0.9 high): pixels showing it in both renders must match.
-    let bBad = 0, bN = 0, aDiff = 0;
+    let bBad = 0;
+    let bN = 0;
+    let aDiff = 0;
     for (let k = 0; k < kFrames; k++) {
-        const a = q.posW[k]!, b = full.posW[k]!;
+        const a = q.posW[k]!;
+        const b = full.posW[k]!;
         for (let i = 0; i < kSize * kSize; i++) {
             const onB = (p: Float32Array) => p[i * 4 + 3] !== 0 && p[i * 4 + 1]! > 0.95;
             if (onB(a) && onB(b)) {

@@ -51,15 +51,18 @@ gpuTest("History.trackerResets", async ({ device }) => {
     cam.beginFrame();
     const f8 = step("jump", "k2");
     log(`HistoryTracker: ${seq.join(" ")}`);
-    expectEq([f0.reason, f1.reason, f2.reason, f3.reason, f4.reason, f5.reason, f6.reason, f7.reason, f8.reason].join(","),
-        "fresh,,,camera-cut,,camera-reset,explicit,key,", "reset reasons");
+    expectEq(
+        [f0.reason, f1.reason, f2.reason, f3.reason, f4.reason, f5.reason, f6.reason, f7.reason, f8.reason].join(","),
+        "fresh,,,camera-cut,,camera-reset,explicit,key,",
+        "reset reasons",
+    );
     expectEq([f0, f1, f2, f3, f4, f5, f6, f7, f8].map((f) => f.frameIndex).join(","), "0,1,2,0,1,0,0,0,1", "frame indices");
-
 });
 
 gpuTest("History.pingPongReset", async ({ device }) => {
     // PingPongTextures: dirty both textures, reset, compare with a fresh pair.
-    const W = 16, H = 8;
+    const W = 16;
+    const H = 8;
     const ctx = device.renderContext;
     const pp = new PingPongTextures(device, ResourceFormat.RGBA32Float, "test");
     const a = pp.get(ctx, W, H, { frameIndex: 0, reset: true, reason: "fresh" });
@@ -76,7 +79,9 @@ gpuTest("History.pingPongReset", async ({ device }) => {
     const after = [await read(device, c.read), await read(device, c.write)];
     const ref = [await read(device, d.read), await read(device, d.write)];
     const zero = after.every((x) => x.every((v) => v === 0));
-    log(`PingPongTextures: dirty sample ${dirty[1]}, after reset all zero ${zero}, equal to fresh pair ${bitwiseEqual(after[0]!, ref[0]!) && bitwiseEqual(after[1]!, ref[1]!)}`);
+    log(
+        `PingPongTextures: dirty sample ${dirty[1]}, after reset all zero ${zero}, equal to fresh pair ${bitwiseEqual(after[0]!, ref[0]!) && bitwiseEqual(after[1]!, ref[1]!)}`,
+    );
     expectEq(dirty[1], 1.5, "textures were dirtied");
     expectEq(zero, true, "reset clears both textures");
     expectEq(bitwiseEqual(after[0]!, ref[0]!) && bitwiseEqual(after[1]!, ref[1]!), true, "state after reset = fresh pair, bit for bit");
@@ -84,7 +89,18 @@ gpuTest("History.pingPongReset", async ({ device }) => {
 
 const kTbOut = ["T.dst", "G.diffuseOpacity", "G.mvec"];
 const tbGraph = (device: Parameters<typeof buildGraph>[0], scene: Parameters<typeof buildGraph>[1], alpha: number) =>
-    buildGraph(device, scene, [["TemporalBlend", "T", { alpha }]], [["G.diffuseOpacity", "T.src"], ["G.mvec", "T.mvec"]], kTbOut, kSize, kSize);
+    buildGraph(
+        device,
+        scene,
+        [["TemporalBlend", "T", { alpha }]],
+        [
+            ["G.diffuseOpacity", "T.src"],
+            ["G.mvec", "T.mvec"],
+        ],
+        kTbOut,
+        kSize,
+        kSize,
+    );
 
 gpuTest("TemporalBlend.parityAndIdentity", async ({ device }) => {
     const scene = makeScene(device);
@@ -99,15 +115,18 @@ gpuTest("TemporalBlend.parityAndIdentity", async ({ device }) => {
     // Frame 2 vs CPU: lerp(src, prev[nearest(uv + mvec)], alpha) where on screen, else src.
     const [dst, src, mvec] = frames[2]!;
     const prev = frames[1]![0]!;
-    let maxErr = 0, reproj = 0;
+    let maxErr = 0;
+    let reproj = 0;
     for (let y = 0; y < kSize; y++) {
         for (let x = 0; x < kSize; x++) {
             const i = y * kSize + x;
-            const u = (x + 0.5) / kSize + mvec![i * 2]!, v = (y + 0.5) / kSize + mvec![i * 2 + 1]!;
+            const u = (x + 0.5) / kSize + mvec![i * 2]!;
+            const v = (y + 0.5) / kSize + mvec![i * 2 + 1]!;
             for (let c = 0; c < 4; c++) {
                 let r = src![i * 4 + c]!;
                 if (u >= 0 && v >= 0 && u < 1 && v < 1) {
-                    const qx = Math.min(Math.floor(u * kSize), kSize - 1), qy = Math.min(Math.floor(v * kSize), kSize - 1);
+                    const qx = Math.min(Math.floor(u * kSize), kSize - 1);
+                    const qy = Math.min(Math.floor(v * kSize), kSize - 1);
                     r = r + (prev[(qy * kSize + qx) * 4 + c]! - r) * alpha;
                     if (c === 0) reproj++;
                 }
@@ -131,7 +150,13 @@ gpuTest("TemporalBlend.parityAndIdentity", async ({ device }) => {
 
 gpuTest("TemporalBlend.coldVsConsecutive", async ({ device }) => {
     const scene = makeScene(device);
-    const res = await coldVsConsecutive(device, scene, () => tbGraph(device, scene, 0.8), ["T.dst"], ["camera-reset", "prime", "explicit", "none"]);
+    const res = await coldVsConsecutive(
+        device,
+        scene,
+        () => tbGraph(device, scene, 0.8),
+        ["T.dst"],
+        ["camera-reset", "prime", "explicit", "none"],
+    );
     for (const r of res) log(`TemporalBlend cold vs consecutive [${r.method}]: X frames bitwise equal ${r.equalFrames}/${r.frames}`);
     for (const r of res.filter((r) => r.method !== "none")) expectEq(r.equalFrames, r.frames, `cold = consecutive after ${r.method}`);
     expectEq(res.find((r) => r.method === "none")!.differs[0], true, "without a cut the leaked history changes X (control)");

@@ -49,10 +49,12 @@ async function render(device: Device, scene: Scene, mode: string, dlShadow: stri
 /** CPU: is the ray p + t*L (t > 0) blocked by box A or B? */
 function blocked(p: V3, L: V3): boolean {
     for (const [mn, mx] of [kBoxA, kBoxB]) {
-        let t0 = 1e-3, t1 = Infinity;
+        let t0 = 1e-3;
+        let t1 = Infinity;
         for (let a = 0; a < 3; a++) {
             const inv = 1 / L[a]!;
-            let ta = (mn[a]! - p[a]!) * inv, tb = (mx[a]! - p[a]!) * inv;
+            let ta = (mn[a]! - p[a]!) * inv;
+            let tb = (mx[a]! - p[a]!) * inv;
             if (ta > tb) [ta, tb] = [tb, ta];
             t0 = Math.max(t0, ta);
             t1 = Math.min(t1, tb);
@@ -64,9 +66,16 @@ function blocked(p: V3, L: V3): boolean {
 
 gpuTest("Visibility.matchesDeferredLighting", async ({ device }) => {
     const scene = makeScene(device, [0.02, 0.02, 0.02]);
-    for (const [mode, extra] of [["ShadowMap", {}], ["ShadowMap", { pcfRadius: 2, normalBias: 2.5 }], ["RayTraced", {}]] as const) {
+    for (const [mode, extra] of [
+        ["ShadowMap", {}],
+        ["ShadowMap", { pcfRadius: 2, normalBias: 2.5 }],
+        ["RayTraced", {}],
+    ] as const) {
         const r = await render(device, scene, mode, mode, extra);
-        let n = 0, bad = 0, lit = 0, shadow = 0;
+        let n = 0;
+        let bad = 0;
+        let lit = 0;
+        let shadow = 0;
         for (let i = 0; i < kSize * kSize; i++) {
             if (r.vis[i * 4 + 3] === 0) continue;
             const expected = r.vis[i * 4 + 1]! > kMinCosTheta ? r.vis[i * 4]! : 1; // DeferredLighting reports 1 for back-facing light
@@ -75,7 +84,9 @@ gpuTest("Visibility.matchesDeferredLighting", async ({ device }) => {
             if (expected === 0) shadow++;
             if (new Uint32Array(Float32Array.of(expected).buffer)[0] !== new Uint32Array(Float32Array.of(r.dl![i]!).buffer)[0]) bad++;
         }
-        log(`Visibility[${mode} ${JSON.stringify(extra)}] vs DeferredLighting: ${n} px, ${bad} differ (lit ${lit}, shadowed ${shadow}); repeat bitwise ${bitwiseEqual(r.vis, r.again)}`);
+        log(
+            `Visibility[${mode} ${JSON.stringify(extra)}] vs DeferredLighting: ${n} px, ${bad} differ (lit ${lit}, shadowed ${shadow}); repeat bitwise ${bitwiseEqual(r.vis, r.again)}`,
+        );
         expectEq(n > 0.5 * kSize * kSize && shadow > 100, true, "geometry and shadows visible");
         expectEq(bad, 0, "visibility bitwise equal to DeferredLighting");
         expectEq(bitwiseEqual(r.vis, r.again), true, "repeated execution bitwise equal");
@@ -87,7 +98,10 @@ gpuTest("Visibility.rayTracedMatchesCpuAndShadowMap", async ({ device }) => {
     const rt = await render(device, scene, "RayTraced", null);
     const sm = await render(device, scene, "ShadowMap", null);
     const none = await render(device, scene, "None", null);
-    let n = 0, cpuBad = 0, smBad = 0, noneBad = 0;
+    let n = 0;
+    let cpuBad = 0;
+    let smBad = 0;
+    let noneBad = 0;
     for (let i = 0; i < kSize * kSize; i++) {
         if (rt.vis[i * 4 + 3] === 0 || rt.pos[i * 4 + 3] === 0) continue;
         if (none.vis[i * 4] !== 1) noneBad++;
@@ -98,7 +112,9 @@ gpuTest("Visibility.rayTracedMatchesCpuAndShadowMap", async ({ device }) => {
         if (rt.vis[i * 4] !== cpu) cpuBad++;
         if (Math.abs(sm.vis[i * 4]! - rt.vis[i * 4]!) > 0.5) smBad++;
     }
-    log(`Visibility: ${n} front-lit px; RayTraced vs CPU differ ${cpuBad} (${(100 * cpuBad / n).toFixed(2)}%), ShadowMap vs RayTraced differ ${smBad} (${(100 * smBad / n).toFixed(2)}%), None != 1: ${noneBad}`);
+    log(
+        `Visibility: ${n} front-lit px; RayTraced vs CPU differ ${cpuBad} (${((100 * cpuBad) / n).toFixed(2)}%), ShadowMap vs RayTraced differ ${smBad} (${((100 * smBad) / n).toFixed(2)}%), None != 1: ${noneBad}`,
+    );
     expectEq(cpuBad <= 0.01 * n, true, "ray-traced visibility = CPU shadow test (edge pixels aside)");
     expectEq(smBad <= 0.03 * n, true, "shadow map = ray traced except along shadow edges");
     expectEq(noneBad, 0, "mode None is all ones");

@@ -3,15 +3,32 @@
  * camera poses, and the cold-vs-consecutive protocol for passes that keep state across frames.
  */
 
-import { RenderGraph, ResourceBindFlags, ResourceFormat, createPass, float3, type Device, type Scene, type Texture } from "@web-falcor/falcor";
+import {
+    RenderGraph,
+    ResourceBindFlags,
+    ResourceFormat,
+    createPass,
+    float3,
+    type Device,
+    type Scene,
+    type Texture,
+} from "@web-falcor/falcor";
 import { resetGraphHistory } from "@web-falcor/render-passes";
 import { bitwiseEqual, read, type PassDecl, type V3 } from "./stylize-helpers.js";
 
 let graphCount = 0;
 
 /** GBufferRaster "G" + passes; no execution. */
-export function buildGraph(device: Device, scene: Scene, passes: PassDecl[], edges: [string, string][], outputs: string[],
-    w: number, h: number, inputs: Record<string, Texture> = {}): RenderGraph {
+export function buildGraph(
+    device: Device,
+    scene: Scene,
+    passes: PassDecl[],
+    edges: [string, string][],
+    outputs: string[],
+    w: number,
+    h: number,
+    inputs: Record<string, Texture> = {},
+): RenderGraph {
     const g = new RenderGraph(device, `FxTest${++graphCount}`);
     g.onResize(w, h);
     g.addPass(createPass(device, "GBufferRaster", { samplePattern: "Center" }), "G");
@@ -39,15 +56,21 @@ export async function warmUp(device: Device, scene: Scene): Promise<void> {
     if (!(c > 0.2)) throw new Error(`G-buffer empty on the warm-up frame (coverage ${c})`);
 }
 
+/** Rgba Texture used by fx-helpers. */
 export function rgbaTexture(device: Device, w: number, h: number, data: Float32Array): Texture {
     return device.createTexture2D(w, h, ResourceFormat.RGBA32Float, 1, 1, data, ResourceBindFlags.ShaderResource);
 }
 
-export interface Pose { pos: V3; target: V3 }
+/** Pose used by fx-helpers. */
+export interface Pose {
+    pos: V3;
+    target: V3;
+}
 export const kPoseA: Pose = { pos: [2.6, 2.4, 3.4], target: [0, 0.4, -0.3] };
 export const kPoseB: Pose = { pos: [-2.5, 2.0, 3.0], target: [0, 0.5, -0.3] };
 export const kPoseX: Pose = { pos: [3.2, 1.8, -1.2], target: [0, 0.4, -0.3] };
 
+/** Set Pose used by fx-helpers. */
 export function setPose(scene: Scene, p: Pose, shift = 0): void {
     scene.camera.setPosition(new float3(p.pos[0] + shift, p.pos[1], p.pos[2] - 0.5 * shift));
     scene.camera.setTarget(new float3(...p.target));
@@ -56,7 +79,15 @@ export function setPose(scene: Scene, p: Pose, shift = 0): void {
 }
 
 /** Renders `frames` frames at `pose` (camera moving by `step` per frame) and reads `outputs` after each frame. */
-export async function renderShot(device: Device, scene: Scene, g: RenderGraph, pose: Pose, frames: number, outputs: string[], step = 0): Promise<Float32Array[][]> {
+export async function renderShot(
+    device: Device,
+    scene: Scene,
+    g: RenderGraph,
+    pose: Pose,
+    frames: number,
+    outputs: string[],
+    step = 0,
+): Promise<Float32Array[][]> {
     const res: Float32Array[][] = [];
     for (let f = 0; f < frames; f++) {
         setPose(scene, pose, step * f);
@@ -77,6 +108,7 @@ export async function renderShot(device: Device, scene: Scene, g: RenderGraph, p
  */
 export type CutMethod = "camera-reset" | "prime" | "explicit" | "none";
 
+/** Cold Consecutive Result used by fx-helpers. */
 export interface ColdConsecutiveResult {
     method: CutMethod;
     equalFrames: number;
@@ -97,7 +129,14 @@ export interface ColdConsecutiveResult {
  * involved, e.g. a cold shot right after the first compile and a consecutive shot a second later. Leaked history differs
  * from both cold renders, so the check still catches it; `coldDrift` reports frames where the two cold renders differ.
  */
-export async function coldVsConsecutive(device: Device, scene: Scene, mk: () => RenderGraph, outputs: string[], methods: CutMethod[], frames = 3): Promise<ColdConsecutiveResult[]> {
+export async function coldVsConsecutive(
+    device: Device,
+    scene: Scene,
+    mk: () => RenderGraph,
+    outputs: string[],
+    methods: CutMethod[],
+    frames = 3,
+): Promise<ColdConsecutiveResult[]> {
     await warmUp(device, scene);
     const renderCold = async () => {
         setPose(scene, kPoseX);

@@ -13,8 +13,14 @@ import { gpuTest, expectEq } from "../harness/registry.js";
 import { bitwiseEqual, kSize, log, makeScene, objectClass, px, readAll, runGraph, smoothstep, type V3 } from "./stylize-helpers.js";
 
 const kEdges: [string, string][] = [
-    ["G.vbuffer", "S.vbuffer"], ["G.posW", "S.posW"], ["G.normW", "S.normW"],
-    ["G.diffuseOpacity", "R.a"], ["S.idColor", "R.b"], ["G.posW", "R.posW"], ["S.posObj", "R.posObj"], ["S.ids", "R.ids"],
+    ["G.vbuffer", "S.vbuffer"],
+    ["G.posW", "S.posW"],
+    ["G.normW", "S.normW"],
+    ["G.diffuseOpacity", "R.a"],
+    ["S.idColor", "R.b"],
+    ["G.posW", "R.posW"],
+    ["S.posObj", "R.posObj"],
+    ["S.ids", "R.ids"],
 ];
 const kOuts = ["R.dst", "R.mask", "G.diffuseOpacity", "S.idColor", "G.posW", "S.posObj", "S.ids"];
 
@@ -25,15 +31,18 @@ const pcg = (v: number): number => {
     return ((word >>> 22) ^ word) >>> 0;
 };
 const latticeHash = (x: number, y: number, z: number, seed: number) =>
-    (pcg((x >>> 0) + pcg((y >>> 0) + pcg((z >>> 0) + pcg(seed)) >>> 0) >>> 0) >>> 8) / 16777216;
+    (pcg(((x >>> 0) + pcg(((y >>> 0) + pcg((z >>> 0) + pcg(seed))) >>> 0)) >>> 0) >>> 8) / 16777216;
 function valueNoise(p: V3, seed: number): number {
     const c = p.map(Math.floor) as V3;
     const f = p.map((x, i) => x - c[i]!) as V3;
     const u = f.map((t) => t * t * (3 - 2 * t)) as V3;
     const h = (dx: number, dy: number, dz: number) => latticeHash(c[0] + dx, c[1] + dy, c[2] + dz, seed);
     const l = (a: number, b: number, t: number) => a + (b - a) * t;
-    return l(l(l(h(0, 0, 0), h(1, 0, 0), u[0]), l(h(0, 1, 0), h(1, 1, 0), u[0]), u[1]),
-        l(l(h(0, 0, 1), h(1, 0, 1), u[0]), l(h(0, 1, 1), h(1, 1, 1), u[0]), u[1]), u[2]);
+    return l(
+        l(l(h(0, 0, 0), h(1, 0, 0), u[0]), l(h(0, 1, 0), h(1, 1, 0), u[0]), u[1]),
+        l(l(h(0, 0, 1), h(1, 0, 1), u[0]), l(h(0, 1, 1), h(1, 1, 1), u[0]), u[1]),
+        u[2],
+    );
 }
 
 type P = Record<string, unknown>;
@@ -73,38 +82,104 @@ function refMask(p: P, pos: V3, bg: boolean, id: number): { m: number; d: number
 gpuTest("WorldRevealMask.matchesCpuReference", async ({ device }) => {
     const scene = makeScene(device);
     // Instance id of the floor (for the id filter), from a first render.
-    const g0 = await runGraph(device, scene, [["StyleAovs", "S"], ["WorldRevealMask", "R"]], kEdges, kOuts);
+    const g0 = await runGraph(
+        device,
+        scene,
+        [
+            ["StyleAovs", "S"],
+            ["WorldRevealMask", "R"],
+        ],
+        kEdges,
+        kOuts,
+    );
     const [, , , , pos0, , ids0] = await readAll(device, g0, kOuts);
     const floorIds = new Set<number>();
-    for (let i = 0; i < kSize * kSize; i++) if (pos0[i * 4 + 3] !== 0 && objectClass(pos0[i * 4]!, pos0[i * 4 + 1]!, pos0[i * 4 + 2]!) === 0) floorIds.add(ids0[i * 4]!);
+    for (let i = 0; i < kSize * kSize; i++)
+        if (pos0[i * 4 + 3] !== 0 && objectClass(pos0[i * 4]!, pos0[i * 4 + 1]!, pos0[i * 4 + 2]!) === 0) floorIds.add(ids0[i * 4]!);
     expectEq(floorIds.size, 1, "floor is one instance");
     const floorId = [...floorIds][0]!;
     const cases: [string, P][] = [
         ["sphere soft", { shape: "sphere", center: [-0.4, 0.5, -0.3], radius: 1.3, edgeWidth: 0.4 }],
-        ["plane noise glow", { shape: "plane", normal: [1, 0.3, 0], offset: 0.2, noiseAmp: 0.35, noiseScale: 3, seed: 7, edgeWidth: 0.25, edgeIntensity: 0.8, edgeColour: [1, 0.5, 0.1] }],
-        ["box object hard invert", { shape: "box", space: "object", center: [0.7, 0.8, -0.8], halfExtents: [0.5, 0.6, 0.5], edgeWidth: 0, invert: true, background: 1 }],
-        ["sweep except floor", { shape: "sphere", center: [0, 0.4, -0.3], radius: 0.2, speed: 0.6, time: 1.5, edgeWidth: 0.2, idMode: "except", ids: [floorId], strength: 0.75 }],
+        [
+            "plane noise glow",
+            {
+                shape: "plane",
+                normal: [1, 0.3, 0],
+                offset: 0.2,
+                noiseAmp: 0.35,
+                noiseScale: 3,
+                seed: 7,
+                edgeWidth: 0.25,
+                edgeIntensity: 0.8,
+                edgeColour: [1, 0.5, 0.1],
+            },
+        ],
+        [
+            "box object hard invert",
+            {
+                shape: "box",
+                space: "object",
+                center: [0.7, 0.8, -0.8],
+                halfExtents: [0.5, 0.6, 0.5],
+                edgeWidth: 0,
+                invert: true,
+                background: 1,
+            },
+        ],
+        [
+            "sweep except floor",
+            {
+                shape: "sphere",
+                center: [0, 0.4, -0.3],
+                radius: 0.2,
+                speed: 0.6,
+                time: 1.5,
+                edgeWidth: 0.2,
+                idMode: "except",
+                ids: [floorId],
+                strength: 0.75,
+            },
+        ],
     ];
     let worst = 0;
     for (const [name, p] of cases) {
-        const g = await runGraph(device, scene, [["StyleAovs", "S"], ["WorldRevealMask", "R", p]], kEdges, kOuts);
+        const g = await runGraph(
+            device,
+            scene,
+            [
+                ["StyleAovs", "S"],
+                ["WorldRevealMask", "R", p],
+            ],
+            kEdges,
+            kOuts,
+        );
         const [dst, mask, a, b, pos, pobj, ids] = await readAll(device, g, kOuts);
-        const strength = get(p, "strength", 1), w = get(p, "edgeWidth", 0.1), ei = get(p, "edgeIntensity", 0);
+        const strength = get(p, "strength", 1);
+        const w = get(p, "edgeWidth", 0.1);
+        const ei = get(p, "edgeIntensity", 0);
         const ec = get<V3>(p, "edgeColour", [1, 0.6, 0.2]);
-        let maxErr = 0, bad = 0, skipped = 0, inside = 0, n = 0;
+        let maxErr = 0;
+        let bad = 0;
+        let skipped = 0;
+        let inside = 0;
+        let n = 0;
         for (let i = 0; i < kSize * kSize; i++) {
             const bg = pos[i * 4 + 3] === 0;
             const P3 = (get(p, "space", "world") === "object" ? px(pobj, i) : px(pos, i)).slice(0, 3) as V3;
             const r = refMask(p, P3, bg, ids[i * 4]!);
             // Hard edges: skip pixels whose distance is within f32 rounding of the threshold.
-            if (r.d !== null && w === 0 && Math.abs(r.d) < 1e-4) { skipped++; continue; }
+            if (r.d !== null && w === 0 && Math.abs(r.d) < 1e-4) {
+                skipped++;
+                continue;
+            }
             n++;
             const m = r.m * strength;
             if (m > 0.5) inside++;
             const edge = !bg && w > 0 ? 4 * r.m * (1 - r.m) : 0;
             let e = Math.abs(mask[i * 4]! - m);
             for (let k = 0; k < 3; k++) {
-                const av = a[i * 4 + k]!, bv = b[i * 4 + k]!;
+                const av = a[i * 4 + k]!;
+                const bv = b[i * 4 + k]!;
                 const ref = (m <= 0 ? av : m >= 1 ? bv : av + (bv - av) * m) + ei * strength * edge * ec[k]!;
                 e = Math.max(e, Math.abs(dst[i * 4 + k]! - ref));
             }
@@ -125,7 +200,16 @@ gpuTest("WorldRevealMask.identity", async ({ device }) => {
         ["strength 0", { shape: "plane", normal: [1, 0, 0], noiseAmp: 0.5, edgeIntensity: 1, strength: 0, background: 1 }],
         ["empty region", { shape: "sphere", center: [50, 50, 50], radius: 0, edgeWidth: 0.1 }],
     ] as [string, P][]) {
-        const g = await runGraph(device, scene, [["StyleAovs", "S"], ["WorldRevealMask", "R", p]], kEdges, kOuts);
+        const g = await runGraph(
+            device,
+            scene,
+            [
+                ["StyleAovs", "S"],
+                ["WorldRevealMask", "R", p],
+            ],
+            kEdges,
+            kOuts,
+        );
         const [dst, , a] = await readAll(device, g, kOuts);
         const same = bitwiseEqual(dst, a);
         log(`WorldRevealMask identity [${name}]: dst == a bitwise ${same}`);
@@ -138,7 +222,16 @@ gpuTest("WorldRevealMask.sweepIsStateless", async ({ device }) => {
     const p = { shape: "sphere", center: [0, 0.4, -0.3], radius: 0, speed: 1, edgeWidth: 0.3, noiseAmp: 0.2, noiseScale: 2 };
     const times = [0.3, 0.9, 1.5, 2.4];
     // Consecutive: one graph, time set per frame.
-    const g = await runGraph(device, scene, [["StyleAovs", "S"], ["WorldRevealMask", "R", { ...p, time: times[0] }]], kEdges, kOuts);
+    const g = await runGraph(
+        device,
+        scene,
+        [
+            ["StyleAovs", "S"],
+            ["WorldRevealMask", "R", { ...p, time: times[0] }],
+        ],
+        kEdges,
+        kOuts,
+    );
     const cover: number[] = [];
     let last: Float32Array | null = null;
     for (const t of times) {
@@ -153,7 +246,16 @@ gpuTest("WorldRevealMask.sweepIsStateless", async ({ device }) => {
     log(`WorldRevealMask sweep coverage ${cover.map((c) => c.toFixed(0)).join(" < ")}`);
     for (let k = 1; k < cover.length; k++) expectEq(cover[k]! > cover[k - 1]!, true, `coverage grows at t = ${times[k]}`);
     // Cold: a fresh graph at t = 1.5.
-    const gc = await runGraph(device, scene, [["StyleAovs", "S"], ["WorldRevealMask", "R", { ...p, time: 1.5 }]], kEdges, kOuts);
+    const gc = await runGraph(
+        device,
+        scene,
+        [
+            ["StyleAovs", "S"],
+            ["WorldRevealMask", "R", { ...p, time: 1.5 }],
+        ],
+        kEdges,
+        kOuts,
+    );
     const [cold] = await readAll(device, gc, ["R.dst"]);
     const same = bitwiseEqual(cold!, last!);
     log(`WorldRevealMask cold vs consecutive (t = 1.5 after 0.3, 0.9): bitwise ${same}`);

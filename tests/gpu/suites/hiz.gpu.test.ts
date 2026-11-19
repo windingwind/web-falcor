@@ -10,12 +10,15 @@ import { buildGraph, coverage } from "./fx-helpers.js";
 
 /** CPU reduction with the shader's footprint rule (odd sources: the last texel also covers the left-over row/column). */
 function reduce(src: Float32Array, sw: number, sh: number): { data: Float32Array; w: number; h: number } {
-    const w = Math.max(1, sw >> 1), h = Math.max(1, sh >> 1);
+    const w = Math.max(1, sw >> 1);
+    const h = Math.max(1, sh >> 1);
     const data = new Float32Array(w * h * 2);
     for (let y = 0; y < h; y++) {
         for (let x = 0; x < w; x++) {
-            const x1 = Math.min(2 * x + (x === w - 1 && sw % 2 === 1 ? 2 : 1), sw - 1), y1 = Math.min(2 * y + (y === h - 1 && sh % 2 === 1 ? 2 : 1), sh - 1);
-            let lo = Infinity, hi = -Infinity;
+            const x1 = Math.min(2 * x + (x === w - 1 && sw % 2 === 1 ? 2 : 1), sw - 1);
+            const y1 = Math.min(2 * y + (y === h - 1 && sh % 2 === 1 ? 2 : 1), sh - 1);
+            let lo = Infinity;
+            let hi = -Infinity;
             for (let yy = Math.min(2 * y, sh - 1); yy <= y1; yy++) {
                 for (let xx = Math.min(2 * x, sw - 1); xx <= x1; xx++) {
                     lo = Math.min(lo, src[(yy * sw + xx) * 2]!);
@@ -31,7 +34,11 @@ function reduce(src: Float32Array, sw: number, sh: number): { data: Float32Array
 
 gpuTest("HiZBuild.pyramidMatchesCpu", async ({ device }) => {
     const scene = makeScene(device);
-    for (const [W, H] of [[128, 128], [100, 75], [67, 129]] as const) {
+    for (const [W, H] of [
+        [128, 128],
+        [100, 75],
+        [67, 129],
+    ] as const) {
         const g = buildGraph(device, scene, [["HiZBuild", "Z", {}]], [["G.depth", "Z.depth"]], ["Z.hiz", "G.depth"], W, H);
         for (let i = 0; i < 5; i++) {
             g.execute(device.renderContext);
@@ -47,12 +54,15 @@ gpuTest("HiZBuild.pyramidMatchesCpu", async ({ device }) => {
         // mip 0 = depth buffer (r = g = depth).
         const dr = await device.renderContext.readTextureSubresource(g.getOutput("G.depth")!);
         const depth = new Float32Array(dr.buffer, dr.byteOffset, dr.byteLength / 4);
-        let m0Bad = 0, bg = 0;
+        let m0Bad = 0;
+        let bg = 0;
         for (let i = 0; i < W * H; i++) {
             if (m0[i * 2] !== depth[i] || m0[i * 2 + 1] !== depth[i]) m0Bad++;
             if (depth[i] === 1) bg++;
         }
-        let prev = { data: m0, w: W, h: H }, bad = 0, sizes = `${W}x${H}`;
+        let prev = { data: m0, w: W, h: H };
+        let bad = 0;
+        let sizes = `${W}x${H}`;
         for (let m = 1; m < hiz.mipCount; m++) {
             const ref = reduce(prev.data, prev.w, prev.h);
             const gpu = await readMip(m);
@@ -62,9 +72,15 @@ gpuTest("HiZBuild.pyramidMatchesCpu", async ({ device }) => {
             sizes += ` ${ref.w}x${ref.h}`;
         }
         const top = prev.data;
-        let gmin = Infinity, gmax = -Infinity;
-        for (let i = 0; i < W * H; i++) { gmin = Math.min(gmin, depth[i]!); gmax = Math.max(gmax, depth[i]!); }
-        log(`HiZBuild ${W}x${H}: mips ${hiz.mipCount} (${sizes}), mip0 mismatches ${m0Bad}, background px ${bg}, reduction mismatches ${bad}, top (${top[0]}, ${top[1]}) vs global (${gmin}, ${gmax})`);
+        let gmin = Infinity;
+        let gmax = -Infinity;
+        for (let i = 0; i < W * H; i++) {
+            gmin = Math.min(gmin, depth[i]!);
+            gmax = Math.max(gmax, depth[i]!);
+        }
+        log(
+            `HiZBuild ${W}x${H}: mips ${hiz.mipCount} (${sizes}), mip0 mismatches ${m0Bad}, background px ${bg}, reduction mismatches ${bad}, top (${top[0]}, ${top[1]}) vs global (${gmin}, ${gmax})`,
+        );
         expectEq(m0Bad, 0, "mip 0 = depth");
         expectEq(bad, 0, "every mip = CPU min/max reduction");
         expectEq(top[0] === gmin && top[1] === gmax, true, "1x1 mip = global min/max (conservative footprints)");

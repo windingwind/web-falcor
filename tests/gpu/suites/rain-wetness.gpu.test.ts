@@ -42,16 +42,25 @@ function hash2(cx: number, cy: number, salt: number, seed: number): number {
 }
 
 function valueNoise(x: number, y: number, salt: number, seed: number): number {
-    const ix = Math.floor(x), iy = Math.floor(y);
-    const fx = x - ix, fy = y - iy;
-    const sx = fx * fx * (3 - 2 * fx), sy = fy * fy * (3 - 2 * fy);
-    const a = hash2(ix, iy, salt, seed), b = hash2(ix + 1, iy, salt, seed), c = hash2(ix, iy + 1, salt, seed), d = hash2(ix + 1, iy + 1, salt, seed);
-    const l0 = a + (b - a) * sx, l1 = c + (d - c) * sx;
+    const ix = Math.floor(x);
+    const iy = Math.floor(y);
+    const fx = x - ix;
+    const fy = y - iy;
+    const sx = fx * fx * (3 - 2 * fx);
+    const sy = fy * fy * (3 - 2 * fy);
+    const a = hash2(ix, iy, salt, seed);
+    const b = hash2(ix + 1, iy, salt, seed);
+    const c = hash2(ix, iy + 1, salt, seed);
+    const d = hash2(ix + 1, iy + 1, salt, seed);
+    const l0 = a + (b - a) * sx;
+    const l1 = c + (d - c) * sx;
     return l0 + (l1 - l0) * sy;
 }
 
 function fbm(x: number, y: number, seed: number): number {
-    let v = 0, a = 0.5, n = 0;
+    let v = 0;
+    let a = 0.5;
+    let n = 0;
     for (let o = 0; o < 4; o++) {
         v += a * valueNoise(x, y, o, seed);
         n += a;
@@ -63,33 +72,61 @@ function fbm(x: number, y: number, seed: number): number {
 }
 
 const sat = (x: number) => Math.min(Math.max(x, 0), 1);
-const smooth = (e0: number, e1: number, x: number) => { const t = sat((x - e0) / Math.max(e1 - e0, 1e-6)); return t * t * (3 - 2 * t); };
+const smooth = (e0: number, e1: number, x: number) => {
+    const t = sat((x - e0) / Math.max(e1 - e0, 1e-6));
+    return t * t * (3 - 2 * t);
+};
 const dot3 = (a: ArrayLike<number>, b: ArrayLike<number>) => a[0]! * b[0]! + a[1]! * b[1]! + a[2]! * b[2]!;
 const frac = (x: number) => x - Math.floor(x);
 
 interface WetParams {
-    wetness: number; sideWetness: number; darkening: number; gloss: number; puddleCoverage: number; puddleEdge: number; puddleScale: number;
-    puddleUpMin: number; puddleRoughness: number; puddleSpecular: number; rippleStrength: number; rippleScale: number; rippleRate: number; time: number; seed: number;
+    wetness: number;
+    sideWetness: number;
+    darkening: number;
+    gloss: number;
+    puddleCoverage: number;
+    puddleEdge: number;
+    puddleScale: number;
+    puddleUpMin: number;
+    puddleRoughness: number;
+    puddleSpecular: number;
+    rippleStrength: number;
+    rippleScale: number;
+    rippleRate: number;
+    time: number;
+    seed: number;
 }
 
 function ripplesCpu(qx: number, qy: number, p: WetParams): [number, number, number] {
     const acc: [number, number, number] = [0, 0, 0];
     const cell = p.rippleScale;
     for (let layer = 0; layer < 2; layer++) {
-        const gx = qx / cell + 0.37 * layer, gy = qy / cell + 0.71 * layer;
-        const c0x = Math.floor(gx), c0y = Math.floor(gy);
+        const gx = qx / cell + 0.37 * layer;
+        const gy = qy / cell + 0.71 * layer;
+        const c0x = Math.floor(gx);
+        const c0y = Math.floor(gy);
         for (let dy = -1; dy <= 1; dy++) {
             for (let dx = -1; dx <= 1; dx++) {
-                const cx = c0x + dx, cy = c0y + dy, salt = 100 + 10 * layer;
-                const ox = (gx - (cx + hash2(cx, cy, salt, p.seed))) * cell, oy = (gy - (cy + hash2(cx, cy, salt + 1, p.seed))) * cell;
+                const cx = c0x + dx;
+                const cy = c0y + dy;
+                const salt = 100 + 10 * layer;
+                const ox = (gx - (cx + hash2(cx, cy, salt, p.seed))) * cell;
+                const oy = (gy - (cy + hash2(cx, cy, salt + 1, p.seed))) * cell;
                 const tau = frac(p.time * p.rippleRate + hash2(cx, cy, salt + 2, p.seed));
-                const d = Math.hypot(ox, oy), r = tau * cell, w = 0.08 * cell, k = (2 * Math.PI) / (0.12 * cell), x = d - r;
+                const d = Math.hypot(ox, oy);
+                const r = tau * cell;
+                const w = 0.08 * cell;
+                const k = (2 * Math.PI) / (0.12 * cell);
+                const x = d - r;
                 const env = Math.exp(-(x * x) / (w * w)) * (1 - tau);
                 const h = Math.sin(k * x) * env;
-                const dh = (k * Math.cos(k * x) - (2 * x) / (w * w) * Math.sin(k * x)) * env;
+                const dh = (k * Math.cos(k * x) - ((2 * x) / (w * w)) * Math.sin(k * x)) * env;
                 const s = 0.08 * cell;
                 acc[0] += h * s;
-                if (d > 1e-6) { acc[1] += dh * (ox / d) * s; acc[2] += dh * (oy / d) * s; }
+                if (d > 1e-6) {
+                    acc[1] += dh * (ox / d) * s;
+                    acc[2] += dh * (oy / d) * s;
+                }
             }
         }
     }
@@ -97,15 +134,29 @@ function ripplesCpu(qx: number, qy: number, p: WetParams): [number, number, numb
 }
 
 /** CPU reference of RainWetness for one pixel: [dst rgba, specRough, normW, wetness]. */
-function wetCpu(col: ArrayLike<number>, diff: ArrayLike<number>, spec: ArrayLike<number>, pos: ArrayLike<number>, nw: ArrayLike<number>, sr: ArrayLike<number>, p: WetParams, basis: ReturnType<typeof planarBasis>): number[][] {
-    let wet = 0, puddle = 0, N = [0, 0, 1], qx = 0, qy = 0;
+function wetCpu(
+    col: ArrayLike<number>,
+    diff: ArrayLike<number>,
+    spec: ArrayLike<number>,
+    pos: ArrayLike<number>,
+    nw: ArrayLike<number>,
+    sr: ArrayLike<number>,
+    p: WetParams,
+    basis: ReturnType<typeof planarBasis>,
+): number[][] {
+    let wet = 0;
+    let puddle = 0;
+    let N = [0, 0, 1];
+    let qx = 0;
+    let qy = 0;
     if (pos[3] !== 0 && dot3(nw, nw) > 0) {
         const l = Math.sqrt(dot3(nw, nw));
         N = [nw[0]! / l, nw[1]! / l, nw[2]! / l];
         const u = dot3(N, basis.up);
         const facing = u >= 0 ? p.sideWetness + (1 - p.sideWetness) * smooth(0, 1, u) : p.sideWetness * sat(1 + u);
         wet = sat(p.wetness * facing);
-        qx = dot3(pos, basis.t1); qy = dot3(pos, basis.t2);
+        qx = dot3(pos, basis.t1);
+        qy = dot3(pos, basis.t2);
         if (p.puddleCoverage > 0) {
             const lo = 1 - p.puddleCoverage;
             puddle = smooth(p.puddleUpMin, 1, u) * smooth(lo, lo + p.puddleEdge, fbm(qx * p.puddleScale, qy * p.puddleScale, p.seed));
@@ -123,21 +174,56 @@ function wetCpu(col: ArrayLike<number>, diff: ArrayLike<number>, spec: ArrayLike
         n2 = [0, 1, 2].map((c) => n2[c]! - p.rippleStrength * puddle * (rip[1] * basis.t1[c]! + rip[2] * basis.t2[c]!));
     }
     const nl = Math.hypot(n2[0]!, n2[1]!, n2[2]!);
-    return [[...rgb, col[3]!], [...f0, rough], [n2[0]! / nl, n2[1]! / nl, n2[2]! / nl, nw[3]!], [wet, puddle, rip[0], 1]];
+    return [
+        [...rgb, col[3]!],
+        [...f0, rough],
+        [n2[0]! / nl, n2[1]! / nl, n2[2]! / nl, nw[3]!],
+        [wet, puddle, rip[0], 1],
+    ];
 }
 
 const kWet: WetParams = {
-    wetness: 0.8, sideWetness: 0.3, darkening: 0.45, gloss: 0.6, puddleCoverage: 0.45, puddleEdge: 0.08, puddleScale: 0.6,
-    puddleUpMin: 0.9, puddleRoughness: 0.02, puddleSpecular: 0.8, rippleStrength: 1, rippleScale: 0.5, rippleRate: 1.5, time: 1.3, seed: 3,
+    wetness: 0.8,
+    sideWetness: 0.3,
+    darkening: 0.45,
+    gloss: 0.6,
+    puddleCoverage: 0.45,
+    puddleEdge: 0.08,
+    puddleScale: 0.6,
+    puddleUpMin: 0.9,
+    puddleRoughness: 0.02,
+    puddleSpecular: 0.8,
+    rippleStrength: 1,
+    rippleScale: 0.5,
+    rippleRate: 1.5,
+    time: 1.3,
+    seed: 3,
 };
 
 const kWetEdges: [string, string][] = [
-    ["G.vbuffer", "L.vbuffer"], ["G.viewW", "L.viewW"],
-    ["L.color", "W.color"], ["L.diffuse", "W.diffuse"], ["L.specular", "W.specular"], ["G.posW", "W.posW"], ["G.normW", "W.normW"], ["G.specRough", "W.specRough"],
+    ["G.vbuffer", "L.vbuffer"],
+    ["G.viewW", "L.viewW"],
+    ["L.color", "W.color"],
+    ["L.diffuse", "W.diffuse"],
+    ["L.specular", "W.specular"],
+    ["G.posW", "W.posW"],
+    ["G.normW", "W.normW"],
+    ["G.specRough", "W.specRough"],
 ];
 
 function wetGraph(device: Device, scene: Scene, props: Partial<WetParams>, outputs: string[]): RenderGraph {
-    return buildGraph(device, scene, [["DeferredLighting", "L", { brdf: "LambertGGX", shadowMode: "None" }], ["RainWetness", "W", props]], kWetEdges, outputs, kSize, kSize);
+    return buildGraph(
+        device,
+        scene,
+        [
+            ["DeferredLighting", "L", { brdf: "LambertGGX", shadowMode: "None" }],
+            ["RainWetness", "W", props],
+        ],
+        kWetEdges,
+        outputs,
+        kSize,
+        kSize,
+    );
 }
 
 gpuTest("RainWetness.cpuParity", async ({ device }) => {
@@ -153,24 +239,42 @@ gpuTest("RainWetness.cpuParity", async ({ device }) => {
     for (const o of [...ins, ...outs]) b.push(await read(device, g.getOutput(o)!));
     const [col, dif, spe, pos, nw, sr, dst, srO, nO, wt] = b;
     const basis = planarBasis([0, 1, 0]);
-    let maxErr = 0, off = 0, geo = 0, puddlePx = 0, puddleNotUp = 0, sideOk = 0, sidePx = 0, rippled = 0;
+    let maxErr = 0;
+    let off = 0;
+    let geo = 0;
+    let puddlePx = 0;
+    let puddleNotUp = 0;
+    let sideOk = 0;
+    let sidePx = 0;
+    let rippled = 0;
     const tol = 2e-3;
     for (let i = 0; i < kSize * kSize; i++) {
         const s = (a: Float32Array) => a.subarray(i * 4, i * 4 + 4);
         const ref = wetCpu(s(col!), s(dif!), s(spe!), s(pos!), s(nw!), s(sr!), kWet, basis);
         const gpu = [s(dst!), s(srO!), s(nO!), s(wt!)];
         let e = 0;
-        for (let k = 0; k < 4; k++) for (let c = 0; c < 4; c++) e = Math.max(e, Math.abs(gpu[k]![c]! - ref[k]![c]!) / Math.max(1, Math.abs(ref[k]![c]!)));
+        for (let k = 0; k < 4; k++)
+            for (let c = 0; c < 4; c++) e = Math.max(e, Math.abs(gpu[k]![c]! - ref[k]![c]!) / Math.max(1, Math.abs(ref[k]![c]!)));
         if (e > tol) off++;
         else maxErr = Math.max(maxErr, e);
         if (pos![i * 4 + 3] === 0) continue;
         geo++;
-        const n = s(nw!), l = Math.hypot(n[0]!, n[1]!, n[2]!), u = n[1]! / l;
-        if (wt![i * 4 + 1]! > 0) { puddlePx++; if (u < kWet.puddleUpMin) puddleNotUp++; }
+        const n = s(nw!);
+        const l = Math.hypot(n[0]!, n[1]!, n[2]!);
+        const u = n[1]! / l;
+        if (wt![i * 4 + 1]! > 0) {
+            puddlePx++;
+            if (u < kWet.puddleUpMin) puddleNotUp++;
+        }
         if (wt![i * 4 + 2] !== 0) rippled++;
-        if (Math.abs(u) < 1e-3) { sidePx++; if (Math.abs(wt![i * 4]! - kWet.wetness * kWet.sideWetness) < 1e-5) sideOk++; }
+        if (Math.abs(u) < 1e-3) {
+            sidePx++;
+            if (Math.abs(wt![i * 4]! - kWet.wetness * kWet.sideWetness) < 1e-5) sideOk++;
+        }
     }
-    log(`RainWetness parity: ${geo} geometry px, off-ref (> ${tol}) ${off}, max rel err of the rest ${maxErr.toExponential(2)}; puddle px ${puddlePx} (not up-facing ${puddleNotUp}), rippled ${rippled}; vertical px ${sidePx}, wet = wetness x sideWetness ${sideOk}`);
+    log(
+        `RainWetness parity: ${geo} geometry px, off-ref (> ${tol}) ${off}, max rel err of the rest ${maxErr.toExponential(2)}; puddle px ${puddlePx} (not up-facing ${puddleNotUp}), rippled ${rippled}; vertical px ${sidePx}, wet = wetness x sideWetness ${sideOk}`,
+    );
     expectEq(off <= Math.ceil(0.001 * kSize * kSize), true, "<= 0.1 % of the pixels off the CPU reference");
     expectEq(maxErr < 1e-3, true, "max rel err < 1e-3");
     expectEq(puddlePx > 200 && puddleNotUp === 0, true, "puddles exist and only on up-facing surfaces");
@@ -184,7 +288,10 @@ gpuTest("RainWetness.identity", async ({ device }) => {
     setPose(scene, kPoseA);
     const outs = ["W.dst", "W.specRoughOut", "W.normWOut", "L.color", "G.specRough", "G.normW"];
     const res: boolean[] = [];
-    for (const props of [{ ...kWet, wetness: 0, puddleCoverage: 0 }, { wetness: 0, puddleCoverage: 0 }]) {
+    for (const props of [
+        { ...kWet, wetness: 0, puddleCoverage: 0 },
+        { wetness: 0, puddleCoverage: 0 },
+    ]) {
         const g = wetGraph(device, scene, props, outs);
         g.execute(device.renderContext);
         const b: Float32Array[] = [];
@@ -192,41 +299,77 @@ gpuTest("RainWetness.identity", async ({ device }) => {
         res.push(bitwiseEqual(b[0]!, b[3]!) && bitwiseEqual(b[1]!, b[4]!) && bitwiseEqual(b[2]!, b[5]!));
     }
     log(`RainWetness identity (wetness 0, puddleCoverage 0; with other params set / defaults): ${res.join(", ")}`);
-    expectEq(res.every((x) => x), true, "dst/specRoughOut/normWOut = color/specRough/normW bit for bit");
+    expectEq(
+        res.every((x) => x),
+        true,
+        "dst/specRoughOut/normWOut = color/specRough/normW bit for bit",
+    );
 });
 
 // ---------------------------------------------------------------------------------------------------------- RainLayer
 
-interface RainParams { count: number; seed: number; box: number; speed: number; speedJitter: number; wind: number[]; exposure: number; width: number; maxLengthPx: number; colour: number[]; intensity: number; opacity: number; near: number; time: number }
+interface RainParams {
+    count: number;
+    seed: number;
+    box: number;
+    speed: number;
+    speedJitter: number;
+    wind: number[];
+    exposure: number;
+    width: number;
+    maxLengthPx: number;
+    colour: number[];
+    intensity: number;
+    opacity: number;
+    near: number;
+    time: number;
+}
 
 function rnd(i: number, salt: number, seed: number): number {
     return (pcg((i ^ pcg((Math.imul(salt, 7919) + pcg(seed)) >>> 0)) >>> 0) >>> 8) / 16777216;
 }
 
 /** CPU splat of RainLayer (same algorithm, doubles; accumulation in the same fixed point). */
-function rainCpu(scene: Scene, p: RainParams, pos: Float32Array, skip?: (head: number[]) => boolean): { rgba: Float32Array; depth: Float32Array; drawn: number } {
+function rainCpu(
+    scene: Scene,
+    p: RainParams,
+    pos: Float32Array,
+    skip?: (head: number[]) => boolean,
+): { rgba: Float32Array; depth: Float32Array; drawn: number } {
     const N = kSize;
     const cam = scene.camera;
-    const cp = cam.getPosition(), ct = cam.getTarget();
+    const cp = cam.getPosition();
+    const ct = cam.getTarget();
     const C = [cp.x, cp.y, cp.z];
     let fwd = [ct.x - cp.x, ct.y - cp.y, ct.z - cp.z];
     const fl = Math.hypot(fwd[0]!, fwd[1]!, fwd[2]!);
     fwd = fwd.map((x) => x / fl);
     const vp = cam.getViewProjMatrix();
-    const clip = (x: number[]) => [0, 1, 2, 3].map((r) => vp.get(r, 0) * x[0]! + vp.get(r, 1) * x[1]! + vp.get(r, 2) * x[2]! + vp.get(r, 3));
-    const toPx = (c: number[]) => [(c[0]! / c[3]! * 0.5 + 0.5) * N, (-c[1]! / c[3]! * 0.5 + 0.5) * N];
+    const clip = (x: number[]) =>
+        [0, 1, 2, 3].map((r) => vp.get(r, 0) * x[0]! + vp.get(r, 1) * x[1]! + vp.get(r, 2) * x[2]! + vp.get(r, 3));
+    const toPx = (c: number[]) => [((c[0]! / c[3]!) * 0.5 + 0.5) * N, ((-c[1]! / c[3]!) * 0.5 + 0.5) * N];
     const vd = (x: number[]) => (x[0]! - C[0]!) * fwd[0]! + (x[1]! - C[1]!) * fwd[1]! + (x[2]! - C[2]!) * fwd[2]!;
-    const sceneD = (qx: number, qy: number) => { const k = (qy * N + qx) * 4; return pos[k + 3] !== 0 ? vd([pos[k]!, pos[k + 1]!, pos[k + 2]!]) : kFar; };
-    const acc = new Float64Array(N * N * 4), depth = new Float32Array(N * N).fill(kFar);
+    const sceneD = (qx: number, qy: number) => {
+        const k = (qy * N + qx) * 4;
+        return pos[k + 3] !== 0 ? vd([pos[k]!, pos[k + 1]!, pos[k + 2]!]) : kFar;
+    };
+    const acc = new Float64Array(N * N * 4);
+    const depth = new Float32Array(N * N).fill(kFar);
     const half = Math.max(p.width, 0.1) * 0.5;
     let drawn = 0;
     for (let i = 0; i < p.count; i++) {
         const base = [0, 1, 2].map((s) => rnd(i, s, p.seed) * p.box);
         const sp = p.speed * (1 + p.speedJitter * (rnd(i, 3, p.seed) - 0.5));
         const vel = [p.wind[0]!, -sp + p.wind[1]!, p.wind[2]!];
-        const head = [0, 1, 2].map((c) => { const o = C[c]! - 0.5 * p.box; let q = base[c]! + vel[c]! * p.time - o; q -= p.box * Math.floor(q / p.box); return o + q; });
+        const head = [0, 1, 2].map((c) => {
+            const o = C[c]! - 0.5 * p.box;
+            let q = base[c]! + vel[c]! * p.time - o;
+            q -= p.box * Math.floor(q / p.box);
+            return o + q;
+        });
         const tail = [0, 1, 2].map((c) => head[c]! - vel[c]! * p.exposure);
-        const dh = vd(head), dtl = vd(tail);
+        const dh = vd(head);
+        const dtl = vd(tail);
         if (dh < p.near || dtl < p.near) continue;
         const rel = Math.max(...[0, 1, 2].map((c) => Math.abs(head[c]! - C[c]!) / (0.5 * p.box)));
         const fade = sat((1 - rel) * 4);
@@ -235,16 +378,30 @@ function rainCpu(scene: Scene, p: RainParams, pos: Float32Array, skip?: (head: n
         const a = toPx(clip(head));
         let b = toPx(clip(tail));
         let ab = [b[0]! - a[0]!, b[1]! - a[1]!];
-        let len = Math.hypot(ab[0]!, ab[1]!), dTail = dtl;
-        if (len > p.maxLengthPx) { const s = p.maxLengthPx / len; b = [a[0]! + ab[0]! * s, a[1]! + ab[1]! * s]; dTail = dh + (dtl - dh) * s; ab = [b[0]! - a[0]!, b[1]! - a[1]!]; len = p.maxLengthPx; }
-        if ((Math.max(a[0]!, b[0]!) < -4 && Math.max(a[1]!, b[1]!) < -4) || Math.min(a[0]!, b[0]!) > N + 4 || Math.min(a[1]!, b[1]!) > N + 4) continue;
+        let len = Math.hypot(ab[0]!, ab[1]!);
+        let dTail = dtl;
+        if (len > p.maxLengthPx) {
+            const s = p.maxLengthPx / len;
+            b = [a[0]! + ab[0]! * s, a[1]! + ab[1]! * s];
+            dTail = dh + (dtl - dh) * s;
+            ab = [b[0]! - a[0]!, b[1]! - a[1]!];
+            len = p.maxLengthPx;
+        }
+        if (
+            (Math.max(a[0]!, b[0]!) < -4 && Math.max(a[1]!, b[1]!) < -4) ||
+            Math.min(a[0]!, b[0]!) > N + 4 ||
+            Math.min(a[1]!, b[1]!) > N + 4
+        )
+            continue;
         drawn++;
         const w0 = p.opacity * fade;
         const xMajor = Math.abs(ab[0]!) >= Math.abs(ab[1]!);
         const dir = len > 1e-6 ? [ab[0]! / len, ab[1]! / len] : [0, 1];
         const nrm = [-dir[1]!, dir[0]!];
-        const a0 = xMajor ? a[0]! : a[1]!, a1 = xMajor ? b[0]! : b[1]!;
-        const m0 = Math.floor(Math.min(a0, a1)), m1 = Math.floor(Math.max(a0, a1));
+        const a0 = xMajor ? a[0]! : a[1]!;
+        const a1 = xMajor ? b[0]! : b[1]!;
+        const m0 = Math.floor(Math.min(a0, a1));
+        const m1 = Math.floor(Math.max(a0, a1));
         const r = Math.ceil(half) + 1;
         const span = xMajor ? ab[0]! : ab[1]!;
         for (let m = m0; m <= m1; m++) {
@@ -252,8 +409,10 @@ function rainCpu(scene: Scene, p: RainParams, pos: Float32Array, skip?: (head: n
             const c = [a[0]! + ab[0]! * t, a[1]! + ab[1]! * t];
             const minorC = Math.floor(xMajor ? c[1]! : c[0]!);
             for (let n = minorC - r; n <= minorC + r; n++) {
-                const qx = xMajor ? m : n, qy = xMajor ? n : m;
-                const pcx = qx + 0.5 - a[0]!, pcy = qy + 0.5 - a[1]!;
+                const qx = xMajor ? m : n;
+                const qy = xMajor ? n : m;
+                const pcx = qx + 0.5 - a[0]!;
+                const pcy = qy + 0.5 - a[1]!;
                 const tt = len > 1e-6 ? sat((pcx * dir[0]! + pcy * dir[1]!) / len) : 0;
                 const dist = Math.abs(pcx * nrm[0]! + pcy * nrm[1]!);
                 const along = pcx * dir[0]! + pcy * dir[1]!;
@@ -277,7 +436,22 @@ function rainCpu(scene: Scene, p: RainParams, pos: Float32Array, skip?: (head: n
     return { rgba, depth, drawn };
 }
 
-const kRain: RainParams = { count: 600, seed: 5, box: 6, speed: 8, speedJitter: 0.3, wind: [1.5, 0, -0.5], exposure: 0.03, width: 1.5, maxLengthPx: 40, colour: [0.7, 0.8, 1.0], intensity: 1.2, opacity: 0.5, near: 0.2, time: 0.7 };
+const kRain: RainParams = {
+    count: 600,
+    seed: 5,
+    box: 6,
+    speed: 8,
+    speedJitter: 0.3,
+    wind: [1.5, 0, -0.5],
+    exposure: 0.03,
+    width: 1.5,
+    maxLengthPx: 40,
+    colour: [0.7, 0.8, 1.0],
+    intensity: 1.2,
+    opacity: 0.5,
+    near: 0.2,
+    time: 0.7,
+};
 
 function rainGraph(device: Device, scene: Scene, props: Record<string, unknown>, outputs: string[], dc = false): RenderGraph {
     const passes: PassDecl[] = [["RainLayer", "R", props]];
@@ -285,7 +459,14 @@ function rainGraph(device: Device, scene: Scene, props: Record<string, unknown>,
     if (dc) {
         passes.unshift(["DeferredLighting", "L", { brdf: "LambertGGX", shadowMode: "None" }]);
         passes.push(["DepthComposite", "D", { alphaMode: "premultiplied" }]);
-        edges.push(["G.vbuffer", "L.vbuffer"], ["G.viewW", "L.viewW"], ["L.color", "D.src"], ["G.posW", "D.posW"], ["R.color", "D.layer"], ["R.depth", "D.layerDepth"]);
+        edges.push(
+            ["G.vbuffer", "L.vbuffer"],
+            ["G.viewW", "L.viewW"],
+            ["L.color", "D.src"],
+            ["G.posW", "D.posW"],
+            ["R.color", "D.layer"],
+            ["R.depth", "D.layerDepth"],
+        );
     }
     return buildGraph(device, scene, passes, edges, outputs, kSize, kSize);
 }
@@ -296,25 +477,36 @@ gpuTest("RainLayer.cpuParity", async ({ device }) => {
     setPose(scene, kPoseA);
     const g = rainGraph(device, scene, kRain, ["R.color", "R.depth"]);
     g.execute(device.renderContext);
-    const col = await read(device, g.getOutput("R.color")!), dep = await read(device, g.getOutput("R.depth")!), pos = await read(device, g.getOutput("G.posW")!);
+    const col = await read(device, g.getOutput("R.color")!);
+    const dep = await read(device, g.getOutput("R.depth")!);
+    const pos = await read(device, g.getOutput("G.posW")!);
     const ref = rainCpu(scene, kRain, pos);
-    let off = 0, lit = 0, maxErr = 0, depthOff = 0, occl = 0;
+    let off = 0;
+    let lit = 0;
+    let maxErr = 0;
+    let depthOff = 0;
+    let occl = 0;
     for (let k = 0; k < kSize * kSize; k++) {
         let e = 0;
         for (let c = 0; c < 4; c++) e = Math.max(e, Math.abs(col[k * 4 + c]! - ref.rgba[k * 4 + c]!));
         if (col[k * 4 + 3]! > 0 || ref.rgba[k * 4 + 3]! > 0) lit++;
         if (e > 2e-3) off++;
         else maxErr = Math.max(maxErr, e);
-        const gd = dep[k * 4]!, rd = ref.depth[k]!;
+        const gd = dep[k * 4]!;
+        const rd = ref.depth[k]!;
         if ((gd === kFar) !== (rd === kFar) || (gd !== kFar && Math.abs(gd - rd) > 1e-4 * Math.max(1, rd))) depthOff++;
         if (col[k * 4 + 3]! > 0 && pos[k * 4 + 3] !== 0) {
-            const cam = scene.camera.getPosition(), t = scene.camera.getTarget();
-            const f = [t.x - cam.x, t.y - cam.y, t.z - cam.z], fl = Math.hypot(f[0]!, f[1]!, f[2]!);
+            const cam = scene.camera.getPosition();
+            const t = scene.camera.getTarget();
+            const f = [t.x - cam.x, t.y - cam.y, t.z - cam.z];
+            const fl = Math.hypot(f[0]!, f[1]!, f[2]!);
             const sd = ((pos[k * 4]! - cam.x) * f[0]! + (pos[k * 4 + 1]! - cam.y) * f[1]! + (pos[k * 4 + 2]! - cam.z) * f[2]!) / fl;
             if (gd > sd * (1 + 1e-5)) occl++;
         }
     }
-    log(`RainLayer parity: drops drawn ${ref.drawn}/${kRain.count}, layer px ${lit}, off-ref (> 2e-3) ${off}, max err of the rest ${maxErr.toExponential(2)}, depth mismatches ${depthOff}, streak px behind the scene ${occl}`);
+    log(
+        `RainLayer parity: drops drawn ${ref.drawn}/${kRain.count}, layer px ${lit}, off-ref (> 2e-3) ${off}, max err of the rest ${maxErr.toExponential(2)}, depth mismatches ${depthOff}, streak px behind the scene ${occl}`,
+    );
     expectEq(ref.drawn > 100 && lit > 1000, true, "enough streaks on screen");
     expectEq(off <= Math.ceil(0.005 * lit), true, "<= 0.5 % of the layer pixels off the CPU splat");
     expectEq(depthOff <= Math.ceil(0.005 * lit), true, "nearest-streak depth matches");
@@ -328,7 +520,10 @@ gpuTest("RainLayer.statelessTimeDrivenAndIdentity", async ({ device }) => {
     const outs = ["R.color", "R.depth"];
     const g = rainGraph(device, scene, kRain, outs);
     const frames: Float32Array[] = [];
-    for (let f = 0; f < 3; f++) { g.execute(device.renderContext); frames.push(await read(device, g.getOutput("R.color")!)); }
+    for (let f = 0; f < 3; f++) {
+        g.execute(device.renderContext);
+        frames.push(await read(device, g.getOutput("R.color")!));
+    }
     const g2 = rainGraph(device, scene, kRain, outs);
     g2.execute(device.renderContext);
     const fresh = await read(device, g2.getOutput("R.color")!);
@@ -339,16 +534,27 @@ gpuTest("RainLayer.statelessTimeDrivenAndIdentity", async ({ device }) => {
     const moved = !bitwiseEqual(frames[0]!, later);
     // identity through DepthComposite
     const id: boolean[] = [];
-    for (const props of [{ ...kRain, opacity: 0 }, { ...kRain, count: 0 }]) {
+    for (const props of [
+        { ...kRain, opacity: 0 },
+        { ...kRain, count: 0 },
+    ]) {
         const gi = rainGraph(device, scene, props, ["D.dst", "L.color", "R.color"], true);
         gi.execute(device.renderContext);
-        const d = await read(device, gi.getOutput("D.dst")!), l = await read(device, gi.getOutput("L.color")!), r = await read(device, gi.getOutput("R.color")!);
+        const d = await read(device, gi.getOutput("D.dst")!);
+        const l = await read(device, gi.getOutput("L.color")!);
+        const r = await read(device, gi.getOutput("R.color")!);
         id.push(bitwiseEqual(d, l) && r.every((v) => v === 0));
     }
-    log(`RainLayer: same time on 3 frames + fresh graph bitwise ${same}; time + 0.05 s differs ${moved}; opacity 0 / count 0 -> empty layer, DepthComposite identity ${id.join(", ")}`);
+    log(
+        `RainLayer: same time on 3 frames + fresh graph bitwise ${same}; time + 0.05 s differs ${moved}; opacity 0 / count 0 -> empty layer, DepthComposite identity ${id.join(", ")}`,
+    );
     expectEq(same, true, "stateless: same time = same layer");
     expectEq(moved, true, "the rain moves with time");
-    expectEq(id.every((x) => x), true, "empty layer = identity");
+    expectEq(
+        id.every((x) => x),
+        true,
+        "empty layer = identity",
+    );
 });
 
 // ------------------------------------------------------------------------------------------------ rainy-night chain
@@ -363,9 +569,19 @@ function rainyNight(device: Device, scene: Scene, ssrTemporal: boolean, outputs:
         ["DepthComposite", "D", { alphaMode: "premultiplied" }],
     ];
     const edges: [string, string][] = [
-        ...kWetEdges, ["G.depth", "Z.depth"],
-        ["W.dst", "S.color"], ["G.depth", "S.depth"], ["W.normWOut", "S.normW"], ["W.specRoughOut", "S.specRough"], ["Z.hiz", "S.hiz"], ["G.mvec", "S.mvec"],
-        ["G.posW", "R.posW"], ["S.dst", "D.src"], ["G.posW", "D.posW"], ["R.color", "D.layer"], ["R.depth", "D.layerDepth"],
+        ...kWetEdges,
+        ["G.depth", "Z.depth"],
+        ["W.dst", "S.color"],
+        ["G.depth", "S.depth"],
+        ["W.normWOut", "S.normW"],
+        ["W.specRoughOut", "S.specRough"],
+        ["Z.hiz", "S.hiz"],
+        ["G.mvec", "S.mvec"],
+        ["G.posW", "R.posW"],
+        ["S.dst", "D.src"],
+        ["G.posW", "D.posW"],
+        ["R.color", "D.layer"],
+        ["R.depth", "D.layerDepth"],
     ];
     return buildGraph(device, scene, passes, edges, outputs, kSize, kSize);
 }
@@ -373,10 +589,22 @@ function rainyNight(device: Device, scene: Scene, ssrTemporal: boolean, outputs:
 gpuTest("RainyNight.coldVsConsecutive", async ({ device }) => {
     const scene = makeScene(device, kSky);
     const outs = ["D.dst", "S.reflection", "W.wetness"];
-    const res = await coldVsConsecutive(device, scene, () => rainyNight(device, scene, true, outs), outs, ["camera-reset", "prime", "explicit", "none"]);
-    for (const r of res) log(`RainyNight (wetness + SSR temporal + rain) cold vs consecutive [${r.method}]: X frames bitwise equal ${r.equalFrames}/${r.frames} (cold drift ${r.coldDrift})`);
+    const res = await coldVsConsecutive(device, scene, () => rainyNight(device, scene, true, outs), outs, [
+        "camera-reset",
+        "prime",
+        "explicit",
+        "none",
+    ]);
+    for (const r of res)
+        log(
+            `RainyNight (wetness + SSR temporal + rain) cold vs consecutive [${r.method}]: X frames bitwise equal ${r.equalFrames}/${r.frames} (cold drift ${r.coldDrift})`,
+        );
     for (const r of res.filter((r) => r.method !== "none")) expectEq(r.equalFrames, r.frames, `cold = consecutive after ${r.method}`);
-    expectEq(res.find((r) => r.method === "none")!.differs.some((d) => d), true, "without a cut SSR's history changes X (control)");
+    expectEq(
+        res.find((r) => r.method === "none")!.differs.some((d) => d),
+        true,
+        "without a cut SSR's history changes X (control)",
+    );
     const off = await coldVsConsecutive(device, scene, () => rainyNight(device, scene, false, outs), outs, ["none"]);
     log(`RainyNight, SSR temporal off, no cut: X frames bitwise equal ${off[0]!.equalFrames}/${off[0]!.frames}`);
     expectEq(off[0]!.equalFrames, off[0]!.frames, "temporal off: the chain keeps no state");
@@ -386,7 +614,8 @@ gpuTest("RainyNight.coldVsConsecutive", async ({ device }) => {
 
 /** Up-ray (+y) from x hits the test scene: floor quad (y = 0, |x|,|z| <= 6) or one of the boxes (origin below its top). */
 function roofed(x: number[]): boolean {
-    const under = (lo: number[], hi: number[]) => x[0]! >= lo[0]! && x[0]! <= hi[0]! && x[2]! >= lo[2]! && x[2]! <= hi[2]! && x[1]! < hi[1]!;
+    const under = (lo: number[], hi: number[]) =>
+        x[0]! >= lo[0]! && x[0]! <= hi[0]! && x[2]! >= lo[2]! && x[2]! <= hi[2]! && x[1]! < hi[1]!;
     return under([-6, 0, -6], [6, 0, 6]) || under(kBoxA[0], kBoxA[1]) || under(kBoxB[0], kBoxB[1]);
 }
 
@@ -409,16 +638,25 @@ gpuTest("RainLayer.skyOcclusion", async ({ device }) => {
     const render = async (props: Record<string, unknown>) => {
         const g = rainGraph(device, scene, props, outs);
         g.execute(device.renderContext);
-        return { col: await read(device, g.getOutput("R.color")!), dep: await read(device, g.getOutput("R.depth")!), pos: await read(device, g.getOutput("G.posW")!) };
+        return {
+            col: await read(device, g.getOutput("R.color")!),
+            dep: await read(device, g.getOutput("R.depth")!),
+            pos: await read(device, g.getOutput("G.posW")!),
+        };
     };
     // (a) default hashes (compare with the pass before the option existed) and explicit "None" = default
     const hashes: string[] = [];
     let explicitNone = true;
-    for (const [name, pose] of [["A", kPoseA], ["under", kPoseUnder]] as const) {
+    for (const [name, pose] of [
+        ["A", kPoseA],
+        ["under", kPoseUnder],
+    ] as const) {
         setPose(scene, pose);
         // Default before and after the explicit render: equal to either (see coldVsConsecutive on drivers that re-optimise
         // a pipeline after creation).
-        const d = await render(kRain), n = await render({ ...kRain, skyOcclusion: "None" }), d2 = await render(kRain);
+        const d = await render(kRain);
+        const n = await render({ ...kRain, skyOcclusion: "None" });
+        const d2 = await render(kRain);
         hashes.push(`${name}: color=${fnv(d.col)} depth=${fnv(d.dep)}`);
         const eq = (a: typeof d, b: typeof d) => bitwiseEqual(a.col, b.col) && bitwiseEqual(a.dep, b.dep);
         explicitNone &&= eq(n, d) || eq(n, d2);
@@ -427,23 +665,41 @@ gpuTest("RainLayer.skyOcclusion", async ({ device }) => {
     // (b) both poses: RayTraced vs the CPU splat without roofed drops, and vs None
     let ok = explicitNone;
     const lines: string[] = [];
-    for (const [name, pose, p] of [["above", kPoseA, kRain], ["under", kPoseUnder, kRainUnder]] as const) {
+    for (const [name, pose, p] of [
+        ["above", kPoseA, kRain],
+        ["under", kPoseUnder, kRainUnder],
+    ] as const) {
         setPose(scene, pose);
         // None before and after RayTraced: an open-sky pixel must equal one of them bit for bit (the splat program is the
         // same in both modes; the two None renders only differ if the driver re-optimised it in between).
-        const un = await render(p), ur = await render({ ...p, skyOcclusion: "RayTraced" }), un2 = await render(p);
-        const all = rainCpu(scene, p, un.pos), open = rainCpu(scene, p, un.pos, roofed);
-        let off = 0, lit = 0, depthOff = 0, maxErr = 0, roofPx = 0, roofLeft = 0, openPx = 0, openChanged = 0;
+        const un = await render(p);
+        const ur = await render({ ...p, skyOcclusion: "RayTraced" });
+        const un2 = await render(p);
+        const all = rainCpu(scene, p, un.pos);
+        const open = rainCpu(scene, p, un.pos, roofed);
+        let off = 0;
+        let lit = 0;
+        let depthOff = 0;
+        let maxErr = 0;
+        let roofPx = 0;
+        let roofLeft = 0;
+        let openPx = 0;
+        let openChanged = 0;
         for (let k = 0; k < kSize * kSize; k++) {
             let e = 0;
             for (let c = 0; c < 4; c++) e = Math.max(e, Math.abs(ur.col[k * 4 + c]! - open.rgba[k * 4 + c]!));
             if (ur.col[k * 4 + 3]! > 0 || open.rgba[k * 4 + 3]! > 0) lit++;
             if (e > 2e-3) off++;
             else maxErr = Math.max(maxErr, e);
-            const gd = ur.dep[k * 4]!, rd = open.depth[k]!;
+            const gd = ur.dep[k * 4]!;
+            const rd = open.depth[k]!;
             if ((gd === kFar) !== (rd === kFar) || (gd !== kFar && Math.abs(gd - rd) > 1e-4 * Math.max(1, rd))) depthOff++;
-            const allA = all.rgba[k * 4 + 3]!, openA = open.rgba[k * 4 + 3]!;
-            if (allA > 0 && openA === 0) { roofPx++; if (ur.col[k * 4 + 3]! !== 0) roofLeft++; }
+            const allA = all.rgba[k * 4 + 3]!;
+            const openA = open.rgba[k * 4 + 3]!;
+            if (allA > 0 && openA === 0) {
+                roofPx++;
+                if (ur.col[k * 4 + 3]! !== 0) roofLeft++;
+            }
             let sameRef = all.depth[k] === open.depth[k];
             for (let c = 0; c < 4; c++) sameRef &&= all.rgba[k * 4 + c] === open.rgba[k * 4 + c];
             if (openA > 0 && sameRef) {
@@ -456,8 +712,15 @@ gpuTest("RainLayer.skyOcclusion", async ({ device }) => {
                 if (!sameAs(un) && !sameAs(un2)) openChanged++;
             }
         }
-        lines.push(`${name}: drops drawn ${all.drawn} -> ${open.drawn} (CPU), layer px ${lit}, off-ref (> 2e-3) ${off}, max err ${maxErr.toExponential(2)}, depth mismatches ${depthOff}; roof-only px ${roofPx} (still lit ${roofLeft}); open-sky px ${openPx} (changed vs None ${openChanged})`);
-        ok &&= off <= Math.ceil(0.005 * lit) && depthOff <= Math.ceil(0.005 * lit) && openPx > 200 && openChanged === 0 && roofLeft <= Math.ceil(0.005 * roofPx);
+        lines.push(
+            `${name}: drops drawn ${all.drawn} -> ${open.drawn} (CPU), layer px ${lit}, off-ref (> 2e-3) ${off}, max err ${maxErr.toExponential(2)}, depth mismatches ${depthOff}; roof-only px ${roofPx} (still lit ${roofLeft}); open-sky px ${openPx} (changed vs None ${openChanged})`,
+        );
+        ok &&=
+            off <= Math.ceil(0.005 * lit) &&
+            depthOff <= Math.ceil(0.005 * lit) &&
+            openPx > 200 &&
+            openChanged === 0 &&
+            roofLeft <= Math.ceil(0.005 * roofPx);
         if (name === "under") ok &&= all.drawn - open.drawn > 50 && open.drawn > 50 && roofPx > 200;
     }
     log(`RainLayer sky occlusion: explicit None = default ${explicitNone}; ${lines.join("; ")}`);
