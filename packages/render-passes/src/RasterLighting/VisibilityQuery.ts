@@ -28,27 +28,32 @@ import { VisibilityService, kDefaultVisibilityParams, kVisibilityModes, type Vis
 
 const kShaderFile = "RenderPasses/RasterLighting/VisibilityQuery.cs.slang";
 
+/** Queries the shared shadow-map or ray-traced visibility service. */
 export class VisibilityQuery extends RenderPass {
-    private pass: ComputePass | null = null;
-    private passKey = "";
-    private mode: VisibilityMode = "ShadowMap";
-    private p = { lightIndex: -1, ...kDefaultVisibilityParams };
+    private mPass: ComputePass | null = null;
+    private mPassKey: string = "";
+    private mMode: VisibilityMode = "ShadowMap";
+    private mParameters: { depthBias: number; normalBias: number; pcfRadius: number; lightIndex: number } = {
+        lightIndex: -1,
+        ...kDefaultVisibilityParams,
+    };
 
     constructor(device: Device, props: Properties) {
         super(device);
-        this.mode = VisibilityService.parseMode("VisibilityQuery", props.get<string>("mode", "ShadowMap"));
-        for (const k of Object.keys(this.p) as (keyof typeof this.p)[]) this.p[k] = Number(props.get(k, this.p[k]));
+        this.mMode = VisibilityService.parseMode("VisibilityQuery", props.get<string>("mode", "ShadowMap"));
+        for (const k of Object.keys(this.mParameters) as (keyof typeof this.mParameters)[])
+            this.mParameters[k] = Number(props.get(k, this.mParameters[k]));
     }
 
     override getProperties(): Properties {
-        return new Properties({ mode: this.mode, ...this.p });
+        return new Properties({ mode: this.mMode, ...this.mParameters });
     }
 
     override renderUI(ui: UIWidgets): void {
-        ui.dropdown("Mode", [...kVisibilityModes], this.mode, (v) => (this.mode = v as VisibilityMode));
-        ui.slider("Depth bias (world)", this.p.depthBias, 0, 0.1, 0.0005, (v) => (this.p.depthBias = v));
-        ui.slider("Normal bias (texels)", this.p.normalBias, 0, 8, 0.1, (v) => (this.p.normalBias = v));
-        ui.slider("PCF radius", this.p.pcfRadius, 0, 4, 1, (v) => (this.p.pcfRadius = Math.round(v)));
+        ui.dropdown("Mode", [...kVisibilityModes], this.mMode, (v) => (this.mMode = v as VisibilityMode));
+        ui.slider("Depth bias (world)", this.mParameters.depthBias, 0, 0.1, 0.0005, (v) => (this.mParameters.depthBias = v));
+        ui.slider("Normal bias (texels)", this.mParameters.normalBias, 0, 8, 0.1, (v) => (this.mParameters.normalBias = v));
+        ui.slider("PCF radius", this.mParameters.pcfRadius, 0, 4, 1, (v) => (this.mParameters.pcfRadius = Math.round(v)));
     }
 
     override reflect(compileData: CompileData): RenderPassReflection {
@@ -65,8 +70,8 @@ export class VisibilityQuery extends RenderPass {
 
     override setScene(scene: typeof this.scene): void {
         super.setScene(scene);
-        this.pass = null;
-        this.passKey = "";
+        this.mPass = null;
+        this.mPassKey = "";
     }
 
     override execute(ctx: RenderContext, renderData: RenderData): void {
@@ -75,21 +80,21 @@ export class VisibilityQuery extends RenderPass {
             ctx.clearTexture(out, [1, 0, 0, 0]);
             return;
         }
-        const vis = VisibilityService.resolve(this.mode, renderData, this.scene, this.p.lightIndex);
+        const vis = VisibilityService.resolve(this.mMode, renderData, this.scene, this.mParameters.lightIndex);
         const defines = this.scene.getSceneDefines().addAll(vis.defines);
         const key = defines.key();
-        if (!this.pass || key !== this.passKey) {
-            this.pass = ComputePass.create(this.device, { path: kShaderFile, defines });
-            this.passKey = key;
+        if (!this.mPass || key !== this.mPassKey) {
+            this.mPass = ComputePass.create(this.device, { path: kShaderFile, defines });
+            this.mPassKey = key;
         }
-        const root = this.pass.getRootVar();
+        const root = this.mPass.getRootVar();
         this.scene.bindShaderData(root);
         root["CB"]!["gFrameDim"] = [out.width, out.height];
         root["CB"]!["gLightIndex"] = vis.lightIndex;
-        vis.bind(root, this.p);
+        vis.bind(root, this.mParameters);
         root["gVBuffer"] = renderData.getTexture("vbuffer")!;
         root["gOutput"] = out;
-        this.pass.execute(ctx, out.width, out.height);
+        this.mPass.execute(ctx, out.width, out.height);
     }
 }
 

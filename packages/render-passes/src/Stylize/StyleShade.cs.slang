@@ -158,7 +158,11 @@ uint findRecord(uint materialId)
 float styledDiffuseFactor(const StyleRecord s, float NoL, float NoV)
 {
     if (s.diffuseModel == 1) return max((NoL + s.wrap) / (1.f + s.wrap), 0.f);
-    if (s.diffuseModel == 2) { const float h = 0.5f * NoL + 0.5f; return h * h; }
+    if (s.diffuseModel == 2)
+    {
+        const float h = 0.5f * NoL + 0.5f;
+        return h * h;
+    }
     if (s.diffuseModel == 3)
     {
         if (NoL <= 0.f) return 0.f;

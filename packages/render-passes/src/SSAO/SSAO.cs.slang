@@ -33,11 +33,22 @@ Texture2D<float4> gNormW;
 Texture2D<float4> gRaw;
 RWTexture2D<float4> gOut;
 
-float3 toView(float3 p) { float4 q = float4(p, 1.f); return float3(dot(gViewRow0, q), dot(gViewRow1, q), dot(gViewRow2, q)); }
-float3 dirToView(float3 d) { float4 q = float4(d, 0.f); return float3(dot(gViewRow0, q), dot(gViewRow1, q), dot(gViewRow2, q)); }
+float3 toView(float3 p)
+{
+    float4 q = float4(p, 1.f);
+    return float3(dot(gViewRow0, q), dot(gViewRow1, q), dot(gViewRow2, q));
+}
+float3 dirToView(float3 d)
+{
+    float4 q = float4(d, 0.f);
+    return float3(dot(gViewRow0, q), dot(gViewRow1, q), dot(gViewRow2, q));
+}
 
 /** Interleaved gradient noise (Jimenez 2014). */
-float ign(float2 p) { return frac(52.9829189f * frac(dot(p, float2(0.06711056f, 0.00583715f)))); }
+float ign(float2 p)
+{
+    return frac(52.9829189f * frac(dot(p, float2(0.06711056f, 0.00583715f))));
+}
 
 float fastAcos(float x)
 {
@@ -51,7 +62,11 @@ void aoMain(uint3 tid: SV_DispatchThreadID)
     const uint2 pix = tid.xy;
     if (any(pix >= gFrameDim)) return;
     const float4 pw = gPosW[pix];
-    if (pw.w == 0.f) { gOut[pix] = float4(1.f); return; }
+    if (pw.w == 0.f)
+    {
+        gOut[pix] = float4(1.f);
+        return;
+    }
 
     const float3 P = toView(pw.xyz);
     const float3 V = normalize(-P);
@@ -60,7 +75,11 @@ void aoMain(uint3 tid: SV_DispatchThreadID)
 
     const float depth = max(-P.z, 1e-4f);
     const float rPx = min(gRadius * gFocalPx / depth, gMaxPixelRadius);
-    if (rPx < 1.f) { gOut[pix] = float4(1.f); return; }
+    if (rPx < 1.f)
+    {
+        gOut[pix] = float4(1.f);
+        return;
+    }
     const float falloffRange = max(gFalloff * gRadius, 1e-4f);
     const float falloffFrom = gRadius - falloffRange;
 
@@ -142,7 +161,11 @@ void blurMain(uint3 tid: SV_DispatchThreadID)
     const uint2 pix = tid.xy;
     if (any(pix >= gFrameDim)) return;
     const float4 pw = gPosW[pix];
-    if (pw.w == 0.f) { gOut[pix] = float4(1.f); return; }
+    if (pw.w == 0.f)
+    {
+        gOut[pix] = float4(1.f);
+        return;
+    }
     const float z0 = -toView(pw.xyz).z;
     const float3 n0 = gNormW[pix].xyz;
     float sum = 0.f, wsum = 0.f;

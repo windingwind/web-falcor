@@ -63,10 +63,12 @@ import { HistoryTracker, PingPongTextures } from "../Utils/History.js";
 import { addColorOutput, addTexInput, dummyTexture, keyLightDir, parseColour } from "../Stylize/StyleCommon.js";
 
 const kShaderFile = "RenderPasses/VolumetricClouds/VolumetricClouds.cs.slang";
+/** Ordered option names; preserve this order for numeric property compatibility. */
 const kResolutions = ["full", "half", "quarter"] as const;
 /** Layer depth where a pixel has no cloud (behind any surface). */
 export const kCloudNoDepth = 2.9e38;
 
+/** Cloud geometry, weather, lighting, raymarch and temporal accumulation parameters. */
 export interface VolumetricCloudsParams {
     coverage: number;
     cloudType: number;
@@ -161,7 +163,11 @@ const norm3 = (v: readonly number[]): V3 => {
     return [v[0]! / l, v[1]! / l, v[2]! / l];
 };
 const dot = (a: readonly number[], b: readonly number[]) => a[0]! * b[0]! + a[1]! * b[1]! + a[2]! * b[2]!;
-const cross = (a: readonly number[], b: readonly number[]): V3 => [a[1]! * b[2]! - a[2]! * b[1]!, a[2]! * b[0]! - a[0]! * b[2]!, a[0]! * b[1]! - a[1]! * b[0]!];
+const cross = (a: readonly number[], b: readonly number[]): V3 => [
+    a[1]! * b[2]! - a[2]! * b[1]!,
+    a[2]! * b[0]! - a[0]! * b[2]!,
+    a[0]! * b[1]! - a[1]! * b[0]!,
+];
 const v3 = (a: unknown, d: readonly number[]): V3 => {
     if (typeof a === "number") return [a, a, a];
     const x = Array.isArray(a) ? a.map(Number) : d;
@@ -204,19 +210,28 @@ export function resolveVolumetricCloudsParams(p: Partial<VolumetricCloudsParams>
     r.fadeDistance = Math.max(0, Number(r.fadeDistance));
     r.seed = Math.max(0, Math.floor(Number(r.seed))) >>> 0;
     r.temporalBlend = cl(r.temporalBlend, 0, 0.99);
-    if (!(kResolutions as readonly string[]).includes(r.resolution)) throw new Error(`VolumetricClouds: resolution must be one of ${kResolutions.join("|")} (got ${r.resolution})`);
+    if (!(kResolutions as readonly string[]).includes(r.resolution))
+        throw new Error(`VolumetricClouds: resolution must be one of ${kResolutions.join("|")} (got ${r.resolution})`);
     r.temporal = !!r.temporal;
     return r;
 }
 
 /** Camera state as used by the kernels (Falcor camera data: pixel ray = ndc.x * U + ndc.y * V + W). */
-export interface CloudCamera { pos: V3; U: V3; V: V3; W: V3 }
+export interface CloudCamera {
+    pos: V3;
+    U: V3;
+    V: V3;
+    W: V3;
+}
 
+/** Extracts the camera origin and ray basis used by the cloud kernels. */
 export function cloudCamera(scene: Scene): CloudCamera {
     const d = scene.camera.getData();
     return {
-        pos: [d.posW.x, d.posW.y, d.posW.z], U: [d.cameraU.x, d.cameraU.y, d.cameraU.z],
-        V: [d.cameraV.x, d.cameraV.y, d.cameraV.z], W: [d.cameraW.x, d.cameraW.y, d.cameraW.z],
+        pos: [d.posW.x, d.posW.y, d.posW.z],
+        U: [d.cameraU.x, d.cameraU.y, d.cameraU.z],
+        V: [d.cameraV.x, d.cameraV.y, d.cameraV.z],
+        W: [d.cameraW.x, d.cameraW.y, d.cameraW.z],
     };
 }
 
@@ -224,7 +239,9 @@ export function cloudCamera(scene: Scene): CloudCamera {
 export interface CloudFrame {
     p: VolumetricCloudsParams;
     cam: CloudCamera;
-    up: V3; e1: V3; e2: V3;
+    up: V3;
+    e1: V3;
+    e2: V3;
     altitude: number;
     light: V3;
     lightRgb: V3;
@@ -232,13 +249,19 @@ export interface CloudFrame {
     salt: number;
 }
 
+/** Resolves cloud parameters and camera state into constants shared by the CPU reference and GPU kernels. */
 export function cloudFrameConstants(params: Partial<VolumetricCloudsParams>, cam: CloudCamera, light: readonly number[]): CloudFrame {
     const p = resolveVolumetricCloudsParams(params);
     const up = norm3(p.upAxis);
     const ref: V3 = Math.abs(up[0]) < 0.9 ? [1, 0, 0] : [0, 0, 1];
-    const e2 = norm3(cross(ref, up)), e1 = cross(up, e2);
+    const e2 = norm3(cross(ref, up));
+    const e1 = cross(up, e2);
     return {
-        p, cam, up, e1, e2,
+        p,
+        cam,
+        up,
+        e1,
+        e2,
         altitude: dot(cam.pos, up) - p.groundHeight,
         light: norm3(light),
         lightRgb: p.lightColor.map((c) => c * p.lightIntensity) as V3,
@@ -253,32 +276,53 @@ function pcg3d(x: number, y: number, z: number): [number, number, number] {
     x = (Math.imul(x, 1664525) + 1013904223) >>> 0;
     y = (Math.imul(y, 1664525) + 1013904223) >>> 0;
     z = (Math.imul(z, 1664525) + 1013904223) >>> 0;
-    x = (x + Math.imul(y, z)) >>> 0; y = (y + Math.imul(z, x)) >>> 0; z = (z + Math.imul(x, y)) >>> 0;
-    x = (x ^ (x >>> 16)) >>> 0; y = (y ^ (y >>> 16)) >>> 0; z = (z ^ (z >>> 16)) >>> 0;
-    x = (x + Math.imul(y, z)) >>> 0; y = (y + Math.imul(z, x)) >>> 0; z = (z + Math.imul(x, y)) >>> 0;
+    x = (x + Math.imul(y, z)) >>> 0;
+    y = (y + Math.imul(z, x)) >>> 0;
+    z = (z + Math.imul(x, y)) >>> 0;
+    x = (x ^ (x >>> 16)) >>> 0;
+    y = (y ^ (y >>> 16)) >>> 0;
+    z = (z ^ (z >>> 16)) >>> 0;
+    x = (x + Math.imul(y, z)) >>> 0;
+    y = (y + Math.imul(z, x)) >>> 0;
+    z = (z + Math.imul(x, y)) >>> 0;
     return [x, y, z];
 }
 const u01 = (u: number) => (u >>> 8) * (1 / 16777216);
 const mix = (a: number, b: number, t: number) => a + (b - a) * t;
 const sat = (x: number) => Math.min(Math.max(x, 0), 1);
-const sstep = (e0: number, e1: number, x: number) => { const t = sat((x - e0) / (e1 - e0)); return t * t * (3 - 2 * t); };
+const sstep = (e0: number, e1: number, x: number) => {
+    const t = sat((x - e0) / (e1 - e0));
+    return t * t * (3 - 2 * t);
+};
 
 function vnoise3(x: number, y: number, z: number, salt: number): number {
-    const ix = Math.floor(x), iy = Math.floor(y), iz = Math.floor(z);
-    const fx = x - ix, fy = y - iy, fz = z - iz;
-    const wx = fx * fx * (3 - 2 * fx), wy = fy * fy * (3 - 2 * fy), wz = fz * fz * (3 - 2 * fz);
+    const ix = Math.floor(x);
+    const iy = Math.floor(y);
+    const iz = Math.floor(z);
+    const fx = x - ix;
+    const fy = y - iy;
+    const fz = z - iz;
+    const wx = fx * fx * (3 - 2 * fx);
+    const wy = fy * fy * (3 - 2 * fy);
+    const wz = fz * fz * (3 - 2 * fz);
     const h = (a: number, b: number, c: number) => u01(pcg3d((ix + a) >>> 0, (iy + b) >>> 0, (((iz + c) | 0) ^ salt) >>> 0)[0]);
-    const x00 = mix(h(0, 0, 0), h(1, 0, 0), wx), x10 = mix(h(0, 1, 0), h(1, 1, 0), wx);
-    const x01 = mix(h(0, 0, 1), h(1, 0, 1), wx), x11 = mix(h(0, 1, 1), h(1, 1, 1), wx);
+    const x00 = mix(h(0, 0, 0), h(1, 0, 0), wx);
+    const x10 = mix(h(0, 1, 0), h(1, 1, 0), wx);
+    const x01 = mix(h(0, 0, 1), h(1, 0, 1), wx);
+    const x11 = mix(h(0, 1, 1), h(1, 1, 1), wx);
     return mix(mix(x00, x10, wy), mix(x01, x11, wy), wz);
 }
 
 function fbm3(x: number, y: number, z: number, oct: number, salt: number): number {
-    let s = 0, a = 0.5, n = 0;
+    let s = 0;
+    let a = 0.5;
+    let n = 0;
     for (let o = 0; o < oct; o++) {
         s += a * vnoise3(x, y, z, (salt + Math.imul(o, 7919)) >>> 0);
         n += a;
-        x = x * 2.03 + 17.1; y = y * 2.03 + 5.3; z = z * 2.03 + 11.7;
+        x = x * 2.03 + 17.1;
+        y = y * 2.03 + 5.3;
+        z = z * 2.03 + 11.7;
         a *= 0.5;
     }
     return s / n;
@@ -292,9 +336,12 @@ function heightProfile(h: number, t: number): number {
 }
 
 function altitudeOf(f: CloudFrame, r: readonly number[]): number {
-    const a = f.altitude, R = f.p.planetRadius, ru = dot(r, f.up);
+    const a = f.altitude;
+    const R = f.p.planetRadius;
+    const ru = dot(r, f.up);
     if (R <= 0) return a + ru;
-    const Ra = R + a, k = 2 * Ra * ru + dot(r, r);
+    const Ra = R + a;
+    const k = 2 * Ra * ru + dot(r, r);
     return a + k / (Math.sqrt(Math.max(Ra * Ra + k, 0)) + Ra);
 }
 
@@ -304,7 +351,8 @@ export function cloudDensity(f: CloudFrame, r: readonly number[], alt: number): 
     const h = (alt - p.cloudBottom) / (p.cloudTop - p.cloudBottom);
     if (h < 0 || h > 1) return 0;
     const q = [0, 1, 2].map((k) => f.cam.pos[k]! + r[k]! - f.offset[k]!);
-    const wu = dot(q, f.e1) * p.weatherScale, wv = dot(q, f.e2) * p.weatherScale;
+    const wu = dot(q, f.e1) * p.weatherScale;
+    const wv = dot(q, f.e2) * p.weatherScale;
     const wc = fbm3(wu, wv, 0.5, 3, (f.salt + 101) >>> 0);
     const cov = sat(p.coverage * (1 + p.weatherAmount * (2 * wc - 1)));
     if (cov <= 0) return 0;
@@ -320,18 +368,27 @@ export function cloudDensity(f: CloudFrame, r: readonly number[], alt: number): 
     return d;
 }
 
-const hg = (c: number, g: number) => { const den = 1 + g * g - 2 * g * c; return (0.0795774715459 * (1 - g * g)) / (den * Math.sqrt(den)); };
+const hg = (c: number, g: number) => {
+    const den = 1 + g * g - 2 * g * c;
+    return (0.0795774715459 * (1 - g * g)) / (den * Math.sqrt(den));
+};
 
 /** Slab interval [t0, t1] along unit dir (t1 <= t0: none). */
 export function cloudSlabInterval(f: CloudFrame, dir: readonly number[]): [number, number] {
-    const a = f.altitude, R = f.p.planetRadius, bot = f.p.cloudBottom, top = f.p.cloudTop, mu = dot(dir, f.up);
+    const a = f.altitude;
+    const R = f.p.planetRadius;
+    const bot = f.p.cloudBottom;
+    const top = f.p.cloudTop;
+    const mu = dot(dir, f.up);
     if (R <= 0) {
         if (a < bot) return mu > 0 ? [(bot - a) / mu, (top - a) / mu] : [0, -1];
         if (a > top) return mu < 0 ? [(top - a) / mu, (bot - a) / mu] : [0, -1];
         return [0, mu > 0 ? (top - a) / mu : mu < 0 ? (bot - a) / mu : 3e38];
     }
-    const Ra = R + a, b = Ra * mu;
-    const db = b * b + (bot - a) * (2 * R + bot + a), dt = b * b + (top - a) * (2 * R + top + a);
+    const Ra = R + a;
+    const b = Ra * mu;
+    const db = b * b + (bot - a) * (2 * R + bot + a);
+    const dt = b * b + (top - a) * (2 * R + top + a);
     if (a < bot) return [-b + Math.sqrt(Math.max(db, 0)), -b + Math.sqrt(Math.max(dt, 0))];
     if (a > top) return mu < 0 && dt >= 0 ? [-b - Math.sqrt(dt), db >= 0 ? -b - Math.sqrt(db) : -b + Math.sqrt(dt)] : [0, -1];
     return [0, mu < 0 && db >= 0 ? -b - Math.sqrt(db) : -b + Math.sqrt(Math.max(dt, 0))];
@@ -352,9 +409,12 @@ export function marchCloudRay(f: CloudFrame, dir: readonly number[], maxT = 3e38
     const p = f.p;
     const [t0, t1r] = cloudSlabInterval(f, dir);
     const t1 = Math.min(t1r, Math.min(maxT, p.maxDistance));
-    let S: V3 = [0, 0, 0], T = 1, front = -1;
+    let S: V3 = [0, 0, 0];
+    let T = 1;
+    let front = -1;
     if (!(t1 > t0)) return { S, T, front };
-    const n = Math.max(p.steps, 1), dt = (t1 - t0) / n;
+    const n = Math.max(p.steps, 1);
+    const dt = (t1 - t0) / n;
     const c = dot(dir, f.light);
     const phase = mix(hg(c, p.phaseForward), hg(c, p.phaseBackward), p.phaseMix);
     for (let i = 0; i < n; i++) {
@@ -366,7 +426,9 @@ export function marchCloudRay(f: CloudFrame, dir: readonly number[], maxT = 3e38
             if (front < 0) front = t;
             const sigma = d * p.density;
             const h = sat((alt - p.cloudBottom) / (p.cloudTop - p.cloudBottom));
-            let s = 0, ds = p.lightStep, od = 0;
+            let s = 0;
+            let ds = p.lightStep;
+            let od = 0;
             for (let k = 0; k < p.lightSteps; k++) {
                 const m = s + 0.5 * ds;
                 const rl = [r[0]! + f.light[0] * m, r[1]! + f.light[1] * m, r[2]! + f.light[2] * m];
@@ -379,7 +441,11 @@ export function marchCloudRay(f: CloudFrame, dir: readonly number[], maxT = 3e38
             const Tl = Math.exp(-p.density * od);
             const powder = mix(1, 1 - Math.exp(-2 * sigma * p.lightStep), p.powder);
             const dT = Math.exp(-sigma * dt);
-            S = [0, 1, 2].map((k) => S[k]! + T * p.albedo * (f.lightRgb[k]! * phase * (Tl * powder) + mix(p.ambientBottom[k]!, p.ambientTop[k]!, h)) * (1 - dT)) as V3;
+            S = [0, 1, 2].map(
+                (k) =>
+                    S[k]! +
+                    T * p.albedo * (f.lightRgb[k]! * phase * (Tl * powder) + mix(p.ambientBottom[k]!, p.ambientTop[k]!, h)) * (1 - dT),
+            ) as V3;
             T *= dT;
             if (T < p.minTransmittance) break;
         }
@@ -394,59 +460,62 @@ export function marchCloudRay(f: CloudFrame, dir: readonly number[], maxT = 3e38
 
 /** Unit ray direction of pixel (x, y) of a w x h grid (pixel centres), as the kernels compute it. */
 export function cloudPixelRay(cam: CloudCamera, x: number, y: number, w: number, h: number): V3 {
-    const nx = (2 * (x + 0.5)) / w - 1, ny = 1 - (2 * (y + 0.5)) / h;
+    const nx = (2 * (x + 0.5)) / w - 1;
+    const ny = 1 - (2 * (y + 0.5)) / h;
     return norm3([0, 1, 2].map((k) => nx * cam.U[k]! + ny * cam.V[k]! + cam.W[k]!));
 }
 
+/** Raymarches a flat or planetary cloud slab and reprojects the resulting cloud layer. */
 export class VolumetricClouds extends RenderPass {
-    private p: VolumetricCloudsParams = { ...kDefaultVolumetricClouds };
-    private passes: Record<string, ComputePass> = {};
-    private readonly history = new HistoryTracker();
-    private histA: PingPongTextures;
-    private histB: PingPongTextures;
-    private march: [Texture, Texture] | null = null;
-    private prevCam: CloudCamera | null = null;
-    private prevTime = 0;
+    private mParameters: VolumetricCloudsParams = { ...kDefaultVolumetricClouds };
+    private mPasses: Record<string, ComputePass> = {};
+    private readonly mHistory: HistoryTracker = new HistoryTracker();
+    private mHistoryA: PingPongTextures;
+    private mHistoryB: PingPongTextures;
+    private mMarch: [Texture, Texture] | null = null;
+    private mPreviousCamera: CloudCamera | null = null;
+    private mPrevTime: number = 0;
 
     constructor(device: Device, props: Properties) {
         super(device);
-        this.histA = new PingPongTextures(device, ResourceFormat.RGBA32Float, "VolumetricClouds::historyA");
-        this.histB = new PingPongTextures(device, ResourceFormat.RGBA32Float, "VolumetricClouds::historyB");
+        this.mHistoryA = new PingPongTextures(device, ResourceFormat.RGBA32Float, "VolumetricClouds::historyA");
+        this.mHistoryB = new PingPongTextures(device, ResourceFormat.RGBA32Float, "VolumetricClouds::historyB");
         this.setProperties(props);
     }
 
     override getProperties(): Properties {
-        return new Properties({ ...this.p } as unknown as Record<string, PropertyValue>);
+        return new Properties({ ...this.mParameters } as unknown as Record<string, PropertyValue>);
     }
 
     override setProperties(props: Properties): void {
-        for (const k of Object.keys(this.p) as (keyof VolumetricCloudsParams)[]) (this.p as unknown as Record<string, unknown>)[k] = props.get(k, this.p[k] as PropertyValue);
-        resolveVolumetricCloudsParams(this.p);
+        for (const k of Object.keys(this.mParameters) as (keyof VolumetricCloudsParams)[])
+            (this.mParameters as unknown as Record<string, unknown>)[k] = props.get(k, this.mParameters[k] as PropertyValue);
+        resolveVolumetricCloudsParams(this.mParameters);
     }
 
     override renderUI(ui: UIWidgets): void {
-        ui.slider("Coverage", this.p.coverage, 0, 1, 0.01, (v) => (this.p.coverage = v));
-        ui.slider("Cloud type", this.p.cloudType, 0, 1, 0.01, (v) => (this.p.cloudType = v));
-        ui.slider("Density", this.p.density, 0, 0.2, 0.001, (v) => (this.p.density = v));
-        ui.slider("Time", this.p.time, 0, 3600, 0.1, (v) => (this.p.time = v));
-        ui.slider("Steps", this.p.steps, 1, 256, 1, (v) => (this.p.steps = Math.round(v)));
-        ui.dropdown("Resolution", [...kResolutions], this.p.resolution, (v) => (this.p.resolution = v));
-        ui.checkbox("Temporal", this.p.temporal, (v) => (this.p.temporal = v));
+        ui.slider("Coverage", this.mParameters.coverage, 0, 1, 0.01, (v) => (this.mParameters.coverage = v));
+        ui.slider("Cloud type", this.mParameters.cloudType, 0, 1, 0.01, (v) => (this.mParameters.cloudType = v));
+        ui.slider("Density", this.mParameters.density, 0, 0.2, 0.001, (v) => (this.mParameters.density = v));
+        ui.slider("Time", this.mParameters.time, 0, 3600, 0.1, (v) => (this.mParameters.time = v));
+        ui.slider("Steps", this.mParameters.steps, 1, 256, 1, (v) => (this.mParameters.steps = Math.round(v)));
+        ui.dropdown("Resolution", [...kResolutions], this.mParameters.resolution, (v) => (this.mParameters.resolution = v));
+        ui.checkbox("Temporal", this.mParameters.temporal, (v) => (this.mParameters.temporal = v));
     }
 
     /** Drops the temporal history: the next frame is computed as on a fresh context. */
     resetHistory(): void {
-        this.history.reset();
+        this.mHistory.reset();
     }
 
     /** Frames since the last history reset. */
     get frameIndex(): number {
-        return this.history.frameIndex;
+        return this.mHistory.frameIndex;
     }
 
     /** The light direction used for shading (lightDir, else the scene's key light, else up). */
     get lightDirection(): V3 {
-        return keyLightDir(this.scene, this.p.lightDir);
+        return keyLightDir(this.scene, this.mParameters.lightDir);
     }
 
     override reflect(compileData: CompileData): RenderPassReflection {
@@ -462,19 +531,23 @@ export class VolumetricClouds extends RenderPass {
     }
 
     private pass(entry: string): ComputePass {
-        return (this.passes[entry] ??= ComputePass.create(this.device, { path: kShaderFile, csEntry: entry }));
+        return (this.mPasses[entry] ??= ComputePass.create(this.device, { path: kShaderFile, csEntry: entry }));
     }
 
     override execute(ctx: RenderContext, rd: RenderData): void {
         const dst = rd.getTexture("dst");
         if (!dst) return;
-        const color = rd.getTexture("color"), posW = rd.getTexture("posW");
-        const layer = rd.getTexture("layer"), layerDepth = rd.getTexture("layerDepth"), trans = rd.getTexture("transmittance");
-        const p = resolveVolumetricCloudsParams(this.p);
-        const W = dst.width, H = dst.height;
+        const color = rd.getTexture("color");
+        const posW = rd.getTexture("posW");
+        const layer = rd.getTexture("layer");
+        const layerDepth = rd.getTexture("layerDepth");
+        const trans = rd.getTexture("transmittance");
+        const p = resolveVolumetricCloudsParams(this.mParameters);
+        const W = dst.width;
+        const H = dst.height;
         const factor = p.resolution === "quarter" ? 4 : p.resolution === "half" ? 2 : 1;
         const temporal = p.temporal && p.temporalBlend > 0;
-        const frame = this.history.begin(this.scene, `${W}x${H}:${factor}:${temporal}`);
+        const frame = this.mHistory.begin(this.scene, `${W}x${H}:${factor}:${temporal}`);
 
         if (p.coverage <= 0 || p.density <= 0 || p.opacity <= 0 || !this.scene) {
             // Identity: no clouds. Copy, clear the optional layers, start the history afresh when clouds come back.
@@ -484,22 +557,27 @@ export class VolumetricClouds extends RenderPass {
             if (layer) ctx.clearTexture(layer, [0, 0, 0, 0]);
             if (layerDepth) ctx.clearTexture(layerDepth, [kCloudNoDepth, 0, 0, 0]);
             if (trans) ctx.clearTexture(trans, [1, 1, 1, 1]);
-            this.history.reset();
-            this.prevCam = null;
+            this.mHistory.reset();
+            this.mPreviousCamera = null;
             return;
         }
 
         const cam = cloudCamera(this.scene);
         const f = cloudFrameConstants(p, cam, this.lightDirection);
-        const lw = Math.ceil(W / factor), lh = Math.ceil(H / factor);
-        if (!this.march || this.march[0].width !== lw || this.march[0].height !== lh) {
+        const lw = Math.ceil(W / factor);
+        const lh = Math.ceil(H / factor);
+        if (!this.mMarch || this.mMarch[0].width !== lw || this.mMarch[0].height !== lh) {
             const flags = ResourceBindFlags.ShaderResource | ResourceBindFlags.UnorderedAccess;
-            this.march = [0, 1].map(() => this.device.createTexture2D(lw, lh, ResourceFormat.RGBA32Float, 1, 1, undefined, flags)) as [Texture, Texture];
+            this.mMarch = [0, 1].map(() => this.device.createTexture2D(lw, lh, ResourceFormat.RGBA32Float, 1, 1, undefined, flags)) as [
+                Texture,
+                Texture,
+            ];
         }
-        const hA = this.histA.get(ctx, W, H, frame), hB = this.histB.get(ctx, W, H, frame);
-        const historyValid = temporal && frame.frameIndex > 0 && this.prevCam !== null;
-        const prev = historyValid ? this.prevCam! : cam;
-        const wd = historyValid ? p.wind.map((w) => w * (p.time - this.prevTime)) : [0, 0, 0];
+        const hA = this.mHistoryA.get(ctx, W, H, frame);
+        const hB = this.mHistoryB.get(ctx, W, H, frame);
+        const historyValid = temporal && frame.frameIndex > 0 && this.mPreviousCamera !== null;
+        const prev = historyValid ? this.mPreviousCamera! : cam;
+        const wd = historyValid ? p.wind.map((w) => w * (p.time - this.mPrevTime)) : [0, 0, 0];
         const flags = (posW ? 1 : 0) | (historyValid ? 2 : 0) | (temporal ? 4 : 0) | (color ? 8 : 0);
         const sq = (a: number[]) => dot(a, a);
         const setCB = (cp: ComputePass) => {
@@ -536,16 +614,16 @@ export class VolumetricClouds extends RenderPass {
         {
             const cp = this.pass("march");
             const root = setCB(cp);
-            root["gOutA"] = this.march[0];
-            root["gOutB"] = this.march[1];
+            root["gOutA"] = this.mMarch[0];
+            root["gOutB"] = this.mMarch[1];
             cp.execute(ctx, lw, lh);
         }
         {
             const cp = this.pass("resolve");
             const root = setCB(cp);
             root["gColor"] = color ?? dummyTexture(this.device);
-            root["gMarchA"] = this.march[0];
-            root["gMarchB"] = this.march[1];
+            root["gMarchA"] = this.mMarch[0];
+            root["gMarchB"] = this.mMarch[1];
             root["gHistA"] = hA.read;
             root["gHistB"] = hB.read;
             root["gOutA"] = hA.write;
@@ -556,8 +634,8 @@ export class VolumetricClouds extends RenderPass {
             root["gTrans"] = trans ?? dummyTexture(this.device, "out:transmittance");
             cp.execute(ctx, W, H);
         }
-        this.prevCam = temporal ? cam : null;
-        this.prevTime = p.time;
+        this.mPreviousCamera = temporal ? cam : null;
+        this.mPrevTime = p.time;
     }
 }
 

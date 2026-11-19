@@ -14,9 +14,12 @@
 import { FieldFlags, ResourceBindFlags, type RenderData, type RenderPassReflection, type Scene, type ShaderVar } from "@web-falcor/falcor";
 import { kCascadedShadowMapData, kMaxCascades, type CascadedShadowMapData } from "./CascadedShadowMap.js";
 
+/** Ordered option names; preserve this order for numeric property compatibility. */
 export const kVisibilityModes = ["None", "ShadowMap", "RayTraced"] as const;
+/** Supported visibility backends, in the order expected by the VIS_MODE shader define. */
 export type VisibilityMode = (typeof kVisibilityModes)[number];
 
+/** World-space shadow bias and shadow-map filter settings shared by visibility clients. */
 export interface VisibilityParams {
     /** Constant shadow depth bias in world units (DeferredLighting default 0.002). */
     depthBias: number;
@@ -28,6 +31,7 @@ export interface VisibilityParams {
 
 export const kDefaultVisibilityParams: VisibilityParams = { depthBias: 0.002, normalBias: 1.5, pcfRadius: 1 };
 
+/** Resolved visibility backend, light index and shader-binding callback for one query. */
 export interface ResolvedVisibility {
     /** The mode actually used (ShadowMap without a shadow map resolves to None). */
     mode: VisibilityMode;
@@ -39,23 +43,34 @@ export interface ResolvedVisibility {
     bind(root: ShaderVar, params?: Partial<VisibilityParams>): void;
 }
 
+/** Resolves a visibility backend and binds shared shadow data for compute passes. */
 export class VisibilityService {
     /** Adds the optional shadow-map input (connect CascadedShadowMap.shadowMap for the ShadowMap mode). */
     static addInputs(r: RenderPassReflection, name = "shadowMap"): void {
-        r.addInput(name, "CascadedShadowMap.shadowMap (ShadowMap visibility)").bindFlags(ResourceBindFlags.ShaderResource).flags(FieldFlags.Optional);
+        r.addInput(name, "CascadedShadowMap.shadowMap (ShadowMap visibility)")
+            .bindFlags(ResourceBindFlags.ShaderResource)
+            .flags(FieldFlags.Optional);
     }
 
     static parseMode(pass: string, v: string): VisibilityMode {
-        if (!(kVisibilityModes as readonly string[]).includes(v)) throw new Error(`${pass}: unknown visibility mode '${v}' (${kVisibilityModes.join(", ")})`);
+        if (!(kVisibilityModes as readonly string[]).includes(v))
+            throw new Error(`${pass}: unknown visibility mode '${v}' (${kVisibilityModes.join(", ")})`);
         return v as VisibilityMode;
     }
 
-    static resolve(mode: VisibilityMode, renderData: RenderData, scene: Scene | null, lightIndex = -1, inputName = "shadowMap"): ResolvedVisibility {
+    static resolve(
+        mode: VisibilityMode,
+        renderData: RenderData,
+        scene: Scene | null,
+        lightIndex = -1,
+        inputName = "shadowMap",
+    ): ResolvedVisibility {
         const csm = renderData.dictionary.get(kCascadedShadowMapData) as CascadedShadowMapData | undefined;
         const shadowMap = renderData.getTexture(inputName);
         const lights = scene?.activeLights ?? [];
         const firstDirectional = lights.findIndex((l) => l.type === 1);
-        const used: VisibilityMode = mode === "ShadowMap" ? (shadowMap && csm && scene ? "ShadowMap" : "None") : mode === "RayTraced" && !scene ? "None" : mode;
+        const used: VisibilityMode =
+            mode === "ShadowMap" ? (shadowMap && csm && scene ? "ShadowMap" : "None") : mode === "RayTraced" && !scene ? "None" : mode;
         const light = used === "ShadowMap" ? csm!.lightIndex : lightIndex >= 0 ? lightIndex : firstDirectional;
         return {
             mode: used,
@@ -65,7 +80,8 @@ export class VisibilityService {
                 if (used !== "ShadowMap") return;
                 const p = { ...kDefaultVisibilityParams, ...params };
                 const cam = scene!.camera;
-                const pos = cam.getPosition(), tgt = cam.getTarget();
+                const pos = cam.getPosition();
+                const tgt = cam.getTarget();
                 const fwd = [tgt.x - pos.x, tgt.y - pos.y, tgt.z - pos.z];
                 const len = Math.hypot(fwd[0]!, fwd[1]!, fwd[2]!);
                 const pad = (a: number[]) => [0, 1, 2, 3].map((i) => a[Math.min(i, a.length - 1)]!);
@@ -74,7 +90,10 @@ export class VisibilityService {
                 cb["gVisCascadeSize"] = csm!.size;
                 cb["gVisPcfRadius"] = p.pcfRadius;
                 cb["gVisDepthBias"] = p.depthBias;
-                cb["gVisCascadeViewProj"] = Array.from({ length: kMaxCascades }, (_v, c) => csm!.viewProj[Math.min(c, csm!.cascadeCount - 1)]!);
+                cb["gVisCascadeViewProj"] = Array.from(
+                    { length: kMaxCascades },
+                    (_v, c) => csm!.viewProj[Math.min(c, csm!.cascadeCount - 1)]!,
+                );
                 cb["gVisCascadeSplits"] = pad(csm!.splits);
                 cb["gVisCascadeTexelWorld"] = pad(csm!.texelWorld);
                 cb["gVisCascadeDepthScale"] = pad(csm!.depthRange.map((r) => 1 / r));

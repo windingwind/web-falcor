@@ -53,9 +53,11 @@ import {
 import { addColorOutput, addTexInput, dummyTexture, parseColour } from "../Stylize/StyleCommon.js";
 
 const kShaderFile = "RenderPasses/Layers/VfxLayer.cs.slang";
+/** Ordered option names; preserve this order for numeric property compatibility. */
 const kTypes = ["fire", "electric", "plasma"] as const;
 export const kVfxMaxEmitters = 16;
 
+/** A world-space fire, electric-arc or plasma emitter and its shape, colour and motion settings. */
 export interface VfxEmitter {
     type: (typeof kTypes)[number];
     position: number[];
@@ -85,6 +87,7 @@ const kEmitterDefaults = {
     plasma: { size: 0.3, colour: [0.7, 0.35, 1], intensity: 3, speed: 1, filaments: 8, corona: 0.6 },
 } as const;
 
+/** Creation defaults for the pass parameters documented in this file header. */
 const kDefaults = {
     emitters: [] as VfxEmitter[],
     time: 0,
@@ -92,6 +95,7 @@ const kDefaults = {
     softness: 0,
     maxRadiusPx: 64,
 };
+/** Creation properties for VfxLayer, including its documented defaults. */
 export type VfxLayerParams = typeof kDefaults;
 
 const vec3 = (v: unknown, fb: number[]): number[] => (Array.isArray(v) && v.length === 3 ? v.map(Number) : fb);
@@ -106,53 +110,69 @@ export function packVfxEmitters(emitters: readonly VfxEmitter[]): Float32Array {
         if (type < 0) throw new RuntimeError(`VfxLayer: unknown emitter type '${String(e.type)}' (${kTypes.join(", ")})`);
         const d = { ...kEmitterDefaults[e.type], ...e } as Required<VfxEmitter>;
         const pos = vec3(d.position, [0, 0, 0]);
-        const axis = e.type === "electric" ? vec3(d.target, [pos[0]!, pos[1]! + 1, pos[2]!]) : e.type === "fire" ? vec3(d.up, [0, 1, 0]) : [0, 0, 0];
+        const axis =
+            e.type === "electric" ? vec3(d.target, [pos[0]!, pos[1]! + 1, pos[2]!]) : e.type === "fire" ? vec3(d.up, [0, 1, 0]) : [0, 0, 0];
         if (e.type === "fire") {
             const l = Math.hypot(axis[0]!, axis[1]!, axis[2]!) || 1;
             for (let k = 0; k < 3; k++) axis[k] = axis[k]! / l;
         }
         const shape = e.type === "fire" ? d.width : e.type === "electric" ? d.amplitude : d.corona;
         const detail = e.type === "fire" ? d.turbulence : e.type === "electric" ? Math.round(d.strands) : d.filaments;
-        out.set([...pos, type, ...axis, Math.max(Number(d.size), 0), ...parseColour(d.colour), Number(d.intensity),
-            Math.max(0, Math.round(Number(d.seed ?? 0))) >>> 0, Number(d.speed), Number(shape), Number(detail)], i * 16);
+        out.set(
+            [
+                ...pos,
+                type,
+                ...axis,
+                Math.max(Number(d.size), 0),
+                ...parseColour(d.colour),
+                Number(d.intensity),
+                Math.max(0, Math.round(Number(d.seed ?? 0))) >>> 0,
+                Number(d.speed),
+                Number(shape),
+                Number(detail),
+            ],
+            i * 16,
+        );
     }
     return out;
 }
 
+/** Renders world-anchored procedural emitters into a colour and depth layer. */
 export class VfxLayer extends RenderPass {
-    private p: VfxLayerParams = JSON.parse(JSON.stringify(kDefaults));
-    private pass: ComputePass | null = null;
-    private emitterBuf: Buffer | null = null;
-    private packed: Float32Array = new Float32Array(16);
+    private mParameters: VfxLayerParams = JSON.parse(JSON.stringify(kDefaults));
+    private mPass: ComputePass | null = null;
+    private mEmitterBuffer: Buffer | null = null;
+    private mPacked: Float32Array = new Float32Array(16);
 
     constructor(device: Device, props: Properties) {
         super(device);
-        for (const k of Object.keys(kDefaults) as (keyof VfxLayerParams)[]) (this.p as Record<string, unknown>)[k] = props.get(k, kDefaults[k] as never);
-        this.setEmitters(this.p.emitters);
+        for (const k of Object.keys(kDefaults) as (keyof VfxLayerParams)[])
+            (this.mParameters as Record<string, unknown>)[k] = props.get(k, kDefaults[k] as never);
+        this.setEmitters(this.mParameters.emitters);
     }
 
     private setEmitters(e: VfxEmitter[]): void {
         if (!Array.isArray(e)) throw new RuntimeError("VfxLayer: emitters must be a list");
-        this.packed = packVfxEmitters(e);
-        this.p.emitters = JSON.parse(JSON.stringify(e.slice(0, kVfxMaxEmitters)));
+        this.mPacked = packVfxEmitters(e);
+        this.mParameters.emitters = JSON.parse(JSON.stringify(e.slice(0, kVfxMaxEmitters)));
     }
 
     override getProperties(): Properties {
-        return new Properties(JSON.parse(JSON.stringify(this.p)));
+        return new Properties(JSON.parse(JSON.stringify(this.mParameters)));
     }
 
     override setProperties(props: Properties): void {
         for (const k of Object.keys(kDefaults) as (keyof VfxLayerParams)[]) {
             if (!props.has(k)) continue;
             if (k === "emitters") this.setEmitters(props.get(k, [] as never));
-            else (this.p as Record<string, unknown>)[k] = props.get(k, kDefaults[k] as never);
+            else (this.mParameters as Record<string, unknown>)[k] = props.get(k, kDefaults[k] as never);
         }
     }
 
     override renderUI(ui: UIWidgets): void {
-        ui.slider("Intensity", this.p.intensity, 0, 10, 0.01, (v) => (this.p.intensity = v));
-        ui.slider("Time", this.p.time, 0, 60, 0.01, (v) => (this.p.time = v));
-        ui.slider("Softness", this.p.softness, 0, 10, 0.01, (v) => (this.p.softness = v));
+        ui.slider("Intensity", this.mParameters.intensity, 0, 10, 0.01, (v) => (this.mParameters.intensity = v));
+        ui.slider("Time", this.mParameters.time, 0, 60, 0.01, (v) => (this.mParameters.time = v));
+        ui.slider("Softness", this.mParameters.softness, 0, 10, 0.01, (v) => (this.mParameters.softness = v));
     }
 
     override reflect(compileData: CompileData): RenderPassReflection {
@@ -167,13 +187,21 @@ export class VfxLayer extends RenderPass {
     override execute(ctx: RenderContext, rd: RenderData): void {
         const color = rd.getTexture("color");
         if (!color) return;
-        const W = color.width, H = color.height;
-        const depthOut = rd.getTexture("depth"), posW = rd.getTexture("posW");
-        const n = Math.min(this.p.emitters.length, kVfxMaxEmitters);
-        if (!this.emitterBuf || this.emitterBuf.size !== this.packed.byteLength) {
-            this.emitterBuf = new Buffer(this.device, { size: this.packed.byteLength, structSize: 16, bindFlags: ResourceBindFlags.ShaderResource | ResourceBindFlags.UnorderedAccess, memoryType: MemoryType.DeviceLocal, name: "VfxLayer::emitters" });
+        const W = color.width;
+        const H = color.height;
+        const depthOut = rd.getTexture("depth");
+        const posW = rd.getTexture("posW");
+        const n = Math.min(this.mParameters.emitters.length, kVfxMaxEmitters);
+        if (!this.mEmitterBuffer || this.mEmitterBuffer.size !== this.mPacked.byteLength) {
+            this.mEmitterBuffer = new Buffer(this.device, {
+                size: this.mPacked.byteLength,
+                structSize: 16,
+                bindFlags: ResourceBindFlags.ShaderResource | ResourceBindFlags.UnorderedAccess,
+                memoryType: MemoryType.DeviceLocal,
+                name: "VfxLayer::emitters",
+            });
         }
-        this.emitterBuf.setBlob(this.packed);
+        this.mEmitterBuffer.setBlob(this.mPacked);
 
         const cam = this.scene?.camera;
         const vp = cam?.getData().viewProjMatNoJitter;
@@ -184,22 +212,31 @@ export class VfxLayer extends RenderPass {
         const fl = Math.hypot(f[0]!, f[1]!, f[2]!) || 1;
         const fovY = cam ? cam.getFovY() : Math.PI / 3;
 
-        this.pass ??= ComputePass.create(this.device, { path: kShaderFile });
-        const root = this.pass.getRootVar();
+        this.mPass ??= ComputePass.create(this.device, { path: kShaderFile });
+        const root = this.mPass.getRootVar();
         const cb = root["CB"]!;
         const consts: Record<string, unknown> = {
-            gFrameDim: [W, H], gCount: cam ? n : 0, gTime: Number(this.p.time), gIntensity: Number(this.p.intensity),
-            gSoftness: Math.max(Number(this.p.softness), 0), gHasPosW: posW ? 1 : 0, gMaxRadiusPx: Math.max(Number(this.p.maxRadiusPx), 0.75),
-            gViewProj0: rows[0], gViewProj1: rows[1], gViewProj2: rows[2], gViewProj3: rows[3],
-            gCamPos: [pos.x, pos.y, pos.z], gPixelsPerUnitAtUnitDepth: (0.5 * H) / Math.tan(0.5 * fovY),
+            gFrameDim: [W, H],
+            gCount: cam ? n : 0,
+            gTime: Number(this.mParameters.time),
+            gIntensity: Number(this.mParameters.intensity),
+            gSoftness: Math.max(Number(this.mParameters.softness), 0),
+            gHasPosW: posW ? 1 : 0,
+            gMaxRadiusPx: Math.max(Number(this.mParameters.maxRadiusPx), 0.75),
+            gViewProj0: rows[0],
+            gViewProj1: rows[1],
+            gViewProj2: rows[2],
+            gViewProj3: rows[3],
+            gCamPos: [pos.x, pos.y, pos.z],
+            gPixelsPerUnitAtUnitDepth: (0.5 * H) / Math.tan(0.5 * fovY),
             gCamFwd: [f[0]! / fl, f[1]! / fl, f[2]! / fl],
         };
         for (const [name, v] of Object.entries(consts)) cb[name] = v as never;
-        root["gEmitters"] = this.emitterBuf;
+        root["gEmitters"] = this.mEmitterBuffer;
         root["gPosW"] = posW ?? dummyTexture(this.device);
         root["gColor"] = color;
         root["gDepth"] = depthOut ?? dummyTexture(this.device, "out:depth");
-        this.pass.execute(ctx, W, H);
+        this.mPass.execute(ctx, W, H);
     }
 }
 

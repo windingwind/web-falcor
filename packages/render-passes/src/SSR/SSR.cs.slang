@@ -78,14 +78,21 @@ float3 toScreen(float3 p)
     return float3((n.x * 0.5f + 0.5f) * float(gFrameDim.x), (0.5f - n.y * 0.5f) * float(gFrameDim.y), n.z);
 }
 
-float viewDepth(float3 p) { return dot(p - gCamPos, gCamFwd); }
+float viewDepth(float3 p)
+{
+    return dot(p - gCamPos, gCamFwd);
+}
 
 uint3 pcg3d(uint3 v)
 {
     v = v * 1664525u + 1013904223u;
-    v.x += v.y * v.z; v.y += v.z * v.x; v.z += v.x * v.y;
+    v.x += v.y * v.z;
+    v.y += v.z * v.x;
+    v.z += v.x * v.y;
     v ^= v >> 16u;
-    v.x += v.y * v.z; v.y += v.z * v.x; v.z += v.x * v.y;
+    v.x += v.y * v.z;
+    v.y += v.z * v.x;
+    v.z += v.x * v.y;
     return v;
 }
 
