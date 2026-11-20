@@ -70,11 +70,14 @@ import {
 import { HistoryTracker, PingPongTextures } from "../Utils/History.js";
 
 const kShaderFile = "RenderPasses/SSGI/SSGI.cs.slang";
+/** Ordered option names; preserve this order for numeric property compatibility. */
 const kModes = ["physical", "painted"] as const;
+/** Ordered option names; preserve this order for numeric property compatibility. */
 const kResolutions = ["full", "half"] as const;
 
 type V3 = [number, number, number];
 
+/** Creation defaults for the pass parameters documented in this file header. */
 const kDefaults = {
     intensity: 1,
     mode: "physical" as string,
@@ -104,18 +107,20 @@ const kDefaults = {
 function vec3(v: unknown, name: string): V3 {
     const o = v as { x?: unknown; y?: unknown; z?: unknown } | null;
     const a: unknown[] | null = Array.isArray(v) ? v : o && typeof o === "object" && "x" in o ? [o.x, o.y, o.z] : null;
-    if (!a || a.length !== 3 || a.some((x) => typeof x !== "number" || !Number.isFinite(x))) throw new Error(`SSGI: ${name} must be three numbers`);
+    if (!a || a.length !== 3 || a.some((x) => typeof x !== "number" || !Number.isFinite(x)))
+        throw new Error(`SSGI: ${name} must be three numbers`);
     return a as V3;
 }
 
+/** Estimates diffuse screen-space indirect light with visibility sectors, denoising and temporal accumulation. */
 export class SSGI extends RenderPass {
-    private p = { ...kDefaults };
-    private passes: Record<string, ComputePass> = {};
-    private readonly history = new HistoryTracker();
-    private readonly pp: PingPongTextures;
-    private scratch: Record<string, Texture> = {};
-    private dummy: Texture | null = null;
-    private dummyRG: Texture | null = null;
+    private mParameters: typeof kDefaults = { ...kDefaults };
+    private mPasses: Record<string, ComputePass> = {};
+    private readonly mHistory: HistoryTracker = new HistoryTracker();
+    private readonly mHistoryTextures: PingPongTextures;
+    private mScratch: Record<string, Texture> = {};
+    private mDummy: Texture | null = null;
+    private mDummyRG: Texture | null = null;
 
     constructor(device: Device, props: Properties) {
         super(device);
@@ -123,49 +128,62 @@ export class SSGI extends RenderPass {
         // (e.g. bands/levels/rampTexture/quantize) are rejected instead of being ignored.
         for (const [k] of props.entries()) {
             if (!(k in kDefaults)) {
-                const q = /^(band|ramp|level|quantiz|quantis|posteri|toon|cel)/i.test(k) ? " (SSGI has no banded, ramped or quantised mode)" : "";
+                const q = /^(band|ramp|level|quantiz|quantis|posteri|toon|cel)/i.test(k)
+                    ? " (SSGI has no banded, ramped or quantised mode)"
+                    : "";
                 throw new Error(`SSGI: unknown property ${k}${q}`);
             }
         }
-        for (const k of Object.keys(kDefaults) as (keyof typeof kDefaults)[]) (this.p as Record<string, unknown>)[k] = props.get(k, kDefaults[k]);
-        if (!(kModes as readonly string[]).includes(this.p.mode)) throw new Error(`SSGI: mode must be one of ${kModes.join("|")} (got ${this.p.mode})`);
-        if (!(kResolutions as readonly string[]).includes(this.p.resolution)) throw new Error(`SSGI: resolution must be one of ${kResolutions.join("|")} (got ${this.p.resolution})`);
-        for (const k of ["tint", "skyColor", "groundColor", "upVector"] as const) this.p[k] = vec3(this.p[k], k);
-        const up = this.p.upVector, l = Math.hypot(...up);
+        for (const k of Object.keys(kDefaults) as (keyof typeof kDefaults)[])
+            (this.mParameters as Record<string, unknown>)[k] = props.get(k, kDefaults[k]);
+        if (!(kModes as readonly string[]).includes(this.mParameters.mode))
+            throw new Error(`SSGI: mode must be one of ${kModes.join("|")} (got ${this.mParameters.mode})`);
+        if (!(kResolutions as readonly string[]).includes(this.mParameters.resolution))
+            throw new Error(`SSGI: resolution must be one of ${kResolutions.join("|")} (got ${this.mParameters.resolution})`);
+        for (const k of ["tint", "skyColor", "groundColor", "upVector"] as const) this.mParameters[k] = vec3(this.mParameters[k], k);
+        const up = this.mParameters.upVector;
+        const l = Math.hypot(...up);
         if (!(l > 0)) throw new Error("SSGI: upVector must not be zero");
-        this.p.upVector = up.map((x) => x / l) as V3;
-        this.pp = new PingPongTextures(device, ResourceFormat.RGBA32Float, "SSGI::history");
+        this.mParameters.upVector = up.map((x) => x / l) as V3;
+        this.mHistoryTextures = new PingPongTextures(device, ResourceFormat.RGBA32Float, "SSGI::history");
     }
 
     override getProperties(): Properties {
-        return new Properties({ ...this.p });
+        return new Properties({ ...this.mParameters });
     }
 
     override renderUI(ui: UIWidgets): void {
-        ui.slider("Intensity", this.p.intensity, 0, 4, 0.01, (v) => (this.p.intensity = v));
-        ui.dropdown("Mode", [...kModes], this.p.mode, (v) => (this.p.mode = v));
-        ui.dropdown("Resolution", [...kResolutions], this.p.resolution, (v) => (this.p.resolution = v));
-        ui.slider("Slices", this.p.sliceCount, 1, 16, 1, (v) => (this.p.sliceCount = Math.round(v)));
-        ui.slider("Steps", this.p.stepCount, 1, 32, 1, (v) => (this.p.stepCount = Math.round(v)));
-        ui.slider("Radius", this.p.radius, 0.01, 50, 0.01, (v) => (this.p.radius = v));
-        ui.slider("Thickness", this.p.thickness, 0.001, 10, 0.001, (v) => (this.p.thickness = v));
-        ui.slider("Denoise iterations", this.p.denoiseIterations, 0, 5, 1, (v) => (this.p.denoiseIterations = Math.round(v)));
-        ui.slider("Softness", this.p.softness, 0, 1, 0.01, (v) => (this.p.softness = v));
-        ui.checkbox("Temporal", this.p.temporal, (v) => (this.p.temporal = v));
-        ui.slider("Temporal weight", this.p.temporalAlpha, 0, 0.98, 0.01, (v) => (this.p.temporalAlpha = v));
-        ui.slider("Hue shift", this.p.hueShift, -180, 180, 1, (v) => (this.p.hueShift = v));
-        ui.slider("Saturation", this.p.saturation, 0, 3, 0.01, (v) => (this.p.saturation = v));
-        ui.slider("Hemisphere ambient", this.p.hemiIntensity, 0, 2, 0.01, (v) => (this.p.hemiIntensity = v));
+        ui.slider("Intensity", this.mParameters.intensity, 0, 4, 0.01, (v) => (this.mParameters.intensity = v));
+        ui.dropdown("Mode", [...kModes], this.mParameters.mode, (v) => (this.mParameters.mode = v));
+        ui.dropdown("Resolution", [...kResolutions], this.mParameters.resolution, (v) => (this.mParameters.resolution = v));
+        ui.slider("Slices", this.mParameters.sliceCount, 1, 16, 1, (v) => (this.mParameters.sliceCount = Math.round(v)));
+        ui.slider("Steps", this.mParameters.stepCount, 1, 32, 1, (v) => (this.mParameters.stepCount = Math.round(v)));
+        ui.slider("Radius", this.mParameters.radius, 0.01, 50, 0.01, (v) => (this.mParameters.radius = v));
+        ui.slider("Thickness", this.mParameters.thickness, 0.001, 10, 0.001, (v) => (this.mParameters.thickness = v));
+        ui.slider(
+            "Denoise iterations",
+            this.mParameters.denoiseIterations,
+            0,
+            5,
+            1,
+            (v) => (this.mParameters.denoiseIterations = Math.round(v)),
+        );
+        ui.slider("Softness", this.mParameters.softness, 0, 1, 0.01, (v) => (this.mParameters.softness = v));
+        ui.checkbox("Temporal", this.mParameters.temporal, (v) => (this.mParameters.temporal = v));
+        ui.slider("Temporal weight", this.mParameters.temporalAlpha, 0, 0.98, 0.01, (v) => (this.mParameters.temporalAlpha = v));
+        ui.slider("Hue shift", this.mParameters.hueShift, -180, 180, 1, (v) => (this.mParameters.hueShift = v));
+        ui.slider("Saturation", this.mParameters.saturation, 0, 3, 0.01, (v) => (this.mParameters.saturation = v));
+        ui.slider("Hemisphere ambient", this.mParameters.hemiIntensity, 0, 2, 0.01, (v) => (this.mParameters.hemiIntensity = v));
     }
 
     /** Drops the temporal history: the next frame is computed as on a fresh context. */
     resetHistory(): void {
-        this.history.reset();
+        this.mHistory.reset();
     }
 
     /** Frames since the last history reset. */
     get frameIndex(): number {
-        return this.history.frameIndex;
+        return this.mHistory.frameIndex;
     }
 
     override reflect(compileData: CompileData): RenderPassReflection {
@@ -180,10 +198,16 @@ export class SSGI extends RenderPass {
         input("depth", "Depth (standard NDC depth, r)");
         input("normW", "World-space shading normal");
         input("diffuseOpacity", "Diffuse albedo (rgb)");
-        r.addInput("hiz", "HiZBuild.hiz of the same depth (optional)").texture2D(0, 0, 1, 0).bindFlags(ResourceBindFlags.ShaderResource).flags(FieldFlags.Optional);
+        r.addInput("hiz", "HiZBuild.hiz of the same depth (optional)")
+            .texture2D(0, 0, 1, 0)
+            .bindFlags(ResourceBindFlags.ShaderResource)
+            .flags(FieldFlags.Optional);
         input("mvec", "Motion vectors (UV, previous minus current)", true);
         const out = (name: string, desc: string, optional: boolean) => {
-            const f = r.addOutput(name, desc).texture2D(w, h).format(ResourceFormat.RGBA32Float)
+            const f = r
+                .addOutput(name, desc)
+                .texture2D(w, h)
+                .format(ResourceFormat.RGBA32Float)
                 .bindFlags(ResourceBindFlags.UnorderedAccess | ResourceBindFlags.ShaderResource);
             if (optional) f.flags(FieldFlags.Optional);
         };
@@ -194,85 +218,98 @@ export class SSGI extends RenderPass {
     }
 
     private tex(name: string, w: number, h: number): Texture {
-        let t = this.scratch[name];
+        let t = this.mScratch[name];
         if (!t || t.width !== w || t.height !== h) {
-            t = this.device.createTexture2D(w, h, ResourceFormat.RGBA32Float, 1, 1, undefined,
-                ResourceBindFlags.ShaderResource | ResourceBindFlags.UnorderedAccess);
-            this.scratch[name] = t;
+            t = this.device.createTexture2D(
+                w,
+                h,
+                ResourceFormat.RGBA32Float,
+                1,
+                1,
+                undefined,
+                ResourceBindFlags.ShaderResource | ResourceBindFlags.UnorderedAccess,
+            );
+            this.mScratch[name] = t;
         }
         return t;
     }
 
     private pass(entry: string): ComputePass {
-        return (this.passes[entry] ??= ComputePass.create(this.device, { path: kShaderFile, csEntry: entry }));
+        return (this.mPasses[entry] ??= ComputePass.create(this.device, { path: kShaderFile, csEntry: entry }));
     }
 
     override execute(ctx: RenderContext, rd: RenderData): void {
         const dst = rd.getTexture("dst");
-        const color = rd.getTexture("color"), depth = rd.getTexture("depth"), normW = rd.getTexture("normW");
+        const color = rd.getTexture("color");
+        const depth = rd.getTexture("depth");
+        const normW = rd.getTexture("normW");
         const albedo = rd.getTexture("diffuseOpacity");
         if (!dst || !color || !depth || !normW || !albedo) return;
         if (!this.scene) throw new Error("SSGI: requires a scene (camera)");
-        const W = dst.width, H = dst.height;
-        const scale = this.p.resolution === "half" ? 2 : 1;
-        const TW = Math.ceil(W / scale), TH = Math.ceil(H / scale);
-        const temporal = this.p.temporal && this.p.temporalAlpha > 0;
+        const W = dst.width;
+        const H = dst.height;
+        const scale = this.mParameters.resolution === "half" ? 2 : 1;
+        const TW = Math.ceil(W / scale);
+        const TH = Math.ceil(H / scale);
+        const temporal = this.mParameters.temporal && this.mParameters.temporalAlpha > 0;
         // The tracker runs every frame; its key (size, resolution, temporal on/off) resets the history when the layout changes.
-        const frame = this.history.begin(this.scene, `${W}x${H}:${scale}:${temporal}`);
+        const frame = this.mHistory.begin(this.scene, `${W}x${H}:${scale}:${temporal}`);
         const radiance = rd.getTexture("radiance") ?? color;
         const hiz = rd.getTexture("hiz");
         const mvec = rd.getTexture("mvec");
         const flags = ResourceBindFlags.ShaderResource | ResourceBindFlags.UnorderedAccess;
-        this.dummy ??= this.device.createTexture2D(1, 1, ResourceFormat.RGBA32Float, 1, 1, new Float32Array(4), flags);
-        this.dummyRG ??= this.device.createTexture2D(1, 1, ResourceFormat.RG32Float, 1, 1, new Float32Array(2), flags);
-        const traced = this.tex("traced", TW, TH), tmp = this.tex("denoise", TW, TH);
+        this.mDummy ??= this.device.createTexture2D(1, 1, ResourceFormat.RGBA32Float, 1, 1, new Float32Array(4), flags);
+        this.mDummyRG ??= this.device.createTexture2D(1, 1, ResourceFormat.RG32Float, 1, 1, new Float32Array(2), flags);
+        const traced = this.tex("traced", TW, TH);
+        const tmp = this.tex("denoise", TW, TH);
         const giOut = rd.getTexture("gi");
         const indOut = rd.getTexture("indirect") ?? this.tex("indirect", W, H);
 
         const cam = this.scene.camera;
         const data = cam.getData();
-        const pos = cam.getPosition(), tgt = cam.getTarget();
+        const pos = cam.getPosition();
+        const tgt = cam.getTarget();
         const f = [tgt.x - pos.x, tgt.y - pos.y, tgt.z - pos.z];
         const fl = Math.hypot(f[0]!, f[1]!, f[2]!) || 1;
         // Pixels per world unit at view depth 1 (vertical).
         const projScale = H / (2 * Math.tan(0.5 * cam.getFovY()));
-        const painted = this.p.mode === "painted";
-        const soft = Math.min(Math.max(painted || this.p.softness > 0 ? this.p.softness : 0, 0), 1);
-        const iters = Math.max(0, Math.round(this.p.denoiseIterations)) + Math.round(3 * soft);
-        const seedFrame = (temporal ? frame.frameIndex : 0) + Math.max(0, Math.round(this.p.seed)) * 7919;
+        const painted = this.mParameters.mode === "painted";
+        const soft = Math.min(Math.max(painted || this.mParameters.softness > 0 ? this.mParameters.softness : 0, 0), 1);
+        const iters = Math.max(0, Math.round(this.mParameters.denoiseIterations)) + Math.round(3 * soft);
+        const seedFrame = (temporal ? frame.frameIndex : 0) + Math.max(0, Math.round(this.mParameters.seed)) * 7919;
         const setCB = (cp: ComputePass) => {
             const root = cp.getRootVar();
             const cb = root["CB"]!;
             cb["gFrameDim"] = [W, H];
             cb["gTraceDim"] = [TW, TH];
             cb["gScale"] = scale;
-            cb["gSliceCount"] = Math.max(1, Math.round(this.p.sliceCount));
-            cb["gStepCount"] = Math.max(1, Math.round(this.p.stepCount));
+            cb["gSliceCount"] = Math.max(1, Math.round(this.mParameters.sliceCount));
+            cb["gStepCount"] = Math.max(1, Math.round(this.mParameters.stepCount));
             cb["gFrameSeed"] = seedFrame >>> 0;
             cb["gInvViewProj"] = data.invViewProj;
             cb["gCamPos"] = [pos.x, pos.y, pos.z];
-            cb["gRadius"] = Math.max(this.p.radius, 0);
+            cb["gRadius"] = Math.max(this.mParameters.radius, 0);
             cb["gCamFwd"] = f.map((x) => x / fl);
-            cb["gThickness"] = Math.max(this.p.thickness, 0);
+            cb["gThickness"] = Math.max(this.mParameters.thickness, 0);
             cb["gProjScale"] = projScale;
-            cb["gMaxRadiusPx"] = Math.max(this.p.maxRadiusPx, 0) * H;
+            cb["gMaxRadiusPx"] = Math.max(this.mParameters.maxRadiusPx, 0) * H;
             cb["gHizMips"] = hiz ? hiz.mipCount : 0;
-            cb["gHizStartPx"] = Math.max(this.p.hizStartPx, 1);
-            cb["gRadianceClamp"] = Math.max(this.p.radianceClamp, 0);
+            cb["gHizStartPx"] = Math.max(this.mParameters.hizStartPx, 1);
+            cb["gRadianceClamp"] = Math.max(this.mParameters.radianceClamp, 0);
             cb["gSigmaN"] = 32 * (1 - 0.9 * soft);
             cb["gSigmaZ"] = 0.02 * (1 + 9 * soft);
-            cb["gTemporalAlpha"] = Math.min(Math.max(this.p.temporalAlpha, 0), 0.999);
+            cb["gTemporalAlpha"] = Math.min(Math.max(this.mParameters.temporalAlpha, 0), 0.999);
             cb["gHistoryValid"] = temporal && frame.frameIndex > 0 ? 1 : 0;
-            cb["gIntensity"] = this.p.intensity;
+            cb["gIntensity"] = this.mParameters.intensity;
             cb["gPainted"] = painted ? 1 : 0;
-            cb["gHueShift"] = (this.p.hueShift * Math.PI) / 180;
-            cb["gSaturation"] = Math.max(this.p.saturation, 0);
-            cb["gTint"] = this.p.tint;
-            cb["gSkyColor"] = this.p.skyColor;
-            cb["gGroundColor"] = this.p.groundColor;
-            cb["gHemiIntensity"] = this.p.hemiIntensity;
-            cb["gHemiOcclusion"] = Math.min(Math.max(this.p.hemiOcclusion, 0), 1);
-            cb["gUp"] = this.p.upVector;
+            cb["gHueShift"] = (this.mParameters.hueShift * Math.PI) / 180;
+            cb["gSaturation"] = Math.max(this.mParameters.saturation, 0);
+            cb["gTint"] = this.mParameters.tint;
+            cb["gSkyColor"] = this.mParameters.skyColor;
+            cb["gGroundColor"] = this.mParameters.groundColor;
+            cb["gHemiIntensity"] = this.mParameters.hemiIntensity;
+            cb["gHemiOcclusion"] = Math.min(Math.max(this.mParameters.hemiOcclusion, 0), 1);
+            cb["gUp"] = this.mParameters.upVector;
             return root;
         };
 
@@ -282,11 +319,12 @@ export class SSGI extends RenderPass {
             root["gDepth"] = depth;
             root["gNormW"] = normW;
             root["gRadiance"] = radiance;
-            root["gHiZ"] = hiz ?? this.dummyRG;
+            root["gHiZ"] = hiz ?? this.mDummyRG;
             root["gTraceOut"] = traced;
             cp.execute(ctx, TW, TH);
         }
-        let src = traced, other = tmp;
+        let src = traced;
+        let other = tmp;
         for (let i = 0; i < iters; i++) {
             const cp = this.pass("denoise");
             const root = setCB(cp);
@@ -298,16 +336,16 @@ export class SSGI extends RenderPass {
             cp.execute(ctx, TW, TH);
             [src, other] = [other, src];
         }
-        const pair = temporal ? this.pp.get(ctx, W, H, frame) : null;
+        const pair = temporal ? this.mHistoryTextures.get(ctx, W, H, frame) : null;
         const acc = pair ? pair.write : this.tex("accum", W, H);
         {
             const cp = this.pass("accumulate");
             const root = setCB(cp);
-            const read = pair ? pair.read : this.dummy;
+            const read = pair ? pair.read : this.mDummy;
             root["gDepth"] = depth;
             root["gNormW"] = normW;
             root["gDenoised"] = src;
-            root["gMvec"] = mvec ?? this.dummy;
+            root["gMvec"] = mvec ?? this.mDummy;
             root["gHistory"] = read;
             root["gAccumOut"] = acc;
             cp.execute(ctx, W, H);

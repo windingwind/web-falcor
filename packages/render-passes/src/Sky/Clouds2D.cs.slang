@@ -34,13 +34,20 @@ static const float kCloudDepth = 2.9e38f;
 uint3 pcg3d(uint3 v)
 {
     v = v * 1664525u + 1013904223u;
-    v.x += v.y * v.z; v.y += v.z * v.x; v.z += v.x * v.y;
+    v.x += v.y * v.z;
+    v.y += v.z * v.x;
+    v.z += v.x * v.y;
     v ^= v >> 16u;
-    v.x += v.y * v.z; v.y += v.z * v.x; v.z += v.x * v.y;
+    v.x += v.y * v.z;
+    v.y += v.z * v.x;
+    v.z += v.x * v.y;
     return v;
 }
 
-float u01(uint u) { return float(u >> 8u) * (1.f / 16777216.f); }
+float u01(uint u)
+{
+    return float(u >> 8u) * (1.f / 16777216.f);
+}
 
 float vnoise2(float2 p, uint salt)
 {

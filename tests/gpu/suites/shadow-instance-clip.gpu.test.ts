@@ -26,7 +26,13 @@ type ClipEntry = [threshold: number, mode: number, edgeWidth: number, scale: num
 type ShadowMode = "ShadowMap" | "RayTraced";
 
 function clipBuffer(device: Device, entries: ClipEntry[]): Buffer {
-    const b = new Buffer(device, { size: entries.length * 16, structSize: 16, bindFlags: ResourceBindFlags.ShaderResource, memoryType: MemoryType.DeviceLocal, name: "ShadowClipTest" });
+    const b = new Buffer(device, {
+        size: entries.length * 16,
+        structSize: 16,
+        bindFlags: ResourceBindFlags.ShaderResource,
+        memoryType: MemoryType.DeviceLocal,
+        name: "ShadowClipTest",
+    });
     b.setBlob(new Float32Array(entries.flat()));
     return b;
 }
@@ -34,7 +40,10 @@ const onB = (e: ClipEntry): ClipEntry[] => Array.from({ length: kInstances }, (_
 
 function graph(device: Device, scene: Scene, mode: ShadowMode): RenderGraph {
     const passes: PassDecl[] = [["DeferredLighting", "L", { brdf: "LambertGGX", shadowMode: mode }]];
-    const edges: [string, string][] = [["G.vbuffer", "L.vbuffer"], ["G.viewW", "L.viewW"]];
+    const edges: [string, string][] = [
+        ["G.vbuffer", "L.vbuffer"],
+        ["G.viewW", "L.viewW"],
+    ];
     const outs = ["L.color", "L.visibility"];
     if (mode === "ShadowMap") {
         passes.unshift(["CascadedShadowMap", "CSM", { mapSize: 1024 }]);
@@ -53,7 +62,8 @@ function bind(g: RenderGraph, mode: ShadowMode, gb?: Buffer, shadow?: Buffer): v
 async function render(device: Device, g: RenderGraph, mode: ShadowMode, frames = 2): Promise<Record<string, Float32Array>> {
     for (let i = 0; i < frames; i++) g.execute(device.renderContext);
     const r: Record<string, Float32Array> = {};
-    for (const o of ["L.color", "L.visibility", "G.posW", ...(mode === "ShadowMap" ? ["CSM.shadowMap"] : [])]) r[o] = await read(device, g.getOutput(o)!);
+    for (const o of ["L.color", "L.visibility", "G.posW", ...(mode === "ShadowMap" ? ["CSM.shadowMap"] : [])])
+        r[o] = await read(device, g.getOutput(o)!);
     return r;
 }
 
@@ -74,15 +84,26 @@ function fnvStr(s: string): string {
     return `${h.toString(16).padStart(8, "0")}:${s.length}`;
 }
 
-/** WGSL of the compiled DeferredLighting kernel and CascadedShadowMap vertex/fragment kernels. */
+/** Shader sources inspected by the hash test; this is deliberately not a public pass API. */
+type KernelSource = { wgsl: string };
+type LightingShaderSource = { kernel: KernelSource };
+type ShadowShaderSources = { vertexKernel: KernelSource; fragmentKernel: KernelSource };
+
+/** WGSL of the compiled lighting and shadow-map kernels, on main or a member-renaming cleanup branch. */
 function wgslHashes(g: RenderGraph, mode: ShadowMode): string {
-    const L = g.getPass("L") as unknown as { pass: { kernel: { wgsl: string } } };
-    let s = `DL=${fnvStr(L.pass.kernel.wgsl)}`;
+    // Independent cleanup branches must remain comparable to main. These casts only inspect shader source;
+    // the render outputs, assertions and tolerances below use the normal render-graph API.
+    const lighting = g.getPass("L") as unknown as { mPass?: LightingShaderSource; pass?: LightingShaderSource };
+    const lightingSource = lighting.mPass ?? lighting.pass;
+    if (!lightingSource) throw new Error("DeferredLighting has not compiled its shader");
+    let hashes = `DL=${fnvStr(lightingSource.kernel.wgsl)}`;
     if (mode === "ShadowMap") {
-        const C = g.getPass("CSM") as unknown as { state: { vertexKernel: { wgsl: string }; fragmentKernel: { wgsl: string } } };
-        s += ` CSM=${fnvStr(C.state.vertexKernel.wgsl)}/${fnvStr(C.state.fragmentKernel.wgsl)}`;
+        const shadows = g.getPass("CSM") as unknown as { mState?: ShadowShaderSources; state?: ShadowShaderSources };
+        const shadowSources = shadows.mState ?? shadows.state;
+        if (!shadowSources) throw new Error("CascadedShadowMap has not compiled its shaders");
+        hashes += ` CSM=${fnvStr(shadowSources.vertexKernel.wgsl)}/${fnvStr(shadowSources.fragmentKernel.wgsl)}`;
     }
-    return s;
+    return hashes;
 }
 
 const kModes: ShadowMode[] = ["ShadowMap", "RayTraced"];
@@ -92,7 +113,11 @@ gpuTest("ShadowClip.defaultHash", async ({ device }) => {
     for (const mode of kModes) {
         const g = graph(device, scene, mode);
         const r = await render(device, g, mode, 3);
-        log(`defaultHash ShadowClip ${mode} ${Object.entries(r).map(([k, v]) => `${k}=${fnv(v)}`).join(" ")}`);
+        log(
+            `defaultHash ShadowClip ${mode} ${Object.entries(r)
+                .map(([k, v]) => `${k}=${fnv(v)}`)
+                .join(" ")}`,
+        );
         log(`defaultHash wgsl ${mode} ${wgslHashes(g, mode)}`);
     }
     expectEq(true, true, "hashes printed");
@@ -133,7 +158,8 @@ gpuTest("ShadowClip.shadowFadesWithObject", async ({ device }) => {
         const full = await run(gone);
         // B's shadow: shadowed without the shadow clip, lit with B fully clipped from the shadow path.
         const R: number[] = [];
-        for (let i = 0; i < kSize * kSize; i++) if (noClip["G.posW"]![i * 4 + 3] !== 0 && vis(noClip, i) < 0.5 && vis(full, i) > 0.5) R.push(i);
+        for (let i = 0; i < kSize * kSize; i++)
+            if (noClip["G.posW"]![i * 4 + 3] !== 0 && vis(noClip, i) < 0.5 && vis(full, i) > 0.5) R.push(i);
         const inR = new Uint8Array(kSize * kSize);
         for (const i of R) inR[i] = 1;
         const frac: number[] = [];
@@ -147,13 +173,19 @@ gpuTest("ShadowClip.shadowFadesWithObject", async ({ device }) => {
         const control = R.reduce((s, i) => s + (1 - vis(noClip, i)), 0) / Math.max(R.length, 1);
         let line = `ShadowClip ${mode}: B-shadow px ${R.length}; shadowed share at threshold ${thresholds.join("/")}: ${frac.map((f) => f.toFixed(3)).join("/")}; px changed outside B's shadow ${outsideChanged}; control (G-buffer clip only) share ${control.toFixed(3)}`;
         const last = frac[frac.length - 1]!;
-        let ok = R.length > 150 && frac[0] === control && control > 0.5 && monotone && (mode === "RayTraced" ? last === 0 && control === 1 : last < 0.05);
+        let ok =
+            R.length > 150 &&
+            frac[0] === control &&
+            control > 0.5 &&
+            monotone &&
+            (mode === "RayTraced" ? last === 0 && control === 1 : last < 0.05);
         if (mode === "RayTraced") {
             ok &&= outsideChanged === 0;
             const d = await run(clipBuffer(device, onB([0.5, 1, 0, 1])));
             let mismatch = 0;
             for (const i of R) {
-                const x = i % kSize, y = Math.floor(i / kSize);
+                const x = i % kSize;
+                const y = Math.floor(i / kSize);
                 if (vis(d, i) !== (bayer(x, y) < 0.5 ? 1 : 0)) mismatch++;
             }
             line += `; dither 0.5 vs CPU Bayer mismatches ${mismatch}/${R.length}`;
@@ -162,7 +194,11 @@ gpuTest("ShadowClip.shadowFadesWithObject", async ({ device }) => {
         log(line);
         allOk &&= ok;
     }
-    expectEq(allOk, true, "B's shadow fades monotonically with the clip threshold and vanishes at > 1 (RayTraced: exact dither, nothing else changes)");
+    expectEq(
+        allOk,
+        true,
+        "B's shadow fades monotonically with the clip threshold and vanishes at > 1 (RayTraced: exact dither, nothing else changes)",
+    );
 });
 
 gpuTest("ShadowClip.stateless", async ({ device }) => {

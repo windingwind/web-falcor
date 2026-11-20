@@ -76,13 +76,20 @@ static const float kNoDepth = 2.9e38f;
 uint3 pcg3d(uint3 v)
 {
     v = v * 1664525u + 1013904223u;
-    v.x += v.y * v.z; v.y += v.z * v.x; v.z += v.x * v.y;
+    v.x += v.y * v.z;
+    v.y += v.z * v.x;
+    v.z += v.x * v.y;
     v ^= v >> 16u;
-    v.x += v.y * v.z; v.y += v.z * v.x; v.z += v.x * v.y;
+    v.x += v.y * v.z;
+    v.y += v.z * v.x;
+    v.z += v.x * v.y;
     return v;
 }
 
-float u01(uint u) { return float(u >> 8u) * (1.f / 16777216.f); }
+float u01(uint u)
+{
+    return float(u >> 8u) * (1.f / 16777216.f);
+}
 
 float hashCorner(int3 i, uint salt)
 {
@@ -349,7 +356,11 @@ void resolve(uint3 tid: SV_DispatchThreadID)
             const float wk = (o.x == 1 ? w.x : 1.f - w.x) * (o.y == 1 ? w.y : 1.f - w.y);
             cur += wk * gMarchA[i];
             const float fr = gMarchB[i].x;
-            if (fr >= 0.f) { fs += wk * fr; fw += wk; }
+            if (fr >= 0.f)
+            {
+                fs += wk * fr;
+                fw += wk;
+            }
         }
         front = fw > 0.f ? fs / fw : -1.f;
         lc = clamp(int2(floor((float2(p) + 0.5f) / float(f))), int2(0, 0), lmax);

@@ -38,6 +38,7 @@ import { addColorOutput, addTexInput, dummyTexture } from "../Stylize/StyleCommo
 
 const kShaderFile = "RenderPasses/Weather/RainWetness.cs.slang";
 
+/** Creation defaults for the pass parameters documented in this file header. */
 const kDefaults = {
     wetness: 0.8,
     sideWetness: 0.3,
@@ -56,6 +57,7 @@ const kDefaults = {
     seed: 0,
     upAxis: [0, 1, 0] as number[],
 };
+/** Creation properties for RainWetness, including its documented defaults. */
 export type RainWetnessParams = typeof kDefaults;
 
 /** Unit up vector and an orthonormal planar basis (t1, t2) for it (shared with the tests). */
@@ -64,7 +66,11 @@ export function planarBasis(upAxis: ArrayLike<number>): { up: number[]; t1: numb
     const l = Math.hypot(up[0]!, up[1]!, up[2]!);
     up = l > 0 ? up.map((x) => x / l) : [0, 1, 0];
     const a = Math.abs(up[0]!) < 0.9 ? [1, 0, 0] : [0, 0, 1];
-    const cross = (x: number[], y: number[]) => [x[1]! * y[2]! - x[2]! * y[1]!, x[2]! * y[0]! - x[0]! * y[2]!, x[0]! * y[1]! - x[1]! * y[0]!];
+    const cross = (x: number[], y: number[]) => [
+        x[1]! * y[2]! - x[2]! * y[1]!,
+        x[2]! * y[0]! - x[0]! * y[2]!,
+        x[0]! * y[1]! - x[1]! * y[0]!,
+    ];
     let t2 = cross(up, a);
     const l2 = Math.hypot(t2[0]!, t2[1]!, t2[2]!);
     t2 = t2.map((x) => x / l2);
@@ -72,26 +78,28 @@ export function planarBasis(upAxis: ArrayLike<number>): { up: number[]; t1: numb
     return { up, t1, t2 };
 }
 
+/** Applies wet-material darkening, puddles and analytic rain ripples to scene surfaces. */
 export class RainWetness extends RenderPass {
-    private p: RainWetnessParams = JSON.parse(JSON.stringify(kDefaults));
-    private cp: ComputePass | null = null;
+    private mParameters: RainWetnessParams = JSON.parse(JSON.stringify(kDefaults));
+    private mPass: ComputePass | null = null;
 
     constructor(device: Device, props: Properties) {
         super(device);
-        for (const k of Object.keys(kDefaults) as (keyof RainWetnessParams)[]) (this.p as Record<string, unknown>)[k] = props.get(k, kDefaults[k] as never);
+        for (const k of Object.keys(kDefaults) as (keyof RainWetnessParams)[])
+            (this.mParameters as Record<string, unknown>)[k] = props.get(k, kDefaults[k] as never);
     }
 
     override getProperties(): Properties {
-        return new Properties(JSON.parse(JSON.stringify(this.p)));
+        return new Properties(JSON.parse(JSON.stringify(this.mParameters)));
     }
 
     override renderUI(ui: UIWidgets): void {
-        ui.slider("Wetness", this.p.wetness, 0, 1, 0.01, (v) => (this.p.wetness = v));
-        ui.slider("Darkening", this.p.darkening, 0, 1, 0.01, (v) => (this.p.darkening = v));
-        ui.slider("Gloss", this.p.gloss, 0, 1, 0.01, (v) => (this.p.gloss = v));
-        ui.slider("Puddle coverage", this.p.puddleCoverage, 0, 1, 0.01, (v) => (this.p.puddleCoverage = v));
-        ui.slider("Ripple strength", this.p.rippleStrength, 0, 4, 0.01, (v) => (this.p.rippleStrength = v));
-        ui.slider("Time", this.p.time, 0, 60, 0.01, (v) => (this.p.time = v));
+        ui.slider("Wetness", this.mParameters.wetness, 0, 1, 0.01, (v) => (this.mParameters.wetness = v));
+        ui.slider("Darkening", this.mParameters.darkening, 0, 1, 0.01, (v) => (this.mParameters.darkening = v));
+        ui.slider("Gloss", this.mParameters.gloss, 0, 1, 0.01, (v) => (this.mParameters.gloss = v));
+        ui.slider("Puddle coverage", this.mParameters.puddleCoverage, 0, 1, 0.01, (v) => (this.mParameters.puddleCoverage = v));
+        ui.slider("Ripple strength", this.mParameters.rippleStrength, 0, 4, 0.01, (v) => (this.mParameters.rippleStrength = v));
+        ui.slider("Time", this.mParameters.time, 0, 60, 0.01, (v) => (this.mParameters.time = v));
     }
 
     override reflect(compileData: CompileData): RenderPassReflection {
@@ -111,27 +119,45 @@ export class RainWetness extends RenderPass {
     }
 
     override execute(ctx: RenderContext, rd: RenderData): void {
-        const dst = rd.getTexture("dst"), color = rd.getTexture("color"), posW = rd.getTexture("posW");
-        const normW = rd.getTexture("normW"), specRough = rd.getTexture("specRough");
-        const srOut = rd.getTexture("specRoughOut"), nOut = rd.getTexture("normWOut");
+        const dst = rd.getTexture("dst");
+        const color = rd.getTexture("color");
+        const posW = rd.getTexture("posW");
+        const normW = rd.getTexture("normW");
+        const specRough = rd.getTexture("specRough");
+        const srOut = rd.getTexture("specRoughOut");
+        const nOut = rd.getTexture("normWOut");
         if (!dst || !color || !posW || !normW || !specRough || !srOut || !nOut) return;
-        const W = dst.width, H = dst.height;
-        const diffuse = rd.getTexture("diffuse"), specular = rd.getTexture("specular");
-        const { up, t1, t2 } = planarBasis(this.p.upAxis);
-        this.cp ??= ComputePass.create(this.device, { path: kShaderFile, csEntry: "main" });
-        const root = this.cp.getRootVar();
+        const W = dst.width;
+        const H = dst.height;
+        const diffuse = rd.getTexture("diffuse");
+        const specular = rd.getTexture("specular");
+        const { up, t1, t2 } = planarBasis(this.mParameters.upAxis);
+        this.mPass ??= ComputePass.create(this.device, { path: kShaderFile, csEntry: "main" });
+        const root = this.mPass.getRootVar();
         const cb = root["CB"]!;
-        const n = (k: keyof RainWetnessParams) => Number(this.p[k]);
+        const n = (k: keyof RainWetnessParams) => Number(this.mParameters[k]);
         const vals: Record<string, unknown> = {
-            gFrameDim: [W, H], gHasDiffuse: diffuse ? 1 : 0, gHasSpecular: specular ? 1 : 0,
-            gUp: up, gT1: t1, gT2: t2,
-            gWetness: Math.min(Math.max(n("wetness"), 0), 1), gSideWetness: Math.min(Math.max(n("sideWetness"), 0), 1),
-            gDarkening: Math.min(Math.max(n("darkening"), 0), 1), gGloss: Math.min(Math.max(n("gloss"), 0), 1),
-            gPuddleCoverage: Math.min(Math.max(n("puddleCoverage"), 0), 1), gPuddleEdge: Math.max(n("puddleEdge"), 1e-4),
-            gPuddleScale: n("puddleScale"), gPuddleUpMin: Math.min(Math.max(n("puddleUpMin"), -1), 0.999),
-            gPuddleRoughness: Math.min(Math.max(n("puddleRoughness"), 0), 1), gPuddleSpecular: Math.min(Math.max(n("puddleSpecular"), 0), 1),
-            gRippleStrength: Math.max(n("rippleStrength"), 0), gRippleScale: Math.max(n("rippleScale"), 1e-3),
-            gRippleRate: n("rippleRate"), gTime: n("time"), gSeed: Math.max(0, Math.round(n("seed"))) >>> 0,
+            gFrameDim: [W, H],
+            gHasDiffuse: diffuse ? 1 : 0,
+            gHasSpecular: specular ? 1 : 0,
+            gUp: up,
+            gT1: t1,
+            gT2: t2,
+            gWetness: Math.min(Math.max(n("wetness"), 0), 1),
+            gSideWetness: Math.min(Math.max(n("sideWetness"), 0), 1),
+            gDarkening: Math.min(Math.max(n("darkening"), 0), 1),
+            gGloss: Math.min(Math.max(n("gloss"), 0), 1),
+            gPuddleCoverage: Math.min(Math.max(n("puddleCoverage"), 0), 1),
+            gPuddleEdge: Math.max(n("puddleEdge"), 1e-4),
+            gPuddleScale: n("puddleScale"),
+            gPuddleUpMin: Math.min(Math.max(n("puddleUpMin"), -1), 0.999),
+            gPuddleRoughness: Math.min(Math.max(n("puddleRoughness"), 0), 1),
+            gPuddleSpecular: Math.min(Math.max(n("puddleSpecular"), 0), 1),
+            gRippleStrength: Math.max(n("rippleStrength"), 0),
+            gRippleScale: Math.max(n("rippleScale"), 1e-3),
+            gRippleRate: n("rippleRate"),
+            gTime: n("time"),
+            gSeed: Math.max(0, Math.round(n("seed"))) >>> 0,
         };
         for (const [k, v] of Object.entries(vals)) cb[k] = v as never;
         root["gColor"] = color;
@@ -144,7 +170,7 @@ export class RainWetness extends RenderPass {
         root["gSpecRoughOut"] = srOut;
         root["gNormWOut"] = nOut;
         root["gWetnessOut"] = rd.getTexture("wetness") ?? dummyTexture(this.device, "out:wetness");
-        this.cp.execute(ctx, W, H);
+        this.mPass.execute(ctx, W, H);
     }
 }
 

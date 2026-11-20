@@ -43,8 +43,10 @@ import {
 import { HistoryTracker, PingPongTextures } from "../Utils/History.js";
 
 const kShaderFile = "RenderPasses/SSR/SSR.cs.slang";
+/** Ordered option names; preserve this order for numeric property compatibility. */
 const kQualities = ["mirror", "stochastic"] as const;
 
+/** Creation defaults for the pass parameters documented in this file header. */
 const kDefaults = {
     intensity: 1,
     quality: "stochastic" as string,
@@ -59,46 +61,49 @@ const kDefaults = {
     seed: 0,
 };
 
+/** Traces, resolves and temporally accumulates screen-space specular reflections. */
 export class SSR extends RenderPass {
-    private p = { ...kDefaults };
-    private passes: Record<string, ComputePass> = {};
-    private readonly history = new HistoryTracker();
-    private readonly pp: PingPongTextures;
-    private traced: Texture | null = null;
-    private resolved: Texture | null = null;
-    private scratch: Record<string, Texture> = {};
-    private dummy: Texture | null = null;
+    private mParameters: typeof kDefaults = { ...kDefaults };
+    private mPasses: Record<string, ComputePass> = {};
+    private readonly mHistory: HistoryTracker = new HistoryTracker();
+    private readonly mHistoryTextures: PingPongTextures;
+    private mTraced: Texture | null = null;
+    private mResolved: Texture | null = null;
+    private mScratch: Record<string, Texture> = {};
+    private mDummy: Texture | null = null;
 
     constructor(device: Device, props: Properties) {
         super(device);
-        for (const k of Object.keys(kDefaults) as (keyof typeof kDefaults)[]) (this.p as Record<string, unknown>)[k] = props.get(k, kDefaults[k]);
-        if (!(kQualities as readonly string[]).includes(this.p.quality)) throw new Error(`SSR: quality must be one of ${kQualities.join("|")} (got ${this.p.quality})`);
-        this.pp = new PingPongTextures(device, ResourceFormat.RGBA32Float, "SSR::history");
+        for (const k of Object.keys(kDefaults) as (keyof typeof kDefaults)[])
+            (this.mParameters as Record<string, unknown>)[k] = props.get(k, kDefaults[k]);
+        if (!(kQualities as readonly string[]).includes(this.mParameters.quality))
+            throw new Error(`SSR: quality must be one of ${kQualities.join("|")} (got ${this.mParameters.quality})`);
+        this.mHistoryTextures = new PingPongTextures(device, ResourceFormat.RGBA32Float, "SSR::history");
     }
 
     override getProperties(): Properties {
-        return new Properties({ ...this.p });
+        return new Properties({ ...this.mParameters });
     }
 
     override renderUI(ui: UIWidgets): void {
-        ui.slider("Intensity", this.p.intensity, 0, 2, 0.01, (v) => (this.p.intensity = v));
-        ui.dropdown("Quality", [...kQualities], this.p.quality, (v) => (this.p.quality = v));
-        ui.slider("Max roughness", this.p.maxRoughness, 0, 1, 0.01, (v) => (this.p.maxRoughness = v));
-        ui.slider("Max steps", this.p.maxSteps, 8, 256, 1, (v) => (this.p.maxSteps = Math.round(v)));
-        ui.slider("Thickness", this.p.thickness, 0.001, 0.2, 0.001, (v) => (this.p.thickness = v));
-        ui.slider("Resolve radius", this.p.resolveRadius, 0, 6, 1, (v) => (this.p.resolveRadius = Math.round(v)));
-        ui.checkbox("Temporal", this.p.temporal, (v) => (this.p.temporal = v));
-        ui.slider("Temporal weight", this.p.temporalAlpha, 0, 0.98, 0.01, (v) => (this.p.temporalAlpha = v));
+        ui.slider("Intensity", this.mParameters.intensity, 0, 2, 0.01, (v) => (this.mParameters.intensity = v));
+        ui.dropdown("Quality", [...kQualities], this.mParameters.quality, (v) => (this.mParameters.quality = v));
+        ui.slider("Max roughness", this.mParameters.maxRoughness, 0, 1, 0.01, (v) => (this.mParameters.maxRoughness = v));
+        ui.slider("Max steps", this.mParameters.maxSteps, 8, 256, 1, (v) => (this.mParameters.maxSteps = Math.round(v)));
+        ui.slider("Thickness", this.mParameters.thickness, 0.001, 0.2, 0.001, (v) => (this.mParameters.thickness = v));
+        ui.slider("Resolve radius", this.mParameters.resolveRadius, 0, 6, 1, (v) => (this.mParameters.resolveRadius = Math.round(v)));
+        ui.checkbox("Temporal", this.mParameters.temporal, (v) => (this.mParameters.temporal = v));
+        ui.slider("Temporal weight", this.mParameters.temporalAlpha, 0, 0.98, 0.01, (v) => (this.mParameters.temporalAlpha = v));
     }
 
     /** Drops the temporal history: the next frame is computed as on a fresh context. */
     resetHistory(): void {
-        this.history.reset();
+        this.mHistory.reset();
     }
 
     /** Frames since the last history reset. */
     get frameIndex(): number {
-        return this.history.frameIndex;
+        return this.mHistory.frameIndex;
     }
 
     override reflect(compileData: CompileData): RenderPassReflection {
@@ -116,7 +121,10 @@ export class SSR extends RenderPass {
         r.addInput("hiz", "HiZBuild.hiz of the same depth").texture2D(0, 0, 1, 0).bindFlags(ResourceBindFlags.ShaderResource);
         input("mvec", "Motion vectors (UV, previous minus current)", true);
         const out = (name: string, desc: string, optional: boolean) => {
-            const f = r.addOutput(name, desc).texture2D(w, h).format(ResourceFormat.RGBA32Float)
+            const f = r
+                .addOutput(name, desc)
+                .texture2D(w, h)
+                .format(ResourceFormat.RGBA32Float)
                 .bindFlags(ResourceBindFlags.UnorderedAccess | ResourceBindFlags.ShaderResource);
             if (optional) f.flags(FieldFlags.Optional);
         };
@@ -127,63 +135,83 @@ export class SSR extends RenderPass {
     }
 
     private tex(name: string, w: number, h: number): Texture {
-        let t = this.scratch[name];
+        let t = this.mScratch[name];
         if (!t || t.width !== w || t.height !== h) {
-            t = this.device.createTexture2D(w, h, ResourceFormat.RGBA32Float, 1, 1, undefined,
-                ResourceBindFlags.ShaderResource | ResourceBindFlags.UnorderedAccess);
-            this.scratch[name] = t;
+            t = this.device.createTexture2D(
+                w,
+                h,
+                ResourceFormat.RGBA32Float,
+                1,
+                1,
+                undefined,
+                ResourceBindFlags.ShaderResource | ResourceBindFlags.UnorderedAccess,
+            );
+            this.mScratch[name] = t;
         }
         return t;
     }
 
     private pass(entry: string): ComputePass {
-        return (this.passes[entry] ??= ComputePass.create(this.device, { path: kShaderFile, csEntry: entry }));
+        return (this.mPasses[entry] ??= ComputePass.create(this.device, { path: kShaderFile, csEntry: entry }));
     }
 
     override execute(ctx: RenderContext, rd: RenderData): void {
         const dst = rd.getTexture("dst");
-        const color = rd.getTexture("color"), depth = rd.getTexture("depth"), normW = rd.getTexture("normW");
-        const specRough = rd.getTexture("specRough"), hiz = rd.getTexture("hiz");
+        const color = rd.getTexture("color");
+        const depth = rd.getTexture("depth");
+        const normW = rd.getTexture("normW");
+        const specRough = rd.getTexture("specRough");
+        const hiz = rd.getTexture("hiz");
         if (!dst || !color || !depth || !normW || !specRough || !hiz) return;
         if (!this.scene) throw new Error("SSR: requires a scene (camera)");
-        const W = dst.width, H = dst.height;
-        const temporal = this.p.temporal && this.p.temporalAlpha > 0;
+        const W = dst.width;
+        const H = dst.height;
+        const temporal = this.mParameters.temporal && this.mParameters.temporalAlpha > 0;
         // The tracker runs every frame; its key (size, temporal on/off) resets the history when the state layout changes.
-        const frame = this.history.begin(this.scene, `${W}x${H}:${temporal}`);
+        const frame = this.mHistory.begin(this.scene, `${W}x${H}:${temporal}`);
         const mvec = rd.getTexture("mvec");
-        this.dummy ??= this.device.createTexture2D(1, 1, ResourceFormat.RGBA32Float, 1, 1, new Float32Array(4), ResourceBindFlags.ShaderResource | ResourceBindFlags.UnorderedAccess);
-        this.traced = this.tex("traced", W, H);
-        this.resolved = this.tex("resolved", W, H);
+        this.mDummy ??= this.device.createTexture2D(
+            1,
+            1,
+            ResourceFormat.RGBA32Float,
+            1,
+            1,
+            new Float32Array(4),
+            ResourceBindFlags.ShaderResource | ResourceBindFlags.UnorderedAccess,
+        );
+        this.mTraced = this.tex("traced", W, H);
+        this.mResolved = this.tex("resolved", W, H);
         const hitOut = rd.getTexture("hit") ?? this.tex("hit", W, H);
         const reflOut = rd.getTexture("reflection") ?? this.tex("reflection", W, H);
 
         const cam = this.scene.camera;
         const data = cam.getData();
-        const p = cam.getPosition(), t = cam.getTarget();
+        const p = cam.getPosition();
+        const t = cam.getTarget();
         const f = [t.x - p.x, t.y - p.y, t.z - p.z];
         const fl = Math.hypot(f[0]!, f[1]!, f[2]!) || 1;
-        const seedFrame = (temporal ? frame.frameIndex : 0) + Math.max(0, Math.round(this.p.seed)) * 7919;
+        const seedFrame = (temporal ? frame.frameIndex : 0) + Math.max(0, Math.round(this.mParameters.seed)) * 7919;
         const setCB = (cp: ComputePass) => {
             const root = cp.getRootVar();
             const cb = root["CB"]!;
             cb["gFrameDim"] = [W, H];
             cb["gMipCount"] = hiz.mipCount;
-            cb["gMaxSteps"] = Math.max(1, Math.round(this.p.maxSteps));
+            cb["gMaxSteps"] = Math.max(1, Math.round(this.mParameters.maxSteps));
             cb["gViewProj"] = data.viewProjMatNoJitter;
             cb["gInvViewProj"] = data.invViewProj;
             cb["gCamPos"] = [p.x, p.y, p.z];
-            cb["gThickness"] = this.p.thickness;
+            cb["gThickness"] = this.mParameters.thickness;
             cb["gCamFwd"] = f.map((x) => x / fl);
             cb["gNear"] = cam.getNearPlane();
-            cb["gMaxRoughness"] = this.p.maxRoughness;
-            cb["gMirrorRoughness"] = this.p.mirrorRoughness;
-            cb["gStochastic"] = this.p.quality === "stochastic" ? 1 : 0;
+            cb["gMaxRoughness"] = this.mParameters.maxRoughness;
+            cb["gMirrorRoughness"] = this.mParameters.mirrorRoughness;
+            cb["gStochastic"] = this.mParameters.quality === "stochastic" ? 1 : 0;
             cb["gFrameSeed"] = seedFrame >>> 0;
-            cb["gResolveRadius"] = Math.max(0, Math.round(this.p.resolveRadius));
-            cb["gTemporalAlpha"] = Math.min(Math.max(this.p.temporalAlpha, 0), 0.999);
+            cb["gResolveRadius"] = Math.max(0, Math.round(this.mParameters.resolveRadius));
+            cb["gTemporalAlpha"] = Math.min(Math.max(this.mParameters.temporalAlpha, 0), 0.999);
             cb["gHistoryValid"] = frame.frameIndex > 0 ? 1 : 0;
-            cb["gIntensity"] = this.p.intensity;
-            cb["gBorderFade"] = this.p.borderFade;
+            cb["gIntensity"] = this.mParameters.intensity;
+            cb["gBorderFade"] = this.mParameters.borderFade;
             return root;
         };
 
@@ -195,27 +223,27 @@ export class SSR extends RenderPass {
             root["gNormW"] = normW;
             root["gSpecRough"] = specRough;
             root["gHiZ"] = hiz;
-            root["gTraceOut"] = this.traced;
+            root["gTraceOut"] = this.mTraced;
             root["gHitOut"] = hitOut;
             cp.execute(ctx, W, H);
         }
         {
             const cp = this.pass("resolve");
             const root = setCB(cp);
-            root["gTraced"] = this.traced;
+            root["gTraced"] = this.mTraced;
             root["gDepth"] = depth;
             root["gNormW"] = normW;
             root["gSpecRough"] = specRough;
-            root["gResolveOut"] = this.resolved;
+            root["gResolveOut"] = this.mResolved;
             cp.execute(ctx, W, H);
         }
-        let refl = this.resolved;
+        let refl = this.mResolved;
         if (temporal) {
-            const { read, write } = this.pp.get(ctx, W, H, frame);
+            const { read, write } = this.mHistoryTextures.get(ctx, W, H, frame);
             const cp = this.pass("temporal");
             const root = setCB(cp);
-            root["gResolved"] = this.resolved;
-            root["gMvec"] = mvec ?? this.dummy;
+            root["gResolved"] = this.mResolved;
+            root["gMvec"] = mvec ?? this.mDummy;
             root["gHistory"] = read;
             root["gTemporalOut"] = write;
             cp.execute(ctx, W, H);

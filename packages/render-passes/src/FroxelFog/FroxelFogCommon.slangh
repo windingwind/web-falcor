@@ -64,8 +64,14 @@ uint2 packFroxel(float4 c)
 }
 #else
 typedef float4 FroxelT;
-float4 unpackFroxel(float4 v) { return v; }
-float4 packFroxel(float4 c) { return max(c, float4(0.f)); }
+float4 unpackFroxel(float4 v)
+{
+    return v;
+}
+float4 packFroxel(float4 c)
+{
+    return max(c, float4(0.f));
+}
 #endif
 
 /// Froxel volume read by the current dispatch (history in scatter, media in integrate, integrated volume in apply) and

@@ -52,9 +52,12 @@ import { addColorOutput, addTexInput, dummyTexture, parseColour } from "../Styli
 const kShaderFile = "RenderPasses/Sky/ProceduralNightSky.cs.slang";
 /** Layer depth of the sky (view-depth units): behind any surface, in front of an empty background (3.4e38). */
 export const kSkyDepth = 3.0e38;
+/** Ordered option names; preserve this order for numeric property compatibility. */
 const kComposites = ["replace", "add"] as const;
+/** Ordered option names; preserve this order for numeric property compatibility. */
 const kLayers = ["stars", "nebula", "aurora"] as const;
 
+/** Star, nebula, aurora and background controls for the procedural sky. */
 export interface NightSkyParams {
     mode: string;
     composite: string;
@@ -144,7 +147,15 @@ export const kDefaultNightSky: NightSkyParams = {
     auroraColourHigh: [0.55, 0.12, 0.75],
 };
 
-const kColourKeys = ["zenithColour", "horizonColour", "groundColour", "nebulaColourA", "nebulaColourB", "auroraColourLow", "auroraColourHigh"] as const;
+const kColourKeys = [
+    "zenithColour",
+    "horizonColour",
+    "groundColour",
+    "nebulaColourA",
+    "nebulaColourB",
+    "auroraColourLow",
+    "auroraColourHigh",
+] as const;
 
 /** Enabled layers of a mode string: bit 0 stars, 1 nebula, 2 aurora. Throws on unknown names. */
 export function nightSkyLayerMask(mode: string): number {
@@ -153,7 +164,8 @@ export function nightSkyLayerMask(mode: string): number {
     let mask = 0;
     for (const part of m.split("+").map((s) => s.trim())) {
         const i = (kLayers as readonly string[]).indexOf(part);
-        if (i < 0) throw new RuntimeError(`ProceduralNightSky: unknown mode '${part}' (use a '+'-list of ${kLayers.join(", ")}, or 'none')`);
+        if (i < 0)
+            throw new RuntimeError(`ProceduralNightSky: unknown mode '${part}' (use a '+'-list of ${kLayers.join(", ")}, or 'none')`);
         mask |= 1 << i;
     }
     return mask;
@@ -163,7 +175,8 @@ export function nightSkyLayerMask(mode: string): number {
 export function resolveNightSkyParams(p: Partial<NightSkyParams>): NightSkyParams {
     const r = { ...kDefaultNightSky, ...p } as NightSkyParams;
     for (const k of kColourKeys) r[k] = parseColour(r[k]);
-    if (!(kComposites as readonly string[]).includes(r.composite)) throw new RuntimeError(`ProceduralNightSky: composite must be one of ${kComposites.join(", ")}`);
+    if (!(kComposites as readonly string[]).includes(r.composite))
+        throw new RuntimeError(`ProceduralNightSky: composite must be one of ${kComposites.join(", ")}`);
     nightSkyLayerMask(r.mode);
     r.seed = Math.max(0, Math.floor(Number(r.seed))) >>> 0;
     r.auroraCurtains = Math.min(Math.max(Math.round(r.auroraCurtains), 1), 4);
@@ -182,9 +195,15 @@ export function pcg3d(x: number, y: number, z: number): [number, number, number]
     x = (Math.imul(x, 1664525) + 1013904223) >>> 0;
     y = (Math.imul(y, 1664525) + 1013904223) >>> 0;
     z = (Math.imul(z, 1664525) + 1013904223) >>> 0;
-    x = (x + Math.imul(y, z)) >>> 0; y = (y + Math.imul(z, x)) >>> 0; z = (z + Math.imul(x, y)) >>> 0;
-    x = (x ^ (x >>> 16)) >>> 0; y = (y ^ (y >>> 16)) >>> 0; z = (z ^ (z >>> 16)) >>> 0;
-    x = (x + Math.imul(y, z)) >>> 0; y = (y + Math.imul(z, x)) >>> 0; z = (z + Math.imul(x, y)) >>> 0;
+    x = (x + Math.imul(y, z)) >>> 0;
+    y = (y + Math.imul(z, x)) >>> 0;
+    z = (z + Math.imul(x, y)) >>> 0;
+    x = (x ^ (x >>> 16)) >>> 0;
+    y = (y ^ (y >>> 16)) >>> 0;
+    z = (z ^ (z >>> 16)) >>> 0;
+    x = (x + Math.imul(y, z)) >>> 0;
+    y = (y + Math.imul(z, x)) >>> 0;
+    z = (z + Math.imul(x, y)) >>> 0;
     return [x, y, z];
 }
 /** Hash of an integer lattice point with a salt -> 3 uints. */
@@ -194,24 +213,41 @@ const u01 = (u: number) => (u >>> 8) * (1 / 16777216);
 const fract = (x: number) => x - Math.floor(x);
 const mix = (a: number, b: number, t: number) => a + (b - a) * t;
 const sat = (x: number) => Math.min(Math.max(x, 0), 1);
-const smooth = (e0: number, e1: number, x: number) => { const t = sat((x - e0) / (e1 - e0)); return t * t * (3 - 2 * t); };
+const smooth = (e0: number, e1: number, x: number) => {
+    const t = sat((x - e0) / (e1 - e0));
+    return t * t * (3 - 2 * t);
+};
 
 /** 3D value noise in [0, 1) with smoothstep interpolation (C1). */
 export function vnoise3(x: number, y: number, z: number, salt: number): number {
-    const ix = Math.floor(x), iy = Math.floor(y), iz = Math.floor(z);
-    const fx = x - ix, fy = y - iy, fz = z - iz;
-    const wx = fx * fx * (3 - 2 * fx), wy = fy * fy * (3 - 2 * fy), wz = fz * fz * (3 - 2 * fz);
+    const ix = Math.floor(x);
+    const iy = Math.floor(y);
+    const iz = Math.floor(z);
+    const fx = x - ix;
+    const fy = y - iy;
+    const fz = z - iz;
+    const wx = fx * fx * (3 - 2 * fx);
+    const wy = fy * fy * (3 - 2 * fy);
+    const wz = fz * fz * (3 - 2 * fz);
     const v = (a: number, b: number, c: number) => u01(hashCell(ix + a, iy + b, iz + c, salt)[0]);
-    const x00 = mix(v(0, 0, 0), v(1, 0, 0), wx), x10 = mix(v(0, 1, 0), v(1, 1, 0), wx);
-    const x01 = mix(v(0, 0, 1), v(1, 0, 1), wx), x11 = mix(v(0, 1, 1), v(1, 1, 1), wx);
+    const x00 = mix(v(0, 0, 0), v(1, 0, 0), wx);
+    const x10 = mix(v(0, 1, 0), v(1, 1, 0), wx);
+    const x01 = mix(v(0, 0, 1), v(1, 0, 1), wx);
+    const x11 = mix(v(0, 1, 1), v(1, 1, 1), wx);
     return mix(mix(x00, x10, wy), mix(x01, x11, wy), wz);
 }
 /** fBm of vnoise3, `oct` octaves, lacunarity 2.03, gain 0.5, normalised to [0, 1). */
 export function fbm3(x: number, y: number, z: number, oct: number, salt: number): number {
-    let s = 0, a = 0.5, n = 0;
+    let s = 0;
+    let a = 0.5;
+    let n = 0;
     for (let o = 0; o < oct; o++) {
-        s += a * vnoise3(x, y, z, (salt + o) >>> 0); n += a;
-        x *= 2.03; y *= 2.03; z *= 2.03; a *= 0.5;
+        s += a * vnoise3(x, y, z, (salt + o) >>> 0);
+        n += a;
+        x *= 2.03;
+        y *= 2.03;
+        z *= 2.03;
+        a *= 0.5;
     }
     return s / n;
 }
@@ -220,7 +256,14 @@ export function fbm3(x: number, y: number, z: number, oct: number, salt: number)
 function derived(p: NightSkyParams) {
     const ang = ((p.rotation + p.rotationSpeed * p.time) * Math.PI) / 180;
     const az = (p.auroraAzimuth * Math.PI) / 180;
-    return { rotCos: Math.cos(ang), rotSin: Math.sin(ang), azCos: Math.cos(az), azSin: Math.sin(az), mask: nightSkyLayerMask(p.mode), salt: Math.imul(p.seed, 131) >>> 0 };
+    return {
+        rotCos: Math.cos(ang),
+        rotSin: Math.sin(ang),
+        azCos: Math.cos(az),
+        azSin: Math.sin(az),
+        mask: nightSkyLayerMask(p.mode),
+        salt: Math.imul(p.seed, 131) >>> 0,
+    };
 }
 
 const kStarGridScale = [1, 2.03, 4.07];
@@ -230,7 +273,11 @@ const kStarLayerDensity = [1, 0.3, 0.08];
  * CPU reference of the shader: sky radiance towards `dir` (sky frame, y up; world directions go through toSkyFrame(upAxis)) for a pixel footprint of `pixelAngle` radians.
  * Returns the background and the layer sum separately (dst = replace ? bg + layers : color + layers).
  */
-export function evalNightSky(dir: readonly number[], params: Partial<NightSkyParams> = {}, pixelAngle = 0.002): { bg: [number, number, number]; layers: [number, number, number] } {
+export function evalNightSky(
+    dir: readonly number[],
+    params: Partial<NightSkyParams> = {},
+    pixelAngle = 0.002,
+): { bg: [number, number, number]; layers: [number, number, number] } {
     const p = resolveNightSkyParams(params);
     const D = derived(p);
     const l = Math.hypot(dir[0]!, dir[1]!, dir[2]!) || 1;
@@ -238,7 +285,10 @@ export function evalNightSky(dir: readonly number[], params: Partial<NightSkyPar
     const S = p.skyScale;
     let bg: number[];
     if (d[1]! < 0) bg = p.groundColour.map((c) => c * S);
-    else { const t = Math.sqrt(d[1]!); bg = [0, 1, 2].map((c) => mix(p.horizonColour[c]!, p.zenithColour[c]!, t) * S); }
+    else {
+        const t = Math.sqrt(d[1]!);
+        bg = [0, 1, 2].map((c) => mix(p.horizonColour[c]!, p.zenithColour[c]!, t) * S);
+    }
     const L = [0, 0, 0];
     if (d[1]! <= 0 || D.mask === 0) return { bg: bg as [number, number, number], layers: [0, 0, 0] };
     const fade = smooth(0, p.horizonFade, d[1]!);
@@ -266,26 +316,32 @@ export function evalNightSky(dir: readonly number[], params: Partial<NightSkyPar
             const P = r.map((v) => v * N);
             const c0 = P.map(Math.floor);
             const salt = (D.salt + 10 + layer) >>> 0;
-            for (let dz = -1; dz <= 1; dz++) for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {
-                const cx = c0[0]! + dx, cy = c0[1]! + dy, cz = c0[2]! + dz;
-                const h = hashCell(cx, cy, cz, salt);
-                const h2 = pcg3d(h[0], h[1] ^ 0x5bd1e995, h[2]);
-                if (u01(h2[0]) >= p.starDensity * kStarLayerDensity[layer]!) continue;
-                const q = [cx + 0.1 + 0.8 * u01(h[0]), cy + 0.1 + 0.8 * u01(h[1]), cz + 0.1 + 0.8 * u01(h[2])];
-                const ql = Math.hypot(q[0]!, q[1]!, q[2]!);
-                if (Math.abs(ql - N) >= 0.5) continue;
-                const s = q.map((v) => v / ql);
-                const ex = r[0]! - s[0]!, ey = r[1]! - s[1]!, ez = r[2]! - s[2]!;
-                const a2 = (ex * ex + ey * ey + ez * ez) / (rad * rad);
-                if (a2 > 9) continue;
-                const ub = u01(h2[1]);
-                const bright = 0.04 + 3 * Math.pow(ub, 8);
-                const tw = 1 + p.starTwinkle * Math.sin(p.time * (2 + 4 * u01(h2[2])) + 6.2831853 * fract(ub * 7.13));
-                const temp = fract(ub * 13.7 + u01(h2[2]) * 3.1);
-                const col = [0, 1, 2].map((c) => mix(1, mix([0.72, 0.82, 1][c]!, [1, 0.78, 0.55][c]!, temp), p.starColourVar));
-                const e = p.starIntensity * bright * tw * Math.exp(-2 * a2) * dust;
-                for (let c = 0; c < 3; c++) L[c]! += e * col[c]!;
-            }
+            for (let dz = -1; dz <= 1; dz++)
+                for (let dy = -1; dy <= 1; dy++)
+                    for (let dx = -1; dx <= 1; dx++) {
+                        const cx = c0[0]! + dx;
+                        const cy = c0[1]! + dy;
+                        const cz = c0[2]! + dz;
+                        const h = hashCell(cx, cy, cz, salt);
+                        const h2 = pcg3d(h[0], h[1] ^ 0x5bd1e995, h[2]);
+                        if (u01(h2[0]) >= p.starDensity * kStarLayerDensity[layer]!) continue;
+                        const q = [cx + 0.1 + 0.8 * u01(h[0]), cy + 0.1 + 0.8 * u01(h[1]), cz + 0.1 + 0.8 * u01(h[2])];
+                        const ql = Math.hypot(q[0]!, q[1]!, q[2]!);
+                        if (Math.abs(ql - N) >= 0.5) continue;
+                        const s = q.map((v) => v / ql);
+                        const ex = r[0]! - s[0]!;
+                        const ey = r[1]! - s[1]!;
+                        const ez = r[2]! - s[2]!;
+                        const a2 = (ex * ex + ey * ey + ez * ez) / (rad * rad);
+                        if (a2 > 9) continue;
+                        const ub = u01(h2[1]);
+                        const bright = 0.04 + 3 * Math.pow(ub, 8);
+                        const tw = 1 + p.starTwinkle * Math.sin(p.time * (2 + 4 * u01(h2[2])) + 6.2831853 * fract(ub * 7.13));
+                        const temp = fract(ub * 13.7 + u01(h2[2]) * 3.1);
+                        const col = [0, 1, 2].map((c) => mix(1, mix([0.72, 0.82, 1][c]!, [1, 0.78, 0.55][c]!, temp), p.starColourVar));
+                        const e = p.starIntensity * bright * tw * Math.exp(-2 * a2) * dust;
+                        for (let c = 0; c < 3; c++) L[c]! += e * col[c]!;
+                    }
         }
     }
     if (D.mask & 4) {
@@ -295,10 +351,15 @@ export function evalNightSky(dir: readonly number[], params: Partial<NightSkyPar
             for (let i = 0; i < K; i++) {
                 const t = i / (K - 1);
                 const h = p.auroraHeight * (1 + p.auroraThickness * t);
-                const px = (d[0]! * h) / d[1]!, pz = (d[2]! * h) / d[1]!;
-                const a = D.azCos * px + D.azSin * pz, b = D.azSin * px - D.azCos * pz;
+                const px = (d[0]! * h) / d[1]!;
+                const pz = (d[2]! * h) / d[1]!;
+                const a = D.azCos * px + D.azSin * pz;
+                const b = D.azSin * px - D.azCos * pz;
                 const ts = p.time * p.auroraSpeed;
-                const line = p.auroraDistance + cu * p.auroraSpacing + p.auroraWave * (2 * vnoise3(a * p.auroraFreq, ts, cu * 7.3 + 0.5, (D.salt + 20) >>> 0) - 1);
+                const line =
+                    p.auroraDistance +
+                    cu * p.auroraSpacing +
+                    p.auroraWave * (2 * vnoise3(a * p.auroraFreq, ts, cu * 7.3 + 0.5, (D.salt + 20) >>> 0) - 1);
                 const db = (b - line) / p.auroraWidth;
                 const band = Math.exp(-db * db);
                 const rays = 0.35 + 0.65 * vnoise3(a * p.auroraRayFreq, 2 * ts, cu * 3.1 + 11.5, (D.salt + 30) >>> 0);
@@ -325,24 +386,30 @@ export function createNightSkyEnvMap(device: Device, params: Partial<NightSkyPar
             const dir = [Math.sin(theta) * Math.sin(phi), Math.cos(theta), -Math.sin(theta) * Math.cos(phi)];
             const s = evalNightSky(toSky(dir), { ...params, composite: "replace" }, pixelAngle);
             const o = (j * width + i) * 4;
-            data[o] = s.bg[0] + s.layers[0]; data[o + 1] = s.bg[1] + s.layers[1]; data[o + 2] = s.bg[2] + s.layers[2]; data[o + 3] = 1;
+            data[o] = s.bg[0] + s.layers[0];
+            data[o + 1] = s.bg[1] + s.layers[1];
+            data[o + 2] = s.bg[2] + s.layers[2];
+            data[o + 3] = 1;
         }
     }
     return new EnvMap(device, { width, height, data } as ConstructorParameters<typeof EnvMap>[1]);
 }
-
 
 /** Rotation taking `up` to +y (minimal rotation, Rodrigues); identity for +y. Sky formulas use +y up. */
 export function toSkyFrame(up: readonly number[]): (v: readonly number[]) => [number, number, number] {
     const l = Math.hypot(up[0]!, up[1]!, up[2]!) || 1;
     const u = [up[0]! / l, up[1]! / l, up[2]! / l];
     const k = [-u[2]!, 0, u[0]!]; // u x (0, 1, 0)
-    const s = Math.hypot(k[0]!, k[2]!), c = u[1]!;
+    const s = Math.hypot(k[0]!, k[2]!);
+    const c = u[1]!;
     if (s < 1e-9) return c > 0 ? (v) => [v[0]!, v[1]!, v[2]!] : (v) => [v[0]!, -v[1]!, -v[2]!];
-    const kx = k[0]! / s, kz = k[2]! / s;
+    const kx = k[0]! / s;
+    const kz = k[2]! / s;
     return (v) => {
         const kv = kx * v[0]! + kz * v[2]!;
-        const cx = -kz * v[1]!, cy = kz * v[0]! - kx * v[2]!, cz = kx * v[1]!; // k x v (k = (kx, 0, kz))
+        const cx = -kz * v[1]!;
+        const cy = kz * v[0]! - kx * v[2]!;
+        const cz = kx * v[1]!; // k x v (k = (kx, 0, kz))
         return [v[0]! * c + cx * s + kx * kv * (1 - c), v[1]! * c + cy * s, v[2]! * c + cz * s + kz * kv * (1 - c)];
     };
 }
@@ -352,35 +419,38 @@ const norm3 = (v: number[]): [number, number, number] => {
     return [v[0]! / l, v[1]! / l, v[2]! / l];
 };
 
+/** Renders deterministic stars, nebulae and aurorae in the configured sky frame. */
 export class ProceduralNightSky extends RenderPass {
-    private p: NightSkyParams = { ...kDefaultNightSky };
-    private pass: ComputePass | null = null;
+    private mParameters: NightSkyParams = { ...kDefaultNightSky };
+    private mPass: ComputePass | null = null;
 
     constructor(device: Device, props: Properties) {
         super(device);
-        for (const k of Object.keys(this.p) as (keyof NightSkyParams)[]) (this.p as unknown as Record<string, unknown>)[k] = props.get(k, this.p[k]);
-        resolveNightSkyParams(this.p);
+        for (const k of Object.keys(this.mParameters) as (keyof NightSkyParams)[])
+            (this.mParameters as unknown as Record<string, unknown>)[k] = props.get(k, this.mParameters[k]);
+        resolveNightSkyParams(this.mParameters);
     }
 
     get params(): NightSkyParams {
-        return { ...this.p };
+        return { ...this.mParameters };
     }
 
     override getProperties(): Properties {
-        return new Properties({ ...this.p });
+        return new Properties({ ...this.mParameters });
     }
 
     override setProperties(props: Properties): void {
-        for (const k of Object.keys(this.p) as (keyof NightSkyParams)[]) (this.p as unknown as Record<string, unknown>)[k] = props.get(k, this.p[k]);
-        resolveNightSkyParams(this.p);
+        for (const k of Object.keys(this.mParameters) as (keyof NightSkyParams)[])
+            (this.mParameters as unknown as Record<string, unknown>)[k] = props.get(k, this.mParameters[k]);
+        resolveNightSkyParams(this.mParameters);
     }
 
     override renderUI(ui: UIWidgets): void {
-        ui.slider("Time", this.p.time, 0, 600, 0.01, (v) => (this.p.time = v));
-        ui.slider("Sky scale", this.p.skyScale, 0, 10, 0.001, (v) => (this.p.skyScale = v));
-        ui.slider("Star intensity", this.p.starIntensity, 0, 10, 0.01, (v) => (this.p.starIntensity = v));
-        ui.slider("Nebula intensity", this.p.nebulaIntensity, 0, 2, 0.001, (v) => (this.p.nebulaIntensity = v));
-        ui.slider("Aurora intensity", this.p.auroraIntensity, 0, 2, 0.001, (v) => (this.p.auroraIntensity = v));
+        ui.slider("Time", this.mParameters.time, 0, 600, 0.01, (v) => (this.mParameters.time = v));
+        ui.slider("Sky scale", this.mParameters.skyScale, 0, 10, 0.001, (v) => (this.mParameters.skyScale = v));
+        ui.slider("Star intensity", this.mParameters.starIntensity, 0, 10, 0.01, (v) => (this.mParameters.starIntensity = v));
+        ui.slider("Nebula intensity", this.mParameters.nebulaIntensity, 0, 2, 0.001, (v) => (this.mParameters.nebulaIntensity = v));
+        ui.slider("Aurora intensity", this.mParameters.auroraIntensity, 0, 2, 0.001, (v) => (this.mParameters.auroraIntensity = v));
     }
 
     override reflect(compileData: CompileData): RenderPassReflection {
@@ -397,27 +467,43 @@ export class ProceduralNightSky extends RenderPass {
     override execute(ctx: RenderContext, rd: RenderData): void {
         const dst = rd.getTexture("dst");
         if (!dst) return;
-        const color = rd.getTexture("color"), posW = rd.getTexture("posW");
-        const layer = rd.getTexture("layer"), layerDepth = rd.getTexture("layerDepth");
-        const p = resolveNightSkyParams(this.p);
+        const color = rd.getTexture("color");
+        const posW = rd.getTexture("posW");
+        const layer = rd.getTexture("layer");
+        const layerDepth = rd.getTexture("layerDepth");
+        const p = resolveNightSkyParams(this.mParameters);
         const D = derived(p);
-        const W = dst.width, H = dst.height;
-        this.pass ??= ComputePass.create(this.device, { path: kShaderFile });
-        let fwd = [0, 0, -1], up = [0, 1, 0], tanY = Math.tan(Math.PI / 8), aspect = W / H;
+        const W = dst.width;
+        const H = dst.height;
+        this.mPass ??= ComputePass.create(this.device, { path: kShaderFile });
+        let fwd = [0, 0, -1];
+        let up = [0, 1, 0];
+        let tanY = Math.tan(Math.PI / 8);
+        let aspect = W / H;
         if (this.scene) {
             const cam = this.scene.camera;
-            const cp = cam.getPosition(), ct = cam.getTarget(), cu = cam.getUpVector();
+            const cp = cam.getPosition();
+            const ct = cam.getTarget();
+            const cu = cam.getUpVector();
             fwd = norm3([ct.x - cp.x, ct.y - cp.y, ct.z - cp.z]);
             up = [cu.x, cu.y, cu.z];
             tanY = Math.tan(0.5 * cam.getFovY());
             aspect = cam.getAspectRatio();
         }
-        const right = norm3([fwd[1]! * up[2]! - fwd[2]! * up[1]!, fwd[2]! * up[0]! - fwd[0]! * up[2]!, fwd[0]! * up[1]! - fwd[1]! * up[0]!]);
-        const trueUp = [right[1] * fwd[2]! - right[2] * fwd[1]!, right[2] * fwd[0]! - right[0] * fwd[2]!, right[0] * fwd[1]! - right[1] * fwd[0]!];
+        const right = norm3([
+            fwd[1]! * up[2]! - fwd[2]! * up[1]!,
+            fwd[2]! * up[0]! - fwd[0]! * up[2]!,
+            fwd[0]! * up[1]! - fwd[1]! * up[0]!,
+        ]);
+        const trueUp = [
+            right[1] * fwd[2]! - right[2] * fwd[1]!,
+            right[2] * fwd[0]! - right[0] * fwd[2]!,
+            right[0] * fwd[1]! - right[1] * fwd[0]!,
+        ];
         const toSky = toSkyFrame(p.upAxis);
         const [rs, us, fs] = [toSky(right), toSky(trueUp), toSky(fwd)];
         const S = p.skyScale;
-        const root = this.pass.getRootVar();
+        const root = this.mPass.getRootVar();
         const cb = root["CB"]!;
         cb["gFrameDim"] = [W, H];
         cb["gHasColor"] = color ? 1 : 0;
@@ -451,7 +537,7 @@ export class ProceduralNightSky extends RenderPass {
         cb["gHasLayerDepth"] = layerDepth ? 1 : 0;
         root["gLayer"] = layer ?? dummyTexture(this.device, "out:layer");
         root["gLayerDepth"] = layerDepth ?? dummyTexture(this.device, "out:layerDepth");
-        this.pass.execute(ctx, W, H);
+        this.mPass.execute(ctx, W, H);
     }
 }
 

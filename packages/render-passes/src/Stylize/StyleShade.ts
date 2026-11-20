@@ -54,12 +54,16 @@ import { dummyTexture, parseColour } from "./StyleCommon.js";
 const kShaderFile = "RenderPasses/Stylize/StyleShade.cs.slang";
 const kSHShaderFile = "RenderPasses/RasterLighting/EnvSH.cs.slang";
 
+/** Ordered option names; preserve this order for numeric property compatibility. */
 export const kStyleShadeDiffuseModels = ["lambert", "wrap", "halfLambert", "minnaert"] as const;
+/** Ordered option names; preserve this order for numeric property compatibility. */
 export const kStyleShadeSpecModels = ["ggx", "blinn", "hardSpec"] as const;
 /** Max. number of per-material overrides. */
 export const kStyleShadeMaxOverrides = 64;
+/** Five float4 records per material; layout is defined in StyleShade.cs.slang. */
 const kRecordFloats = 20;
 
+/** Diffuse, ambient and specular styling controls for one material. */
 export interface StyleRecord {
     diffuseModel: string;
     wrap: number;
@@ -99,57 +103,81 @@ function index(name: string, v: unknown, names: readonly string[]): number {
 
 /** Packs a record into kRecordFloats floats (layout documented in StyleShade.cs.slang). */
 export function packStyleRecord(r: StyleRecord, materialId: number): number[] {
-    const sky = parseColour(r.skyColor), ground = parseColour(r.groundColor);
+    const sky = parseColour(r.skyColor);
+    const ground = parseColour(r.groundColor);
     return [
-        index("diffuseModel", r.diffuseModel, kStyleShadeDiffuseModels), Number(r.wrap), Number(r.minnaertK), index("specModel", r.specModel, kStyleShadeSpecModels),
-        sky[0], sky[1], sky[2], Number(r.hemiMix),
-        ground[0], ground[1], ground[2], Number(r.flatMix),
-        Number(r.shininess), Number(r.hardThreshold), Number(r.hardSoftness), Number(r.specScale),
-        materialId, 0, 0, 0,
+        index("diffuseModel", r.diffuseModel, kStyleShadeDiffuseModels),
+        Number(r.wrap),
+        Number(r.minnaertK),
+        index("specModel", r.specModel, kStyleShadeSpecModels),
+        sky[0],
+        sky[1],
+        sky[2],
+        Number(r.hemiMix),
+        ground[0],
+        ground[1],
+        ground[2],
+        Number(r.flatMix),
+        Number(r.shininess),
+        Number(r.hardThreshold),
+        Number(r.hardSoftness),
+        Number(r.specScale),
+        materialId,
+        0,
+        0,
+        0,
     ];
 }
 
 /** Env specular occlusion (as DeferredLighting.envSpecularOcclusion): Auto = on when the scene has an env map and geometry. */
+/** Ordered option names; preserve this order for numeric property compatibility. */
 const kEnvOcclusionModes = ["Auto", "On", "Off"] as const;
 type EnvOcclusionMode = (typeof kEnvOcclusionModes)[number];
 
 /** Rejects ramp / band properties: this pass has no colour-ramp or band-count mode. */
 function assertNoRamp(keys: Iterable<string>, where: string): void {
-    for (const k of keys) if (/^(ramp|band)/i.test(k)) throw new Error(`StyleShade: '${k}' (${where}) is not supported; StyleShade has no ramp/band mode`);
+    for (const k of keys)
+        if (/^(ramp|band)/i.test(k)) throw new Error(`StyleShade: '${k}' (${where}) is not supported; StyleShade has no ramp/band mode`);
 }
 
+/** Re-shades rasterized geometry with per-material diffuse, ambient and specular styles. */
 export class StyleShade extends RenderPass {
-    private rec: StyleRecord = { ...kDefaultStyleRecord };
-    private overrides: ({ materialId: number } & Partial<StyleRecord>)[] = [];
-    private styleMix = 1;
-    private shadowLight = -1;
-    private envLighting = true;
-    private analyticLights = true;
-    private emissive = true;
-    private envBackground = true;
-    private envSpecularOcclusion: EnvOcclusionMode = "Auto";
+    private mDefaultStyle: StyleRecord = { ...kDefaultStyleRecord };
+    private mOverrides: ({ materialId: number } & Partial<StyleRecord>)[] = [];
+    private mStyleMix: number = 1;
+    private mShadowLight: number = -1;
+    private mEnvLighting: boolean = true;
+    private mAnalyticLights: boolean = true;
+    private mEmissive: boolean = true;
+    private mEnvBackground: boolean = true;
+    private mEnvSpecularOcclusion: EnvOcclusionMode = "Auto";
 
-    private pass: ComputePass | null = null;
-    private passKey = "";
-    private shPass: ComputePass | null = null;
-    private shBuffer: Buffer | null = null;
-    private shSource: unknown = null;
-    private styleBuffer: Buffer | null = null;
-    private styleKey = "";
+    private mPass: ComputePass | null = null;
+    private mPassKey: string = "";
+    private mShPass: ComputePass | null = null;
+    private mShBuffer: Buffer | null = null;
+    private mShSource: unknown = null;
+    private mStyleBuffer: Buffer | null = null;
+    private mStyleKey: string = "";
 
     constructor(device: Device, props: Properties) {
         super(device);
-        assertNoRamp([...props.entries()].map(([k]) => k), "property");
-        for (const k of kRecordKeys) (this.rec as unknown as Record<string, unknown>)[k] = props.get(k, kDefaultStyleRecord[k] as PropertyValue);
-        this.styleMix = Number(props.get("styleMix", 1));
-        this.shadowLight = Number(props.get("shadowLight", -1));
-        this.envLighting = props.get("envLighting", true);
-        this.analyticLights = props.get("analyticLights", true);
-        this.emissive = props.get("emissive", true);
-        this.envBackground = props.get("envBackground", true);
+        assertNoRamp(
+            [...props.entries()].map(([k]) => k),
+            "property",
+        );
+        for (const k of kRecordKeys)
+            (this.mDefaultStyle as unknown as Record<string, unknown>)[k] = props.get(k, kDefaultStyleRecord[k] as PropertyValue);
+        this.mStyleMix = Number(props.get("styleMix", 1));
+        this.mShadowLight = Number(props.get("shadowLight", -1));
+        this.mEnvLighting = props.get("envLighting", true);
+        this.mAnalyticLights = props.get("analyticLights", true);
+        this.mEmissive = props.get("emissive", true);
+        this.mEnvBackground = props.get("envBackground", true);
         const eo = props.get<string>("envSpecularOcclusion", "Auto");
-        if (!(kEnvOcclusionModes as readonly string[]).includes(eo)) throw new Error(`StyleShade: unknown envSpecularOcclusion '${eo}' (${kEnvOcclusionModes.join(", ")})`);
-        this.envSpecularOcclusion = eo as EnvOcclusionMode;
+        if (!(kEnvOcclusionModes as readonly string[]).includes(eo))
+            throw new Error(`StyleShade: unknown envSpecularOcclusion '${eo}' (${kEnvOcclusionModes.join(", ")})`);
+        this.mEnvSpecularOcclusion = eo as EnvOcclusionMode;
         const mats = props.get<PropertyValue[]>("materials", []);
         if (!Array.isArray(mats)) throw new Error("StyleShade: materials must be a list of { materialId, ...style }");
         if (mats.length > kStyleShadeMaxOverrides) throw new Error(`StyleShade: at most ${kStyleShadeMaxOverrides} material overrides`);
@@ -158,39 +186,50 @@ export class StyleShade extends RenderPass {
                 throw new Error("StyleShade: every materials entry needs a numeric materialId");
             }
             assertNoRamp(Object.keys(m), "materials entry");
-            for (const k of Object.keys(m)) if (k !== "materialId" && !(kRecordKeys as string[]).includes(k)) throw new Error(`StyleShade: unknown style field '${k}'`);
-            this.overrides.push({ ...(m as Record<string, unknown>) } as unknown as { materialId: number });
+            for (const k of Object.keys(m))
+                if (k !== "materialId" && !(kRecordKeys as string[]).includes(k)) throw new Error(`StyleShade: unknown style field '${k}'`);
+            this.mOverrides.push({ ...(m as Record<string, unknown>) } as unknown as { materialId: number });
         }
-        packStyleRecord(this.rec, -1); // validates the enums and colours now
-        for (const o of this.overrides) packStyleRecord({ ...this.rec, ...o }, o.materialId);
+        packStyleRecord(this.mDefaultStyle, -1); // validates the enums and colours now
+        for (const o of this.mOverrides) packStyleRecord({ ...this.mDefaultStyle, ...o }, o.materialId);
     }
 
     override getProperties(): Properties {
         return new Properties({
-            ...(this.rec as unknown as Record<string, PropertyValue>),
-            materials: this.overrides.map((o) => ({ ...o })) as unknown as PropertyValue[],
-            styleMix: this.styleMix,
-            shadowLight: this.shadowLight,
-            envLighting: this.envLighting,
-            analyticLights: this.analyticLights,
-            emissive: this.emissive,
-            envBackground: this.envBackground,
-            envSpecularOcclusion: this.envSpecularOcclusion,
+            ...(this.mDefaultStyle as unknown as Record<string, PropertyValue>),
+            materials: this.mOverrides.map((o) => ({ ...o })) as unknown as PropertyValue[],
+            styleMix: this.mStyleMix,
+            shadowLight: this.mShadowLight,
+            envLighting: this.mEnvLighting,
+            analyticLights: this.mAnalyticLights,
+            emissive: this.mEmissive,
+            envBackground: this.mEnvBackground,
+            envSpecularOcclusion: this.mEnvSpecularOcclusion,
         });
     }
 
     override renderUI(ui: UIWidgets): void {
-        ui.slider("Style mix", this.styleMix, 0, 1, 0.01, (v) => (this.styleMix = v));
-        ui.dropdown("Diffuse", [...kStyleShadeDiffuseModels], String(this.rec.diffuseModel), (v) => (this.rec.diffuseModel = v));
-        ui.slider("Wrap", this.rec.wrap, 0, 1, 0.01, (v) => (this.rec.wrap = v));
-        ui.slider("Minnaert k", this.rec.minnaertK, 0.5, 3, 0.01, (v) => (this.rec.minnaertK = v));
-        ui.slider("Hemisphere mix", this.rec.hemiMix, 0, 1, 0.01, (v) => (this.rec.hemiMix = v));
-        ui.slider("Flat albedo mix", this.rec.flatMix, 0, 1, 0.01, (v) => (this.rec.flatMix = v));
-        ui.dropdown("Specular", [...kStyleShadeSpecModels], String(this.rec.specModel), (v) => (this.rec.specModel = v));
-        ui.slider("Shininess (0 = from roughness)", this.rec.shininess, 0, 512, 1, (v) => (this.rec.shininess = v));
-        ui.slider("Hard spec threshold", this.rec.hardThreshold, 0, 1, 0.01, (v) => (this.rec.hardThreshold = v));
-        ui.slider("Hard spec softness", this.rec.hardSoftness, 0, 0.5, 0.005, (v) => (this.rec.hardSoftness = v));
-        ui.slider("Specular scale", this.rec.specScale, 0, 4, 0.01, (v) => (this.rec.specScale = v));
+        ui.slider("Style mix", this.mStyleMix, 0, 1, 0.01, (v) => (this.mStyleMix = v));
+        ui.dropdown(
+            "Diffuse",
+            [...kStyleShadeDiffuseModels],
+            String(this.mDefaultStyle.diffuseModel),
+            (v) => (this.mDefaultStyle.diffuseModel = v),
+        );
+        ui.slider("Wrap", this.mDefaultStyle.wrap, 0, 1, 0.01, (v) => (this.mDefaultStyle.wrap = v));
+        ui.slider("Minnaert k", this.mDefaultStyle.minnaertK, 0.5, 3, 0.01, (v) => (this.mDefaultStyle.minnaertK = v));
+        ui.slider("Hemisphere mix", this.mDefaultStyle.hemiMix, 0, 1, 0.01, (v) => (this.mDefaultStyle.hemiMix = v));
+        ui.slider("Flat albedo mix", this.mDefaultStyle.flatMix, 0, 1, 0.01, (v) => (this.mDefaultStyle.flatMix = v));
+        ui.dropdown(
+            "Specular",
+            [...kStyleShadeSpecModels],
+            String(this.mDefaultStyle.specModel),
+            (v) => (this.mDefaultStyle.specModel = v),
+        );
+        ui.slider("Shininess (0 = from roughness)", this.mDefaultStyle.shininess, 0, 512, 1, (v) => (this.mDefaultStyle.shininess = v));
+        ui.slider("Hard spec threshold", this.mDefaultStyle.hardThreshold, 0, 1, 0.01, (v) => (this.mDefaultStyle.hardThreshold = v));
+        ui.slider("Hard spec softness", this.mDefaultStyle.hardSoftness, 0, 0.5, 0.005, (v) => (this.mDefaultStyle.hardSoftness = v));
+        ui.slider("Specular scale", this.mDefaultStyle.specScale, 0, 4, 0.01, (v) => (this.mDefaultStyle.specScale = v));
     }
 
     override reflect(compileData: CompileData): RenderPassReflection {
@@ -198,10 +237,17 @@ export class StyleShade extends RenderPass {
         const [w, h] = compileData.defaultTexDims;
         r.addInput("vbuffer", "Packed hit information (V-buffer)").bindFlags(ResourceBindFlags.ShaderResource);
         r.addInput("viewW", "View direction (world)").bindFlags(ResourceBindFlags.ShaderResource).flags(FieldFlags.Optional);
-        r.addInput("visibility", "Visibility of the shadowed light (r)").bindFlags(ResourceBindFlags.ShaderResource).flags(FieldFlags.Optional);
-        r.addInput("materialId", "StyleAovs.materialId (raw material id in g)").bindFlags(ResourceBindFlags.ShaderResource).flags(FieldFlags.Optional);
+        r.addInput("visibility", "Visibility of the shadowed light (r)")
+            .bindFlags(ResourceBindFlags.ShaderResource)
+            .flags(FieldFlags.Optional);
+        r.addInput("materialId", "StyleAovs.materialId (raw material id in g)")
+            .bindFlags(ResourceBindFlags.ShaderResource)
+            .flags(FieldFlags.Optional);
         const out = (name: string, desc: string, optional: boolean) => {
-            const f = r.addOutput(name, desc).texture2D(w, h).format(ResourceFormat.RGBA32Float)
+            const f = r
+                .addOutput(name, desc)
+                .texture2D(w, h)
+                .format(ResourceFormat.RGBA32Float)
                 .bindFlags(ResourceBindFlags.UnorderedAccess | ResourceBindFlags.ShaderResource);
             if (optional) f.flags(FieldFlags.Optional);
         };
@@ -213,38 +259,48 @@ export class StyleShade extends RenderPass {
 
     override setScene(scene: typeof this.scene): void {
         super.setScene(scene);
-        this.pass = null;
-        this.passKey = "";
-        this.shSource = null;
+        this.mPass = null;
+        this.mPassKey = "";
+        this.mShSource = null;
     }
 
     private updateEnvSH(ctx: RenderContext): void {
         const env = this.scene!.getEnvMap();
-        if (this.shBuffer && this.shSource === env) return;
-        this.shBuffer ??= new Buffer(this.device, {
-            size: 9 * 16, structSize: 16, bindFlags: ResourceBindFlags.ShaderResource | ResourceBindFlags.UnorderedAccess,
-            memoryType: MemoryType.DeviceLocal, name: "StyleShade::envSH",
+        if (this.mShBuffer && this.mShSource === env) return;
+        this.mShBuffer ??= new Buffer(this.device, {
+            size: 9 * 16,
+            structSize: 16,
+            bindFlags: ResourceBindFlags.ShaderResource | ResourceBindFlags.UnorderedAccess,
+            memoryType: MemoryType.DeviceLocal,
+            name: "StyleShade::envSH",
         });
-        this.shPass ??= ComputePass.create(this.device, { path: kSHShaderFile, defines: this.scene!.getSceneDefines() });
-        const root = this.shPass.getRootVar();
+        this.mShPass ??= ComputePass.create(this.device, { path: kSHShaderFile, defines: this.scene!.getSceneDefines() });
+        const root = this.mShPass.getRootVar();
         this.scene!.bindShaderData(root);
-        root["gSH"] = this.shBuffer;
-        this.shPass.execute(ctx, 64, 1);
-        this.shSource = env;
+        root["gSH"] = this.mShBuffer;
+        this.mShPass.execute(ctx, 64, 1);
+        this.mShSource = env;
     }
 
     private updateStyles(): number {
-        const data = [packStyleRecord(this.rec, -1), ...this.overrides.map((o) => packStyleRecord({ ...this.rec, ...o }, o.materialId))].flat();
+        const data = [
+            packStyleRecord(this.mDefaultStyle, -1),
+            ...this.mOverrides.map((o) => packStyleRecord({ ...this.mDefaultStyle, ...o }, o.materialId)),
+        ].flat();
         const key = data.join(",");
         const bytes = (kStyleShadeMaxOverrides + 1) * kRecordFloats * 4;
-        this.styleBuffer ??= new Buffer(this.device, {
-            size: bytes, structSize: 16, bindFlags: ResourceBindFlags.ShaderResource, memoryType: MemoryType.DeviceLocal, name: "StyleShade::styles",
+        this.mStyleBuffer ??= new Buffer(this.device, {
+            size: bytes,
+            structSize: 16,
+            bindFlags: ResourceBindFlags.ShaderResource,
+            memoryType: MemoryType.DeviceLocal,
+            name: "StyleShade::styles",
         });
-        if (key !== this.styleKey) {
+        if (key !== this.mStyleKey) {
             const f = new Float32Array(bytes / 4);
             f.set(data);
-            this.styleBuffer.setBlob(f);
-            this.styleKey = key;
+            this.mStyleBuffer.setBlob(f);
+            this.mStyleKey = key;
         }
         return data.length / kRecordFloats;
     }
@@ -256,15 +312,23 @@ export class StyleShade extends RenderPass {
             return;
         }
         const scene = this.scene;
-        const useEnv = this.envLighting && scene.useEnvLight;
-        const viewW = rd.getTexture("viewW"), vis = rd.getTexture("visibility"), mat = rd.getTexture("materialId");
-        const diff = rd.getTexture("diffuse"), spec = rd.getTexture("specular");
+        const useEnv = this.mEnvLighting && scene.useEnvLight;
+        const viewW = rd.getTexture("viewW");
+        const vis = rd.getTexture("visibility");
+        const mat = rd.getTexture("materialId");
+        const diff = rd.getTexture("diffuse");
+        const spec = rd.getTexture("specular");
         const defines = scene.getSceneDefines().addAll({
-            USE_ANALYTIC_LIGHTS: this.analyticLights && scene.useAnalyticLights ? 1 : 0,
+            USE_ANALYTIC_LIGHTS: this.mAnalyticLights && scene.useAnalyticLights ? 1 : 0,
             USE_ENV_LIGHT: useEnv ? 1 : 0,
-            USE_ENV_BACKGROUND: this.envBackground && scene.useEnvBackground ? 1 : 0,
-            USE_EMISSIVE: this.emissive ? 1 : 0,
-            ENV_SPEC_OCCLUSION: useEnv && (this.envSpecularOcclusion === "On" || (this.envSpecularOcclusion === "Auto" && !!scene.getEnvMap() && scene.worldBounds !== null)) ? 1 : 0,
+            USE_ENV_BACKGROUND: this.mEnvBackground && scene.useEnvBackground ? 1 : 0,
+            USE_EMISSIVE: this.mEmissive ? 1 : 0,
+            ENV_SPEC_OCCLUSION:
+                useEnv &&
+                (this.mEnvSpecularOcclusion === "On" ||
+                    (this.mEnvSpecularOcclusion === "Auto" && !!scene.getEnvMap() && scene.worldBounds !== null))
+                    ? 1
+                    : 0,
             is_valid_gViewW: viewW ? 1 : 0,
             is_valid_gVisibility: vis ? 1 : 0,
             is_valid_gMaterialId: mat ? 1 : 0,
@@ -272,30 +336,30 @@ export class StyleShade extends RenderPass {
             is_valid_gSpecular: spec ? 1 : 0,
         });
         const key = defines.key();
-        if (!this.pass || key !== this.passKey) {
-            this.pass = ComputePass.create(this.device, { path: kShaderFile, defines });
-            this.passKey = key;
+        if (!this.mPass || key !== this.mPassKey) {
+            this.mPass = ComputePass.create(this.device, { path: kShaderFile, defines });
+            this.mPassKey = key;
         }
         if (useEnv) this.updateEnvSH(ctx);
         const records = this.updateStyles();
 
-        let shadowLight = this.shadowLight;
+        let shadowLight = this.mShadowLight;
         if (shadowLight < 0) {
             const csm = rd.dictionary.get(kCascadedShadowMapData) as CascadedShadowMapData | undefined;
             shadowLight = csm ? csm.lightIndex : scene.activeLights.findIndex((l) => l.type === LightType.Directional);
         }
 
-        const root = this.pass.getRootVar();
+        const root = this.mPass.getRootVar();
         scene.bindShaderData(root);
         const cb = root["CB"]!;
         cb["gFrameDim"] = [color.width, color.height];
         cb["gShadowLightIndex"] = vis ? shadowLight : -1;
         cb["gRecordCount"] = records;
-        cb["gStyleMix"] = Math.min(Math.max(this.styleMix, 0), 1);
+        cb["gStyleMix"] = Math.min(Math.max(this.mStyleMix, 0), 1);
         const env = scene.getEnvMap();
         cb["gEnvSpecLodScale"] = env ? Math.max(0, env.texture.mipCount - 1) : 0;
-        if (useEnv) root["gEnvSH"] = this.shBuffer!;
-        root["gStyles"] = this.styleBuffer!;
+        if (useEnv) root["gEnvSH"] = this.mShBuffer!;
+        root["gStyles"] = this.mStyleBuffer!;
         root["gVBuffer"] = rd.getTexture("vbuffer")!;
         root["gViewW"] = viewW ?? dummyTexture(this.device, "ss:viewW");
         root["gVisibility"] = vis ?? dummyTexture(this.device, "ss:vis");
@@ -303,7 +367,7 @@ export class StyleShade extends RenderPass {
         root["gOutputColor"] = color;
         root["gDiffuse"] = diff ?? dummyTexture(this.device, "ss:outDiff");
         root["gSpecular"] = spec ?? dummyTexture(this.device, "ss:outSpec");
-        this.pass.execute(ctx, color.width, color.height);
+        this.mPass.execute(ctx, color.width, color.height);
     }
 }
 

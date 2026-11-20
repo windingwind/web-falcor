@@ -62,8 +62,10 @@ import { VisibilityService, kDefaultVisibilityParams, kVisibilityModes, type Vis
 const kScatterShader = "RenderPasses/FroxelFog/FroxelFogScatter.cs.slang";
 const kShader = "RenderPasses/FroxelFog/FroxelFog.cs.slang";
 export const kFroxelFogMaxVolumes = 8;
+/** Ordered option names; preserve this order for numeric property compatibility. */
 const kPrecisions = ["half", "float"] as const;
 
+/** A local world-space fog volume with density, scattering and animation controls. */
 export interface FogVolume {
     shape?: "box" | "sphere";
     center: number[];
@@ -77,6 +79,7 @@ export interface FogVolume {
     noiseScale?: number;
 }
 
+/** Creation defaults for the pass parameters documented in this file header. */
 const kDefaults = {
     density: 0.02,
     heightFalloff: 0,
@@ -110,8 +113,13 @@ const kDefaults = {
 export function froxelJitter(i: number): [number, number, number] {
     if (i <= 0) return [0.5, 0.5, 0.5];
     const h = (n: number, b: number) => {
-        let f = 1, r = 0;
-        while (n > 0) { f /= b; r += f * (n % b); n = Math.floor(n / b); }
+        let f = 1;
+        let r = 0;
+        while (n > 0) {
+            f /= b;
+            r += f * (n % b);
+            n = Math.floor(n / b);
+        }
         return r;
     };
     const k = ((i - 1) % 16) + 1;
@@ -124,63 +132,73 @@ const v3 = (a: unknown, d: number[]): number[] => {
     return [x[0] ?? d[0]!, x[1] ?? d[1]!, x[2] ?? d[2]!];
 };
 
-interface CamState { pos: number[]; U: number[]; V: number[]; W: number[] }
+interface CamState {
+    pos: number[];
+    U: number[];
+    V: number[];
+    W: number[];
+}
 
+/** Integrates volumetric scattering over a froxel grid with optional temporal reprojection. */
 export class FroxelFog extends RenderPass {
-    private p = { ...kDefaults };
-    private scatterPass: ComputePass | null = null;
-    private scatterKey = "";
-    private passes: Record<string, ComputePass> = {};
-    private readonly history = new HistoryTracker();
-    private vol: [Buffer, Buffer] | null = null;
-    private integrated: Buffer | null = null;
-    private volKey = "";
-    private prevCam: CamState | null = null;
-    private fogScratch: Texture | null = null;
+    private mParameters: typeof kDefaults = { ...kDefaults };
+    private mScatterPass: ComputePass | null = null;
+    private mScatterKey: string = "";
+    private mPasses: Record<string, ComputePass> = {};
+    private readonly mHistory: HistoryTracker = new HistoryTracker();
+    private mVolumes: [Buffer, Buffer] | null = null;
+    private mIntegrated: Buffer | null = null;
+    private mVolKey: string = "";
+    private mPreviousCamera: CamState | null = null;
+    private mFogScratch: Texture | null = null;
 
     constructor(device: Device, props: Properties) {
         super(device);
-        for (const k of Object.keys(kDefaults) as (keyof typeof kDefaults)[]) (this.p as Record<string, unknown>)[k] = props.get(k, kDefaults[k] as PropertyValue);
-        this.p.visMode = VisibilityService.parseMode("FroxelFog", this.p.visMode);
-        if (!(kPrecisions as readonly string[]).includes(this.p.precision)) throw new Error(`FroxelFog: precision must be one of ${kPrecisions.join("|")} (got ${this.p.precision})`);
-        if (!Array.isArray(this.p.volumes)) throw new Error("FroxelFog: volumes must be a list");
-        if (this.p.volumes.length > kFroxelFogMaxVolumes) throw new Error(`FroxelFog: at most ${kFroxelFogMaxVolumes} volumes (got ${this.p.volumes.length})`);
-        for (const v of this.p.volumes) {
-            if (v.shape !== undefined && v.shape !== "box" && v.shape !== "sphere") throw new Error(`FroxelFog: volume shape must be box|sphere (got ${String(v.shape)})`);
+        for (const k of Object.keys(kDefaults) as (keyof typeof kDefaults)[])
+            (this.mParameters as Record<string, unknown>)[k] = props.get(k, kDefaults[k] as PropertyValue);
+        this.mParameters.visMode = VisibilityService.parseMode("FroxelFog", this.mParameters.visMode);
+        if (!(kPrecisions as readonly string[]).includes(this.mParameters.precision))
+            throw new Error(`FroxelFog: precision must be one of ${kPrecisions.join("|")} (got ${this.mParameters.precision})`);
+        if (!Array.isArray(this.mParameters.volumes)) throw new Error("FroxelFog: volumes must be a list");
+        if (this.mParameters.volumes.length > kFroxelFogMaxVolumes)
+            throw new Error(`FroxelFog: at most ${kFroxelFogMaxVolumes} volumes (got ${this.mParameters.volumes.length})`);
+        for (const v of this.mParameters.volumes) {
+            if (v.shape !== undefined && v.shape !== "box" && v.shape !== "sphere")
+                throw new Error(`FroxelFog: volume shape must be box|sphere (got ${String(v.shape)})`);
         }
     }
 
     override getProperties(): Properties {
-        return new Properties({ ...this.p } as unknown as Record<string, PropertyValue>);
+        return new Properties({ ...this.mParameters } as unknown as Record<string, PropertyValue>);
     }
 
     override renderUI(ui: UIWidgets): void {
-        ui.slider("Density", this.p.density, 0, 0.5, 0.001, (v) => (this.p.density = v));
-        ui.slider("Height falloff", this.p.heightFalloff, 0, 2, 0.01, (v) => (this.p.heightFalloff = v));
-        ui.slider("Height base", this.p.heightBase, -100, 100, 0.1, (v) => (this.p.heightBase = v));
-        ui.slider("Anisotropy", this.p.anisotropy, -0.95, 0.95, 0.01, (v) => (this.p.anisotropy = v));
-        ui.slider("Light intensity", this.p.lightIntensity, 0, 10, 0.01, (v) => (this.p.lightIntensity = v));
-        ui.slider("Other lights", this.p.otherLights, 0, 10, 0.01, (v) => (this.p.otherLights = v));
-        ui.slider("Noise", this.p.noise, 0, 1, 0.01, (v) => (this.p.noise = v));
-        ui.dropdown("Visibility", [...kVisibilityModes], this.p.visMode, (v) => (this.p.visMode = v));
-        ui.slider("Far", this.p.far, 1, 2000, 1, (v) => (this.p.far = v));
-        ui.checkbox("Temporal", this.p.temporal, (v) => (this.p.temporal = v));
-        ui.slider("Temporal blend", this.p.temporalBlend, 0, 0.98, 0.01, (v) => (this.p.temporalBlend = v));
+        ui.slider("Density", this.mParameters.density, 0, 0.5, 0.001, (v) => (this.mParameters.density = v));
+        ui.slider("Height falloff", this.mParameters.heightFalloff, 0, 2, 0.01, (v) => (this.mParameters.heightFalloff = v));
+        ui.slider("Height base", this.mParameters.heightBase, -100, 100, 0.1, (v) => (this.mParameters.heightBase = v));
+        ui.slider("Anisotropy", this.mParameters.anisotropy, -0.95, 0.95, 0.01, (v) => (this.mParameters.anisotropy = v));
+        ui.slider("Light intensity", this.mParameters.lightIntensity, 0, 10, 0.01, (v) => (this.mParameters.lightIntensity = v));
+        ui.slider("Other lights", this.mParameters.otherLights, 0, 10, 0.01, (v) => (this.mParameters.otherLights = v));
+        ui.slider("Noise", this.mParameters.noise, 0, 1, 0.01, (v) => (this.mParameters.noise = v));
+        ui.dropdown("Visibility", [...kVisibilityModes], this.mParameters.visMode, (v) => (this.mParameters.visMode = v));
+        ui.slider("Far", this.mParameters.far, 1, 2000, 1, (v) => (this.mParameters.far = v));
+        ui.checkbox("Temporal", this.mParameters.temporal, (v) => (this.mParameters.temporal = v));
+        ui.slider("Temporal blend", this.mParameters.temporalBlend, 0, 0.98, 0.01, (v) => (this.mParameters.temporalBlend = v));
     }
 
     /** Drops the temporal history: the next frame is computed as on a fresh context. */
     resetHistory(): void {
-        this.history.reset();
+        this.mHistory.reset();
     }
 
     /** Frames since the last history reset. */
     get frameIndex(): number {
-        return this.history.frameIndex;
+        return this.mHistory.frameIndex;
     }
 
     /** The integrated froxel volume of the last frame ((S, T) per froxel, layout as the shaders; null before the first frame). */
     get integratedVolume(): Buffer | null {
-        return this.integrated;
+        return this.mIntegrated;
     }
 
     override reflect(compileData: CompileData): RenderPassReflection {
@@ -189,51 +207,67 @@ export class FroxelFog extends RenderPass {
         r.addInput("color", "Lit colour (HDR)").bindFlags(ResourceBindFlags.ShaderResource);
         r.addInput("posW", "World position (GBufferRaster.posW; w = 0 on background)").bindFlags(ResourceBindFlags.ShaderResource);
         VisibilityService.addInputs(r);
-        r.addOutput("dst", "Colour with fog").texture2D(w, h).format(ResourceFormat.RGBA32Float)
+        r.addOutput("dst", "Colour with fog")
+            .texture2D(w, h)
+            .format(ResourceFormat.RGBA32Float)
             .bindFlags(ResourceBindFlags.UnorderedAccess | ResourceBindFlags.ShaderResource);
-        r.addOutput("fog", "In-scattered radiance (rgb) and transmittance (a)").texture2D(w, h).format(ResourceFormat.RGBA32Float)
-            .bindFlags(ResourceBindFlags.UnorderedAccess | ResourceBindFlags.ShaderResource).flags(FieldFlags.Optional);
+        r.addOutput("fog", "In-scattered radiance (rgb) and transmittance (a)")
+            .texture2D(w, h)
+            .format(ResourceFormat.RGBA32Float)
+            .bindFlags(ResourceBindFlags.UnorderedAccess | ResourceBindFlags.ShaderResource)
+            .flags(FieldFlags.Optional);
         return r;
     }
 
     override setScene(scene: typeof this.scene): void {
         super.setScene(scene);
-        this.scatterPass = null;
-        this.scatterKey = "";
+        this.mScatterPass = null;
+        this.mScatterKey = "";
     }
 
     private grid(): [number, number, number] {
-        return [this.p.gridX, this.p.gridY, this.p.gridZ].map((g) => Math.max(1, Math.round(Number(g)))) as [number, number, number];
+        return [this.mParameters.gridX, this.mParameters.gridY, this.mParameters.gridZ].map((g) => Math.max(1, Math.round(Number(g)))) as [
+            number,
+            number,
+            number,
+        ];
     }
 
     private hasFog(): boolean {
-        return this.p.density > 0 || this.p.volumes.some((v) => Number(v.density) > 0);
+        return this.mParameters.density > 0 || this.mParameters.volumes.some((v) => Number(v.density) > 0);
     }
 
     private pass(entry: string, half: boolean): ComputePass {
         const k = `${entry}:${half}`;
-        return (this.passes[k] ??= ComputePass.create(this.device, { path: kShader, csEntry: entry, defines: half ? { FROXEL_HALF: 1 } : {} }));
+        return (this.mPasses[k] ??= ComputePass.create(this.device, {
+            path: kShader,
+            csEntry: entry,
+            defines: half ? { FROXEL_HALF: 1 } : {},
+        }));
     }
 
     private buffers(n: number, half: boolean): void {
         const key = `${n}:${half}`;
-        if (this.vol && this.volKey === key) return;
+        if (this.mVolumes && this.mVolKey === key) return;
         const stride = half ? 8 : 16;
-        const mk = () => this.device.createStructuredBuffer(stride, n, ResourceBindFlags.ShaderResource | ResourceBindFlags.UnorderedAccess);
-        this.vol = [mk(), mk()];
-        this.integrated = mk();
-        this.volKey = key;
+        const mk = () =>
+            this.device.createStructuredBuffer(stride, n, ResourceBindFlags.ShaderResource | ResourceBindFlags.UnorderedAccess);
+        this.mVolumes = [mk(), mk()];
+        this.mIntegrated = mk();
+        this.mVolKey = key;
     }
 
     override execute(ctx: RenderContext, rd: RenderData): void {
-        const dst = rd.getTexture("dst"), color = rd.getTexture("color"), posW = rd.getTexture("posW");
+        const dst = rd.getTexture("dst");
+        const color = rd.getTexture("color");
+        const posW = rd.getTexture("posW");
         if (!dst || !color || !posW) return;
         if (!this.scene) throw new Error("FroxelFog: requires a scene (camera)");
         const fogOut = rd.getTexture("fog");
         const [gx, gy, gz] = this.grid();
-        const half = this.p.precision === "half";
-        const temporal = !!this.p.temporal && this.p.temporalBlend > 0;
-        const frame = this.history.begin(this.scene, `${gx}x${gy}x${gz}:${half}:${temporal}`);
+        const half = this.mParameters.precision === "half";
+        const temporal = !!this.mParameters.temporal && this.mParameters.temporalBlend > 0;
+        const frame = this.mHistory.begin(this.scene, `${gx}x${gy}x${gz}:${half}:${temporal}`);
         const cam = this.scene.camera;
         const data = cam.getData();
         const cur: CamState = {
@@ -248,42 +282,48 @@ export class FroxelFog extends RenderPass {
             if (color.format === dst.format && color.width === dst.width && color.height === dst.height) ctx.copyTexture(dst, color);
             else ctx.blit(color, dst, "nearest");
             if (fogOut) ctx.clearTexture(fogOut, [0, 0, 0, 1]);
-            this.history.reset();
-            this.prevCam = null;
+            this.mHistory.reset();
+            this.mPreviousCamera = null;
             return;
         }
 
         const n = gx * gy * gz;
         this.buffers(n, half);
-        if (frame.reset || frame.frameIndex === 0) for (const b of this.vol!) ctx.clearBuffer(b);
+        if (frame.reset || frame.frameIndex === 0) for (const b of this.mVolumes!) ctx.clearBuffer(b);
         const w = temporal ? frame.frameIndex & 1 : 0;
-        const write = this.vol![w]!, read = this.vol![1 - w]!;
-        const historyValid = temporal && frame.frameIndex > 0 && this.prevCam !== null;
-        const prev = historyValid ? this.prevCam! : cur;
+        const write = this.mVolumes![w]!;
+        const read = this.mVolumes![1 - w]!;
+        const historyValid = temporal && frame.frameIndex > 0 && this.mPreviousCamera !== null;
+        const prev = historyValid ? this.mPreviousCamera! : cur;
 
         const len = (a: number[]) => Math.hypot(a[0]!, a[1]!, a[2]!);
         const sq = (a: number[]) => a[0]! * a[0]! + a[1]! * a[1]! + a[2]! * a[2]!;
-        const spread = Math.max(1e-3, Number(this.p.spread));
-        const far = Math.max(1e-4, Number(this.p.far));
+        const spread = Math.max(1e-3, Number(this.mParameters.spread));
+        const far = Math.max(1e-4, Number(this.mParameters.far));
         const jit = historyValid ? froxelJitter(frame.frameIndex) : [0.5, 0.5, 0.5];
-        const up = v3(this.p.upAxis, [0, 1, 0]);
+        const up = v3(this.mParameters.upAxis, [0, 1, 0]);
         const ul = len(up) || 1;
-        const lc = v3(this.p.lightColor, [1, 1, 1]).map((x) => x * this.p.lightIntensity);
-        const vis = VisibilityService.resolve(this.p.visMode as VisibilityMode, rd, this.scene, this.p.lightIndex);
+        const lc = v3(this.mParameters.lightColor, [1, 1, 1]).map((x) => x * this.mParameters.lightIntensity);
+        const vis = VisibilityService.resolve(this.mParameters.visMode as VisibilityMode, rd, this.scene, this.mParameters.lightIndex);
         const vols: number[][] = [];
-        for (const v of this.p.volumes) {
+        for (const v of this.mParameters.volumes) {
             const he = v3(v.halfExtent, [1, 1, 1]).map((x) => Math.max(Math.abs(x), 1e-6));
-            vols.push([...v3(v.center, [0, 0, 0]), v.shape === "sphere" ? 1 : 0], [...he, Number(v.density) || 0],
-                [...v3(v.albedo ?? [1, 1, 1], [1, 1, 1]), Math.max(0, Number(v.softness ?? 0.2))], [Number(v.noise ?? 0), Number(v.noiseScale ?? 0.5), 0, 0]);
+            vols.push(
+                [...v3(v.center, [0, 0, 0]), v.shape === "sphere" ? 1 : 0],
+                [...he, Number(v.density) || 0],
+                [...v3(v.albedo ?? [1, 1, 1], [1, 1, 1]), Math.max(0, Number(v.softness ?? 0.2))],
+                [Number(v.noise ?? 0), Number(v.noiseScale ?? 0.5), 0, 0],
+            );
         }
         while (vols.length < kFroxelFogMaxVolumes * 4) vols.push([0, 0, 0, 0]);
-        const W = dst.width, H = dst.height;
+        const W = dst.width;
+        const H = dst.height;
 
         const setCB = (cp: ComputePass) => {
             const root = cp.getRootVar();
             const cb = root["CB"]!;
-            cb["gGrid"] = [gx, gy, gz, (historyValid ? 1 : 0) | (this.p.skyFog ? 2 : 0)];
-            cb["gMisc"] = [W, H, this.p.volumes.length, vis.lightIndex >= 0 ? vis.lightIndex + 1 : 0];
+            cb["gGrid"] = [gx, gy, gz, (historyValid ? 1 : 0) | (this.mParameters.skyFog ? 2 : 0)];
+            cb["gMisc"] = [W, H, this.mParameters.volumes.length, vis.lightIndex >= 0 ? vis.lightIndex + 1 : 0];
             cb["gCamPos"] = [...cur.pos, len(cur.W)];
             cb["gCamU"] = [...cur.U, sq(cur.U)];
             cb["gCamV"] = [...cur.V, sq(cur.V)];
@@ -292,14 +332,19 @@ export class FroxelFog extends RenderPass {
             cb["gPrevU"] = [...prev.U, sq(prev.U)];
             cb["gPrevV"] = [...prev.V, sq(prev.V)];
             cb["gPrevW"] = [...prev.W, 0];
-            cb["gSlices"] = [far, spread, 1 / spread, Math.min(Math.max(this.p.temporalBlend, 0), 0.999)];
-            cb["gJitter"] = [...jit, this.p.time];
-            cb["gGlobal"] = [Math.max(0, this.p.density), this.p.heightFalloff, this.p.heightBase, Math.min(Math.max(this.p.anisotropy, -0.99), 0.99)];
-            cb["gUp"] = [...up.map((x) => x / ul), Math.max(0, this.p.noise)];
-            cb["gAlbedo"] = [...v3(this.p.albedo, [1, 1, 1]), this.p.noiseScale];
-            cb["gWind"] = [...v3(this.p.wind, [0, 0, 0]), Math.max(0, Number(this.p.otherLights))];
+            cb["gSlices"] = [far, spread, 1 / spread, Math.min(Math.max(this.mParameters.temporalBlend, 0), 0.999)];
+            cb["gJitter"] = [...jit, this.mParameters.time];
+            cb["gGlobal"] = [
+                Math.max(0, this.mParameters.density),
+                this.mParameters.heightFalloff,
+                this.mParameters.heightBase,
+                Math.min(Math.max(this.mParameters.anisotropy, -0.99), 0.99),
+            ];
+            cb["gUp"] = [...up.map((x) => x / ul), Math.max(0, this.mParameters.noise)];
+            cb["gAlbedo"] = [...v3(this.mParameters.albedo, [1, 1, 1]), this.mParameters.noiseScale];
+            cb["gWind"] = [...v3(this.mParameters.wind, [0, 0, 0]), Math.max(0, Number(this.mParameters.otherLights))];
             cb["gLightScale"] = [...lc, 0];
-            cb["gAmbient"] = [...v3(this.p.ambient, [0, 0, 0]), 0];
+            cb["gAmbient"] = [...v3(this.mParameters.ambient, [0, 0, 0]), 0];
             cb["gVol"] = vols;
             return root;
         };
@@ -308,38 +353,46 @@ export class FroxelFog extends RenderPass {
             const defines = this.scene.getSceneDefines().addAll(vis.defines);
             if (half) defines.add("FROXEL_HALF", "1");
             const key = defines.key();
-            if (!this.scatterPass || key !== this.scatterKey) {
-                this.scatterPass = ComputePass.create(this.device, { path: kScatterShader, defines });
-                this.scatterKey = key;
+            if (!this.mScatterPass || key !== this.mScatterKey) {
+                this.mScatterPass = ComputePass.create(this.device, { path: kScatterShader, defines });
+                this.mScatterKey = key;
             }
-            const root = setCB(this.scatterPass);
+            const root = setCB(this.mScatterPass);
             this.scene.bindShaderData(root);
             vis.bind(root, kDefaultVisibilityParams);
             root["gFroxelSrc"] = read;
             root["gFroxelDst"] = write;
-            this.scatterPass.execute(ctx, gx, gy, gz);
+            this.mScatterPass.execute(ctx, gx, gy, gz);
         }
         {
             const cp = this.pass("integrate", half);
             const root = setCB(cp);
             root["gFroxelSrc"] = write;
-            root["gFroxelDst"] = this.integrated!;
+            root["gFroxelDst"] = this.mIntegrated!;
             cp.execute(ctx, gx, gy);
         }
         {
-            if (!fogOut && (!this.fogScratch || this.fogScratch.width !== W || this.fogScratch.height !== H)) {
-                this.fogScratch = this.device.createTexture2D(W, H, ResourceFormat.RGBA32Float, 1, 1, undefined, ResourceBindFlags.ShaderResource | ResourceBindFlags.UnorderedAccess);
+            if (!fogOut && (!this.mFogScratch || this.mFogScratch.width !== W || this.mFogScratch.height !== H)) {
+                this.mFogScratch = this.device.createTexture2D(
+                    W,
+                    H,
+                    ResourceFormat.RGBA32Float,
+                    1,
+                    1,
+                    undefined,
+                    ResourceBindFlags.ShaderResource | ResourceBindFlags.UnorderedAccess,
+                );
             }
             const cp = this.pass("apply", half);
             const root = setCB(cp);
-            root["gFroxelSrc"] = this.integrated!;
+            root["gFroxelSrc"] = this.mIntegrated!;
             root["gColor"] = color;
             root["gPosW"] = posW;
             root["gDst"] = dst;
-            root["gFog"] = fogOut ?? this.fogScratch!;
+            root["gFog"] = fogOut ?? this.mFogScratch!;
             cp.execute(ctx, W, H);
         }
-        this.prevCam = temporal ? cur : null;
+        this.mPreviousCamera = temporal ? cur : null;
     }
 }
 

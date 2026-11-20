@@ -23,9 +23,13 @@ StructuredBuffer<float4> gInstanceClip;
 float shadowClipLatticeValue(int3 c)
 {
     uint3 v = uint3(c) * 1664525u + 1013904223u;
-    v.x += v.y * v.z; v.y += v.z * v.x; v.z += v.x * v.y;
+    v.x += v.y * v.z;
+    v.y += v.z * v.x;
+    v.z += v.x * v.y;
     v ^= v >> 16u;
-    v.x += v.y * v.z; v.y += v.z * v.x; v.z += v.x * v.y;
+    v.x += v.y * v.z;
+    v.y += v.z * v.x;
+    v.z += v.x * v.y;
     return float(v.x >> 8u) * (1.f / 16777216.f);
 }
 

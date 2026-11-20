@@ -89,14 +89,21 @@ float3 worldPos(float2 uv, float z)
     return w.xyz / w.w;
 }
 
-float viewDepth(float3 p) { return dot(p - gCamPos, gCamFwd); }
+float viewDepth(float3 p)
+{
+    return dot(p - gCamPos, gCamFwd);
+}
 
 uint3 pcg3d(uint3 v)
 {
     v = v * 1664525u + 1013904223u;
-    v.x += v.y * v.z; v.y += v.z * v.x; v.z += v.x * v.y;
+    v.x += v.y * v.z;
+    v.y += v.z * v.x;
+    v.z += v.x * v.y;
     v ^= v >> 16u;
-    v.x += v.y * v.z; v.y += v.z * v.x; v.z += v.x * v.y;
+    v.x += v.y * v.z;
+    v.y += v.z * v.x;
+    v.z += v.x * v.y;
     return v;
 }
 
@@ -107,7 +114,10 @@ float2 rand2(uint2 p, uint frame)
 }
 
 /// Antiderivative of cos(t - n) sin(t).
-float G(float t, float n) { return -0.25f * cos(2.f * t - n) + 0.5f * t * sin(n); }
+float G(float t, float n)
+{
+    return -0.25f * cos(2.f * t - n) + 0.5f * t * sin(n);
+}
 
 /// Integral of cos(t - n) |sin t| over [a, b] (a <= b, both in [-pi, pi]).
 float sectorWeight(float a, float b, float n)
@@ -118,7 +128,10 @@ float sectorWeight(float a, float b, float n)
 }
 
 /// Signed angle of d from V towards T in the slice plane.
-float sliceAngle(float3 d, float3 V, float3 T) { return atan2(dot(d, T), dot(d, V)); }
+float sliceAngle(float3 d, float3 V, float3 T)
+{
+    return atan2(dot(d, T), dot(d, V));
+}
 
 float sampleDepth(uint2 sp, float t)
 {
@@ -200,7 +213,11 @@ void trace(uint3 tid: SV_DispatchThreadID)
                 if (any(s2 < 0.f) || any(s2 >= dim)) break;
                 const uint2 sp = uint2(s2);
                 const float zs = sampleDepth(sp, t);
-                if (zs >= 1.f) { prevValid = false; continue; } // background never occludes
+                if (zs >= 1.f)
+                {
+                    prevValid = false;
+                    continue;
+                } // background never occludes
                 const float3 S = worldPos((float2(sp) + 0.5f) / dim, zs);
                 const float3 Ns = normalize(gNormW[sp].xyz);
                 const float3 d = S - P;
@@ -222,7 +239,10 @@ void trace(uint3 tid: SV_DispatchThreadID)
                     a0 = min(a0, pa);
                     a1 = max(a1, pa);
                 }
-                prevS = S; prevN = Ns; prevA = tf; prevValid = true;
+                prevS = S;
+                prevN = Ns;
+                prevA = tf;
+                prevValid = true;
                 const float x0 = saturate((a0 - lo) / M_PI);
                 const float x1 = saturate((a1 - lo) / M_PI);
                 const uint start = min(uint(x0 * float(kSectors)), kSectors - 1);
@@ -273,7 +293,9 @@ void denoise(uint3 tid: SV_DispatchThreadID)
     const uint2 q = tid.xy;
     if (any(q >= gTraceDim)) return;
     const float4 c = gDenoiseIn[q];
-    float d0; float3 n0; bool bg;
+    float d0;
+    float3 n0;
+    bool bg;
     guide(q, d0, n0, bg);
     if (bg)
     {
@@ -289,7 +311,9 @@ void denoise(uint3 tid: SV_DispatchThreadID)
         {
             const int2 s = int2(q) + int2(dx, dy) * int(gAtrousStep);
             if (any(s < 0) || any(s >= int2(gTraceDim))) continue;
-            float dq; float3 nq; bool bq;
+            float dq;
+            float3 nq;
+            bool bq;
             guide(uint2(s), dq, nq, bq);
             if (bq) continue;
             const float wt = h[abs(dx)] * h[abs(dy)] * pow(max(dot(n0, nq), 0.f), gSigmaN) * exp(-abs(dq - d0) / max(gSigmaZ * d0, 1e-6f));
@@ -326,7 +350,9 @@ void accumulate(uint3 tid: SV_DispatchThreadID)
             {
                 const int2 s = int2(qc) + int2(dx, dy);
                 if (any(s < 0) || any(s >= int2(gTraceDim))) continue;
-                float dq; float3 nq; bool bq;
+                float dq;
+                float3 nq;
+                bool bq;
                 guide(uint2(s), dq, nq, bq);
                 if (bq) continue;
                 const float2 o = abs(float2(s) - fq);

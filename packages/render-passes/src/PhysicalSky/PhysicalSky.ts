@@ -36,6 +36,7 @@ import {
 
 const kShaderFile = "RenderPasses/PhysicalSky/PhysicalSky.cs.slang";
 
+/** Atmosphere, sun-disc and compositing parameters for the Preetham sky model. */
 export interface PhysicalSkyParams {
     /** Direction towards the sun (normalised internally); y is up. */
     sunDir: [number, number, number];
@@ -62,17 +63,27 @@ const norm3 = (v: readonly number[]): [number, number, number] => {
 };
 
 /** Preetham's Perez coefficients (A..E) for Y, x, y at turbidity T, and the zenith values (Y in kcd/m^2). */
-export function preethamCoefficients(T: number, thetaS: number): { Y: number[]; x: number[]; y: number[]; zenith: [number, number, number] } {
+export function preethamCoefficients(
+    T: number,
+    thetaS: number,
+): { Y: number[]; x: number[]; y: number[]; zenith: [number, number, number] } {
     const Y = [0.1787 * T - 1.463, -0.3554 * T + 0.4275, -0.0227 * T + 5.3251, 0.1206 * T - 2.5771, -0.067 * T + 0.3703];
     const x = [-0.0193 * T - 0.2592, -0.0665 * T + 0.0008, -0.0004 * T + 0.2125, -0.0641 * T - 0.8989, -0.0033 * T + 0.0452];
     const y = [-0.0167 * T - 0.2608, -0.095 * T + 0.0092, -0.0079 * T + 0.2102, -0.0441 * T - 1.6537, -0.0109 * T + 0.0529];
     const chi = (4 / 9 - T / 120) * (Math.PI - 2 * thetaS);
     const Yz = (4.0453 * T - 4.971) * Math.tan(chi) - 0.2155 * T + 2.4192;
-    const t = thetaS, t2 = t * t, t3 = t2 * t, T2 = T * T;
-    const xz = T2 * (0.00166 * t3 - 0.00375 * t2 + 0.00209 * t) + T * (-0.02903 * t3 + 0.06377 * t2 - 0.03202 * t + 0.00394)
-        + (0.11693 * t3 - 0.21196 * t2 + 0.06052 * t + 0.25886);
-    const yz = T2 * (0.00275 * t3 - 0.0061 * t2 + 0.00317 * t) + T * (-0.04214 * t3 + 0.0897 * t2 - 0.04153 * t + 0.00516)
-        + (0.15346 * t3 - 0.26756 * t2 + 0.0667 * t + 0.26688);
+    const t = thetaS;
+    const t2 = t * t;
+    const t3 = t2 * t;
+    const T2 = T * T;
+    const xz =
+        T2 * (0.00166 * t3 - 0.00375 * t2 + 0.00209 * t) +
+        T * (-0.02903 * t3 + 0.06377 * t2 - 0.03202 * t + 0.00394) +
+        (0.11693 * t3 - 0.21196 * t2 + 0.06052 * t + 0.25886);
+    const yz =
+        T2 * (0.00275 * t3 - 0.0061 * t2 + 0.00317 * t) +
+        T * (-0.04214 * t3 + 0.0897 * t2 - 0.04153 * t + 0.00516) +
+        (0.15346 * t3 - 0.26756 * t2 + 0.0667 * t + 0.26688);
     return { Y, x, y, zenith: [Yz, xz, yz] };
 }
 
@@ -80,8 +91,13 @@ const perez = (c: number[], cosTheta: number, gamma: number, cosGamma: number) =
     (1 + c[0]! * Math.exp(c[1]! / Math.max(cosTheta, 1e-3))) * (1 + c[2]! * Math.exp(c[3]! * gamma) + c[4]! * cosGamma * cosGamma);
 
 function xyYToLinearSrgb(x: number, y: number, Yv: number): [number, number, number] {
-    const X = (x * Yv) / y, Z = ((1 - x - y) * Yv) / y;
-    return [3.2404542 * X - 1.5371385 * Yv - 0.4985314 * Z, -0.969266 * X + 1.8760108 * Yv + 0.041556 * Z, 0.0556434 * X - 0.2040259 * Yv + 1.0572252 * Z];
+    const X = (x * Yv) / y;
+    const Z = ((1 - x - y) * Yv) / y;
+    return [
+        3.2404542 * X - 1.5371385 * Yv - 0.4985314 * Z,
+        -0.969266 * X + 1.8760108 * Yv + 0.041556 * Z,
+        0.0556434 * X - 0.2040259 * Yv + 1.0572252 * Z,
+    ];
 }
 
 /** Sun transmittance (RGB) along the view to the sun: Rayleigh + aerosol optical depth, Kasten-Young airmass. */
@@ -94,7 +110,11 @@ export function sunTransmittance(T: number, cosThetaS: number): [number, number,
 }
 
 /** CPU reference of the shader (same formulas): radiance towards direction `dir` (y up). */
-export function evalPhysicalSky(dir: readonly number[], params: PhysicalSkyParams = kDefaultPhysicalSky, withSun = true): [number, number, number] {
+export function evalPhysicalSky(
+    dir: readonly number[],
+    params: PhysicalSkyParams = kDefaultPhysicalSky,
+    withSun = true,
+): [number, number, number] {
     const s = norm3(params.sunDir);
     const d = norm3(dir);
     const below = d[1] < 0;
@@ -107,7 +127,9 @@ export function evalPhysicalSky(dir: readonly number[], params: PhysicalSkyParam
     const gamma = Math.acos(cosGamma);
     const cosTS = Math.cos(thetaS);
     const f = (k: number[]) => perez(k, cosTheta, gamma, cosGamma) / perez(k, 1, thetaS, cosTS);
-    const Yv = c.zenith[0] * f(c.Y), x = c.zenith[1] * f(c.x), y = c.zenith[2] * f(c.y);
+    const Yv = c.zenith[0] * f(c.Y);
+    const x = c.zenith[1] * f(c.x);
+    const y = c.zenith[2] * f(c.y);
     let rgb = xyYToLinearSrgb(x, y, Yv).map((v) => Math.max(v, 0) * params.skyScale) as [number, number, number];
     if (below) {
         rgb = rgb.map((v, i) => v * params.groundAlbedo[i]!) as [number, number, number];
@@ -123,7 +145,12 @@ export function evalPhysicalSky(dir: readonly number[], params: PhysicalSkyParam
 
 /** Lat-long EnvMap of the sky (height = width / 2). The sun disk is included when it covers at least one texel
  *  (otherwise use withSun=false and an analytic DirectionalLight for the sun). */
-export function createPhysicalSkyEnvMap(device: Device, params: PhysicalSkyParams = kDefaultPhysicalSky, width = 1024, withSun = false): EnvMap {
+export function createPhysicalSkyEnvMap(
+    device: Device,
+    params: PhysicalSkyParams = kDefaultPhysicalSky,
+    width = 1024,
+    withSun = false,
+): EnvMap {
     const height = Math.max(1, width >> 1);
     const data = new Float32Array(width * height * 4);
     for (let j = 0; j < height; j++) {
@@ -134,42 +161,49 @@ export function createPhysicalSkyEnvMap(device: Device, params: PhysicalSkyParam
             const dir = [Math.sin(theta) * Math.sin(phi), Math.cos(theta), -Math.sin(theta) * Math.cos(phi)];
             const c = evalPhysicalSky(dir, params, withSun);
             const o = (j * width + i) * 4;
-            data[o] = c[0]; data[o + 1] = c[1]; data[o + 2] = c[2]; data[o + 3] = 1;
+            data[o] = c[0];
+            data[o + 1] = c[1];
+            data[o + 2] = c[2];
+            data[o + 3] = 1;
         }
     }
     return new EnvMap(device, { width, height, data } as ConstructorParameters<typeof EnvMap>[1]);
 }
 
+/** Renders the Preetham sky model with optional sun disc and scene-depth masking. */
 export class PhysicalSky extends RenderPass {
-    private p: PhysicalSkyParams = { ...kDefaultPhysicalSky };
-    private pass: ComputePass | null = null;
-    private dummy: Texture | null = null;
+    private mParameters: PhysicalSkyParams = { ...kDefaultPhysicalSky };
+    private mPass: ComputePass | null = null;
+    private mDummy: Texture | null = null;
 
     constructor(device: Device, props: Properties) {
         super(device);
-        for (const k of Object.keys(this.p) as (keyof PhysicalSkyParams)[]) (this.p as unknown as Record<string, unknown>)[k] = props.get(k, this.p[k]);
+        for (const k of Object.keys(this.mParameters) as (keyof PhysicalSkyParams)[])
+            (this.mParameters as unknown as Record<string, unknown>)[k] = props.get(k, this.mParameters[k]);
     }
 
     get params(): PhysicalSkyParams {
-        return { ...this.p };
+        return { ...this.mParameters };
     }
 
     override getProperties(): Properties {
-        return new Properties({ ...this.p });
+        return new Properties({ ...this.mParameters });
     }
 
     override renderUI(ui: UIWidgets): void {
-        ui.slider("Turbidity", this.p.turbidity, 1.7, 10, 0.01, (v) => (this.p.turbidity = v));
-        ui.slider("Sky scale", this.p.skyScale, 0, 1, 0.001, (v) => (this.p.skyScale = v));
-        ui.slider("Sun intensity", this.p.sunIntensity, 0, 1e5, 1, (v) => (this.p.sunIntensity = v));
-        ui.slider("Sun radius (deg)", this.p.sunAngularRadiusDeg, 0, 5, 0.01, (v) => (this.p.sunAngularRadiusDeg = v));
+        ui.slider("Turbidity", this.mParameters.turbidity, 1.7, 10, 0.01, (v) => (this.mParameters.turbidity = v));
+        ui.slider("Sky scale", this.mParameters.skyScale, 0, 1, 0.001, (v) => (this.mParameters.skyScale = v));
+        ui.slider("Sun intensity", this.mParameters.sunIntensity, 0, 1e5, 1, (v) => (this.mParameters.sunIntensity = v));
+        ui.slider("Sun radius (deg)", this.mParameters.sunAngularRadiusDeg, 0, 5, 0.01, (v) => (this.mParameters.sunAngularRadiusDeg = v));
     }
 
     override reflect(compileData: CompileData): RenderPassReflection {
         const r = new RenderPassReflection();
         const [w, h] = compileData.defaultTexDims;
         r.addInput("color", "Scene color (optional)").bindFlags(ResourceBindFlags.ShaderResource).flags(FieldFlags.Optional);
-        r.addInput("posW", "World position, w = 0 marks background (optional)").bindFlags(ResourceBindFlags.ShaderResource).flags(FieldFlags.Optional);
+        r.addInput("posW", "World position, w = 0 marks background (optional)")
+            .bindFlags(ResourceBindFlags.ShaderResource)
+            .flags(FieldFlags.Optional);
         r.addOutput("dst", "Sky behind the scene")
             .texture2D(w, h)
             .format(ResourceFormat.RGBA32Float)
@@ -182,25 +216,39 @@ export class PhysicalSky extends RenderPass {
         if (!dst) return;
         const color = rd.getTexture("color");
         const posW = rd.getTexture("posW");
-        const W = dst.width, H = dst.height;
-        if (!this.pass) this.pass = ComputePass.create(this.device, { path: kShaderFile });
+        const W = dst.width;
+        const H = dst.height;
+        if (!this.mPass) this.mPass = ComputePass.create(this.device, { path: kShaderFile });
         // camera basis (defaults: looking down -z) for per-pixel view rays
-        let fwd = [0, 0, -1], up = [0, 1, 0], tanY = Math.tan(Math.PI / 8), aspect = W / H;
+        let fwd = [0, 0, -1];
+        let up = [0, 1, 0];
+        let tanY = Math.tan(Math.PI / 8);
+        let aspect = W / H;
         if (this.scene) {
             const cam = this.scene.camera;
-            const p = cam.getPosition(), t = cam.getTarget(), u = cam.getUpVector();
+            const p = cam.getPosition();
+            const t = cam.getTarget();
+            const u = cam.getUpVector();
             fwd = norm3([t.x - p.x, t.y - p.y, t.z - p.z]);
             up = [u.x, u.y, u.z];
             tanY = Math.tan(0.5 * cam.getFovY());
             aspect = cam.getAspectRatio();
         }
-        const right = norm3([fwd[1]! * up[2]! - fwd[2]! * up[1]!, fwd[2]! * up[0]! - fwd[0]! * up[2]!, fwd[0]! * up[1]! - fwd[1]! * up[0]!]);
-        const trueUp = [right[1] * fwd[2]! - right[2] * fwd[1]!, right[2] * fwd[0]! - right[0] * fwd[2]!, right[0] * fwd[1]! - right[1] * fwd[0]!];
-        const s = norm3(this.p.sunDir);
+        const right = norm3([
+            fwd[1]! * up[2]! - fwd[2]! * up[1]!,
+            fwd[2]! * up[0]! - fwd[0]! * up[2]!,
+            fwd[0]! * up[1]! - fwd[1]! * up[0]!,
+        ]);
+        const trueUp = [
+            right[1] * fwd[2]! - right[2] * fwd[1]!,
+            right[2] * fwd[0]! - right[0] * fwd[2]!,
+            right[0] * fwd[1]! - right[1] * fwd[0]!,
+        ];
+        const s = norm3(this.mParameters.sunDir);
         const thetaS = Math.acos(Math.min(Math.max(s[1], 0), 1));
-        const c = preethamCoefficients(this.p.turbidity, thetaS);
-        const tr = sunTransmittance(this.p.turbidity, s[1]);
-        const cb = this.pass.getRootVar()["CB"]!;
+        const c = preethamCoefficients(this.mParameters.turbidity, thetaS);
+        const tr = sunTransmittance(this.mParameters.turbidity, s[1]);
+        const cb = this.mPass.getRootVar()["CB"]!;
         cb["gFrameDim"] = [W, H];
         cb["gHasColor"] = color ? 1 : 0;
         cb["gHasPos"] = posW ? 1 : 0;
@@ -214,20 +262,28 @@ export class PhysicalSky extends RenderPass {
         cb["gCoefYy0"] = c.y.slice(0, 4);
         cb["gCoefE"] = [c.Y[4]!, c.x[4]!, c.y[4]!, 0];
         cb["gZenith"] = c.zenith;
-        cb["gSkyScale"] = this.p.skyScale;
-        cb["gSunRadiance"] = tr.map((v) => v * this.p.sunIntensity * (s[1] > 0 ? 1 : 0));
-        cb["gCosSunRadius"] = Math.cos((this.p.sunAngularRadiusDeg * Math.PI) / 180);
-        cb["gGround"] = this.p.groundAlbedo;
-        const root = this.pass.getRootVar();
-        if ((!color || !posW) && !this.dummy) {
-            this.dummy = new Texture(this.device, { type: ResourceType.Texture2D, width: 1, height: 1, format: ResourceFormat.RGBA32Float,
-                bindFlags: ResourceBindFlags.ShaderResource, name: "PhysicalSky::dummy" });
+        cb["gSkyScale"] = this.mParameters.skyScale;
+        cb["gSunRadiance"] = tr.map((v) => v * this.mParameters.sunIntensity * (s[1] > 0 ? 1 : 0));
+        cb["gCosSunRadius"] = Math.cos((this.mParameters.sunAngularRadiusDeg * Math.PI) / 180);
+        cb["gGround"] = this.mParameters.groundAlbedo;
+        const root = this.mPass.getRootVar();
+        if ((!color || !posW) && !this.mDummy) {
+            this.mDummy = new Texture(this.device, {
+                type: ResourceType.Texture2D,
+                width: 1,
+                height: 1,
+                format: ResourceFormat.RGBA32Float,
+                bindFlags: ResourceBindFlags.ShaderResource,
+                name: "PhysicalSky::dummy",
+            });
         }
-        root["gColor"] = color ?? this.dummy!; // unconnected optional inputs: gHasColor/gHasPos say they are unused
-        root["gPosW"] = posW ?? this.dummy!;
+        root["gColor"] = color ?? this.mDummy!; // unconnected optional inputs: gHasColor/gHasPos say they are unused
+        root["gPosW"] = posW ?? this.mDummy!;
         root["gDst"] = dst;
-        this.pass.execute(ctx, W, H);
+        this.mPass.execute(ctx, W, H);
     }
 }
 
-registerRenderPass("PhysicalSky", (device, props) => new PhysicalSky(device, props), { desc: "Preetham analytic sky + sun disk (background / env map)" });
+registerRenderPass("PhysicalSky", (device, props) => new PhysicalSky(device, props), {
+    desc: "Preetham analytic sky + sun disk (background / env map)",
+});

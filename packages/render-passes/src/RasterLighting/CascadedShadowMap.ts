@@ -52,6 +52,7 @@ import {
 
 /** Optional per-instance clip input (GBufferRaster's clip buffer layout: one float4 per geometry instance). */
 const kClipBuffer = "clipBuffer";
+/** One float4 per instance, matching the InstanceClip shader buffer layout. */
 const kClipStride = 16;
 
 const kShaderFile = "RenderPasses/RasterLighting/ShadowMap.3d.slang";
@@ -59,6 +60,7 @@ export const kMaxCascades = 4;
 /** Dictionary key under which the pass publishes its CascadedShadowMapData each frame. */
 export const kCascadedShadowMapData = "CascadedShadowMap.data";
 
+/** Cascade transforms, depth splits and texel sizes published for shadow-map consumers. */
 export interface CascadedShadowMapData {
     lightIndex: number;
     cascadeCount: number;
@@ -86,64 +88,65 @@ interface CascadeVars {
     root: ShaderVar;
 }
 
+/** Renders directional-light cascades and shares their matrices with deferred lighting. */
 export class CascadedShadowMap extends RenderPass {
-    private lightIndex = -1;
-    private cascadeCount = 3;
-    private mapSize = 2048;
-    private splitLambda = 0.8;
-    private maxDistance = 0;
-    private useAlphaTest = true;
-    private state: GraphicsState | null = null;
+    private mLightIndex: number = -1;
+    private mCascadeCount: number = 3;
+    private mMapSize: number = 2048;
+    private mSplitLambda: number = 0.8;
+    private mMaxDistance: number = 0;
+    private mUseAlphaTest: boolean = true;
+    private mState: GraphicsState | null = null;
     /** Whether `state` was built with INSTANCE_CLIP. */
-    private stateClip = false;
-    private pipelineLayout: GPUPipelineLayout | null = null;
-    private cascades: CascadeVars[] = [];
-    private vao: Vao | null = null;
-    private depth: Texture | null = null;
-    private warned = false;
+    private mStateClip: boolean = false;
+    private mPipelineLayout: GPUPipelineLayout | null = null;
+    private mCascades: CascadeVars[] = [];
+    private mVao: Vao | null = null;
+    private mDepth: Texture | null = null;
+    private mWarned: boolean = false;
 
     constructor(device: Device, props: Properties) {
         super(device);
-        this.lightIndex = props.get("lightIndex", -1);
-        this.cascadeCount = Math.min(kMaxCascades, Math.max(1, props.get("cascadeCount", 3)));
-        this.mapSize = props.get("mapSize", 2048);
-        this.splitLambda = props.get("splitLambda", 0.8);
-        this.maxDistance = props.get("maxDistance", 0);
-        this.useAlphaTest = props.get("useAlphaTest", true);
+        this.mLightIndex = props.get("lightIndex", -1);
+        this.mCascadeCount = Math.min(kMaxCascades, Math.max(1, props.get("cascadeCount", 3)));
+        this.mMapSize = props.get("mapSize", 2048);
+        this.mSplitLambda = props.get("splitLambda", 0.8);
+        this.mMaxDistance = props.get("maxDistance", 0);
+        this.mUseAlphaTest = props.get("useAlphaTest", true);
     }
 
     override getProperties(): Properties {
         return new Properties({
-            lightIndex: this.lightIndex,
-            cascadeCount: this.cascadeCount,
-            mapSize: this.mapSize,
-            splitLambda: this.splitLambda,
-            maxDistance: this.maxDistance,
-            useAlphaTest: this.useAlphaTest,
+            lightIndex: this.mLightIndex,
+            cascadeCount: this.mCascadeCount,
+            mapSize: this.mMapSize,
+            splitLambda: this.mSplitLambda,
+            maxDistance: this.mMaxDistance,
+            useAlphaTest: this.mUseAlphaTest,
         });
     }
 
     override renderUI(ui: UIWidgets): void {
-        ui.slider("Cascades", this.cascadeCount, 1, kMaxCascades, 1, (v) => {
-            this.cascadeCount = Math.round(v);
+        ui.slider("Cascades", this.mCascadeCount, 1, kMaxCascades, 1, (v) => {
+            this.mCascadeCount = Math.round(v);
             this.requestRecompile();
         });
-        ui.dropdown("Map size", ["512", "1024", "2048", "4096"], String(this.mapSize), (v) => {
-            this.mapSize = Number(v);
+        ui.dropdown("Map size", ["512", "1024", "2048", "4096"], String(this.mMapSize), (v) => {
+            this.mMapSize = Number(v);
             this.requestRecompile();
         });
-        ui.slider("Split lambda", this.splitLambda, 0, 1, 0.01, (v) => (this.splitLambda = v));
-        ui.slider("Max distance (0 = scene)", this.maxDistance, 0, 1000, 0.1, (v) => (this.maxDistance = v));
-        ui.checkbox("Alpha test", this.useAlphaTest, (v) => {
-            this.useAlphaTest = v;
-            this.state = null;
+        ui.slider("Split lambda", this.mSplitLambda, 0, 1, 0.01, (v) => (this.mSplitLambda = v));
+        ui.slider("Max distance (0 = scene)", this.mMaxDistance, 0, 1000, 0.1, (v) => (this.mMaxDistance = v));
+        ui.checkbox("Alpha test", this.mUseAlphaTest, (v) => {
+            this.mUseAlphaTest = v;
+            this.mState = null;
         });
     }
 
     override reflect(_compileData: CompileData): RenderPassReflection {
         const r = new RenderPassReflection();
         r.addOutput("shadowMap", "Light-space depth atlas (R32F, cascades side by side)")
-            .texture2D(this.mapSize * this.cascadeCount, this.mapSize)
+            .texture2D(this.mMapSize * this.mCascadeCount, this.mMapSize)
             .format(ResourceFormat.R32Float)
             .bindFlags(ResourceBindFlags.RenderTarget | ResourceBindFlags.ShaderResource);
         r.addInput(kClipBuffer, "Per-instance clip entries (GBufferRaster clipBuffer): clipped casters cast no shadow")
@@ -155,26 +158,33 @@ export class CascadedShadowMap extends RenderPass {
 
     override setScene(scene: typeof this.scene): void {
         super.setScene(scene);
-        this.state = null;
-        this.vao = null;
-        this.warned = false;
+        this.mState = null;
+        this.mVao = null;
+        this.mWarned = false;
     }
 
     /** Index into the scene's active (GPU) light list of the shadowed directional light, or -1. */
     private findLight(): number {
         const lights = this.scene!.activeLights;
-        if (this.lightIndex >= 0) return this.lightIndex < lights.length && lights[this.lightIndex]!.type === LightType.Directional ? this.lightIndex : -1;
+        if (this.mLightIndex >= 0)
+            return this.mLightIndex < lights.length && lights[this.mLightIndex]!.type === LightType.Directional ? this.mLightIndex : -1;
         return lights.findIndex((l) => l.type === LightType.Directional);
     }
 
     private build(clip: boolean): void {
         const scene = this.scene!;
         const defines = scene.getSceneDefines();
-        defines.add("USE_ALPHA_TEST", this.useAlphaTest ? 1 : 0);
+        defines.add("USE_ALPHA_TEST", this.mUseAlphaTest ? 1 : 0);
         if (clip) defines.add("INSTANCE_CLIP", 1); // only with a clip buffer: the default define set stays untouched
-        this.stateClip = clip;
+        this.mStateClip = clip;
         const program = this.device.programManager.createProgram(
-            { path: kShaderFile, entryPoints: [{ name: "vsMain", type: ShaderType.Vertex }, { name: "psMain", type: ShaderType.Pixel }] },
+            {
+                path: kShaderFile,
+                entryPoints: [
+                    { name: "vsMain", type: ShaderType.Vertex },
+                    { name: "psMain", type: ShaderType.Pixel },
+                ],
+            },
             defines,
         );
         const version = program.getActiveVersion();
@@ -182,26 +192,27 @@ export class CascadedShadowMap extends RenderPass {
         const ps = version.getKernel("psMain", ShaderType.Pixel);
         const bindings = mergeWgslBindings(vs.bindings, ps.bindings);
         // One parameter block per cascade: per-cascade constants must not alias within one submit.
-        this.cascades = [];
+        this.mCascades = [];
         for (let c = 0; c < kMaxCascades; c++) {
             const vars = new ParameterBlock(this.device, version.reflection, bindings);
-            this.cascades.push({ vars, root: makeRootVar(vars) });
+            this.mCascades.push({ vars, root: makeRootVar(vars) });
         }
         const state = new GraphicsState(this.device).setKernels(vs, ps);
         state.setVao(this.getVao());
         state.setRasterizerState(RasterizerState.create(new RasterizerStateDesc().setCullMode(CullMode.None)));
         state.setDepthStencilState(DepthStencilState.create(new DepthStencilStateDesc()));
-        const vars0 = this.cascades[0]!.vars;
+        const vars0 = this.mCascades[0]!.vars;
         const groupIndices = vars0.getGroupIndices();
         const maxGroup = groupIndices.length ? Math.max(...groupIndices) : -1;
         const layouts: GPUBindGroupLayout[] = [];
-        for (let g = 0; g <= maxGroup; g++) layouts.push(vars0.getBindGroupLayout(g) ?? this.device.gpuDevice.createBindGroupLayout({ entries: [] }));
-        this.pipelineLayout = this.device.gpuDevice.createPipelineLayout({ bindGroupLayouts: layouts });
-        this.state = state;
+        for (let g = 0; g <= maxGroup; g++)
+            layouts.push(vars0.getBindGroupLayout(g) ?? this.device.gpuDevice.createBindGroupLayout({ entries: [] }));
+        this.mPipelineLayout = this.device.gpuDevice.createPipelineLayout({ bindGroupLayouts: layouts });
+        this.mState = state;
     }
 
     private getVao(): Vao {
-        if (this.vao) return this.vao;
+        if (this.mVao) return this.mVao;
         const vertexLayout = new VertexLayout();
         const vb = new VertexBufferLayout();
         vb.addElement("POSITION", 0, ResourceFormat.RGB32Float, 1, 0);
@@ -214,8 +225,14 @@ export class CascadedShadowMap extends RenderPass {
         ib.setInputClass(InputClass.PerInstanceData, 1);
         vertexLayout.addBufferLayout(0, vb).addBufferLayout(1, ib);
         const drawData = this.scene!.getMeshDrawData();
-        this.vao = new Vao(Topology.TriangleList, vertexLayout, [drawData.vertexBuffer, drawData.drawIDBuffer], drawData.indexBuffer, ResourceFormat.R32Uint);
-        return this.vao;
+        this.mVao = new Vao(
+            Topology.TriangleList,
+            vertexLayout,
+            [drawData.vertexBuffer, drawData.drawIDBuffer],
+            drawData.indexBuffer,
+            ResourceFormat.R32Uint,
+        );
+        return this.mVao;
     }
 
     /** Fits the cascades to the current camera and light (CPU, double precision). */
@@ -232,7 +249,9 @@ export class CascadedShadowMap extends RenderPass {
         // Scene box corners (for the view range and the caster depth range).
         const b = scene.worldBounds;
         const corners: V3[] = [];
-        if (b) for (let i = 0; i < 8; i++) corners.push([i & 1 ? b.max[0] : b.min[0], i & 2 ? b.max[1] : b.min[1], i & 4 ? b.max[2] : b.min[2]]);
+        if (b)
+            for (let i = 0; i < 8; i++)
+                corners.push([i & 1 ? b.max[0] : b.min[0], i & 2 ? b.max[1] : b.min[1], i & 4 ? b.max[2] : b.min[2]]);
         let near = Math.max(cam.getNearPlane(), 1e-3);
         let far = cam.getFarPlane();
         if (corners.length) {
@@ -241,22 +260,30 @@ export class CascadedShadowMap extends RenderPass {
             near = Math.max(near, Math.min(...depths));
             if (!(far > near)) far = near * 2;
         }
-        if (this.maxDistance > 0) far = Math.min(far, this.maxDistance);
+        if (this.mMaxDistance > 0) far = Math.min(far, this.mMaxDistance);
 
-        const n = this.cascadeCount;
+        const n = this.mCascadeCount;
         const splits: number[] = [];
         for (let i = 1; i <= n; i++) {
             const log = near * Math.pow(far / near, i / n);
             const lin = near + ((far - near) * i) / n;
-            splits.push(this.splitLambda * log + (1 - this.splitLambda) * lin);
+            splits.push(this.mSplitLambda * log + (1 - this.mSplitLambda) * lin);
         }
 
         const f = norm(lightDir);
         const up0: V3 = Math.abs(f[1]) < 0.99 ? [0, 1, 0] : [1, 0, 0];
         const lr = norm(cross(f, up0));
         const lu = cross(lr, f);
-        const S = this.mapSize;
-        const out: CascadedShadowMapData = { lightIndex: -1, cascadeCount: n, size: S, viewProj: [], splits, texelWorld: [], depthRange: [] };
+        const S = this.mMapSize;
+        const out: CascadedShadowMapData = {
+            lightIndex: -1,
+            cascadeCount: n,
+            size: S,
+            viewProj: [],
+            splits,
+            texelWorld: [],
+            depthRange: [],
+        };
         let z0 = near;
         for (let c = 0; c < n; c++) {
             const z1 = splits[c]!;
@@ -264,7 +291,8 @@ export class CascadedShadowMap extends RenderPass {
             const pts: V3[] = [];
             for (const z of [z0, z1]) {
                 const cz = add(pos, mul(fwd, z));
-                for (const sx of [-1, 1]) for (const sy of [-1, 1]) pts.push(add(cz, add(mul(right, sx * z * tanX), mul(up, sy * z * tanY))));
+                for (const sx of [-1, 1])
+                    for (const sy of [-1, 1]) pts.push(add(cz, add(mul(right, sx * z * tanX), mul(up, sy * z * tanY))));
             }
             let center: V3 = [0, 0, 0];
             for (const p of pts) center = add(center, mul(p, 1 / pts.length));
@@ -311,8 +339,9 @@ export class CascadedShadowMap extends RenderPass {
         if (!this.scene) return;
         const li = this.findLight();
         if (li < 0) {
-            if (!this.warned) Logger.warning("CascadedShadowMap: the scene has no (active) directional light; the shadow map stays empty.");
-            this.warned = true;
+            if (!this.mWarned)
+                Logger.warning("CascadedShadowMap: the scene has no (active) directional light; the shadow map stays empty.");
+            this.mWarned = true;
             return;
         }
         const light = this.scene.activeLights[li]!;
@@ -323,10 +352,10 @@ export class CascadedShadowMap extends RenderPass {
         const clipBuffer = renderData.getBuffer(kClipBuffer);
         const clipCount = clipBuffer ? Math.floor(clipBuffer.size / kClipStride) : 0;
         const clip = clipBuffer !== undefined && clipCount > 0;
-        if (!this.state || this.stateClip !== clip) this.build(clip);
-        if (!this.depth || this.depth.width !== atlas.width || this.depth.height !== atlas.height) {
-            this.depth?.destroy();
-            this.depth = new Texture(this.device, {
+        if (!this.mState || this.mStateClip !== clip) this.build(clip);
+        if (!this.mDepth || this.mDepth.width !== atlas.width || this.mDepth.height !== atlas.height) {
+            this.mDepth?.destroy();
+            this.mDepth = new Texture(this.device, {
                 type: ResourceType.Texture2D,
                 width: atlas.width,
                 height: atlas.height,
@@ -335,21 +364,21 @@ export class CascadedShadowMap extends RenderPass {
                 name: "CascadedShadowMap::depth",
             });
         }
-        ctx.clearDsv(this.depth.getDSV(), 1, 0);
+        ctx.clearDsv(this.mDepth.getDSV(), 1, 0);
 
         const fbo = new Fbo();
         fbo.attachColorTarget(atlas, 0);
-        fbo.attachDepthStencilTarget(this.depth);
-        const state = this.state!;
+        fbo.attachDepthStencilTarget(this.mDepth);
+        const state = this.mState!;
         state.setFbo(fbo);
-        const gso = state.getGSO(this.pipelineLayout!);
+        const gso = state.getGSO(this.mPipelineLayout!);
         const vao = state.getVao()!;
         const draws = this.scene.getMeshDrawData().draws;
 
         // Bind groups first: dirty cbuffers upload on the encoder, which is locked while a render pass is open.
         const groups = [];
         for (let c = 0; c < data.cascadeCount; c++) {
-            const { vars, root } = this.cascades[c]!;
+            const { vars, root } = this.mCascades[c]!;
             this.scene.bindShaderData(root);
             root["PerCascadeCB"]["gLightViewProj"] = data.viewProj[c]!;
             if (clip) {
