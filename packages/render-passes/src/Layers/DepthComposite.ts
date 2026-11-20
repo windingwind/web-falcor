@@ -39,25 +39,32 @@ import {
 import { addColorOutput, addTexInput, cameraData, dummyTexture, enumIndex } from "../Stylize/StyleCommon.js";
 
 const kShaderFile = "RenderPasses/Layers/DepthComposite.cs.slang";
+/** Ordered option names; preserve this order for numeric property compatibility. */
 const kAlphaModes = ["premultiplied", "straight", "additive"] as const;
 
+/** Composites a colour layer against scene depth using the selected alpha convention. */
 export class DepthComposite extends RenderPass {
-    private p = { alphaMode: "premultiplied" as string, opacity: 1, softness: 0 };
-    private pass: ComputePass | null = null;
+    private mParameters: { alphaMode: string; opacity: number; softness: number } = {
+        alphaMode: "premultiplied" as string,
+        opacity: 1,
+        softness: 0,
+    };
+    private mPass: ComputePass | null = null;
 
     constructor(device: Device, props: Properties) {
         super(device);
-        for (const k of Object.keys(this.p) as (keyof typeof this.p)[]) (this.p as Record<string, unknown>)[k] = props.get(k, this.p[k]);
-        enumIndex("DepthComposite", "alphaMode", this.p.alphaMode, kAlphaModes);
+        for (const k of Object.keys(this.mParameters) as (keyof typeof this.mParameters)[])
+            (this.mParameters as Record<string, unknown>)[k] = props.get(k, this.mParameters[k]);
+        enumIndex("DepthComposite", "alphaMode", this.mParameters.alphaMode, kAlphaModes);
     }
 
     override getProperties(): Properties {
-        return new Properties({ ...this.p });
+        return new Properties({ ...this.mParameters });
     }
 
     override renderUI(ui: UIWidgets): void {
-        ui.slider("Opacity", this.p.opacity, 0, 1, 0.01, (v) => (this.p.opacity = v));
-        ui.slider("Softness", this.p.softness, 0, 10, 0.01, (v) => (this.p.softness = v));
+        ui.slider("Opacity", this.mParameters.opacity, 0, 1, 0.01, (v) => (this.mParameters.opacity = v));
+        ui.slider("Softness", this.mParameters.softness, 0, 10, 0.01, (v) => (this.mParameters.softness = v));
     }
 
     override reflect(compileData: CompileData): RenderPassReflection {
@@ -75,18 +82,23 @@ export class DepthComposite extends RenderPass {
     }
 
     override execute(ctx: RenderContext, rd: RenderData): void {
-        const src = rd.getTexture("src"), layer = rd.getTexture("layer"), dst = rd.getTexture("dst");
+        const src = rd.getTexture("src");
+        const layer = rd.getTexture("layer");
+        const dst = rd.getTexture("dst");
         if (!src || !layer || !dst) return;
-        const depth = rd.getTexture("depth"), posW = rd.getTexture("posW"), layerDepth = rd.getTexture("layerDepth");
-        const trans = rd.getTexture("transmittance"), dstDepth = rd.getTexture("dstDepth");
+        const depth = rd.getTexture("depth");
+        const posW = rd.getTexture("posW");
+        const layerDepth = rd.getTexture("layerDepth");
+        const trans = rd.getTexture("transmittance");
+        const dstDepth = rd.getTexture("dstDepth");
         if (posW && !this.scene) throw new RuntimeError("DepthComposite: posW needs a scene (camera)");
-        this.pass ??= ComputePass.create(this.device, { path: kShaderFile });
-        const root = this.pass.getRootVar();
+        this.mPass ??= ComputePass.create(this.device, { path: kShaderFile });
+        const root = this.mPass.getRootVar();
         const cb = root["CB"]!;
         cb["gFrameDim"] = [dst.width, dst.height];
-        cb["gAlphaMode"] = enumIndex("DepthComposite", "alphaMode", this.p.alphaMode, kAlphaModes);
-        cb["gOpacity"] = Math.min(Math.max(Number(this.p.opacity), 0), 1);
-        cb["gSoftness"] = Math.max(Number(this.p.softness), 0);
+        cb["gAlphaMode"] = enumIndex("DepthComposite", "alphaMode", this.mParameters.alphaMode, kAlphaModes);
+        cb["gOpacity"] = Math.min(Math.max(Number(this.mParameters.opacity), 0), 1);
+        cb["gSoftness"] = Math.max(Number(this.mParameters.softness), 0);
         cb["gSceneDepthFromPosW"] = posW ? 1 : 0;
         cb["gHasSceneDepth"] = depth ? 1 : 0;
         cb["gHasLayerDepth"] = layerDepth ? 1 : 0;
@@ -103,7 +115,7 @@ export class DepthComposite extends RenderPass {
         root["gTransmittance"] = trans ?? dummy;
         root["gDst"] = dst;
         root["gDstDepth"] = dstDepth ?? dummyTexture(this.device, "out:dstDepth");
-        this.pass.execute(ctx, dst.width, dst.height);
+        this.mPass.execute(ctx, dst.width, dst.height);
     }
 }
 

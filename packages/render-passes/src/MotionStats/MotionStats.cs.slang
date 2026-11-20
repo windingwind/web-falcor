@@ -121,7 +121,11 @@ void finalMain(uint gi: SV_GroupIndex)
         {
             const uint c = gHist[gMagBins + b].load();
             total += c;
-            if (c > bestCount) { bestCount = c; best = b; }
+            if (c > bestCount)
+            {
+                bestCount = c;
+                best = b;
+            }
         }
         const float binWidth = 2.f * M_PI / float(gDirBins);
         const float domAngle = total > 0 ? -M_PI + (float(best) + 0.5f) * binWidth : 0.f;

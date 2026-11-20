@@ -34,11 +34,12 @@ const kShaderFile = "RenderPasses/GBuffer/SubsetRaster.cs.slang";
 
 type Draw = { indexCount: number; firstIndex: number; baseVertex: number; firstInstance: number };
 
+/** Rasterizes a selected set of scene instances into independent G-buffer targets. */
 export class SubsetRaster extends GBufferRaster {
-    private instanceMask: number[] = [];
-    private maskPass: ComputePass | null = null;
-    private maskPassKey = "";
-    private drawCache: { source: readonly Draw[]; mask: number[]; draws: Draw[] } | null = null;
+    private mInstanceMask: number[] = [];
+    private mMaskPass: ComputePass | null = null;
+    private mMaskPassKey: string = "";
+    private mDrawCache: { source: readonly Draw[]; mask: number[]; draws: Draw[] } | null = null;
 
     constructor(device: Device, props: Properties) {
         super(device, props);
@@ -48,27 +49,27 @@ export class SubsetRaster extends GBufferRaster {
 
     override getProperties(): Properties {
         const p = super.getProperties();
-        p.set("instanceMask", [...this.instanceMask]);
+        p.set("instanceMask", [...this.mInstanceMask]);
         return p;
     }
 
     /** Sets the geometry instance ids to draw. */
     setInstanceMask(ids: ArrayLike<number>): void {
-        this.instanceMask = [...new Set(Array.from(ids, (v) => Math.round(Number(v))))].filter((v) => v >= 0).sort((a, b) => a - b);
-        this.drawCache = null;
+        this.mInstanceMask = [...new Set(Array.from(ids, (v) => Math.round(Number(v))))].filter((v) => v >= 0).sort((a, b) => a - b);
+        this.mDrawCache = null;
     }
 
     getInstanceMask(): number[] {
-        return [...this.instanceMask];
+        return [...this.mInstanceMask];
     }
 
     protected override getDraws(): readonly Draw[] {
         const all = super.getDraws();
-        if (!this.drawCache || this.drawCache.source !== all || this.drawCache.mask !== this.instanceMask) {
-            const ids = new Set(this.instanceMask);
-            this.drawCache = { source: all, mask: this.instanceMask, draws: all.filter((_, i) => ids.has(i)) };
+        if (!this.mDrawCache || this.mDrawCache.source !== all || this.mDrawCache.mask !== this.mInstanceMask) {
+            const ids = new Set(this.mInstanceMask);
+            this.mDrawCache = { source: all, mask: this.mInstanceMask, draws: all.filter((_, i) => ids.has(i)) };
         }
-        return this.drawCache.draws;
+        return this.mDrawCache.draws;
     }
 
     override reflect(compileData: CompileData): RenderPassReflection {
@@ -77,7 +78,9 @@ export class SubsetRaster extends GBufferRaster {
         r.getField("vbuffer")?.flags(FieldFlags.None);
         const depth = r.getField("depth");
         const [w, h] = depth ? [depth.width, depth.height] : compileData.defaultTexDims;
-        r.addInput("sceneVBuffer", "V-buffer of the full scene (for subsetMask)").bindFlags(ResourceBindFlags.ShaderResource).flags(FieldFlags.Optional);
+        r.addInput("sceneVBuffer", "V-buffer of the full scene (for subsetMask)")
+            .bindFlags(ResourceBindFlags.ShaderResource)
+            .flags(FieldFlags.Optional);
         r.addOutput("subsetMask", "0 = no subset, 1 = subset visible in the scene, 2 = subset hidden (needs sceneVBuffer)")
             .texture2D(w, h)
             .format(ResourceFormat.R32Float)
@@ -102,16 +105,16 @@ export class SubsetRaster extends GBufferRaster {
         }
         const defines = this.scene.getSceneDefines();
         const key = defines.key();
-        if (!this.maskPass || key !== this.maskPassKey) {
-            this.maskPass = ComputePass.create(this.device, { path: kShaderFile, defines });
-            this.maskPassKey = key;
+        if (!this.mMaskPass || key !== this.mMaskPassKey) {
+            this.mMaskPass = ComputePass.create(this.device, { path: kShaderFile, defines });
+            this.mMaskPassKey = key;
         }
-        const root = this.maskPass.getRootVar();
+        const root = this.mMaskPass.getRootVar();
         root["CB"]!["gFrameDim"] = [mask.width, mask.height];
         root["gSubsetVBuffer"] = vb;
         root["gSceneVBuffer"] = sceneVb;
         root["gSubsetMask"] = mask;
-        this.maskPass.execute(ctx, mask.width, mask.height);
+        this.mMaskPass.execute(ctx, mask.width, mask.height);
     }
 }
 
