@@ -4,25 +4,43 @@
  */
 
 import { describe, it, expect } from "vitest";
-import { evaluateGlobals, quantizeTime, resolveNodeQuantization, type AnimationChannel, type SceneNode, type SceneAnimations } from "../src/Scene/Animation/SceneAnimation.js";
+import {
+    evaluateGlobals,
+    quantizeTime,
+    resolveNodeQuantization,
+    type AnimationChannel,
+    type SceneNode,
+    type SceneAnimations,
+} from "../src/Scene/Animation/SceneAnimation.js";
 import { float3 } from "../src/Utils/Math/Vector.js";
 import { quatf } from "../src/Utils/Math/Quaternion.js";
 
 const node = (parent: number, x = 0): SceneNode => ({ parent, t: new float3(x, 0, 0), r: new quatf(0, 0, 0, 1), s: new float3(1, 1, 1) });
 const slideX = (nodeID: number): AnimationChannel => ({
-    nodeID, path: "translation", interp: "LINEAR", times: new Float32Array([0, 1]), values: new Float32Array([0, 0, 0, 24, 0, 0]),
+    nodeID,
+    path: "translation",
+    interp: "LINEAR",
+    times: new Float32Array([0, 1]),
+    values: new Float32Array([0, 0, 0, 24, 0, 0]),
 });
 
 describe("animation time quantisation", () => {
     it("quantizeTime holds frame k at 2*floor(k/2)/fps on twos", () => {
-        for (let k = 0; k < 48; k++) expect(quantizeTime(k / 24, { hold: 2 / 24 })).toBeCloseTo(2 * Math.floor(k / 2) / 24, 12);
-        for (let k = 0; k < 48; k++) expect(quantizeTime(k / 24, { hold: 3 / 24, phase: 1 / 24 })).toBeCloseTo((3 * Math.floor((k - 1) / 3) + 1) / 24, 12);
+        for (let k = 0; k < 48; k++) expect(quantizeTime(k / 24, { hold: 2 / 24 })).toBeCloseTo((2 * Math.floor(k / 2)) / 24, 12);
+        for (let k = 0; k < 48; k++)
+            expect(quantizeTime(k / 24, { hold: 3 / 24, phase: 1 / 24 })).toBeCloseTo((3 * Math.floor((k - 1) / 3) + 1) / 24, 12);
         expect(quantizeTime(0.37, { hold: 0 })).toBe(0.37);
     });
 
     it("descendants inherit the nearest quantised ancestor", () => {
         const nodes = [node(-1), node(0), node(1), node(-1)];
-        const r = resolveNodeQuantization(nodes, new Map([[0, { hold: 0.5 }], [2, { hold: 0.25 }]]));
+        const r = resolveNodeQuantization(
+            nodes,
+            new Map([
+                [0, { hold: 0.5 }],
+                [2, { hold: 0.25 }],
+            ]),
+        );
         expect(r.map((q) => q?.hold)).toEqual([0.5, 0.5, 0.25, undefined]);
     });
 

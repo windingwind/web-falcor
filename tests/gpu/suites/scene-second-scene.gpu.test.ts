@@ -27,18 +27,85 @@ function quad(c: V3[], n: V3, materialID: number, nodeID?: number) {
     };
 }
 function box(min: V3, max: V3, materialID: number, nodeID?: number) {
-    const [x0, y0, z0] = min, [x1, y1, z1] = max;
+    const [x0, y0, z0] = min;
+    const [x1, y1, z1] = max;
     return [
-        quad([[x0, y1, z1], [x1, y1, z1], [x1, y1, z0], [x0, y1, z0]], [0, 1, 0], materialID, nodeID),
-        quad([[x0, y0, z1], [x1, y0, z1], [x1, y1, z1], [x0, y1, z1]], [0, 0, 1], materialID, nodeID),
-        quad([[x1, y0, z0], [x0, y0, z0], [x0, y1, z0], [x1, y1, z0]], [0, 0, -1], materialID, nodeID),
-        quad([[x1, y0, z1], [x1, y0, z0], [x1, y1, z0], [x1, y1, z1]], [1, 0, 0], materialID, nodeID),
-        quad([[x0, y0, z0], [x0, y0, z1], [x0, y1, z1], [x0, y1, z0]], [-1, 0, 0], materialID, nodeID),
+        quad(
+            [
+                [x0, y1, z1],
+                [x1, y1, z1],
+                [x1, y1, z0],
+                [x0, y1, z0],
+            ],
+            [0, 1, 0],
+            materialID,
+            nodeID,
+        ),
+        quad(
+            [
+                [x0, y0, z1],
+                [x1, y0, z1],
+                [x1, y1, z1],
+                [x0, y1, z1],
+            ],
+            [0, 0, 1],
+            materialID,
+            nodeID,
+        ),
+        quad(
+            [
+                [x1, y0, z0],
+                [x0, y0, z0],
+                [x0, y1, z0],
+                [x1, y1, z0],
+            ],
+            [0, 0, -1],
+            materialID,
+            nodeID,
+        ),
+        quad(
+            [
+                [x1, y0, z1],
+                [x1, y0, z0],
+                [x1, y1, z0],
+                [x1, y1, z1],
+            ],
+            [1, 0, 0],
+            materialID,
+            nodeID,
+        ),
+        quad(
+            [
+                [x0, y0, z0],
+                [x0, y0, z1],
+                [x0, y1, z1],
+                [x0, y1, z0],
+            ],
+            [-1, 0, 0],
+            materialID,
+            nodeID,
+        ),
     ];
 }
-const kMats = ([[0.6, 0.65, 0.6], [0.85, 0.3, 0.1], [0.15, 0.35, 0.85]] as V3[]).map((c) => ({ basic: { baseColor: new float4(c[0], c[1], c[2], 1) } }));
+const kMats = (
+    [
+        [0.6, 0.65, 0.6],
+        [0.85, 0.3, 0.1],
+        [0.15, 0.35, 0.85],
+    ] as V3[]
+).map((c) => ({ basic: { baseColor: new float4(c[0], c[1], c[2], 1) } }));
 const kLight = () => [{ type: LightType.Directional, dirW: new float3(0.2, -1, 0.3), intensity: new float3(2, 2, 2) }];
-const kFloor = (s: number) => quad([[-s, 0, s], [s, 0, s], [s, 0, -s], [-s, 0, -s]], [0, 1, 0], 0);
+const kFloor = (s: number) =>
+    quad(
+        [
+            [-s, 0, s],
+            [s, 0, s],
+            [s, 0, -s],
+            [-s, 0, -s],
+        ],
+        [0, 1, 0],
+        0,
+    );
 
 /** Floor + one box (top at `h`) + optional second box; fresh vertex arrays on every call. */
 function staticScene(device: Device, h: number, second: boolean): Scene {
@@ -54,7 +121,11 @@ function animatedScene(device: Device): Scene {
     ];
     const meshes = [kFloor(4), ...box([-0.45, 0, -0.45], [0.45, 0.9, 0.45], 1, 0), ...box([-0.3, 0, -0.3], [0.3, 1.4, 0.3], 2, 1)];
     const slide = (nodeID: number, from: V3, to: V3): AnimationChannel => ({
-        nodeID, path: "translation", interp: "LINEAR", times: new Float32Array([0, 1]), values: new Float32Array([...from, ...to]),
+        nodeID,
+        path: "translation",
+        interp: "LINEAR",
+        times: new Float32Array([0, 1]),
+        values: new Float32Array([...from, ...to]),
     });
     const channels = [slide(0, [-1.4, 0, 0.2], [0.6, 0, 0.7]), slide(1, [0.9, 0, -1.0], [1.7, 0, -0.1])];
     return setCamera(new Scene(device, meshes, kMats, kLight(), undefined, [], nodes, channels));
@@ -89,7 +160,9 @@ async function gbuffer(device: Device, scene: Scene): Promise<{ posW: Float32Arr
 
 /** Covered pixels, pixels above y = `above`, and the per-pixel max y. */
 function coverage(posW: Float32Array, above: number): { px: number; high: number; maxY: number } {
-    let px = 0, high = 0, maxY = -Infinity;
+    let px = 0;
+    let high = 0;
+    let maxY = -Infinity;
     for (let i = 0; i < kSize * kSize; i++) {
         if (posW[i * 4 + 3] === 0) continue;
         px++;
@@ -101,7 +174,8 @@ function coverage(posW: Float32Array, above: number): { px: number; high: number
 }
 
 function bitwiseEqual(a: Float32Array, b: Float32Array): boolean {
-    const ua = new Uint32Array(a.buffer, a.byteOffset, a.length), ub = new Uint32Array(b.buffer, b.byteOffset, b.length);
+    const ua = new Uint32Array(a.buffer, a.byteOffset, a.length);
+    const ub = new Uint32Array(b.buffer, b.byteOffset, b.length);
     if (ua.length !== ub.length) return false;
     for (let i = 0; i < ua.length; i++) if (ua[i] !== ub[i]) return false;
     return true;
@@ -119,7 +193,6 @@ function materialPx(gb: { posW: Float32Array; diffuse: Float32Array }, m: number
     return n;
 }
 
-
 gpuTest("SecondScene.staticThenAnimated", async ({ device }) => {
     // Two rounds of (static scene, animated scene): in the second round every program comes from the program cache.
     for (const round of [1, 2]) {
@@ -133,7 +206,9 @@ gpuTest("SecondScene.staticThenAnimated", async ({ device }) => {
             const g = await gbuffer(device, anim);
             frames.push({ t, c: coverage(g.posW, 1.0), a: materialPx(g, 1), b: materialPx(g, 2), posW: g.posW });
         }
-        console.log(`SecondScene.staticThenAnimated round ${round}: static px ${ca.px}; ${frames.map((f) => `t=${f.t}: px ${f.c.px}, box B px ${f.c.high}, max y ${f.c.maxY.toFixed(3)}, box A/B material px ${f.a}/${f.b}`).join("; ")}`);
+        console.log(
+            `SecondScene.staticThenAnimated round ${round}: static px ${ca.px}; ${frames.map((f) => `t=${f.t}: px ${f.c.px}, box B px ${f.c.high}, max y ${f.c.maxY.toFixed(3)}, box A/B material px ${f.a}/${f.b}`).join("; ")}`,
+        );
         expectEq(ca.px > 0.3 * kSize * kSize, true, `round ${round}: static scene G-buffer non-empty (${ca.px} px)`);
         expectEq(ca.high, 0, `round ${round}: static scene has nothing above y = 1`);
         let moved = 0;
@@ -158,7 +233,9 @@ gpuTest("SecondScene.twoStaticScenes", async ({ device }) => {
     const s3 = staticScene(device, 0.6, false);
     const g3 = await gbuffer(device, s3);
     const [c1, c2, c3] = [g1, g2, g3].map((g) => coverage(g.posW, 1.0));
-    console.log(`SecondScene.twoStaticScenes: px ${c1!.px}/${c2!.px}/${c3!.px}, above y=1 ${c1!.high}/${c2!.high}/${c3!.high}, max y ${c1!.maxY}/${c2!.maxY}/${c3!.maxY}`);
+    console.log(
+        `SecondScene.twoStaticScenes: px ${c1!.px}/${c2!.px}/${c3!.px}, above y=1 ${c1!.high}/${c2!.high}/${c3!.high}, max y ${c1!.maxY}/${c2!.maxY}/${c3!.maxY}`,
+    );
     expectEq(c1!.px > 0.3 * kSize * kSize, true, `first scene G-buffer non-empty (${c1!.px} px)`);
     expectEq(c2!.px > 0.3 * kSize * kSize, true, `second scene G-buffer non-empty (${c2!.px} px)`);
     expectEq(bitwiseEqual(g1.posW, g2.posW) && bitwiseEqual(g1.diffuse, g2.diffuse), true, "second scene renders bitwise like the first");

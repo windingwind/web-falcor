@@ -13,7 +13,12 @@ type V3 = [number, number, number];
 function quad(c: V3[], n: V3) {
     const uv = [new float2(0, 0), new float2(1, 0), new float2(1, 1), new float2(0, 1)];
     return {
-        vertices: c.map((p, i) => ({ position: new float3(...p), normal: new float3(...n), tangent: new float4(1, 0, 0, 1), texCrd: uv[i]! })),
+        vertices: c.map((p, i) => ({
+            position: new float3(...p),
+            normal: new float3(...n),
+            tangent: new float4(1, 0, 0, 1),
+            texCrd: uv[i]!,
+        })),
         indices: new Uint32Array([0, 1, 2, 0, 2, 3]),
         materialID: 0,
     };
@@ -22,9 +27,33 @@ function quad(c: V3[], n: V3) {
 gpuTest("GBufferRaster.linearZMatchesGBufferRT", async ({ device }) => {
     const s = 30;
     const meshes = [
-        quad([[-s, 0, s], [s, 0, s], [s, 0, -s], [-s, 0, -s]], [0, 1, 0]),
-        quad([[-1, 0, 0.5], [1, 0, 0.5], [1, 1.5, 0.5], [-1, 1.5, 0.5]], [0, 0, 1]),
-        quad([[0.5, 0, -3], [2.5, 0, -3], [2.5, 2.5, -3], [0.5, 2.5, -3]], [0, 0, 1]),
+        quad(
+            [
+                [-s, 0, s],
+                [s, 0, s],
+                [s, 0, -s],
+                [-s, 0, -s],
+            ],
+            [0, 1, 0],
+        ),
+        quad(
+            [
+                [-1, 0, 0.5],
+                [1, 0, 0.5],
+                [1, 1.5, 0.5],
+                [-1, 1.5, 0.5],
+            ],
+            [0, 0, 1],
+        ),
+        quad(
+            [
+                [0.5, 0, -3],
+                [2.5, 0, -3],
+                [2.5, 2.5, -3],
+                [0.5, 2.5, -3],
+            ],
+            [0, 0, 1],
+        ),
     ];
     const scene = new Scene(device, meshes, [{ basic: { baseColor: new float4(0.5, 0.5, 0.5, 1) } }]);
     scene.camera.setPosition(new float3(0.4, 1.6, 6));
@@ -47,8 +76,13 @@ gpuTest("GBufferRaster.linearZMatchesGBufferRT", async ({ device }) => {
     };
     const ras = await render("GBufferRaster");
     const rt = await render("GBufferRT");
-    const n = scene.camera.getNearPlane(), f = scene.camera.getFarPlane();
-    let hits = 0, bad = 0, maxRel = 0, maxAbsW = 0, maxAt = -1;
+    const n = scene.camera.getNearPlane();
+    const f = scene.camera.getFarPlane();
+    let hits = 0;
+    let bad = 0;
+    let maxRel = 0;
+    let maxAbsW = 0;
+    let maxAt = -1;
     for (let i = 0; i < size * size; i++) {
         if (ras.mask[i] !== 1 || rt.mask[i] !== 1) continue;
         const w = rt.z[i * 2]!;
@@ -57,12 +91,17 @@ gpuTest("GBufferRaster.linearZMatchesGBufferRT", async ({ device }) => {
         const rel = Math.abs(got - expected) / expected;
         // silhouette pixels can hit different surfaces in raster vs RT; count them, don't fail on a few
         if (rel > 1e-2) bad++;
-        else if (rel > maxRel) { maxRel = rel; maxAt = i; }
+        else if (rel > maxRel) {
+            maxRel = rel;
+            maxAt = i;
+        }
         maxAbsW = Math.max(maxAbsW, Math.abs(got - w));
         hits++;
     }
     const c = (size / 2) * size + size / 2;
-    console.error(`# GBufferRaster linearZ vs GBufferRT: ${hits} px, max rel err ${maxRel.toExponential(2)} (at ${maxAt}), ${bad} px > 1e-2 (silhouettes); |raster - RT w| <= ${maxAbsW.toFixed(4)} (near ${n}); centre raster ${ras.z[c * 2]} vs RT ${rt.z[c * 2]}`);
+    console.error(
+        `# GBufferRaster linearZ vs GBufferRT: ${hits} px, max rel err ${maxRel.toExponential(2)} (at ${maxAt}), ${bad} px > 1e-2 (silhouettes); |raster - RT w| <= ${maxAbsW.toFixed(4)} (near ${n}); centre raster ${ras.z[c * 2]} vs RT ${rt.z[c * 2]}`,
+    );
     expectEq(hits > size * size * 0.5, true, "enough hit pixels");
     // raster interpolation vs ray hit: same order as GBufferRaster.allChannelsMatchGBufferRT's posW tolerance (5e-3 abs);
     // measured 1.9e-4 (first draft asked 1e-4). The unfixed port is off by a factor ~w^2 (0.174 vs 5.6).

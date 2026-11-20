@@ -31,13 +31,21 @@ function sphere(r: number, c: V3, nLon: number, nLat: number, materialID: number
         for (let b = 0; b <= nLon; b++) {
             const ph = (2 * Math.PI * b) / nLon;
             const n: V3 = [Math.sin(th) * Math.cos(ph), Math.cos(th), Math.sin(th) * Math.sin(ph)];
-            vertices.push({ position: new float3(c[0] + n[0] * r, c[1] + n[1] * r, c[2] + n[2] * r), normal: new float3(...n), tangent: new float4(-Math.sin(ph), 0, Math.cos(ph), 1), texCrd: new float2(b / nLon, a / nLat) });
+            vertices.push({
+                position: new float3(c[0] + n[0] * r, c[1] + n[1] * r, c[2] + n[2] * r),
+                normal: new float3(...n),
+                tangent: new float4(-Math.sin(ph), 0, Math.cos(ph), 1),
+                texCrd: new float2(b / nLon, a / nLat),
+            });
         }
     }
     const idx: number[] = [];
     for (let a = 0; a < nLat; a++) {
         for (let b = 0; b < nLon; b++) {
-            const i0 = a * (nLon + 1) + b, i1 = i0 + 1, i2 = i0 + nLon + 1, i3 = i2 + 1;
+            const i0 = a * (nLon + 1) + b;
+            const i1 = i0 + 1;
+            const i2 = i0 + nLon + 1;
+            const i3 = i2 + 1;
             idx.push(i0, i1, i2, i1, i3, i2);
         }
     }
@@ -50,9 +58,17 @@ const kMirrorScenes = new WeakMap<Device, Scene>();
 function mirrorScene(device: Device): Scene {
     let scene = kMirrorScenes.get(device);
     if (!scene) {
-        const f = 6, uv = [new float2(0, 0), new float2(1, 0), new float2(1, 1), new float2(0, 1)];
+        const f = 6;
+        const uv = [new float2(0, 0), new float2(1, 0), new float2(1, 1), new float2(0, 1)];
         const floor = {
-            vertices: ([[-f, 0, f], [f, 0, f], [f, 0, -f], [-f, 0, -f]] as V3[]).map((p, i) => ({ position: new float3(...p), normal: new float3(0, 1, 0), tangent: new float4(1, 0, 0, 1), texCrd: uv[i]! })),
+            vertices: (
+                [
+                    [-f, 0, f],
+                    [f, 0, f],
+                    [f, 0, -f],
+                    [-f, 0, -f],
+                ] as V3[]
+            ).map((p, i) => ({ position: new float3(...p), normal: new float3(0, 1, 0), tangent: new float4(1, 0, 0, 1), texCrd: uv[i]! })),
             indices: new Uint32Array([0, 1, 2, 0, 2, 3]),
             materialID: 0,
         };
@@ -60,7 +76,9 @@ function mirrorScene(device: Device): Scene {
             { basic: { baseColor: new float4(0.9, 0.9, 0.9, 1), specular: new float4(0, 0, 1, 0) } },
             { basic: { baseColor: new float4(0.8, 0.2, 0.1, 1), specular: new float4(0, 0.7, 0, 0) } },
         ];
-        scene = new Scene(device, [floor, sphere(kSphereR, kSphereC, 128, 64, 1)], mats, [{ type: LightType.Directional, dirW: new float3(0.3, -1, -0.4), intensity: new float3(3, 3, 3) }]);
+        scene = new Scene(device, [floor, sphere(kSphereR, kSphereC, 128, 64, 1)], mats, [
+            { type: LightType.Directional, dirW: new float3(0.3, -1, -0.4), intensity: new float3(3, 3, 3) },
+        ]);
         scene.setEnvMap(new EnvMap(device, { width: 1, height: 1, data: new Float32Array([0.2, 0.25, 0.35, 1]) } as never));
         kMirrorScenes.set(device, scene);
     }
@@ -72,17 +90,39 @@ function mirrorScene(device: Device): Scene {
 }
 
 const kSsrEdges: [string, string][] = [
-    ["G.vbuffer", "L.vbuffer"], ["G.viewW", "L.viewW"], ["G.depth", "Z.depth"],
-    ["L.color", "S.color"], ["G.depth", "S.depth"], ["G.normW", "S.normW"], ["G.specRough", "S.specRough"], ["Z.hiz", "S.hiz"], ["G.mvec", "S.mvec"],
+    ["G.vbuffer", "L.vbuffer"],
+    ["G.viewW", "L.viewW"],
+    ["G.depth", "Z.depth"],
+    ["L.color", "S.color"],
+    ["G.depth", "S.depth"],
+    ["G.normW", "S.normW"],
+    ["G.specRough", "S.specRough"],
+    ["Z.hiz", "S.hiz"],
+    ["G.mvec", "S.mvec"],
 ];
 
 function ssrGraph(device: Device, scene: Scene, props: Record<string, unknown>, outputs: string[]) {
-    return buildGraph(device, scene, [["DeferredLighting", "L", { brdf: "LambertGGX", shadowMode: "None" }], ["HiZBuild", "Z", {}], ["SSR", "S", props]], kSsrEdges, outputs, kSize, kSize);
+    return buildGraph(
+        device,
+        scene,
+        [
+            ["DeferredLighting", "L", { brdf: "LambertGGX", shadowMode: "None" }],
+            ["HiZBuild", "Z", {}],
+            ["SSR", "S", props],
+        ],
+        kSsrEdges,
+        outputs,
+        kSize,
+        kSize,
+    );
 }
 
 const sub = (a: V3, b: V3): V3 => [a[0] - b[0], a[1] - b[1], a[2] - b[2]];
 const dot = (a: ArrayLike<number>, b: ArrayLike<number>) => a[0]! * b[0]! + a[1]! * b[1]! + a[2]! * b[2]!;
-const nrm = (a: V3): V3 => { const l = Math.hypot(...a) || 1; return [a[0] / l, a[1] / l, a[2] / l]; };
+const nrm = (a: V3): V3 => {
+    const l = Math.hypot(...a) || 1;
+    return [a[0] / l, a[1] / l, a[2] / l];
+};
 
 function envBRDFApprox(F0: number, rough: number, NoV: number): number {
     const r = [rough * -1 + 1, rough * -0.0275 + 0.0425, rough * -0.572 + 1.04, rough * 0.022 - 0.04];
@@ -104,9 +144,16 @@ gpuTest("SSR.mirrorMatchesAnalyticHits", async ({ device }) => {
     const cam = kCam.pos;
     const project = (q: V3) => {
         const c = [0, 1, 2, 3].map((r) => vp.get(r, 0) * q[0] + vp.get(r, 1) * q[1] + vp.get(r, 2) * q[2] + vp.get(r, 3));
-        return [(c[0]! / c[3]! * 0.5 + 0.5) * kSize, (0.5 - c[1]! / c[3]! * 0.5) * kSize];
+        return [((c[0]! / c[3]!) * 0.5 + 0.5) * kSize, (0.5 - (c[1]! / c[3]!) * 0.5) * kSize];
     };
-    let hitN = 0, hitOk = 0, missN = 0, missOk = 0, reflErr = 0, maxPx = 0, grazeHits = 0, grazeMiss = 0;
+    let hitN = 0;
+    let hitOk = 0;
+    let missN = 0;
+    let missOk = 0;
+    let reflErr = 0;
+    let maxPx = 0;
+    let grazeHits = 0;
+    let grazeMiss = 0;
     const fDiag: string[] = [];
     for (let i = 0; i < kSize * kSize; i++) {
         if (pos![i * 4 + 3] === 0) continue;
@@ -116,7 +163,9 @@ gpuTest("SSR.mirrorMatchesAnalyticHits", async ({ device }) => {
         const R: V3 = [-V[0], V[1], -V[2]];
         // Ray-sphere intersection.
         const oc = sub(P, kSphereC);
-        const b = dot(oc, R), c = dot(oc, oc) - kSphereR * kSphereR, disc = b * b - c;
+        const b = dot(oc, R);
+        const c = dot(oc, oc) - kSphereR * kSphereR;
+        const disc = b * b - c;
         const conf = hit![i * 4 + 3]!;
         if (disc < 0) {
             // Clearance of the ray from the sphere (perpendicular distance minus radius). A ray that passes just behind
@@ -127,8 +176,12 @@ gpuTest("SSR.mirrorMatchesAnalyticHits", async ({ device }) => {
                 missN++;
                 if (conf === 0) missOk++;
                 else if (fDiag.length < 12) {
-                    const hx = Math.floor(hit![i * 4]! * kSize), hy = Math.floor(hit![i * 4 + 1]! * kSize), j = hy * kSize + hx;
-                    fDiag.push(`px(${i % kSize},${Math.floor(i / kSize)})->(${hx},${hy}) hitY ${pos![j * 4 + 1]!.toFixed(3)} hz ${hit![i * 4 + 2]!.toFixed(5)} conf ${conf.toFixed(2)} R ${R.map((x) => x.toFixed(2)).join(",")}`);
+                    const hx = Math.floor(hit![i * 4]! * kSize);
+                    const hy = Math.floor(hit![i * 4 + 1]! * kSize);
+                    const j = hy * kSize + hx;
+                    fDiag.push(
+                        `px(${i % kSize},${Math.floor(i / kSize)})->(${hx},${hy}) hitY ${pos![j * 4 + 1]!.toFixed(3)} hz ${hit![i * 4 + 2]!.toFixed(5)} conf ${conf.toFixed(2)} R ${R.map((x) => x.toFixed(2)).join(",")}`,
+                    );
                 }
             } else if (conf > 0) grazeHits++;
             else grazeMiss++;
@@ -143,13 +196,16 @@ gpuTest("SSR.mirrorMatchesAnalyticHits", async ({ device }) => {
         const [qx, qy] = project(Q);
         if (qx! < 2 || qy! < 2 || qx! > kSize - 2 || qy! > kSize - 2) continue;
         hitN++;
-        const ex = hit![i * 4]! * kSize - qx!, ey = hit![i * 4 + 1]! * kSize - qy!;
+        const ex = hit![i * 4]! * kSize - qx!;
+        const ey = hit![i * 4 + 1]! * kSize - qy!;
         const e = Math.hypot(ex, ey);
         if (conf > 0 && e <= 1.5) hitOk++;
         if (conf > 0) maxPx = Math.max(maxPx, e);
         if (conf > 0) {
             // reflection = conf * colour(hit pixel) * DFG(F0, roughness 0, N.V)
-            const hx = Math.floor(hit![i * 4]! * kSize), hy = Math.floor(hit![i * 4 + 1]! * kSize), j = hy * kSize + hx;
+            const hx = Math.floor(hit![i * 4]! * kSize);
+            const hy = Math.floor(hit![i * 4 + 1]! * kSize);
+            const j = hy * kSize + hx;
             const NoV = Math.min(Math.max(V[1], 0), 1);
             for (let ch = 0; ch < 3; ch++) {
                 const ref = conf * col![j * 4 + ch]! * envBRDFApprox(spr![i * 4 + ch]!, spr![i * 4 + 3]!, NoV);
@@ -158,7 +214,9 @@ gpuTest("SSR.mirrorMatchesAnalyticHits", async ({ device }) => {
             }
         }
     }
-    log(`SSR mirror: analytic sphere hits ${hitN}, found at the right pixel ${hitOk} (${(100 * hitOk / Math.max(hitN, 1)).toFixed(1)} %, max err ${maxPx.toFixed(2)} px); sky rays with clearance > ${kClearance} ${missN}, missed ${missOk} (${(100 * missOk / Math.max(missN, 1)).toFixed(1)} %); grazing sky rays hit/miss ${grazeHits}/${grazeMiss}; reflection/composite max abs err ${reflErr.toExponential(2)}`);
+    log(
+        `SSR mirror: analytic sphere hits ${hitN}, found at the right pixel ${hitOk} (${((100 * hitOk) / Math.max(hitN, 1)).toFixed(1)} %, max err ${maxPx.toFixed(2)} px); sky rays with clearance > ${kClearance} ${missN}, missed ${missOk} (${((100 * missOk) / Math.max(missN, 1)).toFixed(1)} %); grazing sky rays hit/miss ${grazeHits}/${grazeMiss}; reflection/composite max abs err ${reflErr.toExponential(2)}`,
+    );
     if (fDiag.length) log(`SSR mirror false hits (first ${fDiag.length}): ${fDiag.join(" | ")}`);
     expectEq(hitN > 300, true, `enough mirror pixels see the sphere (${hitN})`);
     expectEq(hitOk >= 0.95 * hitN, true, "Hi-Z march finds >= 95 % of the analytic hits within 1.5 px");
@@ -182,10 +240,12 @@ gpuTest("SSR.intensityZeroIsIdentity", async ({ device }) => {
 
 /** Mean absolute difference between horizontal neighbours of the reflection where both have confidence. */
 function roughness(buf: Float32Array): number {
-    let s = 0, n = 0;
+    let s = 0;
+    let n = 0;
     for (let y = 0; y < kSize; y++) {
         for (let x = 0; x + 1 < kSize; x++) {
-            const i = (y * kSize + x) * 4, j = i + 4;
+            const i = (y * kSize + x) * 4;
+            const j = i + 4;
             if (buf[i + 3]! <= 0 || buf[j + 3]! <= 0) continue;
             for (let c = 0; c < 3; c++) s += Math.abs(buf[i + c]! - buf[j + c]!);
             n++;
@@ -202,12 +262,15 @@ gpuTest("SSR.temporalAccumulationAndStateless", async ({ device }) => {
     const props = { maxRoughness: 1, resolveRadius: 0, temporalAlpha: 0.9 };
     const g = ssrGraph(device, scene, props, ["S.reflection"]);
     const fr = await renderShot(device, scene, g, kPoseA, 12, ["S.reflection"]);
-    const n0 = roughness(fr[0]![0]!), n11 = roughness(fr[11]![0]!);
+    const n0 = roughness(fr[0]![0]!);
+    const n11 = roughness(fr[11]![0]!);
     setPose(scene, kPoseA);
     const g2 = ssrGraph(device, scene, { ...props, temporal: false }, ["S.reflection"]);
     const st = await renderShot(device, scene, g2, kPoseA, 3, ["S.reflection"]);
     const stateless = bitwiseEqual(st[0]![0]!, st[2]![0]!);
-    log(`SSR temporal: neighbour noise frame 0 ${n0.toExponential(3)} -> frame 11 ${n11.toExponential(3)}; temporal off: frames 0 and 2 bitwise equal ${stateless}`);
+    log(
+        `SSR temporal: neighbour noise frame 0 ${n0.toExponential(3)} -> frame 11 ${n11.toExponential(3)}; temporal off: frames 0 and 2 bitwise equal ${stateless}`,
+    );
     expectEq(n0 > 0 && n11 < 0.7 * n0, true, "temporal accumulation reduces the stochastic noise");
     expectEq(stateless, true, "temporal off: no state");
 });
@@ -218,7 +281,11 @@ gpuTest("SSR.coldVsConsecutive", async ({ device }) => {
     const res = await coldVsConsecutive(device, scene, mk(true), ["S.dst", "S.reflection"], ["camera-reset", "prime", "explicit", "none"]);
     for (const r of res) log(`SSR cold vs consecutive [${r.method}]: X frames bitwise equal ${r.equalFrames}/${r.frames}`);
     for (const r of res.filter((r) => r.method !== "none")) expectEq(r.equalFrames, r.frames, `cold = consecutive after ${r.method}`);
-    expectEq(res.find((r) => r.method === "none")!.differs.some((d) => d), true, "without a cut the history changes X (control)");
+    expectEq(
+        res.find((r) => r.method === "none")!.differs.some((d) => d),
+        true,
+        "without a cut the history changes X (control)",
+    );
     const off = await coldVsConsecutive(device, scene, mk(false), ["S.dst", "S.reflection"], ["none"]);
     log(`SSR temporal off, no cut: X frames bitwise equal ${off[0]!.equalFrames}/${off[0]!.frames}`);
     expectEq(off[0]!.equalFrames, off[0]!.frames, "temporal off: stateless (no cut needed)");
