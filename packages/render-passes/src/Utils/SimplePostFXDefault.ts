@@ -18,6 +18,7 @@ export interface SimplePostFXEffectParams {
     colorPowerScalar: number;
 }
 
+/** Returns whether all effect controls select the native SimplePostFX pass-through state. */
 export function simplePostFXIsDefault(p: SimplePostFXEffectParams): boolean {
     return (
         p.bloomAmount === 0 &&

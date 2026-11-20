@@ -42,7 +42,11 @@ void main(uint3 tid: SV_DispatchThreadID)
     if (any(p >= gFrameDim)) return;
     const float4 src = gSrc[p];
     const float4 pos = gPosW[p];
-    if (gDensity == 0.f || gMaxOpacity == 0.f) { gDst[p] = src; return; }
+    if (gDensity == 0.f || gMaxOpacity == 0.f)
+    {
+        gDst[p] = src;
+        return;
+    }
     if (pos.w == 0.f)
     {
         gDst[p] = gSkyMode == 1 ? src : float4(lerp(src.rgb, gStops[gStopCount - 1].rgb, gMaxOpacity), src.a);

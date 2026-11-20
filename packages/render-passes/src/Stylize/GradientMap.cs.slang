@@ -13,7 +13,11 @@ cbuffer CB
 Texture2D<float4> gSrc;
 RWTexture2D<float4> gDst;
 
-float encodeSrgb(float x) { x = saturate(x); return x <= 0.0031308f ? 12.92f * x : 1.055f * pow(x, 1.f / 2.4f) - 0.055f; }
+float encodeSrgb(float x)
+{
+    x = saturate(x);
+    return x <= 0.0031308f ? 12.92f * x : 1.055f * pow(x, 1.f / 2.4f) - 0.055f;
+}
 
 float3 ramp(float x)
 {
@@ -30,7 +34,11 @@ void main(uint3 tid: SV_DispatchThreadID)
     const uint2 p = tid.xy;
     if (any(p >= gFrameDim)) return;
     const float4 src = gSrc[p];
-    if (gStrength == 0.f) { gDst[p] = src; return; }
+    if (gStrength == 0.f)
+    {
+        gDst[p] = src;
+        return;
+    }
     const float t = encodeSrgb(dot(src.rgb, float3(0.2126f, 0.7152f, 0.0722f)));
     gDst[p] = float4(lerp(src.rgb, ramp(t), gStrength), src.a);
 }

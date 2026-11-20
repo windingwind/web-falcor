@@ -25,11 +25,23 @@ uint pcgHash(uint v)
     uint word = ((state >> ((state >> 28u) + 4u)) ^ state) * 277803737u;
     return (word >> 22u) ^ word;
 }
-float rnd(uint a, uint b) { return float(pcgHash(a ^ pcgHash(b ^ pcgHash(gSeed))) >> 8) * (1.f / 16777216.f); }
+float rnd(uint a, uint b)
+{
+    return float(pcgHash(a ^ pcgHash(b ^ pcgHash(gSeed))) >> 8) * (1.f / 16777216.f);
+}
 
-float3 rgbToYiq(float3 c) { return float3(dot(c, float3(0.299f, 0.587f, 0.114f)), dot(c, float3(0.596f, -0.274f, -0.322f)), dot(c, float3(0.211f, -0.523f, 0.312f))); }
-float3 yiqToRgb(float3 y) { return float3(y.x + 0.956f * y.y + 0.621f * y.z, y.x - 0.272f * y.y - 0.647f * y.z, y.x - 1.106f * y.y + 1.703f * y.z); }
-float3 at(int x, int y) { return gSrc[int2(clamp(x, 0, int(gFrameDim.x) - 1), y)].rgb; }
+float3 rgbToYiq(float3 c)
+{
+    return float3(dot(c, float3(0.299f, 0.587f, 0.114f)), dot(c, float3(0.596f, -0.274f, -0.322f)), dot(c, float3(0.211f, -0.523f, 0.312f)));
+}
+float3 yiqToRgb(float3 y)
+{
+    return float3(y.x + 0.956f * y.y + 0.621f * y.z, y.x - 0.272f * y.y - 0.647f * y.z, y.x - 1.106f * y.y + 1.703f * y.z);
+}
+float3 at(int x, int y)
+{
+    return gSrc[int2(clamp(x, 0, int(gFrameDim.x) - 1), y)].rgb;
+}
 
 [numthreads(16, 16, 1)]
 void main(uint3 tid: SV_DispatchThreadID)
@@ -37,7 +49,11 @@ void main(uint3 tid: SV_DispatchThreadID)
     const int2 p = int2(tid.xy);
     if (any(p >= int2(gFrameDim))) return;
     const float4 src = gSrc[p];
-    if (gStrength == 0.f) { gDst[p] = src; return; }
+    if (gStrength == 0.f)
+    {
+        gDst[p] = src;
+        return;
+    }
     const float H = float(gFrameDim.y);
     // tracking band: rolls down the frame at trackingSpeed frame heights per frame
     const float bandY = frac(float(gFrame) * gTrackingSpeed) * H * 1.2f - 0.1f * H;

@@ -27,7 +27,10 @@ float viewDepth(int2 p)
     return pw.w != 0.f ? max(dot(pw.xyz - gCamPos, gCamFwd), 1e-6f) : gFarDepth;
 }
 
-float coc(float z) { return min(gCocScale * abs(z - gFocalDistance) / max(z, 1e-6f), gMaxCoC); }
+float coc(float z)
+{
+    return min(gCocScale * abs(z - gFocalDistance) / max(z, 1e-6f), gMaxCoC);
+}
 
 [numthreads(16, 16, 1)]
 void main(uint3 tid: SV_DispatchThreadID)
@@ -35,7 +38,11 @@ void main(uint3 tid: SV_DispatchThreadID)
     const uint2 pix = tid.xy;
     if (any(pix >= gFrameDim)) return;
     const float4 c0 = gColor[pix];
-    if (gCocScale <= 0.f) { gDst[pix] = c0; return; }
+    if (gCocScale <= 0.f)
+    {
+        gDst[pix] = c0;
+        return;
+    }
     const float zC = viewDepth(int2(pix));
     const float sizeC = coc(zC);
     // Scatter-as-gather: every source pixel spreads its colour uniformly over its CoC disk (weight 1 / disk area);

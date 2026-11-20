@@ -42,8 +42,10 @@ import { addColorOutput, addTexInput } from "../Stylize/StyleCommon.js";
 const kShaderFile = "RenderPasses/Dissolve/Dissolve.cs.slang";
 const kNoiseModes = { dither: 1, object: 2 } as const;
 /** Bytes per clip entry (float4), as read by GBufferRaster. */
+/** One float4 per geometry instance, matching GBufferRaster’s clip buffer layout. */
 const kEntryBytes = 16;
 
+/** Creation defaults for the pass parameters documented in this file header. */
 const kControlDefaults = {
     instances: [] as number[],
     threshold: 1,
@@ -78,9 +80,10 @@ export function dissolveClipEntries(p: ControlParams): Float32Array {
     return out;
 }
 
+/** Converts time and per-instance dissolve controls into the G-buffer clip layout. */
 export class DissolveControl extends RenderPass {
-    private p: ControlParams = { ...kControlDefaults, instances: [] };
-    private size = kEntryBytes;
+    private mParameters: ControlParams = { ...kControlDefaults, instances: [] };
+    private mSize: number = kEntryBytes;
 
     constructor(device: Device, props: Properties) {
         super(device);
@@ -89,47 +92,56 @@ export class DissolveControl extends RenderPass {
 
     /** Updates the given properties (others keep their values), e.g. setProperties(new Properties({ time })) per frame. */
     override setProperties(props: Properties): void {
-        const next = { ...this.p };
-        for (const k of Object.keys(kControlDefaults) as (keyof ControlParams)[]) (next as Record<string, unknown>)[k] = props.get(k, next[k] as never);
-        if (!Array.isArray(next.instances) || next.instances.some((x) => !Number.isInteger(Number(x)) || Number(x) < 0 || Number(x) > 1 << 20))
+        const next = { ...this.mParameters };
+        for (const k of Object.keys(kControlDefaults) as (keyof ControlParams)[])
+            (next as Record<string, unknown>)[k] = props.get(k, next[k] as never);
+        if (
+            !Array.isArray(next.instances) ||
+            next.instances.some((x) => !Number.isInteger(Number(x)) || Number(x) < 0 || Number(x) > 1 << 20)
+        )
             throw new Error("DissolveControl: instances must be a list of geometry instance ids");
-        if (!(next.noise in kNoiseModes)) throw new Error(`DissolveControl: noise must be one of ${Object.keys(kNoiseModes).join(", ")} (got ${next.noise})`);
-        for (const k of ["threshold", "time", "startTime", "duration", "stagger", "noiseScale", "edgeWidth"] as const) num("DissolveControl", k, next[k]);
+        if (!(next.noise in kNoiseModes))
+            throw new Error(`DissolveControl: noise must be one of ${Object.keys(kNoiseModes).join(", ")} (got ${next.noise})`);
+        for (const k of ["threshold", "time", "startTime", "duration", "stagger", "noiseScale", "edgeWidth"] as const)
+            num("DissolveControl", k, next[k]);
         next.instances = next.instances.map((x) => Number(x));
-        this.p = next;
-        const size = dissolveClipEntries(this.p).byteLength;
-        if (size !== this.size) {
-            this.size = size;
+        this.mParameters = next;
+        const size = dissolveClipEntries(this.mParameters).byteLength;
+        if (size !== this.mSize) {
+            this.mSize = size;
             this.requestRecompile();
         }
     }
 
     override getProperties(): Properties {
-        return new Properties(JSON.parse(JSON.stringify(this.p)) as Record<string, PropertyValue>);
+        return new Properties(JSON.parse(JSON.stringify(this.mParameters)) as Record<string, PropertyValue>);
     }
 
     override renderUI(ui: UIWidgets): void {
-        ui.slider("Threshold", this.p.threshold, 0, 1, 0.01, (v) => (this.p.threshold = v));
-        ui.slider("Time", this.p.time, 0, 60, 0.01, (v) => (this.p.time = v));
-        ui.slider("Duration", this.p.duration, 0, 30, 0.01, (v) => (this.p.duration = v));
-        ui.slider("Noise scale", this.p.noiseScale, 0.01, 100, 0.01, (v) => (this.p.noiseScale = v));
-        ui.slider("Edge width", this.p.edgeWidth, 0, 1, 0.001, (v) => (this.p.edgeWidth = v));
+        ui.slider("Threshold", this.mParameters.threshold, 0, 1, 0.01, (v) => (this.mParameters.threshold = v));
+        ui.slider("Time", this.mParameters.time, 0, 60, 0.01, (v) => (this.mParameters.time = v));
+        ui.slider("Duration", this.mParameters.duration, 0, 30, 0.01, (v) => (this.mParameters.duration = v));
+        ui.slider("Noise scale", this.mParameters.noiseScale, 0.01, 100, 0.01, (v) => (this.mParameters.noiseScale = v));
+        ui.slider("Edge width", this.mParameters.edgeWidth, 0, 1, 0.001, (v) => (this.mParameters.edgeWidth = v));
     }
 
     override reflect(_compileData: CompileData): RenderPassReflection {
         const r = new RenderPassReflection();
-        r.addOutput("clipBuffer", "Per-instance clip entries for GBufferRaster.clipBuffer").rawBuffer(this.size).bindFlags(ResourceBindFlags.ShaderResource);
+        r.addOutput("clipBuffer", "Per-instance clip entries for GBufferRaster.clipBuffer")
+            .rawBuffer(this.mSize)
+            .bindFlags(ResourceBindFlags.ShaderResource);
         return r;
     }
 
     override execute(ctx: RenderContext, rd: RenderData): void {
         const buf = rd.getBuffer("clipBuffer");
         if (!buf) return;
-        const data = dissolveClipEntries(this.p);
+        const data = dissolveClipEntries(this.mParameters);
         ctx.updateBuffer(buf, data.subarray(0, Math.floor(buf.size / 4)));
     }
 }
 
+/** Creation defaults for the pass parameters documented in this file header. */
 const kDefaults = {
     edgeColour: [6, 2.4, 0.6] as number[],
     emberColour: [1.2, 0.15, 0.02] as number[],
@@ -140,13 +152,15 @@ const kDefaults = {
 type Params = typeof kDefaults;
 
 const vec3 = (key: string, v: unknown): [number, number, number] => {
-    if (!Array.isArray(v) || v.length !== 3 || v.some((x) => !Number.isFinite(Number(x)))) throw new Error(`Dissolve: ${key} must be [r, g, b] (got ${JSON.stringify(v)})`);
+    if (!Array.isArray(v) || v.length !== 3 || v.some((x) => !Number.isFinite(Number(x))))
+        throw new Error(`Dissolve: ${key} must be [r, g, b] (got ${JSON.stringify(v)})`);
     return [Number(v[0]), Number(v[1]), Number(v[2])];
 };
 
+/** Adds an emissive burn edge to the G-buffer instance clip result. */
 export class Dissolve extends RenderPass {
-    private p: Params = { ...kDefaults };
-    private pass: ComputePass | null = null;
+    private mParameters: Params = { ...kDefaults };
+    private mPass: ComputePass | null = null;
 
     constructor(device: Device, props: Properties) {
         super(device);
@@ -154,22 +168,22 @@ export class Dissolve extends RenderPass {
     }
 
     override setProperties(props: Properties): void {
-        const next = { ...this.p };
+        const next = { ...this.mParameters };
         for (const k of Object.keys(kDefaults) as (keyof Params)[]) (next as Record<string, unknown>)[k] = props.get(k, next[k] as never);
         vec3("edgeColour", next.edgeColour);
         vec3("emberColour", next.emberColour);
         for (const k of ["edgeIntensity", "edgeSharpness", "charAmount"] as const) num("Dissolve", k, next[k]);
-        this.p = next;
+        this.mParameters = next;
     }
 
     override getProperties(): Properties {
-        return new Properties(JSON.parse(JSON.stringify(this.p)) as Record<string, PropertyValue>);
+        return new Properties(JSON.parse(JSON.stringify(this.mParameters)) as Record<string, PropertyValue>);
     }
 
     override renderUI(ui: UIWidgets): void {
-        ui.slider("Edge intensity", this.p.edgeIntensity, 0, 20, 0.01, (v) => (this.p.edgeIntensity = v));
-        ui.slider("Edge sharpness", this.p.edgeSharpness, 0.1, 8, 0.01, (v) => (this.p.edgeSharpness = v));
-        ui.slider("Char amount", this.p.charAmount, 0, 1, 0.01, (v) => (this.p.charAmount = v));
+        ui.slider("Edge intensity", this.mParameters.edgeIntensity, 0, 20, 0.01, (v) => (this.mParameters.edgeIntensity = v));
+        ui.slider("Edge sharpness", this.mParameters.edgeSharpness, 0.1, 8, 0.01, (v) => (this.mParameters.edgeSharpness = v));
+        ui.slider("Char amount", this.mParameters.charAmount, 0, 1, 0.01, (v) => (this.mParameters.charAmount = v));
     }
 
     override reflect(compileData: CompileData): RenderPassReflection {
@@ -182,21 +196,23 @@ export class Dissolve extends RenderPass {
     }
 
     override execute(ctx: RenderContext, rd: RenderData): void {
-        const dst = rd.getTexture("dst"), color = rd.getTexture("color"), edge = rd.getTexture("clipEdge");
+        const dst = rd.getTexture("dst");
+        const color = rd.getTexture("color");
+        const edge = rd.getTexture("clipEdge");
         if (!dst || !color || !edge) return;
-        this.pass ??= ComputePass.create(this.device, { path: kShaderFile });
-        const root = this.pass.getRootVar();
+        this.mPass ??= ComputePass.create(this.device, { path: kShaderFile });
+        const root = this.mPass.getRootVar();
         const cb = root["CB"]!;
         cb["gFrameDim"] = [dst.width, dst.height];
-        cb["gEdgeColour"] = vec3("edgeColour", this.p.edgeColour);
-        cb["gEmberColour"] = vec3("emberColour", this.p.emberColour);
-        cb["gEdgeIntensity"] = this.p.edgeIntensity;
-        cb["gEdgeSharpness"] = Math.max(this.p.edgeSharpness, 1e-3);
-        cb["gCharAmount"] = this.p.charAmount;
+        cb["gEdgeColour"] = vec3("edgeColour", this.mParameters.edgeColour);
+        cb["gEmberColour"] = vec3("emberColour", this.mParameters.emberColour);
+        cb["gEdgeIntensity"] = this.mParameters.edgeIntensity;
+        cb["gEdgeSharpness"] = Math.max(this.mParameters.edgeSharpness, 1e-3);
+        cb["gCharAmount"] = this.mParameters.charAmount;
         root["gColor"] = color;
         root["gClipEdge"] = edge;
         root["gDst"] = dst;
-        this.pass.execute(ctx, dst.width, dst.height);
+        this.mPass.execute(ctx, dst.width, dst.height);
     }
 }
 

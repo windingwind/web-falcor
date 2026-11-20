@@ -12,6 +12,7 @@
 import { Properties, registerRenderPass, type Device, type RenderData, type ShaderVar } from "@web-falcor/falcor";
 import { StylePostPass, cameraData, keyLightDir, type PortSpec } from "./StyleCommon.js";
 
+/** Creation defaults for the pass parameters documented in this file header. */
 const kDefaults = {
     samples: 64,
     density: 0.8,
@@ -25,7 +26,12 @@ const kDefaults = {
 };
 
 /** Screen uv (y down) of a direction, and how much it faces the camera (0 behind .. 1 straight ahead). */
-export function projectDirection(viewProjRows: number[][], camPos: number[], camFwd: number[], dir: number[]): { uv: [number, number]; facing: number } {
+export function projectDirection(
+    viewProjRows: number[][],
+    camPos: number[],
+    camFwd: number[],
+    dir: number[],
+): { uv: [number, number]; facing: number } {
     const far = 1e4;
     const w4 = [camPos[0]! + dir[0]! * far, camPos[1]! + dir[1]! * far, camPos[2]! + dir[2]! * far, 1];
     const c = viewProjRows.map((r) => r[0]! * w4[0]! + r[1]! * w4[1]! + r[2]! * w4[2]! + r[3]! * w4[3]!);
@@ -35,6 +41,7 @@ export function projectDirection(viewProjRows: number[][], camPos: number[], cam
     return { uv: [0.5 + 0.5 * ndc[0]!, 0.5 - 0.5 * ndc[1]!], facing: Math.min(Math.max(facing * 4, 0), 1) };
 }
 
+/** Accumulates radial light scattering towards the projected key light. */
 export class LightShafts extends StylePostPass<typeof kDefaults> {
     protected readonly shaderFile = "RenderPasses/Stylize/LightShafts.cs.slang";
     protected readonly outputDesc = "Colour with light shafts added";
@@ -50,10 +57,13 @@ export class LightShafts extends StylePostPass<typeof kDefaults> {
 
     protected setConstants(cb: ShaderVar, _W: number, _H: number, _rd: RenderData): void {
         const cam = cameraData(this.scene!);
-        let uv: [number, number], facing: number;
+        let uv: [number, number];
+        let facing: number;
         const manual = this.p.sunUV.map(Number);
-        if (manual[0]! >= 0 && manual[1]! >= 0) { uv = [manual[0]!, manual[1]!]; facing = 1; }
-        else ({ uv, facing } = projectDirection(cam.viewProjRows, cam.pos, cam.fwd, keyLightDir(this.scene, this.p.lightDir)));
+        if (manual[0]! >= 0 && manual[1]! >= 0) {
+            uv = [manual[0]!, manual[1]!];
+            facing = 1;
+        } else ({ uv, facing } = projectDirection(cam.viewProjRows, cam.pos, cam.fwd, keyLightDir(this.scene, this.p.lightDir)));
         cb["gSunUV"] = uv;
         cb["gTint"] = this.p.tint.map(Number);
         cb["gSunFacing"] = facing;

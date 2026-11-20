@@ -16,18 +16,41 @@
 import { Properties, registerRenderPass, type Device, type RenderData, type ShaderVar } from "@web-falcor/falcor";
 import { StylePostPass, enumIndex, keyLightDir, parseColour, type PortSpec } from "./StyleCommon.js";
 
+/** Ordered option names; preserve this order for numeric property compatibility. */
 const kModes = ["half_lambert", "lambert"] as const;
+/** Ordered option names; preserve this order for numeric property compatibility. */
 const kRampNames = ["tf2_warm", "valorant", "anime_hard", "anime_soft", "custom"] as const;
 type Stop = [number, string | number[]];
 /** Built-in ramps (sRGB hex; positions in [0, 1]). Written for this pass. */
 export const kRamps: Record<string, Stop[]> = {
-    tf2_warm: [[0, "#5a5e6e"], [0.4, "#7d5a55"], [0.55, "#c39c82"], [1, "#fff4e0"]],
-    valorant: [[0, "#8a8aa2"], [0.5, "#c8c3cc"], [1, "#fffcf6"]],
-    anime_hard: [[0, "#c4b8d4"], [0.5, "#c4b8d4"], [0.5001, "#ffffff"], [1, "#ffffff"]],
-    anime_soft: [[0, "#bcb4cc"], [0.4, "#cfc6d8"], [0.6, "#f9f6f4"], [1, "#ffffff"]],
+    tf2_warm: [
+        [0, "#5a5e6e"],
+        [0.4, "#7d5a55"],
+        [0.55, "#c39c82"],
+        [1, "#fff4e0"],
+    ],
+    valorant: [
+        [0, "#8a8aa2"],
+        [0.5, "#c8c3cc"],
+        [1, "#fffcf6"],
+    ],
+    anime_hard: [
+        [0, "#c4b8d4"],
+        [0.5, "#c4b8d4"],
+        [0.5001, "#ffffff"],
+        [1, "#ffffff"],
+    ],
+    anime_soft: [
+        [0, "#bcb4cc"],
+        [0.4, "#cfc6d8"],
+        [0.6, "#f9f6f4"],
+        [1, "#ffffff"],
+    ],
 };
+/** Matches the fixed stop arrays in this pass’s Slang constant buffer. */
 const kMaxStops = 6;
 
+/** Creation defaults for the pass parameters documented in this file header. */
 const kDefaults = {
     mode: "half_lambert" as string,
     ramp: "tf2_warm" as string,
@@ -40,6 +63,7 @@ const kDefaults = {
     lightDir: [0, 0, 0] as number[],
 };
 
+/** Maps the key-light response through the configured shading ramp. */
 export class RampShade extends StylePostPass<typeof kDefaults> {
     protected readonly shaderFile = "RenderPasses/Stylize/RampShade.cs.slang";
     protected readonly outputDesc = "Ramp-shaded colour";
@@ -60,8 +84,9 @@ export class RampShade extends StylePostPass<typeof kDefaults> {
     /** The active ramp as [pos, linear rgb] pairs. */
     rampStops(): [number, [number, number, number]][] {
         const name = kRampNames[enumIndex("RampShade", "ramp", this.p.ramp, kRampNames)]!;
-        const stops = (name === "custom" ? (this.p.stops as unknown as Stop[]) : kRamps[name]!);
-        if (!Array.isArray(stops) || stops.length < 2 || stops.length > kMaxStops) throw new Error(`RampShade: ramp needs 2-${kMaxStops} stops`);
+        const stops = name === "custom" ? (this.p.stops as unknown as Stop[]) : kRamps[name]!;
+        if (!Array.isArray(stops) || stops.length < 2 || stops.length > kMaxStops)
+            throw new Error(`RampShade: ramp needs 2-${kMaxStops} stops`);
         const out = stops.map(([pos, c]) => [Number(pos), parseColour(c)] as [number, [number, number, number]]);
         for (let i = 1; i < out.length; i++) if (!(out[i]![0] >= out[i - 1]![0])) throw new Error("RampShade: stop positions must ascend");
         return out;

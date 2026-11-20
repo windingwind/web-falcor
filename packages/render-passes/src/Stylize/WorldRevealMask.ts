@@ -48,11 +48,15 @@ import {
 import { addColorOutput, addTexInput, dummyTexture, enumIndex } from "./StyleCommon.js";
 
 const kShaderFile = "RenderPasses/Stylize/WorldRevealMask.cs.slang";
+/** Ordered option names; preserve this order for numeric property compatibility. */
 const kShapes = ["sphere", "plane", "box"] as const;
+/** Ordered option names; preserve this order for numeric property compatibility. */
 const kSpaces = ["world", "object"] as const;
+/** Ordered option names; preserve this order for numeric property compatibility. */
 const kIdModes = ["none", "only", "except"] as const;
 export const kWorldRevealMaxIds = 8;
 
+/** Creation defaults for the pass parameters documented in this file header. */
 const kDefaults = {
     shape: "sphere" as string,
     space: "world" as string,
@@ -79,13 +83,15 @@ const kDefaults = {
 type Params = typeof kDefaults;
 
 const vec3 = (pass: string, key: string, v: unknown): [number, number, number] => {
-    if (!Array.isArray(v) || v.length !== 3 || v.some((x) => !Number.isFinite(Number(x)))) throw new Error(`${pass}: ${key} must be [x, y, z] (got ${JSON.stringify(v)})`);
+    if (!Array.isArray(v) || v.length !== 3 || v.some((x) => !Number.isFinite(Number(x))))
+        throw new Error(`${pass}: ${key} must be [x, y, z] (got ${JSON.stringify(v)})`);
     return [Number(v[0]), Number(v[1]), Number(v[2])];
 };
 
+/** Reveals one image through another using a world-space or object-space region. */
 export class WorldRevealMask extends RenderPass {
-    private p: Params = { ...kDefaults };
-    private pass: ComputePass | null = null;
+    private mParameters: Params = { ...kDefaults };
+    private mPass: ComputePass | null = null;
 
     constructor(device: Device, props: Properties) {
         super(device);
@@ -94,29 +100,33 @@ export class WorldRevealMask extends RenderPass {
 
     /** Updates the given properties (others keep their values), e.g. setProperties(new Properties({ time })) per frame. */
     override setProperties(props: Properties): void {
-        const next = { ...this.p };
+        const next = { ...this.mParameters };
         for (const k of Object.keys(kDefaults) as (keyof Params)[]) (next as Record<string, unknown>)[k] = props.get(k, next[k] as never);
         enumIndex("WorldRevealMask", "shape", next.shape, kShapes);
         enumIndex("WorldRevealMask", "space", next.space, kSpaces);
         enumIndex("WorldRevealMask", "idMode", next.idMode, kIdModes);
         for (const k of ["center", "normal", "halfExtents", "edgeColour"] as const) vec3("WorldRevealMask", k, next[k]);
-        if (!Array.isArray(next.ids) || next.ids.length > kWorldRevealMaxIds || next.ids.some((x) => !Number.isInteger(Number(x)) || Number(x) < 0))
+        if (
+            !Array.isArray(next.ids) ||
+            next.ids.length > kWorldRevealMaxIds ||
+            next.ids.some((x) => !Number.isInteger(Number(x)) || Number(x) < 0)
+        )
             throw new Error(`WorldRevealMask: ids must be up to ${kWorldRevealMaxIds} non-negative integers`);
         if (!(Number(next.idChannel) >= 0 && Number(next.idChannel) <= 3)) throw new Error("WorldRevealMask: idChannel must be 0..3");
-        this.p = next;
+        this.mParameters = next;
     }
 
     override getProperties(): Properties {
-        return new Properties(JSON.parse(JSON.stringify(this.p)) as Record<string, PropertyValue>);
+        return new Properties(JSON.parse(JSON.stringify(this.mParameters)) as Record<string, PropertyValue>);
     }
 
     override renderUI(ui: UIWidgets): void {
-        ui.slider("Radius", this.p.radius, 0, 100, 0.01, (v) => (this.p.radius = v));
-        ui.slider("Offset", this.p.offset, -100, 100, 0.01, (v) => (this.p.offset = v));
-        ui.slider("Time", this.p.time, 0, 60, 0.01, (v) => (this.p.time = v));
-        ui.slider("Edge width", this.p.edgeWidth, 0, 10, 0.01, (v) => (this.p.edgeWidth = v));
-        ui.slider("Noise amplitude", this.p.noiseAmp, 0, 10, 0.01, (v) => (this.p.noiseAmp = v));
-        ui.slider("Strength", this.p.strength, 0, 1, 0.01, (v) => (this.p.strength = v));
+        ui.slider("Radius", this.mParameters.radius, 0, 100, 0.01, (v) => (this.mParameters.radius = v));
+        ui.slider("Offset", this.mParameters.offset, -100, 100, 0.01, (v) => (this.mParameters.offset = v));
+        ui.slider("Time", this.mParameters.time, 0, 60, 0.01, (v) => (this.mParameters.time = v));
+        ui.slider("Edge width", this.mParameters.edgeWidth, 0, 10, 0.01, (v) => (this.mParameters.edgeWidth = v));
+        ui.slider("Noise amplitude", this.mParameters.noiseAmp, 0, 10, 0.01, (v) => (this.mParameters.noiseAmp = v));
+        ui.slider("Strength", this.mParameters.strength, 0, 1, 0.01, (v) => (this.mParameters.strength = v));
     }
 
     override reflect(compileData: CompileData): RenderPassReflection {
@@ -134,41 +144,45 @@ export class WorldRevealMask extends RenderPass {
 
     override execute(ctx: RenderContext, rd: RenderData): void {
         const dst = rd.getTexture("dst");
-        const a = rd.getTexture("a"), b = rd.getTexture("b"), posW = rd.getTexture("posW");
+        const a = rd.getTexture("a");
+        const b = rd.getTexture("b");
+        const posW = rd.getTexture("posW");
         if (!dst || !a || !b || !posW) return;
-        const posObj = rd.getTexture("posObj"), ids = rd.getTexture("ids"), mask = rd.getTexture("mask");
-        const space = enumIndex("WorldRevealMask", "space", this.p.space, kSpaces);
+        const posObj = rd.getTexture("posObj");
+        const ids = rd.getTexture("ids");
+        const mask = rd.getTexture("mask");
+        const space = enumIndex("WorldRevealMask", "space", this.mParameters.space, kSpaces);
         if (space === 1 && !posObj) throw new RuntimeError("WorldRevealMask: space 'object' needs the posObj input");
-        const idMode = enumIndex("WorldRevealMask", "idMode", this.p.idMode, kIdModes);
+        const idMode = enumIndex("WorldRevealMask", "idMode", this.mParameters.idMode, kIdModes);
         if (idMode !== 0 && !ids) throw new RuntimeError("WorldRevealMask: idMode 'only'/'except' needs the ids input");
-        this.pass ??= ComputePass.create(this.device, { path: kShaderFile });
-        const root = this.pass.getRootVar();
+        this.mPass ??= ComputePass.create(this.device, { path: kShaderFile });
+        const root = this.mPass.getRootVar();
         const cb = root["CB"]!;
-        const n = vec3("WorldRevealMask", "normal", this.p.normal);
+        const n = vec3("WorldRevealMask", "normal", this.mParameters.normal);
         const nl = Math.hypot(...n) || 1;
         const idList = new Array<number>(kWorldRevealMaxIds).fill(0);
-        this.p.ids.forEach((x, i) => (idList[i] = Number(x) >>> 0));
+        this.mParameters.ids.forEach((x, i) => (idList[i] = Number(x) >>> 0));
         cb["gFrameDim"] = [dst.width, dst.height];
-        cb["gShape"] = enumIndex("WorldRevealMask", "shape", this.p.shape, kShapes);
+        cb["gShape"] = enumIndex("WorldRevealMask", "shape", this.mParameters.shape, kShapes);
         cb["gSpace"] = space;
-        cb["gCenter"] = vec3("WorldRevealMask", "center", this.p.center);
-        cb["gRadius"] = this.p.radius;
+        cb["gCenter"] = vec3("WorldRevealMask", "center", this.mParameters.center);
+        cb["gRadius"] = this.mParameters.radius;
         cb["gNormal"] = n.map((x) => x / nl);
-        cb["gOffset"] = this.p.offset;
-        cb["gHalfExtents"] = vec3("WorldRevealMask", "halfExtents", this.p.halfExtents);
-        cb["gSweep"] = this.p.speed * this.p.time;
-        cb["gEdgeWidth"] = Math.max(0, this.p.edgeWidth);
-        cb["gNoiseScale"] = this.p.noiseScale;
-        cb["gNoiseAmp"] = this.p.noiseAmp;
-        cb["gSeed"] = Math.max(0, Math.round(this.p.seed)) >>> 0;
-        cb["gInvert"] = this.p.invert ? 1 : 0;
-        cb["gBackground"] = this.p.background;
-        cb["gStrength"] = this.p.strength;
-        cb["gEdgeColour"] = vec3("WorldRevealMask", "edgeColour", this.p.edgeColour);
-        cb["gEdgeIntensity"] = this.p.edgeIntensity;
+        cb["gOffset"] = this.mParameters.offset;
+        cb["gHalfExtents"] = vec3("WorldRevealMask", "halfExtents", this.mParameters.halfExtents);
+        cb["gSweep"] = this.mParameters.speed * this.mParameters.time;
+        cb["gEdgeWidth"] = Math.max(0, this.mParameters.edgeWidth);
+        cb["gNoiseScale"] = this.mParameters.noiseScale;
+        cb["gNoiseAmp"] = this.mParameters.noiseAmp;
+        cb["gSeed"] = Math.max(0, Math.round(this.mParameters.seed)) >>> 0;
+        cb["gInvert"] = this.mParameters.invert ? 1 : 0;
+        cb["gBackground"] = this.mParameters.background;
+        cb["gStrength"] = this.mParameters.strength;
+        cb["gEdgeColour"] = vec3("WorldRevealMask", "edgeColour", this.mParameters.edgeColour);
+        cb["gEdgeIntensity"] = this.mParameters.edgeIntensity;
         cb["gIdMode"] = idMode;
-        cb["gIdCount"] = this.p.ids.length;
-        cb["gIdChannel"] = Math.round(this.p.idChannel);
+        cb["gIdCount"] = this.mParameters.ids.length;
+        cb["gIdChannel"] = Math.round(this.mParameters.idChannel);
         cb["gIdList0"] = idList.slice(0, 4);
         cb["gIdList1"] = idList.slice(4, 8);
         cb["gHasMask"] = mask ? 1 : 0;
@@ -179,7 +193,7 @@ export class WorldRevealMask extends RenderPass {
         root["gIds"] = ids ?? dummyTexture(this.device);
         root["gDst"] = dst;
         root["gMask"] = mask ?? dummyTexture(this.device, "out:mask");
-        this.pass.execute(ctx, dst.width, dst.height);
+        this.mPass.execute(ctx, dst.width, dst.height);
     }
 }
 

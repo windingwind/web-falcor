@@ -45,11 +45,14 @@ import {
 import { addColorOutput, addTexInput, dummyTexture, enumIndex } from "../Stylize/StyleCommon.js";
 
 const kShaderFile = "RenderPasses/Focus/StylizedFocus.cs.slang";
+/** Compute entry points declared by the companion Slang shader. */
 const kEntries = ["blurH", "blurV", "composite"] as const;
 type Entry = (typeof kEntries)[number];
+/** Ordered option names; preserve this order for numeric property compatibility. */
 export const kStylizedFocusModes = ["depth", "point", "screen", "ids", "mask"] as const;
 export const kStylizedFocusMaxIds = 32;
 
+/** Creation defaults for the pass parameters documented in this file header. */
 const kDefaults = {
     mode: "depth" as string,
     strength: 1,
@@ -63,12 +66,14 @@ const kDefaults = {
     blurRadius: 0.01,
     desaturate: 0.8,
 };
+/** Creation properties for StylizedFocus, including its documented defaults. */
 export type StylizedFocusParams = typeof kDefaults;
 
+/** Blurs and desaturates regions outside a selected depth, point, screen or identity focus. */
 export class StylizedFocus extends RenderPass {
-    private p: StylizedFocusParams = JSON.parse(JSON.stringify(kDefaults));
-    private passes = new Map<Entry, ComputePass>();
-    private tex: [Texture, Texture, Texture] | null = null;
+    private mParameters: StylizedFocusParams = JSON.parse(JSON.stringify(kDefaults));
+    private mPasses: Map<Entry, ComputePass> = new Map<Entry, ComputePass>();
+    private mTextures: [Texture, Texture, Texture] | null = null;
 
     constructor(device: Device, props: Properties) {
         super(device);
@@ -76,25 +81,27 @@ export class StylizedFocus extends RenderPass {
     }
 
     override setProperties(props: Properties): void {
-        for (const k of Object.keys(kDefaults) as (keyof StylizedFocusParams)[]) if (props.has(k)) (this.p as Record<string, unknown>)[k] = props.get(k, kDefaults[k] as never);
-        enumIndex("StylizedFocus", "mode", this.p.mode, kStylizedFocusModes);
-        const ids = (this.p.ids ?? []).map(Number);
-        if (ids.length > kStylizedFocusMaxIds) throw new Error(`StylizedFocus: at most ${kStylizedFocusMaxIds} ids (use mode "mask" for larger selections)`);
+        for (const k of Object.keys(kDefaults) as (keyof StylizedFocusParams)[])
+            if (props.has(k)) (this.mParameters as Record<string, unknown>)[k] = props.get(k, kDefaults[k] as never);
+        enumIndex("StylizedFocus", "mode", this.mParameters.mode, kStylizedFocusModes);
+        const ids = (this.mParameters.ids ?? []).map(Number);
+        if (ids.length > kStylizedFocusMaxIds)
+            throw new Error(`StylizedFocus: at most ${kStylizedFocusMaxIds} ids (use mode "mask" for larger selections)`);
         if (ids.some((v) => !Number.isInteger(v) || v < 0)) throw new Error("StylizedFocus: ids must be non-negative integers");
-        this.p.ids = ids;
+        this.mParameters.ids = ids;
     }
 
     override getProperties(): Properties {
-        return new Properties(JSON.parse(JSON.stringify(this.p)));
+        return new Properties(JSON.parse(JSON.stringify(this.mParameters)));
     }
 
     override renderUI(ui: UIWidgets): void {
-        ui.slider("Strength", this.p.strength, 0, 1, 0.01, (v) => (this.p.strength = v));
-        ui.slider("Focus distance", this.p.focusDistance, 0, 1000, 0.1, (v) => (this.p.focusDistance = v));
-        ui.slider("Focus range", this.p.focusRange, 0, 100, 0.01, (v) => (this.p.focusRange = v));
-        ui.slider("Falloff", this.p.falloff, 0.001, 100, 0.01, (v) => (this.p.falloff = v));
-        ui.slider("Blur radius", this.p.blurRadius, 0, 0.1, 0.001, (v) => (this.p.blurRadius = v));
-        ui.slider("Desaturate", this.p.desaturate, 0, 1, 0.01, (v) => (this.p.desaturate = v));
+        ui.slider("Strength", this.mParameters.strength, 0, 1, 0.01, (v) => (this.mParameters.strength = v));
+        ui.slider("Focus distance", this.mParameters.focusDistance, 0, 1000, 0.1, (v) => (this.mParameters.focusDistance = v));
+        ui.slider("Focus range", this.mParameters.focusRange, 0, 100, 0.01, (v) => (this.mParameters.focusRange = v));
+        ui.slider("Falloff", this.mParameters.falloff, 0.001, 100, 0.01, (v) => (this.mParameters.falloff = v));
+        ui.slider("Blur radius", this.mParameters.blurRadius, 0, 0.1, 0.001, (v) => (this.mParameters.blurRadius = v));
+        ui.slider("Desaturate", this.mParameters.desaturate, 0, 1, 0.01, (v) => (this.mParameters.desaturate = v));
     }
 
     override reflect(compileData: CompileData): RenderPassReflection {
@@ -110,36 +117,57 @@ export class StylizedFocus extends RenderPass {
     }
 
     private kernel(e: Entry): ComputePass {
-        let k = this.passes.get(e);
-        if (!k) this.passes.set(e, (k = ComputePass.create(this.device, { path: kShaderFile, csEntry: e })));
+        let k = this.mPasses.get(e);
+        if (!k) this.mPasses.set(e, (k = ComputePass.create(this.device, { path: kShaderFile, csEntry: e })));
         return k;
     }
 
     override execute(ctx: RenderContext, rd: RenderData): void {
-        const src = rd.getTexture("src"), dst = rd.getTexture("dst");
+        const src = rd.getTexture("src");
+        const dst = rd.getTexture("dst");
         if (!src || !dst) return;
-        const posW = rd.getTexture("posW"), id = rd.getTexture("id"), mask = rd.getTexture("mask"), focusOut = rd.getTexture("focus");
-        const p = this.p;
+        const posW = rd.getTexture("posW");
+        const id = rd.getTexture("id");
+        const mask = rd.getTexture("mask");
+        const focusOut = rd.getTexture("focus");
+        const p = this.mParameters;
         const mode = enumIndex("StylizedFocus", "mode", p.mode, kStylizedFocusModes);
         if (mode <= 1 && !posW) throw new Error(`StylizedFocus: mode ${p.mode} needs the posW input`);
         if (mode === 3 && !id) throw new Error("StylizedFocus: mode ids needs the id input");
-        const W = dst.width, H = dst.height;
-        if (!this.tex || this.tex[0].width !== W || this.tex[0].height !== H) {
+        const W = dst.width;
+        const H = dst.height;
+        if (!this.mTextures || this.mTextures[0].width !== W || this.mTextures[0].height !== H) {
             const flags = ResourceBindFlags.ShaderResource | ResourceBindFlags.UnorderedAccess;
-            this.tex = [0, 1, 2].map(() => this.device.createTexture2D(W, H, ResourceFormat.RGBA32Float, 1, 1, undefined, flags)) as [Texture, Texture, Texture];
+            this.mTextures = [0, 1, 2].map(() => this.device.createTexture2D(W, H, ResourceFormat.RGBA32Float, 1, 1, undefined, flags)) as [
+                Texture,
+                Texture,
+                Texture,
+            ];
         }
-        const [T, B1, B2] = this.tex;
+        const [T, B1, B2] = this.mTextures;
         const cam = this.scene ? this.scene.camera.getPosition() : null;
         const strength = Number(p.strength);
         const blurOn = strength > 0 && Number(p.blurRadius) > 0;
         const sigma2 = Number(p.blurRadius) * H;
         const ids = p.ids;
         const consts: Record<string, unknown> = {
-            gFrameDim: [W, H], gMode: mode, gHasMask: mask ? 1 : 0, gCamPos: cam ? [cam.x, cam.y, cam.z] : [0, 0, 0],
-            gFocusDistance: Number(p.focusDistance), gFocusPoint: p.focusPoint.map(Number), gFocusRange: Math.max(Number(p.focusRange), 0),
-            gScreenCenter: p.screenCenter.map(Number), gFalloff: Math.max(Number(p.falloff), 1e-6), gBackgroundFocus: Number(p.backgroundFocus),
-            gIds: Array.from({ length: 8 }, (_, i) => [0, 1, 2, 3].map((k) => ids[i * 4 + k] ?? 0)), gIdCount: ids.length,
-            gStrength: strength, gDesaturate: Number(p.desaturate), gHasBlur: blurOn ? 1 : 0, gSigma: 1, gHasFocusOut: focusOut ? 1 : 0,
+            gFrameDim: [W, H],
+            gMode: mode,
+            gHasMask: mask ? 1 : 0,
+            gCamPos: cam ? [cam.x, cam.y, cam.z] : [0, 0, 0],
+            gFocusDistance: Number(p.focusDistance),
+            gFocusPoint: p.focusPoint.map(Number),
+            gFocusRange: Math.max(Number(p.focusRange), 0),
+            gScreenCenter: p.screenCenter.map(Number),
+            gFalloff: Math.max(Number(p.falloff), 1e-6),
+            gBackgroundFocus: Number(p.backgroundFocus),
+            gIds: Array.from({ length: 8 }, (_, i) => [0, 1, 2, 3].map((k) => ids[i * 4 + k] ?? 0)),
+            gIdCount: ids.length,
+            gStrength: strength,
+            gDesaturate: Number(p.desaturate),
+            gHasBlur: blurOn ? 1 : 0,
+            gSigma: 1,
+            gHasFocusOut: focusOut ? 1 : 0,
         };
         const d = (slot: string) => dummyTexture(this.device, slot);
         const run = (e: Entry, sigma: number, inT: Texture, out: Texture) => {
@@ -161,7 +189,10 @@ export class StylizedFocus extends RenderPass {
             k.execute(ctx, W, H);
         };
         if (blurOn) {
-            for (const [sigma, outT] of [[sigma2 / 3, B1], [sigma2, B2]] as const) {
+            for (const [sigma, outT] of [
+                [sigma2 / 3, B1],
+                [sigma2, B2],
+            ] as const) {
                 const s = Math.max(sigma, 0.25);
                 run("blurH", s, src, T);
                 run("blurV", s, T, outT);

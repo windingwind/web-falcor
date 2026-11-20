@@ -47,7 +47,11 @@ void tileMaxMain(uint3 tid: SV_DispatchThreadID)
             if (any(p >= gFrameDim)) continue;
             const float2 v = velocity(p);
             const float l = dot(v, v);
-            if (l > bestL) { bestL = l; best = v; }
+            if (l > bestL)
+            {
+                bestL = l;
+                best = v;
+            }
         }
     }
     gOut[t] = float4(best, 0.f, 1.f);
@@ -68,7 +72,11 @@ void neighborMaxMain(uint3 tid: SV_DispatchThreadID)
             if (any(q < 0) || any(q >= int2(gTileDim))) continue;
             const float2 v = gTileIn[uint2(q)].xy;
             const float l = dot(v, v);
-            if (l > bestL) { bestL = l; best = v; }
+            if (l > bestL)
+            {
+                bestL = l;
+                best = v;
+            }
         }
     }
     gOut[uint2(t)] = float4(best, 0.f, 1.f);
@@ -80,10 +88,22 @@ float depthAt(uint2 p)
     return pw.w != 0.f ? dot(pw.xyz - gCamPos, gCamFwd) : 1e30f;
 }
 
-float softDepthCompare(float za, float zb, float extent) { return saturate(1.f - (za - zb) / extent); }
-float cone(float dist, float vLen) { return saturate(1.f - dist / vLen); }
-float cylinder(float dist, float vLen) { return 1.f - smoothstep(0.95f * vLen, 1.05f * vLen, dist); }
-float ign(float2 p) { return frac(52.9829189f * frac(dot(p, float2(0.06711056f, 0.00583715f)))); }
+float softDepthCompare(float za, float zb, float extent)
+{
+    return saturate(1.f - (za - zb) / extent);
+}
+float cone(float dist, float vLen)
+{
+    return saturate(1.f - dist / vLen);
+}
+float cylinder(float dist, float vLen)
+{
+    return 1.f - smoothstep(0.95f * vLen, 1.05f * vLen, dist);
+}
+float ign(float2 p)
+{
+    return frac(52.9829189f * frac(dot(p, float2(0.06711056f, 0.00583715f))));
+}
 
 [numthreads(16, 16, 1)]
 void gatherMain(uint3 tid: SV_DispatchThreadID)
@@ -92,7 +112,11 @@ void gatherMain(uint3 tid: SV_DispatchThreadID)
     if (any(pix >= gFrameDim)) return;
     const float4 cX = gColor[pix];
     const float2 vN = gTileIn[min(pix / gTileSize, gTileDim - 1)].xy;
-    if (length(vN) <= 0.5f) { gOut[pix] = cX; return; }
+    if (length(vN) <= 0.5f)
+    {
+        gOut[pix] = cX;
+        return;
+    }
 
     const float2 vX = velocity(pix);
     const float vXLen = max(length(vX), 0.5f);

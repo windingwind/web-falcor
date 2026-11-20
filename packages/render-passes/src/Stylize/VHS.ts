@@ -11,20 +11,32 @@
 import { Properties, registerRenderPass, type Device, type RenderContext, type RenderData, type ShaderVar } from "@web-falcor/falcor";
 import { StylePostPass, type PortSpec } from "./StyleCommon.js";
 
-const kDefaults = { chromaBlur: 4, chromaOffset: 2, lineJitter: 1, tracking: 0.5, trackingSpeed: 0.02, noise: 0.05, seed: 0, frameOffset: 0, strength: 1 };
+/** Creation defaults for the pass parameters documented in this file header. */
+const kDefaults = {
+    chromaBlur: 4,
+    chromaOffset: 2,
+    lineJitter: 1,
+    tracking: 0.5,
+    trackingSpeed: 0.02,
+    noise: 0.05,
+    seed: 0,
+    frameOffset: 0,
+    strength: 1,
+};
 
+/** Applies deterministic frame-dependent VHS colour and signal artefacts. */
 export class VHS extends StylePostPass<typeof kDefaults> {
     protected readonly shaderFile = "RenderPasses/Stylize/VHS.cs.slang";
     protected readonly outputDesc = "VHS-filtered colour";
     protected readonly ports: readonly PortSpec[] = [["src", "Colour (linear)", false, "gSrc"]];
-    private frame = 0;
+    private mFrame: number = 0;
 
     constructor(device: Device, props: Properties) {
         super(device, props, kDefaults);
     }
 
     protected setConstants(cb: ShaderVar, _W: number, _H: number, _rd: RenderData): void {
-        cb["gFrame"] = (this.frame + Math.round(this.p.frameOffset)) >>> 0;
+        cb["gFrame"] = (this.mFrame + Math.round(this.p.frameOffset)) >>> 0;
         cb["gSeed"] = Math.round(this.p.seed) >>> 0;
         cb["gChromaBlur"] = this.p.chromaBlur;
         cb["gChromaOffset"] = this.p.chromaOffset;
@@ -37,8 +49,10 @@ export class VHS extends StylePostPass<typeof kDefaults> {
 
     override execute(ctx: RenderContext, rd: RenderData): void {
         super.execute(ctx, rd);
-        this.frame++;
+        this.mFrame++;
     }
 }
 
-registerRenderPass("VHS", (device, props) => new VHS(device, props), { desc: "VHS tape: chroma bleed/offset, line jitter, rolling tracking band, noise" });
+registerRenderPass("VHS", (device, props) => new VHS(device, props), {
+    desc: "VHS tape: chroma bleed/offset, line jitter, rolling tracking band, noise",
+});

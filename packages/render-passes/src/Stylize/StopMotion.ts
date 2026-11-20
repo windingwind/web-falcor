@@ -48,6 +48,7 @@ const kShaderFile = "RenderPasses/Stylize/StopMotion.cs.slang";
 export const kStopMotionMaxIds = 8;
 export const kStopMotionMaxJitterPx = 8;
 
+/** Creation defaults for the pass parameters documented in this file header. */
 const kDefaults = {
     fps: 24,
     time: 0,
@@ -80,9 +81,10 @@ export function stopMotionGain(flicker: number, key: number, seed: number): numb
     return Math.fround(1 + flicker * (2 * h - 1));
 }
 
+/** Combines per-node animation holds with deterministic object jitter and flicker. */
 export class StopMotion extends RenderPass {
-    private p: Params = { ...kDefaults, nodeHolds: {} };
-    private pass: ComputePass | null = null;
+    private mParameters: Params = { ...kDefaults, nodeHolds: {} };
+    private mPass: ComputePass | null = null;
 
     constructor(device: Device, props: Properties) {
         super(device);
@@ -91,20 +93,26 @@ export class StopMotion extends RenderPass {
 
     /** Updates the given properties (others keep their values), e.g. setProperties(new Properties({ time })) per frame. */
     override setProperties(props: Properties): void {
-        const next: Params = { ...this.p };
+        const next: Params = { ...this.mParameters };
         for (const k of Object.keys(kDefaults) as (keyof Params)[]) (next as Record<string, unknown>)[k] = props.get(k, next[k] as never);
         const holds = next.nodeHolds ?? {};
         if (typeof holds !== "object" || Array.isArray(holds)) throw new Error("StopMotion: nodeHolds must be an object { node: frames }");
         for (const [k, v] of Object.entries(holds))
-            if (!Number.isInteger(Number(k)) || Number(k) < 0 || !(Number(v) >= 1)) throw new Error(`StopMotion: nodeHolds entry ${k}: ${String(v)} (node index >= 0, hold >= 1 frame)`);
+            if (!Number.isInteger(Number(k)) || Number(k) < 0 || !(Number(v) >= 1))
+                throw new Error(`StopMotion: nodeHolds entry ${k}: ${String(v)} (node index >= 0, hold >= 1 frame)`);
         if (!(next.fps > 0)) throw new Error("StopMotion: fps must be > 0");
-        if (!(next.jitterPx >= 0 && next.jitterPx <= kStopMotionMaxJitterPx)) throw new Error(`StopMotion: jitterPx must be in [0, ${kStopMotionMaxJitterPx}]`);
-        if (!Array.isArray(next.jitterIds) || next.jitterIds.length > kStopMotionMaxIds || next.jitterIds.some((x) => !Number.isInteger(Number(x)) || Number(x) < 0))
+        if (!(next.jitterPx >= 0 && next.jitterPx <= kStopMotionMaxJitterPx))
+            throw new Error(`StopMotion: jitterPx must be in [0, ${kStopMotionMaxJitterPx}]`);
+        if (
+            !Array.isArray(next.jitterIds) ||
+            next.jitterIds.length > kStopMotionMaxIds ||
+            next.jitterIds.some((x) => !Number.isInteger(Number(x)) || Number(x) < 0)
+        )
             throw new Error(`StopMotion: jitterIds must be up to ${kStopMotionMaxIds} non-negative integers`);
         if (!(next.idChannel >= 0 && next.idChannel <= 3)) throw new Error("StopMotion: idChannel must be 0..3");
-        const holdsChanged = JSON.stringify(holds) !== JSON.stringify(this.p.nodeHolds) || next.fps !== this.p.fps;
+        const holdsChanged = JSON.stringify(holds) !== JSON.stringify(this.mParameters.nodeHolds) || next.fps !== this.mParameters.fps;
         next.nodeHolds = { ...holds };
-        this.p = next;
+        this.mParameters = next;
         if (holdsChanged) this.applyHolds();
     }
 
@@ -115,21 +123,23 @@ export class StopMotion extends RenderPass {
 
     /** Applies `nodeHolds` to the scene (only when non-empty: an empty table leaves the scene as it is). */
     private applyHolds(): void {
-        const entries = Object.entries(this.p.nodeHolds);
+        const entries = Object.entries(this.mParameters.nodeHolds);
         if (!this.scene || entries.length === 0) return;
-        this.scene.setAnimationTimeQuantization(Object.fromEntries(entries.map(([k, v]) => [Number(k), { hold: Number(v) / this.p.fps }])));
+        this.scene.setAnimationTimeQuantization(
+            Object.fromEntries(entries.map(([k, v]) => [Number(k), { hold: Number(v) / this.mParameters.fps }])),
+        );
     }
 
     override getProperties(): Properties {
-        return new Properties(JSON.parse(JSON.stringify(this.p)) as Record<string, PropertyValue>);
+        return new Properties(JSON.parse(JSON.stringify(this.mParameters)) as Record<string, PropertyValue>);
     }
 
     override renderUI(ui: UIWidgets): void {
-        ui.slider("Time", this.p.time, 0, 60, 1 / 24, (v) => (this.p.time = v));
-        ui.slider("Jitter (px)", this.p.jitterPx, 0, kStopMotionMaxJitterPx, 1, (v) => (this.p.jitterPx = v));
-        ui.slider("Jitter hold (frames)", this.p.jitterHold, 1, 8, 1, (v) => (this.p.jitterHold = v));
-        ui.slider("Flicker", this.p.flicker, 0, 0.5, 0.01, (v) => (this.p.flicker = v));
-        ui.slider("Flicker hold (frames)", this.p.flickerHold, 1, 8, 1, (v) => (this.p.flickerHold = v));
+        ui.slider("Time", this.mParameters.time, 0, 60, 1 / 24, (v) => (this.mParameters.time = v));
+        ui.slider("Jitter (px)", this.mParameters.jitterPx, 0, kStopMotionMaxJitterPx, 1, (v) => (this.mParameters.jitterPx = v));
+        ui.slider("Jitter hold (frames)", this.mParameters.jitterHold, 1, 8, 1, (v) => (this.mParameters.jitterHold = v));
+        ui.slider("Flicker", this.mParameters.flicker, 0, 0.5, 0.01, (v) => (this.mParameters.flicker = v));
+        ui.slider("Flicker hold (frames)", this.mParameters.flickerHold, 1, 8, 1, (v) => (this.mParameters.flickerHold = v));
     }
 
     override reflect(compileData: CompileData): RenderPassReflection {
@@ -143,25 +153,31 @@ export class StopMotion extends RenderPass {
     }
 
     override execute(ctx: RenderContext, rd: RenderData): void {
-        const src = rd.getTexture("src"), dst = rd.getTexture("dst");
+        const src = rd.getTexture("src");
+        const dst = rd.getTexture("dst");
         if (!src || !dst) return;
-        const id = rd.getTexture("id"), posW = rd.getTexture("posW");
-        const jitter = Math.round(this.p.jitterPx);
+        const id = rd.getTexture("id");
+        const posW = rd.getTexture("posW");
+        const jitter = Math.round(this.mParameters.jitterPx);
         if (jitter > 0 && !id) throw new RuntimeError("StopMotion: jitterPx > 0 needs the id input");
         if (posW && !this.scene) throw new RuntimeError("StopMotion: posW ordering needs a scene (camera)");
-        this.pass ??= ComputePass.create(this.device, { path: kShaderFile });
-        const root = this.pass.getRootVar();
+        this.mPass ??= ComputePass.create(this.device, { path: kShaderFile });
+        const root = this.mPass.getRootVar();
         const cb = root["CB"]!;
         const ids = new Array<number>(kStopMotionMaxIds).fill(0);
-        this.p.jitterIds.forEach((x, i) => (ids[i] = Number(x) >>> 0));
+        this.mParameters.jitterIds.forEach((x, i) => (ids[i] = Number(x) >>> 0));
         const cam = this.scene ? cameraData(this.scene) : null;
         cb["gFrameDim"] = [dst.width, dst.height];
         cb["gJitterPx"] = jitter;
-        cb["gJitterKey"] = stopMotionKey(this.p.time, this.p.fps, this.p.jitterHold) >>> 0;
-        cb["gSeed"] = Math.max(0, Math.round(this.p.seed)) >>> 0;
-        cb["gGain"] = stopMotionGain(this.p.flicker, stopMotionKey(this.p.time, this.p.fps, this.p.flickerHold), Math.max(0, Math.round(this.p.seed)));
-        cb["gIdChannel"] = Math.round(this.p.idChannel);
-        cb["gIdCount"] = this.p.jitterIds.length;
+        cb["gJitterKey"] = stopMotionKey(this.mParameters.time, this.mParameters.fps, this.mParameters.jitterHold) >>> 0;
+        cb["gSeed"] = Math.max(0, Math.round(this.mParameters.seed)) >>> 0;
+        cb["gGain"] = stopMotionGain(
+            this.mParameters.flicker,
+            stopMotionKey(this.mParameters.time, this.mParameters.fps, this.mParameters.flickerHold),
+            Math.max(0, Math.round(this.mParameters.seed)),
+        );
+        cb["gIdChannel"] = Math.round(this.mParameters.idChannel);
+        cb["gIdCount"] = this.mParameters.jitterIds.length;
         cb["gIdList0"] = ids.slice(0, 4);
         cb["gIdList1"] = ids.slice(4, 8);
         cb["gHasPosW"] = posW ? 1 : 0;
@@ -171,7 +187,7 @@ export class StopMotion extends RenderPass {
         root["gId"] = id ?? dummyTexture(this.device);
         root["gPosW"] = posW ?? dummyTexture(this.device, "in:posW");
         root["gDst"] = dst;
-        this.pass.execute(ctx, dst.width, dst.height);
+        this.mPass.execute(ctx, dst.width, dst.height);
     }
 }
 

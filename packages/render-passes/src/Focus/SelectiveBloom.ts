@@ -41,10 +41,12 @@ import {
 import { addColorOutput, addTexInput, dummyTexture, parseColour } from "../Stylize/StyleCommon.js";
 
 const kShaderFile = "RenderPasses/Focus/SelectiveBloom.cs.slang";
+/** Compute entry points declared by the companion Slang shader. */
 const kEntries = ["prefilter", "blurH", "blurV", "composite"] as const;
 type Entry = (typeof kEntries)[number];
 export const kSelectiveBloomMaxIds = 32;
 
+/** Creation defaults for the pass parameters documented in this file header. */
 const kDefaults = {
     ids: [] as number[],
     invert: false,
@@ -54,12 +56,14 @@ const kDefaults = {
     radius: 0.02,
     tint: [1, 1, 1] as number[] | string,
 };
+/** Creation properties for SelectiveBloom, including its documented defaults. */
 export type SelectiveBloomParams = typeof kDefaults;
 
+/** Blooms selected instances or masked image regions using a separable filter. */
 export class SelectiveBloom extends RenderPass {
-    private p: SelectiveBloomParams = JSON.parse(JSON.stringify(kDefaults));
-    private passes = new Map<Entry, ComputePass>();
-    private half: [Texture, Texture] | null = null;
+    private mParameters: SelectiveBloomParams = JSON.parse(JSON.stringify(kDefaults));
+    private mPasses: Map<Entry, ComputePass> = new Map<Entry, ComputePass>();
+    private mHalfResolutionTextures: [Texture, Texture] | null = null;
 
     constructor(device: Device, props: Properties) {
         super(device);
@@ -67,21 +71,23 @@ export class SelectiveBloom extends RenderPass {
     }
 
     override setProperties(props: Properties): void {
-        for (const k of Object.keys(kDefaults) as (keyof SelectiveBloomParams)[]) if (props.has(k)) (this.p as Record<string, unknown>)[k] = props.get(k, kDefaults[k] as never);
-        const ids = (this.p.ids ?? []).map(Number);
-        if (ids.length > kSelectiveBloomMaxIds) throw new Error(`SelectiveBloom: at most ${kSelectiveBloomMaxIds} ids (use the mask input for larger selections)`);
+        for (const k of Object.keys(kDefaults) as (keyof SelectiveBloomParams)[])
+            if (props.has(k)) (this.mParameters as Record<string, unknown>)[k] = props.get(k, kDefaults[k] as never);
+        const ids = (this.mParameters.ids ?? []).map(Number);
+        if (ids.length > kSelectiveBloomMaxIds)
+            throw new Error(`SelectiveBloom: at most ${kSelectiveBloomMaxIds} ids (use the mask input for larger selections)`);
         if (ids.some((v) => !Number.isInteger(v) || v < 0)) throw new Error("SelectiveBloom: ids must be non-negative integers");
-        this.p.ids = ids;
+        this.mParameters.ids = ids;
     }
 
     override getProperties(): Properties {
-        return new Properties(JSON.parse(JSON.stringify(this.p)));
+        return new Properties(JSON.parse(JSON.stringify(this.mParameters)));
     }
 
     override renderUI(ui: UIWidgets): void {
-        ui.slider("Intensity", this.p.intensity, 0, 8, 0.01, (v) => (this.p.intensity = v));
-        ui.slider("Threshold", this.p.threshold, 0, 20, 0.01, (v) => (this.p.threshold = v));
-        ui.slider("Radius", this.p.radius, 0.001, 0.2, 0.001, (v) => (this.p.radius = v));
+        ui.slider("Intensity", this.mParameters.intensity, 0, 8, 0.01, (v) => (this.mParameters.intensity = v));
+        ui.slider("Threshold", this.mParameters.threshold, 0, 20, 0.01, (v) => (this.mParameters.threshold = v));
+        ui.slider("Radius", this.mParameters.radius, 0.001, 0.2, 0.001, (v) => (this.mParameters.radius = v));
     }
 
     override reflect(compileData: CompileData): RenderPassReflection {
@@ -96,31 +102,53 @@ export class SelectiveBloom extends RenderPass {
     }
 
     private kernel(e: Entry): ComputePass {
-        let k = this.passes.get(e);
-        if (!k) this.passes.set(e, (k = ComputePass.create(this.device, { path: kShaderFile, csEntry: e })));
+        let k = this.mPasses.get(e);
+        if (!k) this.mPasses.set(e, (k = ComputePass.create(this.device, { path: kShaderFile, csEntry: e })));
         return k;
     }
 
     override execute(ctx: RenderContext, rd: RenderData): void {
-        const src = rd.getTexture("src"), dst = rd.getTexture("dst");
+        const src = rd.getTexture("src");
+        const dst = rd.getTexture("dst");
         if (!src || !dst) return;
-        const id = rd.getTexture("id"), mask = rd.getTexture("mask"), glowOut = rd.getTexture("glow");
-        const W = dst.width, H = dst.height, W2 = Math.max(1, (W + 1) >> 1), H2 = Math.max(1, (H + 1) >> 1);
-        if (!this.half || this.half[0].width !== W2 || this.half[0].height !== H2) {
+        const id = rd.getTexture("id");
+        const mask = rd.getTexture("mask");
+        const glowOut = rd.getTexture("glow");
+        const W = dst.width;
+        const H = dst.height;
+        const W2 = Math.max(1, (W + 1) >> 1);
+        const H2 = Math.max(1, (H + 1) >> 1);
+        if (
+            !this.mHalfResolutionTextures ||
+            this.mHalfResolutionTextures[0].width !== W2 ||
+            this.mHalfResolutionTextures[0].height !== H2
+        ) {
             const flags = ResourceBindFlags.ShaderResource | ResourceBindFlags.UnorderedAccess;
-            this.half = [0, 1].map(() => this.device.createTexture2D(W2, H2, ResourceFormat.RGBA32Float, 1, 1, undefined, flags)) as [Texture, Texture];
+            this.mHalfResolutionTextures = [0, 1].map(() =>
+                this.device.createTexture2D(W2, H2, ResourceFormat.RGBA32Float, 1, 1, undefined, flags),
+            ) as [Texture, Texture];
         }
-        const [A, B] = this.half;
-        const p = this.p;
+        const [A, B] = this.mHalfResolutionTextures;
+        const p = this.mParameters;
         const ids = p.ids;
         const idsActive = !!id && ids.length > 0;
         const anySelected = p.invert ? !!id || !!mask : idsActive || (!!mask && !id);
         const intensity = anySelected ? Number(p.intensity) : 0;
         const packed = Array.from({ length: 8 }, (_, i) => [0, 1, 2, 3].map((k) => ids[i * 4 + k] ?? 0));
         const consts: Record<string, unknown> = {
-            gFrameDim: [W, H], gHalfDim: [W2, H2], gIds: packed, gIdCount: ids.length, gHasId: id ? 1 : 0, gHasMask: mask ? 1 : 0,
-            gInvert: p.invert ? 1 : 0, gThreshold: Number(p.threshold), gKnee: Math.max(Number(p.knee), 0), gIntensity: intensity,
-            gSigma: Math.max(Number(p.radius) * H2, 0.5), gTint: parseColour(p.tint), gHasGlowOut: glowOut ? 1 : 0,
+            gFrameDim: [W, H],
+            gHalfDim: [W2, H2],
+            gIds: packed,
+            gIdCount: ids.length,
+            gHasId: id ? 1 : 0,
+            gHasMask: mask ? 1 : 0,
+            gInvert: p.invert ? 1 : 0,
+            gThreshold: Number(p.threshold),
+            gKnee: Math.max(Number(p.knee), 0),
+            gIntensity: intensity,
+            gSigma: Math.max(Number(p.radius) * H2, 0.5),
+            gTint: parseColour(p.tint),
+            gHasGlowOut: glowOut ? 1 : 0,
         };
         const d = (slot: string) => dummyTexture(this.device, slot);
         const run = (e: Entry, x: number, y: number, inT: Texture, out: Texture, dstT: Texture, glowT: Texture) => {

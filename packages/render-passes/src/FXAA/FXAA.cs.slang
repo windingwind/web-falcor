@@ -14,7 +14,10 @@ cbuffer CB
 Texture2D<float4> gSrc;
 RWTexture2D<float4> gDst;
 
-float4 fetch(int2 p) { return gSrc[uint2(clamp(p, int2(0), int2(gFrameDim) - 1))]; }
+float4 fetch(int2 p)
+{
+    return gSrc[uint2(clamp(p, int2(0), int2(gFrameDim) - 1))];
+}
 
 /** Bilinear filter at pixel-space position p (pixel centres at integer + 0.5), clamp-to-edge. */
 float4 bilerp(float2 p)
@@ -25,8 +28,14 @@ float4 bilerp(float2 p)
     return lerp(lerp(fetch(i), fetch(i + int2(1, 0)), f.x), lerp(fetch(i + int2(0, 1)), fetch(i + int2(1, 1)), f.x), f.y);
 }
 
-float luma(float4 c) { return dot(saturate(c.rgb), float3(0.299f, 0.587f, 0.114f)); }
-float lumaAt(float2 p) { return luma(bilerp(p)); }
+float luma(float4 c)
+{
+    return dot(saturate(c.rgb), float3(0.299f, 0.587f, 0.114f));
+}
+float lumaAt(float2 p)
+{
+    return luma(bilerp(p));
+}
 
 float stepQuality(uint i)
 {
@@ -45,7 +54,11 @@ void main(uint3 tid: SV_DispatchThreadID)
     if (any(pix >= gFrameDim)) return;
     const int2 ip = int2(pix);
     const float4 cC = fetch(ip);
-    if (gEnabled == 0) { gDst[pix] = cC; return; }
+    if (gEnabled == 0)
+    {
+        gDst[pix] = cC;
+        return;
+    }
     // y grows downwards: "up" is -y
     const float lC = luma(cC);
     const float lD = luma(fetch(ip + int2(0, 1))), lU = luma(fetch(ip + int2(0, -1)));
@@ -53,7 +66,11 @@ void main(uint3 tid: SV_DispatchThreadID)
     const float lMin = min(lC, min(min(lD, lU), min(lL, lR)));
     const float lMax = max(lC, max(max(lD, lU), max(lL, lR)));
     const float range = lMax - lMin;
-    if (range < max(gEdgeThresholdMin, lMax * gEdgeThresholdMax)) { gDst[pix] = cC; return; }
+    if (range < max(gEdgeThresholdMin, lMax * gEdgeThresholdMax))
+    {
+        gDst[pix] = cC;
+        return;
+    }
 
     const float lDL = luma(fetch(ip + int2(-1, 1))), lUR = luma(fetch(ip + int2(1, -1)));
     const float lUL = luma(fetch(ip + int2(-1, -1))), lDR = luma(fetch(ip + int2(1, 1)));
@@ -70,12 +87,17 @@ void main(uint3 tid: SV_DispatchThreadID)
     const float gradScaled = 0.25f * max(abs(g1), abs(g2));
     float stepLen = 1.f; // pixels, perpendicular to the edge
     float lLocalAvg;
-    if (is1Steepest) { stepLen = -stepLen; lLocalAvg = 0.5f * (l1 + lC); }
+    if (is1Steepest)
+    {
+        stepLen = -stepLen;
+        lLocalAvg = 0.5f * (l1 + lC);
+    }
     else lLocalAvg = 0.5f * (l2 + lC);
 
     const float2 uv = float2(pix) + 0.5f;
     float2 cur = uv;
-    if (isH) cur.y += stepLen * 0.5f; else cur.x += stepLen * 0.5f;
+    if (isH) cur.y += stepLen * 0.5f;
+    else cur.x += stepLen * 0.5f;
     const float2 off = isH ? float2(1.f, 0.f) : float2(0.f, 1.f);
     float2 p1 = cur - off, p2 = cur + off;
     float e1 = lumaAt(p1) - lLocalAvg, e2 = lumaAt(p2) - lLocalAvg;
@@ -84,8 +106,16 @@ void main(uint3 tid: SV_DispatchThreadID)
     if (!r2) p2 += off;
     for (uint i = 2; i < gIterations && !(r1 && r2); i++)
     {
-        if (!r1) { e1 = lumaAt(p1) - lLocalAvg; r1 = abs(e1) >= gradScaled; }
-        if (!r2) { e2 = lumaAt(p2) - lLocalAvg; r2 = abs(e2) >= gradScaled; }
+        if (!r1)
+        {
+            e1 = lumaAt(p1) - lLocalAvg;
+            r1 = abs(e1) >= gradScaled;
+        }
+        if (!r2)
+        {
+            e2 = lumaAt(p2) - lLocalAvg;
+            r2 = abs(e2) >= gradScaled;
+        }
         if (!r1) p1 -= off * stepQuality(i);
         if (!r2) p2 += off * stepQuality(i);
     }
@@ -105,7 +135,8 @@ void main(uint3 tid: SV_DispatchThreadID)
     finalOffset = max(finalOffset, s2 * s2 * gSubpixelQuality);
 
     float2 fuv = uv;
-    if (isH) fuv.y += finalOffset * stepLen; else fuv.x += finalOffset * stepLen;
+    if (isH) fuv.y += finalOffset * stepLen;
+    else fuv.x += finalOffset * stepLen;
     const float4 c = bilerp(fuv);
     gDst[pix] = float4(c.rgb, cC.a);
 }

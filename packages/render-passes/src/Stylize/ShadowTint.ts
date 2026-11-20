@@ -14,12 +14,23 @@
 import { Properties, registerRenderPass, type Device, type RenderData, type ShaderVar } from "@web-falcor/falcor";
 import { StylePostPass, cameraData, keyLightDir, parseColour, type PortSpec } from "./StyleCommon.js";
 
+/** Creation defaults for the pass parameters documented in this file header. */
 const kDefaults = {
-    threshold: 0.2, softness: 0.05, hueShift: -15, valueDrop: 0.3, satKeep: 1.1,
-    nearTint: [0.85, 0.9, 1.1] as number[], farTint: [0.8, 1.0, 0.95] as number[], near: 0, far: 0,
-    brightness: 1, strength: 1, lightDir: [0, 0, 0] as number[],
+    threshold: 0.2,
+    softness: 0.05,
+    hueShift: -15,
+    valueDrop: 0.3,
+    satKeep: 1.1,
+    nearTint: [0.85, 0.9, 1.1] as number[],
+    farTint: [0.8, 1.0, 0.95] as number[],
+    near: 0,
+    far: 0,
+    brightness: 1,
+    strength: 1,
+    lightDir: [0, 0, 0] as number[],
 };
 
+/** Tints lit and shadowed regions using a visibility input. */
 export class ShadowTint extends StylePostPass<typeof kDefaults> {
     protected readonly shaderFile = "RenderPasses/Stylize/ShadowTint.cs.slang";
     protected readonly outputDesc = "Colour with tinted shadows";

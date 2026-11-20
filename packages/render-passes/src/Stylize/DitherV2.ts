@@ -26,8 +26,11 @@ import {
 } from "@web-falcor/falcor";
 import { StylePostPass, cameraData, enumIndex, type PortSpec } from "./StyleCommon.js";
 
+/** Ordered option names; preserve this order for numeric property compatibility. */
 const kPatterns = ["bayer2", "bayer4", "bayer8", "blue_noise", "ps1", "ign"] as const;
+/** Ordered option names; preserve this order for numeric property compatibility. */
 const kSpaces = ["screen", "view_sphere", "world"] as const;
+/** 64 by 64 texels for the void-and-cluster blue-noise tile generated below. */
 const kBlueSize = 64;
 
 /**
@@ -38,37 +41,70 @@ export function voidAndCluster(n: number, sigma = 1.5, seed = 1): Float32Array {
     const N = n * n;
     const R = Math.ceil(4 * sigma);
     const kernel: [number, number, number][] = [];
-    for (let dy = -R; dy <= R; dy++) for (let dx = -R; dx <= R; dx++) kernel.push([dx, dy, Math.exp(-(dx * dx + dy * dy) / (2 * sigma * sigma))]);
+    for (let dy = -R; dy <= R; dy++)
+        for (let dx = -R; dx <= R; dx++) kernel.push([dx, dy, Math.exp(-(dx * dx + dy * dy) / (2 * sigma * sigma))]);
     const energy = new Float64Array(N);
     const on = new Uint8Array(N);
     const add = (i: number, s: number) => {
-        const x = i % n, y = (i / n) | 0;
+        const x = i % n;
+        const y = (i / n) | 0;
         for (const [dx, dy, w] of kernel) energy[((y + dy + n) % n) * n + ((x + dx + n) % n)]! += s * w;
     };
     // initial binary pattern: ~10 % random points (LCG), then relaxed by swapping the tightest cluster into the largest void
     let st = seed >>> 0;
-    const rnd = () => ((st = (Math.imul(st, 1664525) + 1013904223) >>> 0) / 4294967296);
+    const rnd = () => (st = (Math.imul(st, 1664525) + 1013904223) >>> 0) / 4294967296;
     const initial = Math.max(1, Math.floor(N / 10));
     let placed = 0;
-    while (placed < initial) { const i = Math.floor(rnd() * N); if (!on[i]) { on[i] = 1; add(i, 1); placed++; } }
+    while (placed < initial) {
+        const i = Math.floor(rnd() * N);
+        if (!on[i]) {
+            on[i] = 1;
+            add(i, 1);
+            placed++;
+        }
+    }
     const argExt = (want: number, max: boolean) => {
-        let best = -1, bv = max ? -Infinity : Infinity;
-        for (let i = 0; i < N; i++) if (on[i] === want && (max ? energy[i]! > bv : energy[i]! < bv)) { bv = energy[i]!; best = i; }
+        let best = -1;
+        let bv = max ? -Infinity : Infinity;
+        for (let i = 0; i < N; i++)
+            if (on[i] === want && (max ? energy[i]! > bv : energy[i]! < bv)) {
+                bv = energy[i]!;
+                best = i;
+            }
         return best;
     };
     for (let it = 0; it < 4 * N; it++) {
-        const c = argExt(1, true); on[c] = 0; add(c, -1);
+        const c = argExt(1, true);
+        on[c] = 0;
+        add(c, -1);
         const v = argExt(0, false);
-        if (v === c) { on[c] = 1; add(c, 1); break; }
-        on[v] = 1; add(v, 1);
+        if (v === c) {
+            on[c] = 1;
+            add(c, 1);
+            break;
+        }
+        on[v] = 1;
+        add(v, 1);
     }
     const rank = new Float32Array(N);
     // phase 1: remove points from the tightest clusters, ranks initial-1 .. 0
-    const proto = on.slice(); const protoEnergy = energy.slice();
-    for (let r = initial - 1; r >= 0; r--) { const c = argExt(1, true); on[c] = 0; add(c, -1); rank[c] = r; }
-    on.set(proto); energy.set(protoEnergy);
+    const proto = on.slice();
+    const protoEnergy = energy.slice();
+    for (let r = initial - 1; r >= 0; r--) {
+        const c = argExt(1, true);
+        on[c] = 0;
+        add(c, -1);
+        rank[c] = r;
+    }
+    on.set(proto);
+    energy.set(protoEnergy);
     // phase 2/3: fill the largest voids, ranks initial .. N-1
-    for (let r = initial; r < N; r++) { const v = argExt(0, false); on[v] = 1; add(v, 1); rank[v] = r; }
+    for (let r = initial; r < N; r++) {
+        const v = argExt(0, false);
+        on[v] = 1;
+        add(v, 1);
+        rank[v] = r;
+    }
     for (let i = 0; i < N; i++) rank[i] = rank[i]! / N;
     return rank;
 }
@@ -87,6 +123,7 @@ function blueNoiseTexture(device: Device): Texture {
     return t;
 }
 
+/** Creation defaults for the pass parameters documented in this file header. */
 const kDefaults = {
     pattern: "bayer4" as string,
     space: "screen" as string,
@@ -97,6 +134,7 @@ const kDefaults = {
     mix: 1,
 };
 
+/** Applies ordered, blue-noise or error-diffusion colour dithering. */
 export class DitherV2 extends StylePostPass<typeof kDefaults> {
     protected readonly shaderFile = "RenderPasses/Stylize/DitherV2.cs.slang";
     protected readonly outputDesc = "Dithered colour";
@@ -115,7 +153,8 @@ export class DitherV2 extends StylePostPass<typeof kDefaults> {
     protected setConstants(cb: ShaderVar, _W: number, H: number, _rd: RenderData): void {
         const pattern = enumIndex("DitherV2", "pattern", this.p.pattern, kPatterns);
         const space = enumIndex("DitherV2", "space", this.p.space, kSpaces);
-        let angScale = 1, camPos: number[] = [0, 0, 0];
+        let angScale = 1;
+        let camPos: number[] = [0, 0, 0];
         if (this.scene) {
             const cam = cameraData(this.scene);
             camPos = cam.pos;
