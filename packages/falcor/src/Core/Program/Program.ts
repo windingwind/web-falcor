@@ -198,7 +198,16 @@ export interface CompilationStats {
     programKernelsTotalTime: number;
 }
 
-const kNoCompilationStats: CompilationStats = { programVersionCount: 0, programVersionCacheHits: 0, programKernelsCount: 0, programVersionMaxTime: 0, programKernelsMaxTime: 0, programVersionTotalTime: 0, programKernelsTotalTime: 0 };
+/** Zero-valued counters used when compilation statistics are reset. */
+const kNoCompilationStats: CompilationStats = {
+    programVersionCount: 0,
+    programVersionCacheHits: 0,
+    programKernelsCount: 0,
+    programVersionMaxTime: 0,
+    programKernelsMaxTime: 0,
+    programVersionTotalTime: 0,
+    programKernelsTotalTime: 0,
+};
 
 export class ProgramManager {
     readonly globalDefines = new DefineList();
@@ -227,7 +236,7 @@ export class ProgramManager {
      * Without it every new pass instance recompiles its shaders, e.g. each rebuild of a render graph. ProgramVersions
      * are immutable after creation, so sharing them between Programs is safe.
      */
-    private versionCache = new Map<string, ProgramVersion>();
+    private mVersionCache: Map<string, ProgramVersion> = new Map<string, ProgramVersion>();
     /** Set to false to compile every Program version anew (e.g. to measure compile times). */
     programCacheEnabled = true;
 
@@ -304,7 +313,7 @@ export class ProgramManager {
             this.resolveSource = source.resolveSource;
             this.filePaths = source.filePaths;
         }
-        this.versionCache.clear();
+        this.mVersionCache.clear();
         this.compiler.dispose();
         this.compiler = this.createCompiler();
         for (const alt of this.altCompilers.values()) {
@@ -336,7 +345,7 @@ export class ProgramManager {
         const modules = programModules(desc);
         const cacheKey = JSON.stringify([modules, desc.entryPoints, allDefines.key(), desc.typeConformances ?? [], desc.slangRuntime ?? ""]);
         if (this.programCacheEnabled) {
-            const cached = this.versionCache.get(cacheKey);
+            const cached = this.mVersionCache.get(cacheKey);
             if (cached) {
                 this.stats.programVersionCacheHits++;
                 return cached;
@@ -366,18 +375,18 @@ export class ProgramManager {
         st.programVersionMaxTime = Math.max(st.programVersionMaxTime, versionTime);
         st.programKernelsMaxTime = Math.max(st.programKernelsMaxTime, kernelsTime);
         const version = new ProgramVersion(new ProgramReflection(result.reflection), kernels);
-        if (this.programCacheEnabled) this.versionCache.set(cacheKey, version);
+        if (this.programCacheEnabled) this.mVersionCache.set(cacheKey, version);
         return version;
     }
 
     /** Drops all cached program versions (Programs keep the versions they already hold). */
     clearProgramCache(): void {
-        this.versionCache.clear();
+        this.mVersionCache.clear();
     }
 
     /** Number of program versions in the program cache. */
     get programCacheSize(): number {
-        return this.versionCache.size;
+        return this.mVersionCache.size;
     }
 }
 

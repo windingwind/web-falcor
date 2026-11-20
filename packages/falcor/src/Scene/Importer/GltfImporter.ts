@@ -506,32 +506,52 @@ function gather<T extends Float32Array | Uint32Array>(data: T, source: Uint32Arr
  * touch its position (vertices that share a position but differ in other attributes get the same normal). Degenerate
  * faces contribute nothing; a vertex whose faces are all degenerate gets (0, 0, 1).
  */
-export function generateSmoothNormals(indices: Uint32Array, pos: Float32Array): Float32Array {
-    const count = pos.length / 3;
-    const key = (v: number) => `${pos[v * 3]},${pos[v * 3 + 1]},${pos[v * 3 + 2]}`;
+export function generateSmoothNormals(indices: Uint32Array, positions: Float32Array): Float32Array {
+    const vertexCount = positions.length / 3;
+    const positionKey = (vertexIndex: number) =>
+        `${positions[vertexIndex * 3]},${positions[vertexIndex * 3 + 1]},${positions[vertexIndex * 3 + 2]}`;
     const sums = new Map<string, [number, number, number]>();
-    for (let t = 0; t + 2 < indices.length; t += 3) {
-        const [a, b, c] = [indices[t]!, indices[t + 1]!, indices[t + 2]!];
-        const e1 = [pos[b * 3]! - pos[a * 3]!, pos[b * 3 + 1]! - pos[a * 3 + 1]!, pos[b * 3 + 2]! - pos[a * 3 + 2]!];
-        const e2 = [pos[c * 3]! - pos[a * 3]!, pos[c * 3 + 1]! - pos[a * 3 + 1]!, pos[c * 3 + 2]! - pos[a * 3 + 2]!];
-        const n = [e1[1]! * e2[2]! - e1[2]! * e2[1]!, e1[2]! * e2[0]! - e1[0]! * e2[2]!, e1[0]! * e2[1]! - e1[1]! * e2[0]!];
-        const len = Math.hypot(n[0]!, n[1]!, n[2]!);
-        if (!(len > 0)) continue;
-        // each position once per face (a face may reference the same position twice)
-        for (const k of new Set([key(a), key(b), key(c)])) {
-            const s = sums.get(k) ?? [0, 0, 0];
-            s[0] += n[0]! / len; s[1] += n[1]! / len; s[2] += n[2]! / len;
-            sums.set(k, s);
+    for (let triangleIndex = 0; triangleIndex + 2 < indices.length; triangleIndex += 3) {
+        const [vertexA, vertexB, vertexC] = [indices[triangleIndex]!, indices[triangleIndex + 1]!, indices[triangleIndex + 2]!];
+        const edgeAB = [
+            positions[vertexB * 3]! - positions[vertexA * 3]!,
+            positions[vertexB * 3 + 1]! - positions[vertexA * 3 + 1]!,
+            positions[vertexB * 3 + 2]! - positions[vertexA * 3 + 2]!,
+        ];
+        const edgeAC = [
+            positions[vertexC * 3]! - positions[vertexA * 3]!,
+            positions[vertexC * 3 + 1]! - positions[vertexA * 3 + 1]!,
+            positions[vertexC * 3 + 2]! - positions[vertexA * 3 + 2]!,
+        ];
+        const faceNormal = [
+            edgeAB[1]! * edgeAC[2]! - edgeAB[2]! * edgeAC[1]!,
+            edgeAB[2]! * edgeAC[0]! - edgeAB[0]! * edgeAC[2]!,
+            edgeAB[0]! * edgeAC[1]! - edgeAB[1]! * edgeAC[0]!,
+        ];
+        const normalLength = Math.hypot(faceNormal[0]!, faceNormal[1]!, faceNormal[2]!);
+        if (!(normalLength > 0)) continue;
+        // Accumulate each position once per face; degenerate indices may repeat a position.
+        for (const facePositionKey of new Set([positionKey(vertexA), positionKey(vertexB), positionKey(vertexC)])) {
+            const normalSum = sums.get(facePositionKey) ?? [0, 0, 0];
+            normalSum[0] += faceNormal[0]! / normalLength;
+            normalSum[1] += faceNormal[1]! / normalLength;
+            normalSum[2] += faceNormal[2]! / normalLength;
+            sums.set(facePositionKey, normalSum);
         }
     }
-    const out = new Float32Array(count * 3);
-    for (let v = 0; v < count; v++) {
-        const s = sums.get(key(v));
-        const len = s ? Math.hypot(s[0], s[1], s[2]) : 0;
-        if (s && len > 0) [out[v * 3], out[v * 3 + 1], out[v * 3 + 2]] = [s[0] / len, s[1] / len, s[2] / len];
-        else out[v * 3 + 2] = 1;
+    const normals = new Float32Array(vertexCount * 3);
+    for (let vertexIndex = 0; vertexIndex < vertexCount; vertexIndex++) {
+        const normalSum = sums.get(positionKey(vertexIndex));
+        const normalLength = normalSum ? Math.hypot(normalSum[0], normalSum[1], normalSum[2]) : 0;
+        if (normalSum && normalLength > 0)
+            [normals[vertexIndex * 3], normals[vertexIndex * 3 + 1], normals[vertexIndex * 3 + 2]] = [
+                normalSum[0] / normalLength,
+                normalSum[1] / normalLength,
+                normalSum[2] / normalLength,
+            ];
+        else normals[vertexIndex * 3 + 2] = 1;
     }
-    return out;
+    return normals;
 }
 
 /**
